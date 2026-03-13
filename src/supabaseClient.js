@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
 
-// Asegúrate de que la URL empiece con https:// y no tenga espacios al final
-const supabaseUrl = 'https://pugwgdqgsqjtbeouodpo.supabase.co' 
-const supabaseAnonKey = 'sb_publishable_oBdXZE0PPSnj9lv-1qzalA_uB6kHtVu'
+// Estas líneas le dicen a tu código que busque las llaves en la configuración de Vercel
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey)
