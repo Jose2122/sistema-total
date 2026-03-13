@@ -1,0 +1,297 @@
+/* Requisiciones.css - StockSmart Enterprise (Ultra-Compact & Aesthetic) */
+
+/* --- FUENTES Y BASE --- */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+
+:root {
+  --primary: #0ea5e9;
+  --primary-dark: #0284c7;
+  --success: #22c55e;
+  --warning: #facc15;
+  --danger: #ef4444;
+  --slate-50: #f8fafc;
+  --slate-100: #f1f5f9;
+  --slate-200: #e2e8f0;
+  --slate-300: #cbd5e1; /* Un gris intermedio para bordes */
+  --slate-400: #94a3b8;
+  --slate-600: #475569;
+  --slate-800: #1e293b;
+  --slate-900: #0f172a;
+  
+  /* Curva de animación profesional */
+  --ease-out-expo: cubic-bezier(0.19, 1, 0.22, 1);
+}
+
+/* --- ANIMACIONES FLUIDAS --- */
+.animate-main {
+  animation: fadeIn 0.6s var(--ease-out-expo);
+}
+
+.animate-modal {
+  animation: slideUp 0.5s var(--ease-out-expo);
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { 
+    transform: translateY(30px) scale(0.98); 
+    opacity: 0; 
+  }
+  to { 
+    transform: translateY(0) scale(1); 
+    opacity: 1; 
+  }
+}
+
+/* --- DASHBOARD CARDS (Compactas y con Sombra) --- */
+.dashboard-container {
+  display: flex;
+  gap: 15px;
+  margin-bottom: 25px;
+}
+
+.stat-card {
+  flex: 1;
+  background-color: white;
+  padding: 18px;
+  border-radius: 12px;
+  /* Sombra sutil para profundidad */
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05), 0 1px 2px 0 rgba(0, 0, 0, 0.03);
+  transition: all 0.3s var(--ease-out-expo);
+  border: 1px solid var(--slate-100);
+}
+
+.stat-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.03);
+}
+
+.stat-label {
+  color: var(--slate-600); /* Un poco más oscuro */
+  font-size: 0.6rem; /* Más pequeño para jerarquía */
+  font-weight: 800; /* Más negrita */
+  text-transform: uppercase;
+  letter-spacing: 0.08em; /* Más espacio entre letras */
+}
+
+.stat-value {
+  font-size: 1.6rem; /* Un poco más pequeño para ser compacto */
+  font-weight: 900; /* Peso máximo */
+  color: var(--slate-900);
+  margin-top: 2px;
+}
+
+/* --- TABLA PRINCIPAL DEL HISTORIAL (Look Limpio) --- */
+.table-container {
+  background-color: white;
+  padding: 15px;
+  border-radius: 15px;
+  box-shadow: 0 10px 15px -3px rgba(15, 23, 42, 0.03);
+  overflow-x: auto;
+  border: 1px solid var(--slate-100);
+}
+
+.tc-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.tc-table th {
+  padding: 10px 12px;
+  color: var(--slate-600);
+  font-size: 0.65rem;
+  font-weight: 900; /* Super negrita */
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background-color: var(--slate-50);
+  text-align: left;
+  border-bottom: 2px solid var(--slate-100);
+}
+
+.tc-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--slate-50);
+  font-size: 0.75rem;
+  color: var(--slate-800);
+  transition: background-color 0.2s;
+}
+
+.tc-table tbody tr:hover td {
+  background-color: #fafcfe; /* Sutil hover en toda la fila */
+}
+
+/* --- MODAL OVERLAY --- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(15, 23, 42, 0.65); /* Un poco más oscuro */
+  backdrop-filter: blur(5px); /* Más blur para enfoque */
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 2000;
+}
+
+.modal-card {
+  background-color: white;
+  padding: 25px 30px;
+  border-radius: 20px;
+  width: 96%;
+  max-width: 1300px;
+  max-height: 94vh;
+  overflow-y: auto;
+  /* Sombra de lujo */
+  box-shadow: 0 25px 50px -12px rgba(15, 23, 42, 0.25);
+  border: 1px solid var(--slate-100);
+}
+
+/* --- INPUTS ESTILO COMPACTO & "FUNDS-LIKE" --- */
+.input-tc {
+  width: 100%;
+  padding: 8px 12px; /* Espaciado cómodo pero compacto */
+  border-radius: 8px; /* Un poco más curvo */
+  border: 1px solid var(--slate-200);
+  font-family: 'Inter', sans-serif;
+  font-size: 0.8rem;
+  background-color: #fcfdfe; /* Fondo muy suave */
+  transition: all 0.2s var(--ease-out-expo);
+  color: var(--slate-900);
+}
+
+.input-tc:focus {
+  outline: none;
+  border-color: var(--primary);
+  background-color: white;
+  /* Sombra de foco más suave */
+  box-shadow: 0 0 0 4px rgba(14, 165, 233, 0.08);
+}
+
+.input-tc[readonly] {
+  background-color: #f1f5f9; /* Un gris más notable para 'desactivado' */
+  color: var(--slate-600);
+  cursor: not-allowed;
+  border-color: var(--slate-200);
+}
+
+/* --- ÁREA DE LA TABLA DE RENGLONES (Limpieza Extrema) --- */
+.renglon-row input.input-tc {
+  background-color: transparent;
+  border-color: transparent;
+  border-radius: 4px;
+  padding: 6px; /* Más pequeño dentro de la tabla */
+  font-size: 0.75rem;
+}
+
+/* Quitamos sombras y bordes pesados en el hover de inputs de tabla */
+.renglon-row:hover input.input-tc {
+  background-color: white;
+  border-color: var(--slate-300); /* Borde más visible al hover */
+  box-shadow: none;
+}
+
+.btn-add-row {
+  margin-top: 10px;
+  padding: 8px;
+  border-radius: 8px;
+  border: 2px dashed var(--slate-300);
+  background: none;
+  color: var(--slate-600);
+  font-weight: 800; /* Súper negrita */
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  width: 100%;
+  transition: all 0.3s var(--ease-out-expo);
+}
+
+.btn-add-row:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+  background-color: rgba(14, 165, 233, 0.04);
+  transform: translateY(-1px);
+}
+
+/* --- CABECERA Y BADGES --- */
+.req-header-line {
+  border-top: 2px solid var(--primary);
+  margin: 15px 0;
+  opacity: 0.8;
+}
+
+.status-purchase-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background-color: #f1f5f9;
+  padding: 4px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--slate-200);
+}
+
+/* --- BOTONES DE ACCIÓN (Más definidos) --- */
+.btn-tc {
+  padding: 10px 20px; /* Un poco más grandes para mejor click */
+  border-radius: 10px;
+  border: none;
+  font-weight: 800; /* Súper negrita */
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  font-family: 'Inter', sans-serif;
+  transition: all 0.3s var(--ease-out-expo);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+.btn-tc-primary { background-color: var(--primary); color: white; }
+.btn-tc-success { background-color: var(--success); color: white; }
+.btn-tc-danger { background-color: var(--danger); color: white; }
+.btn-tc-secondary { background-color: var(--slate-100); color: var(--slate-600); border: 1px solid var(--slate-200); }
+.btn-tc-dark { background-color: var(--slate-800); color: white; }
+
+.btn-tc:hover {
+  filter: brightness(1.08);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.btn-tc:active {
+  transform: translateY(-1px);
+}
+
+/* --- FIRMAS Y TOTALES --- */
+.signature-line {
+  border-top: 1.5px solid var(--slate-400); /* Línea más fina */
+  padding-top: 10px;
+  width: 220px;
+  text-align: ;
+}
+
+.totals-container {
+  width: 280px;
+  background: var(--slate-50);
+  padding: 15px;
+  border-radius: 12px;
+  border: 1px solid var(--slate-200);
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.01);
+}
+
+/* --- RESPONSIVE --- */
+@media (max-width: 768px) {
+  .dashboard-container {
+    flex-direction: column;
+  }
+  
+  .modal-card {
+    padding: 20px;
+    width: 98%;
+  }
+}
