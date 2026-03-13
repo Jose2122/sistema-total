@@ -170,14 +170,42 @@ const Usuarios = () => {
             )}
           </div>
           
-          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', backgroundColor: '#f1f5f9', padding: '15px', borderRadius: '16px' }}>
-            <input className="input-style" style={{ flex: 2, minWidth: '200px' }} placeholder="🔍 Buscar por nombre..." value={busqueda} onChange={(e) => setBusqueda(e.target.value)} />
-            <select className="input-style" style={{ flex: 1 }} value={filtroDpto} onChange={(e) => setFiltroDpto(e.target.value)}>
-              <option value="Todos">Departamentos</option>
+          <div style={{
+            display: 'flex',
+            gap: '15px',
+            backgroundColor: '#f8fafc',
+            padding: '12px',
+            borderRadius: '12px',
+            border: '1px solid #e2e8f0'
+          }}>
+            <div style={{ flex: 1, position: 'relative' }}>
+              <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }}>🔍</span>
+              <input
+                className="input-style"
+                style={{ width: '100%', paddingLeft: '35px', margin: 0, backgroundColor: 'white', boxSizing: 'border-box' }}
+                placeholder="Buscar por nombre..."
+                value={busqueda}
+                onChange={(e) => setBusqueda(e.target.value)}
+              />
+            </div>
+            
+            <select
+              className="input-style"
+              style={{ flex: 1, margin: 0, backgroundColor: 'white' }}
+              value={filtroDpto}
+              onChange={(e) => setFiltroDpto(e.target.value)}
+            >
+              <option value="Todos">Todos los Departamentos</option>
               {DEPARTAMENTOS.map(d => <option key={d} value={d}>{d}</option>)}
             </select>
-            <select className="input-style" style={{ flex: 1 }} value={filtroCargo} onChange={(e) => setFiltroCargo(e.target.value)}>
-              <option value="Todos">Cargos</option>
+            
+            <select
+              className="input-style"
+              style={{ flex: 1, margin: 0, backgroundColor: 'white' }}
+              value={filtroCargo}
+              onChange={(e) => setFiltroCargo(e.target.value)}
+            >
+              <option value="Todos">Todos los Cargos</option>
               {CARGOS.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>

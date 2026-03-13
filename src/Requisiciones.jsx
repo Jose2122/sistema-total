@@ -1,15 +1,17 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
-import { supabase } from './supabaseClient'; 
+import { supabase } from './supabaseClient';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Loader2 } from 'lucide-react';
 import './Requisiciones.css';
 
 const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
   // --- ESTADOS DEL SISTEMA ---
   const [showModal, setShowModal] = useState(false);
-  const [historial, setHistorial] = useState([]); 
+  const [historial, setHistorial] = useState([]);
   const [editandoId, setEditandoId] = useState(null);
-  const [loading, setLoading] = useState(false); 
+  const [loading, setLoading] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
 
   // --- NUEVOS ESTADOS PARA FILTROS ---
@@ -26,15 +28,15 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
         .select('*')
         .eq('correo', session.user.email)
         .single();
-      
+
       const ADMIN_EMAIL = 'jcontreras.totalclean@gmail.com';
-      setCurrentUser({ 
-        ...perfil, 
-        esAdminReal: session.user.email === ADMIN_EMAIL 
+      setCurrentUser({
+        ...perfil,
+        esAdminReal: session.user.email === ADMIN_EMAIL
       });
     }
   }, []);
-  
+
   // --- LÓGICA DE CARGA DESDE SUPABASE CON FILTROS DE JERARQUÍA ---
   const cargarHistorialDesdeBD = useCallback(async () => {
     if (!currentUser) return;
@@ -52,7 +54,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
       }
 
       const { data, error } = await query.order('fecha_emision', { ascending: false });
-      
+
       if (error) throw error;
       if (data) {
         const historialMapeado = data.map(db => ({
@@ -88,10 +90,10 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
   // --- LÓGICA DE FILTRADO EN TIEMPO REAL ---
   const historialFiltrado = useMemo(() => {
     return historial.filter(req => {
-      const matchTexto = 
-        req.solicitante.toLowerCase().includes(busqueda.toLowerCase()) || 
+      const matchTexto =
+        req.solicitante.toLowerCase().includes(busqueda.toLowerCase()) ||
         req.correlativo.toLowerCase().includes(busqueda.toLowerCase());
-      
+
       const matchDepto = filtroDepto === 'Todos' || req.gerencia === filtroDepto;
       const matchStatus = filtroAprobacion === 'Todos' || req.aprobacion === filtroAprobacion;
 
@@ -102,7 +104,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
   // --- ESTADOS DEL FORMULARIO ---
   const [prioridad, setPrioridad] = useState('Normal');
   const [solicitante, setSolicitante] = useState('');
-  const [centroCostoID, setCentroCostoID] = useState('1.00.2'); 
+  const [centroCostoID, setCentroCostoID] = useState('1.00.2');
   const [centroCostoNombre, setCentroCostoNombre] = useState('MTTO MAYOR-BOSCAN');
   const [departamento, setDepartamento] = useState('Operaciones');
   const [justificacion, setJustificacion] = useState('');
@@ -126,8 +128,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
   ];
 
   const listaGerencias = [
-    "Administración Maracaibo", "Administración El Tigre", "Operaciones", "Mantenimiento", 
-    "Seguridad", "Recursos Humanos", "Estimación", "Almacén", "Gerencia General", 
+    "Administración Maracaibo", "Administración El Tigre", "Operaciones", "Mantenimiento",
+    "Seguridad", "Recursos Humanos", "Estimación", "Almacén", "Gerencia General",
     "Servicios Generales", "Contabilidad"
   ];
 
@@ -163,7 +165,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
         setObservaciones(datosPredefinidos.observaciones || '');
         const encontrarCC = listaCentrosCostos.find(c => c.nombre.toUpperCase() === (datosPredefinidos.centro_costo || '').toUpperCase());
         if (encontrarCC) setCentroCostoID(encontrarCC.id);
-        
+
         if (datosPredefinidos.partidasSeleccionadas) {
           const nuevosRenglones = datosPredefinidos.partidasSeleccionadas.map((p, idx) => ({
             id: Date.now() + idx,
@@ -182,7 +184,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
         setSolicitante(`${currentUser.nombre} ${currentUser.apellido}`);
         setDepartamento(currentUser.departamento);
       }
-      setShowModal(true); 
+      setShowModal(true);
     }
   }, [isOpen, datosPredefinidos, currentUser]);
 
@@ -215,7 +217,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
       await cargarHistorialDesdeBD();
     } catch (err) { alert(err.message); } finally { setLoading(false); }
   };
-  
+
   const resetearFormulario = () => {
     if (currentUser) {
       setSolicitante(`${currentUser.nombre} ${currentUser.apellido}`);
@@ -249,11 +251,11 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
     }
     setLoading(true);
     try {
-      const { error } = await supabase.from('requisiciones').update({ 
-        aprobacion: true, 
+      const { error } = await supabase.from('requisiciones').update({
+        aprobacion: true,
         aprobacion_nombre: 'Aprobado',
         status_compra: 'Completado',
-        firma_gerente: currentUser.firma_url 
+        firma_gerente: currentUser.firma_url
       }).eq('id', editandoId);
       if (error) throw error;
       alert("Aprobada con éxito.");
@@ -268,12 +270,12 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
     const motivo = window.prompt("Indique el motivo del rechazo:");
     setLoading(true);
     try {
-      const { error } = await supabase.from('requisiciones').update({ 
-        aprobacion: false, 
+      const { error } = await supabase.from('requisiciones').update({
+        aprobacion: false,
         aprobacion_nombre: 'Rechazado',
         status_compra: 'En Espera',
         justificacion: motivo ? `${justificacion} | MOTIVO RECHAZO: ${motivo}` : justificacion,
-        firma_gerente: null 
+        firma_gerente: null
       }).eq('id', editandoId);
       if (error) throw error;
       alert("Requisición rechazada.");
@@ -287,21 +289,21 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
     setLoading(true);
     const nuevoCorrelativo = `REQ-${String(historial.length + 1).padStart(3, '0')}`;
     const nuevaReqBD = {
-        correlativo_req: nuevoCorrelativo, 
-        fecha_emision: new Date().toISOString(),
-        fecha_requerida: fechaRequerida,
-        solicitante,
-        gerencia: departamento,
-        centro_costo: `${centroCostoNombre} (${centroCostoID})`,
-        prioridad,
-        status_compra: 'Pendiente',
-        aprobacion: false,
-        aprobacion_nombre: 'Pendiente', 
-        total_bs: totalGeneral,
-        items: renglones,
-        justificacion,
-        observaciones,
-        origen: datosPredefinidos ? 'Sistema' : 'Manual'
+      correlativo_req: nuevoCorrelativo,
+      fecha_emision: new Date().toISOString(),
+      fecha_requerida: fechaRequerida,
+      solicitante,
+      gerencia: departamento,
+      centro_costo: `${centroCostoNombre} (${centroCostoID})`,
+      prioridad,
+      status_compra: 'Pendiente',
+      aprobacion: false,
+      aprobacion_nombre: 'Pendiente',
+      total_bs: totalGeneral,
+      items: renglones,
+      justificacion,
+      observaciones,
+      origen: datosPredefinidos ? 'Sistema' : 'Manual'
     };
 
     try {
@@ -325,8 +327,14 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
   };
 
   return (
-    <div className="animate-main" style={{ padding: '25px', backgroundColor: '#f1f5f9', minHeight: '100vh' }}>
-      
+    <motion.div
+      className="animate-main"
+      style={{ padding: '25px', backgroundColor: '#f1f5f9', minHeight: '100vh' }}
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.5, ease: "easeOut" }}
+    >
+
       {/* --- DASHBOARD SUPERIOR --- */}
       <div className="dashboard-container">
         {[
@@ -344,33 +352,33 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
       {/* --- SECCIÓN DE FILTROS (SIMILAR A GESTIÓN DE USUARIOS) --- */}
       <div className="table-container" style={{ marginBottom: '15px', padding: '15px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-             <h2 style={{ margin: 0, fontSize: '1.4rem', fontWeight: '700', color: '#1e293b' }}>Historial de Requisiciones</h2>
-             <button className="btn-tc btn-tc-primary" style={{ display: 'flex', alignItems: 'center', gap: '8px' }} onClick={() => { setEditandoId(null); setShowModal(true); }}>
-                <span>+ Nueva Requisición</span>
-             </button>
+          <h2 style={{ margin: 0, fontSize: '1.4rem', fontWeight: '700', color: '#1e293b' }}>Historial de Requisiciones</h2>
+          <button className="btn-tc btn-tc-primary" style={{ display: 'flex', alignItems: 'center', gap: '8px' }} onClick={() => { setEditandoId(null); setShowModal(true); }}>
+            <span>+ Nueva Requisición</span>
+          </button>
         </div>
 
-        <div style={{ 
-            display: 'flex', 
-            gap: '15px', 
-            backgroundColor: '#f8fafc', 
-            padding: '12px', 
-            borderRadius: '12px',
-            border: '1px solid #e2e8f0'
+        <div style={{
+          display: 'flex',
+          gap: '15px',
+          backgroundColor: '#f8fafc',
+          padding: '12px',
+          borderRadius: '12px',
+          border: '1px solid #e2e8f0'
         }}>
           <div style={{ flex: 1, position: 'relative' }}>
-             <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }}>🔍</span>
-             <input 
-                className="input-tc" 
-                style={{ paddingLeft: '35px', margin: 0, backgroundColor: 'white' }} 
-                placeholder="Buscar por solicitante o N° REQ..." 
-                value={busqueda}
-                onChange={(e) => setBusqueda(e.target.value)}
-             />
+            <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }}>🔍</span>
+            <input
+              className="input-tc"
+              style={{ width: '100%', paddingLeft: '35px', margin: 0, backgroundColor: 'white', boxSizing: 'border-box' }}
+              placeholder="Buscar por solicitante o N° REQ..."
+              value={busqueda}
+              onChange={(e) => setBusqueda(e.target.value)}
+            />
           </div>
-          
-          <select 
-            className="input-tc" 
+
+          <select
+            className="input-tc"
             style={{ flex: 1, margin: 0, backgroundColor: 'white' }}
             value={filtroDepto}
             onChange={(e) => setFiltroDepto(e.target.value)}
@@ -379,8 +387,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
             {listaGerencias.map(g => <option key={g} value={g}>{g}</option>)}
           </select>
 
-          <select 
-            className="input-tc" 
+          <select
+            className="input-tc"
             style={{ flex: 1, margin: 0, backgroundColor: 'white' }}
             value={filtroAprobacion}
             onChange={(e) => setFiltroAprobacion(e.target.value)}
@@ -418,7 +426,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
                 <td>{req.centroCosto}</td>
                 <td>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                    <div style={{ 
+                    <div style={{
                       width: '8px', height: '8px', borderRadius: '50%',
                       backgroundColor: req.aprobacion === 'Aprobado' ? 'var(--success)' : (req.aprobacion === 'Rechazado' ? 'var(--danger)' : 'var(--warning)')
                     }}></div>
@@ -456,15 +464,16 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
                     <span style={{ fontSize: '10px', color: estadoGlobal.color, fontWeight: '900' }}>{estadoGlobal.texto}</span>
                   </div>
                 </div>
-                <div style={{ display: 'flex', gap: '10px' }}>
+                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                  <span style={{ fontSize: '0.75rem', fontWeight: '800', color: 'var(--slate-600)', textTransform: 'uppercase' }}>Nivel de prioridad:</span>
                   <button className={`btn-tc ${prioridad === 'Normal' ? 'btn-tc-primary' : 'btn-tc-secondary'}`} onClick={() => setPrioridad('Normal')}>NORMAL</button>
                   <button className={`btn-tc ${prioridad === 'Alta' ? 'btn-tc-danger' : 'btn-tc-secondary'}`} onClick={() => setPrioridad('Alta')}>ALTA</button>
                   <div style={{ backgroundColor: '#fef08a', padding: '10px 15px', borderRadius: '8px', fontWeight: '900' }}>
-                    N° {editandoId ? historial.find(h=>h.id===editandoId)?.correlativo.split('-')[1] : String(historial.length + 1).padStart(3, '0')}
+                    N° {editandoId ? historial.find(h => h.id === editandoId)?.correlativo.split('-')[1] : String(historial.length + 1).padStart(3, '0')}
                   </div>
                 </div>
               </div>
-              
+
               <div className="req-header-line"></div>
 
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '20px', marginBottom: '25px' }}>
@@ -498,16 +507,16 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
               {/* CAMPO DE OBSERVACIONES */}
               <div style={{ marginBottom: '25px' }}>
                 <label className="stat-label">OBSERVACIONES</label>
-                <textarea 
-                   className="input-tc" 
-                   style={{ minHeight: '60px', paddingTop: '10px' }}
-                   value={observaciones} 
-                   onChange={(e) => setObservaciones(e.target.value)} 
-                   placeholder="Notas adicionales sobre la entrega, especificaciones técnicas, etc."
+                <textarea
+                  className="input-tc"
+                  style={{ minHeight: '60px', paddingTop: '10px' }}
+                  value={observaciones}
+                  onChange={(e) => setObservaciones(e.target.value)}
+                  placeholder="Notas adicionales sobre la entrega, especificaciones técnicas, etc."
                 />
               </div>
 
-              <table className="tc-table" style={{ fontSize: '0.75rem' }}>
+              <table className="tc-table" style={{ fontSize: '0.85rem' }}>
                 <thead>
                   <tr style={{ backgroundColor: 'var(--slate-50)' }}>
                     <th>RENG.</th>
@@ -523,30 +532,63 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
                   </tr>
                 </thead>
                 <tbody>
-                  {renglones.map((f, index) => (
-                    <tr key={f.id} className="renglon-row">
-                      <td style={{ textAlign: 'center' }}>{index + 1}</td>
-                      <td><input className="input-tc" value={f.clasificacion} onChange={(e) => actualizarFila(f.id, 'clasificacion', e.target.value)} /></td>
-                      <td><input className="input-tc" value={f.categoria} onChange={(e) => actualizarFila(f.id, 'categoria', e.target.value)} /></td>
-                      <td><input className="input-tc" type="number" value={f.cant} onChange={(e) => actualizarFila(f.id, 'cant', e.target.value)} /></td>
-                      <td>
-                        <select className="input-tc" value={f.uni} onChange={(e) => actualizarFila(f.id, 'uni', e.target.value)}>
-                          {unidades.map(u => <option key={u} value={u}>{u}</option>)}
-                        </select>
-                      </td>
-                      <td><input className="input-tc" value={f.descripcion} onChange={(e) => actualizarFila(f.id, 'descripcion', e.target.value)} /></td>
-                      <td><input className="input-tc" type="number" value={f.pu} style={{ textAlign: 'right' }} onChange={(e) => actualizarFila(f.id, 'pu', e.target.value)} /></td>
-                      <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{f.total.toLocaleString('de-DE')}</td>
-                      <td>
-                        <select className="input-tc" style={{ fontSize: '10px' }} value={f.status} onChange={(e) => actualizarFila(f.id, 'status', e.target.value)}>
-                          <option value="En Espera">En Espera</option>
-                          <option value="Parcial">Parcial</option>
-                          <option value="Completado">Completado</option>
-                        </select>
-                      </td>
-                      <td><button onClick={() => setRenglones(renglones.filter(r => r.id !== f.id))} style={{ color: 'var(--danger)', border: 'none', background: 'none' }}>×</button></td>
-                    </tr>
-                  ))}
+                  <AnimatePresence>
+                    {renglones.map((f, index) => (
+                      <motion.tr
+                        key={f.id}
+                        className="renglon-row"
+                        initial={{ opacity: 0, height: 0, scaleY: 0.8 }}
+                        animate={{ opacity: 1, height: 'auto', scaleY: 1 }}
+                        exit={{ opacity: 0, height: 0, scaleY: 0.8, overflow: 'hidden' }}
+                        transition={{ duration: 0.3 }}
+                      >
+                        <td style={{ textAlign: 'center' }}>{index + 1}</td>
+                        <td><input className="input-tc" value={f.clasificacion} onChange={(e) => actualizarFila(f.id, 'clasificacion', e.target.value)} /></td>
+                        <td><input className="input-tc" value={f.categoria} onChange={(e) => actualizarFila(f.id, 'categoria', e.target.value)} /></td>
+                        <td><input className="input-tc" type="number" value={f.cant} onChange={(e) => actualizarFila(f.id, 'cant', e.target.value)} /></td>
+                        <td>
+                          <select className="input-tc" value={f.uni} onChange={(e) => actualizarFila(f.id, 'uni', e.target.value)}>
+                            {unidades.map(u => <option key={u} value={u}>{u}</option>)}
+                          </select>
+                        </td>
+                        <td><input className="input-tc" value={f.descripcion} onChange={(e) => actualizarFila(f.id, 'descripcion', e.target.value)} /></td>
+                        <td><input className="input-tc" type="number" value={f.pu} style={{ textAlign: 'right' }} onChange={(e) => actualizarFila(f.id, 'pu', e.target.value)} /></td>
+                        <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{f.total.toLocaleString('de-DE')}</td>
+                        <td>
+                          <select
+                            className="input-tc"
+                            style={{
+                              fontSize: '0.8rem',
+                              fontWeight: 'bold',
+                              backgroundColor: f.status === 'Completado' ? '#f0fdf4' : f.status === 'Parcial' ? '#fff7ed' : 'transparent',
+                              color: f.status === 'Completado' ? '#15803d' : f.status === 'Parcial' ? '#ea580c' : 'var(--slate-600)'
+                            }}
+                            value={f.status}
+                            onChange={(e) => actualizarFila(f.id, 'status', e.target.value)}
+                          >
+                            <option value="En Espera">En Espera</option>
+                            <option value="Parcial">Parcial</option>
+                            <option value="Completado">Completado</option>
+                          </select>
+                        </td>
+                        <td style={{ textAlign: 'center' }}>
+                          <button
+                            onClick={() => setRenglones(renglones.filter(r => r.id !== f.id))}
+                            style={{
+                              color: 'var(--danger)', border: 'none', background: 'none',
+                              fontSize: '1.5rem', cursor: 'pointer', fontWeight: 'bold',
+                              transition: 'transform 0.2s', display: 'flex', alignItems: 'center'
+                            }}
+                            onMouseEnter={e => e.target.style.transform = 'scale(1.25)'}
+                            onMouseLeave={e => e.target.style.transform = 'scale(1)'}
+                            title="Eliminar Renglón"
+                          >
+                            ×
+                          </button>
+                        </td>
+                      </motion.tr>
+                    ))}
+                  </AnimatePresence>
                 </tbody>
               </table>
 
@@ -554,16 +596,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
                 + AÑADIR RENGLÓN
               </button>
 
-              <div style={{ marginTop: '30px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
-                <div className="signature-line">
-                   {historial.find(h => h.id === editandoId)?.firma_gerente && (
-                     <img src={historial.find(h => h.id === editandoId).firma_gerente} alt="Firma" style={{ width: '160px', mixBlendMode: 'darken' }} />
-                   )}
-                   <p style={{ margin: 0, fontWeight: '900' }}>CARLOS VEGA</p>
-                   <p style={{ margin: 0, fontSize: '0.65rem', color: 'var(--slate-400)' }}>GERENTE GENERAL</p>
-                   <p style={{ margin: 0, fontSize: '0.6rem', color: 'var(--primary)' }}>TOTAL CLEAN C.A.</p>
-                </div>
-
+              <div style={{ marginTop: '30px', display: 'flex', justifyContent: 'flex-end', alignItems: 'flex-end' }}>
                 <div className="totals-container">
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
                     <span className="stat-label">SUB-TOTAL:</span>
@@ -577,25 +610,44 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
               </div>
             </div>
 
-            <div style={{ marginTop: '30px', display: 'flex', justifyContent: 'flex-end', gap: '15px' }}>
-              <button className="btn-tc btn-tc-secondary" onClick={() => { setShowModal(false); onClose?.(); resetearFormulario(); }}>Cerrar</button>
-              <button className="btn-tc btn-tc-dark" onClick={exportarPDF}>📥 PDF</button>
-              
-            {editandoId ? (
-                (currentUser?.rol === 'Gerente General' || currentUser?.esAdminReal) && (
-                  <>
-                    <button className="btn-tc btn-tc-danger" onClick={manejarRechazar} disabled={loading}>RECHAZAR</button>
-                    <button className="btn-tc btn-tc-success" onClick={manejarAprobar} disabled={loading}>APROBAR REQUISICIÓN</button>
-                  </>
-                )
-              ) : (
-                <button className="btn-tc btn-tc-primary" onClick={manejarGenerar} disabled={loading}>GENERAR REQUISICIÓN</button>
-              )}
+            <div style={{ marginTop: '30px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+
+              {/* FIRMA MOVIDA CERCA DE BOTONES */}
+              <div className="signature-line">
+                {historial.find(h => h.id === editandoId)?.firma_gerente && (
+                  <img src={historial.find(h => h.id === editandoId).firma_gerente} alt="Firma" style={{ width: '160px', mixBlendMode: 'darken' }} />
+                )}
+                <p style={{ margin: 0, fontWeight: '900' }}>CARLOS VEGA</p>
+                <p style={{ margin: 0, fontSize: '0.65rem', color: 'var(--slate-400)' }}>GERENTE GENERAL</p>
+                <p style={{ margin: 0, fontSize: '0.6rem', color: 'var(--primary)' }}>TOTAL CLEAN C.A.</p>
+              </div>
+
+              <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
+                <button className="btn-tc btn-tc-secondary" onClick={() => { setShowModal(false); onClose?.(); resetearFormulario(); }}>Cerrar</button>
+                <button className="btn-tc btn-tc-dark" onClick={exportarPDF}>📥 PDF</button>
+
+                {editandoId ? (
+                  (currentUser?.rol === 'Gerente General' || currentUser?.esAdminReal) && (
+                    <>
+                      <button className="btn-tc btn-tc-danger" onClick={manejarRechazar} disabled={loading}>
+                        {loading ? <Loader2 className="animate-spin" size={16} /> : "RECHAZAR"}
+                      </button>
+                      <button className="btn-tc btn-tc-success" onClick={manejarAprobar} disabled={loading}>
+                        {loading ? <Loader2 className="animate-spin" size={16} /> : "APROBAR REQUISICIÓN"}
+                      </button>
+                    </>
+                  )
+                ) : (
+                  <button className="btn-tc btn-tc-primary" onClick={manejarGenerar} disabled={loading}>
+                    {loading ? <Loader2 className="animate-spin" size={16} /> : "GENERAR REQUISICIÓN"}
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>
       )}
-    </div>
+    </motion.div>
   );
 };
 

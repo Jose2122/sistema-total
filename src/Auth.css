@@ -22,9 +22,22 @@
 }
 
 /* Títulos y textos */
-.title-black { color: #1e293b; font-weight: 800; margin-bottom: 5px; }
-.title-white { color: #fff; font-weight: 800; }
-.container span { font-size: 12px; color: #64748b; margin-bottom: 15px; }
+.title-black {
+    color: #1e293b;
+    font-weight: 800;
+    margin-bottom: 5px;
+}
+
+.title-white {
+    color: #fff;
+    font-weight: 800;
+}
+
+.container span {
+    font-size: 12px;
+    color: #64748b;
+    margin-bottom: 15px;
+}
 
 .container * {
     box-sizing: border-box;
@@ -34,8 +47,10 @@
 .container form {
     background-color: #fff;
     display: flex;
-    align-items: center;      /* Centra horizontalmente */
-    justify-content: center;   /* Centra verticalmente */
+    align-items: center;
+    /* Centra horizontalmente */
+    justify-content: center;
+    /* Centra verticalmente */
     flex-direction: column;
     padding: 0 40px;
     height: 100%;
@@ -50,27 +65,30 @@
     padding: 12px 15px;
     font-size: 14px;
     border-radius: 10px;
-    width: 100%;             /* Ahora sí mide el 100% real */
+    width: 100%;
+    /* Ahora sí mide el 100% real */
     outline: none;
     transition: border-color 0.2s;
 }
 
 .container input:focus {
-    border-color: #0070e0;   /* Azul Total Clean al escribir */
+    border-color: #0070e0;
+    /* Azul Total Clean al escribir */
 }
 
 /* 4. FILA DE REGISTRO: Nombre y Apellido iguales */
-.row-inputs { 
-    display: flex; 
-    gap: 10px; 
-    width: 100%; 
+.row-inputs {
+    display: flex;
+    gap: 10px;
+    width: 100%;
 }
 
 .row-inputs input {
-    flex: 1;                /* Obliga a ambos a medir lo mismo */
+    flex: 1;
+    /* Obliga a ambos a medir lo mismo */
 }
 
-/* 5. BOTÓN PRINCIPAL: Centrado y con relieve */
+/* 5. BOTÓN PRINCIPAL: Animación Elegante */
 .btn-solid {
     background-color: #0070e0;
     color: #fff;
@@ -86,12 +104,41 @@
     align-items: center;
     justify-content: center;
     gap: 8px;
-    box-shadow: 0 4px 12px rgba(0, 112, 224, 0.2); /* Relieve suave */
-    transition: transform 0.2s, background-color 0.2s;
+    position: relative;
+    overflow: hidden;
+    box-shadow: 0 4px 15px rgba(0, 112, 224, 0.4);
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.3s, box-shadow 0.3s;
+    animation: pulseGlow 2.5s infinite;
 }
 
 .btn-solid:hover {
-    background-color: #005bb8;
+    background-color: #0080ff;
+    transform: translateY(-3px) scale(1.02);
+    box-shadow: 0 8px 25px rgba(0, 112, 224, 0.6);
+    animation: none; /* Se detiene el pulso al hacer hover para ceder paso al efecto manual */
+}
+
+/* Efecto reflejo en hover */
+.btn-solid::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 50%;
+    height: 100%;
+    background: linear-gradient(to right, rgba(255,255,255,0) 0%, rgba(255,255,255,0.3) 50%, rgba(255,255,255,0) 100%);
+    transform: skewX(-25deg);
+    transition: left 0.6s ease;
+}
+
+.btn-solid:hover::before {
+    left: 150%;
+}
+
+@keyframes pulseGlow {
+    0% { box-shadow: 0 0 0 0 rgba(0, 112, 224, 0.6); }
+    70% { box-shadow: 0 0 0 12px rgba(0, 112, 224, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(0, 112, 224, 0); }
 }
 
 .eye-icon {
@@ -104,15 +151,50 @@
 }
 
 /* Lógica de los paneles deslizantes */
-.form-container { position: absolute; top: 0; height: 100%; transition: all 0.6s ease-in-out; }
-.sign-in { left: 0; width: 50%; z-index: 2; }
-.container.active .sign-in { transform: translateX(100%); }
-.sign-up { left: 0; width: 50%; opacity: 0; z-index: 1; }
-.container.active .sign-up { transform: translateX(100%); opacity: 1; z-index: 5; animation: move 0.6s; }
+.form-container {
+    position: absolute;
+    top: 0;
+    height: 100%;
+    transition: all 0.6s ease-in-out;
+}
+
+.sign-in {
+    left: 0;
+    width: 50%;
+    z-index: 2;
+}
+
+.container.active .sign-in {
+    transform: translateX(100%);
+}
+
+.sign-up {
+    left: 0;
+    width: 50%;
+    opacity: 0;
+    z-index: 1;
+}
+
+.container.active .sign-up {
+    transform: translateX(100%);
+    opacity: 1;
+    z-index: 5;
+    animation: move 0.6s;
+}
 
 @keyframes move {
-    0%, 49.99% { opacity: 0; z-index: 1; }
-    50%, 100% { opacity: 1; z-index: 5; }
+
+    0%,
+    49.99% {
+        opacity: 0;
+        z-index: 1;
+    }
+
+    50%,
+    100% {
+        opacity: 1;
+        z-index: 5;
+    }
 }
 
 /* Contenedor del Toggle (El fondo azul) */
@@ -128,7 +210,10 @@
     border-radius: 150px 0 0 100px;
 }
 
-.container.active .toggle-container { transform: translateX(-100%); border-radius: 0 150px 100px 0; }
+.container.active .toggle-container {
+    transform: translateX(-100%);
+    border-radius: 0 150px 100px 0;
+}
 
 .toggle {
     background: linear-gradient(135deg, #101827 0%, #0070e0 100%);
@@ -141,7 +226,9 @@
     transition: all 0.6s ease-in-out;
 }
 
-.container.active .toggle { transform: translateX(50%); }
+.container.active .toggle {
+    transform: translateX(50%);
+}
 
 .toggle-panel {
     position: absolute;
@@ -155,10 +242,24 @@
     text-align: center;
 }
 
-.toggle-left { transform: translateX(-200%); transition: all 0.6s; }
-.container.active .toggle-left { transform: translateX(0); }
-.toggle-right { right: 0; transform: translateX(0); transition: all 0.6s; }
-.container.active .toggle-right { transform: translateX(200%); }
+.toggle-left {
+    transform: translateX(-200%);
+    transition: all 0.6s;
+}
+
+.container.active .toggle-left {
+    transform: translateX(0);
+}
+
+.toggle-right {
+    right: 0;
+    transform: translateX(0);
+    transition: all 0.6s;
+}
+
+.container.active .toggle-right {
+    transform: translateX(200%);
+}
 
 .hidden {
     background-color: transparent;

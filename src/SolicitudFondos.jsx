@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient'; 
 import Requisiciones from './Requisiciones'; 
+import './SolicitudFondos.css';
 
 const StockSmartTotalClean = () => {
   const [showModal, setShowModal] = useState(false);
@@ -331,8 +332,8 @@ const historialFiltrado = historial.filter(h =>
 
       {/* MODAL DE REGISTRO */}
       {showModal && (
-        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15, 23, 42, 0.7)', backdropFilter: 'blur(5px)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
-          <div style={{ backgroundColor: '#f8fafc', width: '98%', maxWidth: '1580px', maxHeight: '95vh', borderRadius: '25px', padding: '30px', overflowY: 'auto' }}>
+        <div className="sf-modal-overlay">
+          <div className="sf-modal-container">
             
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '25px' }}>
               <div>
@@ -350,19 +351,19 @@ const historialFiltrado = historial.filter(h =>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px', background: 'white', padding: '20px', borderRadius: '15px', border: '1px solid #e2e8f0', marginBottom: '20px' }}>
               <div style={{ display: 'flex', flexDirection: 'column' }}>
                 <label style={{ fontSize: '10px', fontWeight: 'bold', color: '#363636', marginBottom: '5px' }}>FECHA OPERATIVA</label>
-                <input type="date" value={form.fecha} onChange={(e) => setForm({...form, fecha: e.target.value})} style={{ padding: '7.5px', borderRadius: '8px', border: '1px solid #cbd5e1' }} />
+                <input type="date" className="sf-input" value={form.fecha} onChange={(e) => setForm({...form, fecha: e.target.value})} />
               </div>
               
               <div style={{ display: 'flex', flexDirection: 'column' }}>
                 <label style={{ fontSize: '10px', fontWeight: 'bold', color: '#363636', marginBottom: '5px' }}>GERENCIA SOLICITANTE</label>
                 <select 
+                  className="sf-input"
                   value={form.gerencia} 
                   onChange={(e) => {
                     const nuevaGerencia = e.target.value;
                     const primerResponsable = gerenciasData[nuevaGerencia] ? gerenciasData[nuevaGerencia][0] : '';
                     setForm({ ...form, gerencia: nuevaGerencia, responsable: primerResponsable });
                   }} 
-                  style={{ padding: '8px', borderRadius: '8px', border: '1px solid #cbd5e1' }}
                 >
                   <option value="">Seleccione Gerencia...</option>
                   {Object.keys(gerenciasData).map(g => <option key={g} value={g}>{g}</option>)}
@@ -372,9 +373,9 @@ const historialFiltrado = historial.filter(h =>
               <div style={{ display: 'flex', flexDirection: 'column' }}>
                 <label style={{ fontSize: '10px', fontWeight: 'bold', color: '#363636', marginBottom: '5px' }}>RESPONSABLE DE GASTO</label>
                 <select 
+                  className="sf-input"
                   value={form.responsable} 
                   onChange={(e) => setForm({...form, responsable: e.target.value})} 
-                  style={{ padding: '8px', borderRadius: '8px', border: '1px solid #cbd5e1' }}
                 >
                   <option value="">Seleccione Responsable...</option>
                   {gerenciasData[form.gerencia]?.map(r => <option key={r} value={r}>{r}</option>)}
@@ -383,8 +384,8 @@ const historialFiltrado = historial.filter(h =>
             </div>
 
             {/* TABLA DE RENGLONES */}
-            <div style={{ background: 'white', borderRadius: '15px', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
-              <div style={{ display: 'flex', background: '#f8fafc', fontSize: '10px', fontWeight: '900', borderBottom: '2px solid #e2e8f0' }}>
+            <div className="sf-table-wrapper">
+              <div className="sf-table-header">
                 <div style={{ width: '40px', padding: '12px', textAlign: 'center' }}>SEL</div>
                 <div style={{ width: '45px', padding: '12px' }}>N°</div>
                 <div style={{ width: '200px', padding: '12px' }}>C. COSTO</div>
@@ -394,46 +395,46 @@ const historialFiltrado = historial.filter(h =>
                 <div style={{ width: '90px', padding: '12px' }}>UNID</div>
                 <div style={{ width: '460px', padding: '12px' }}>DESCRIPCIÓN DEL GASTO</div>
                 <div style={{ width: '200px', padding: '12px' }}>BENEFICIARIO</div>
-                <div style={{ width: '120px', padding: '12px', background: '#fffbeb', textAlign: 'CENTER' }}>P.U BS</div>
-                <div style={{ width: '120px', padding: '12px', background: '#f0fdf4', textAlign: 'CENTER' }}>P.U USD</div>
-                <div style={{ width: '120px', padding: '12px', background: '#dbfbff', textAlign: 'CENTER' }}>TOTAL $</div>
+                <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>P.U BS</div>
+                <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>P.U USD</div>
+                <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>TOTAL $</div>
               </div>
               
               <div style={{ maxHeight: '40vh', overflowY: 'auto' }}>
                 {form.partidas.map((p, i) => (
-                  <div key={p.id} style={{ display: 'flex', borderBottom: '1px solid #f1f5f9', alignItems: 'center', fontSize: '12px', background: p.selected ? '#f0fdf4' : 'transparent' }}>
+                  <div key={p.id} className="sf-table-row" style={{ background: p.selected ? '#e0f2fe' : 'transparent' }}>
                     <div style={{ width: '40px', textAlign: 'center' }}>
                         <input type="checkbox" checked={p.selected || false} onChange={(e) => manejarCambioPartida(i, 'selected', e.target.checked)} style={{ cursor: 'pointer', transform: 'scale(1.2)' }} />
                     </div>
                     <div style={{ width: '45px', textAlign: 'center', fontWeight: 'bold', color: '#94a3b8' }}>{i + 1}</div>
                     <div style={{ width: '200px', padding: '6px' }}>
-                      <select value={p.cc} onChange={(e) => manejarCambioPartida(i, 'cc', e.target.value)} style={{ border: 'none', width: '100%', background: 'transparent', fontWeight: 'bold', outline: 'none' }}>
+                      <select className="sf-table-input" value={p.cc} onChange={(e) => manejarCambioPartida(i, 'cc', e.target.value)} style={{ fontWeight: 'bold' }}>
                         <option value="">Seleccione C.C...</option>
                         {centrosCosto.map(op => <option key={op} value={op}>{op}</option>)}
                       </select>
                     </div>
                     <div style={{ width: '215px', padding: '6px' }}>
-                      <select value={p.clasif} onChange={(e) => manejarCambioPartida(i, 'clasif', e.target.value)} disabled={!p.cc} style={{ border: 'none', width: '100%', background: 'transparent', outline: 'none' }}>
+                      <select className="sf-table-input" value={p.clasif} onChange={(e) => manejarCambioPartida(i, 'clasif', e.target.value)} disabled={!p.cc}>
                         <option value="">Clasificación...</option>
                         {todasClasificaciones.filter(cl => cl.padre === p.cc).map(op => <option key={op.nombre} value={op.nombre}>{op.nombre}</option>)}
                       </select>
                     </div>
                     <div style={{ width: '215px', padding: '6px' }}>
-                      <select value={p.cat} onChange={(e) => manejarCambioPartida(i, 'cat', e.target.value)} disabled={!p.clasif} style={{ border: 'none', width: '100%', background: 'transparent', outline: 'none', color: '#000000'}}>
+                      <select className="sf-table-input" value={p.cat} onChange={(e) => manejarCambioPartida(i, 'cat', e.target.value)} disabled={!p.clasif}>
                         <option value="">Categoría...</option>
                         {[...new Set(todasCategorias.filter(ct => ct.padre === p.clasif).map(ct => ct.nombre))].map(nombre => (
                           <option key={nombre} value={nombre}>{nombre}</option>
                         ))}
                       </select>
                     </div>
-                    <div style={{ width: '80px', padding: '6px' }}><input type="number" value={p.cant} onChange={(e) => manejarCambioPartida(i, 'cant', e.target.value)} style={{ border: 'none', width: '100%', textAlign: 'center', background: 'transparent' }} /></div>
-                    <div style={{ width: '90px', padding: '6px' }}><select value={p.uni} onChange={(e) => manejarCambioPartida(i, 'uni', e.target.value)} style={{ border: 'none', width: '100%', background: 'transparent' }}>{unidades.map(u => <option key={u}>{u}</option>)}</select></div>
-                    <div style={{ width: '460px', padding: '10px' }}><textarea value={p.desc} onChange={(e) => manejarCambioPartida(i, 'desc', e.target.value)} style={{ border: 'none', width: '100%', background: 'transparent', resize: 'none' }} /></div>
-                    <div style={{ width: '200px', padding: '6px' }}><input value={p.ben} onChange={(e) => manejarCambioPartida(i, 'ben', e.target.value)} style={{ border: 'none', width: '100%', background: 'transparent' }} /></div>
-                    <div style={{ width: '120px', padding: '6px', background: '#fffbeb' }}><input type="number" value={p.puBs} onChange={(e) => manejarCambioPartida(i, 'puBs', e.target.value)} style={{ border: 'none', width: '100%', textAlign: 'right', background: 'transparent' }} disabled={p.puUsd > 0} /></div>
-                    <div style={{ width: '120px', padding: '6px', background: '#f0fdf4' }}><input type="number" value={p.puUsd} onChange={(e) => manejarCambioPartida(i, 'puUsd', e.target.value)} style={{ border: 'none', width: '100%', textAlign: 'right', background: 'transparent' }} disabled={p.puBs > 0} /></div>
-                    <div style={{ width: '120px', padding: '6px', background: '#dbfbff', textAlign: 'right', fontWeight: 'bold' }}>{((parseFloat(p.puBs) || parseFloat(p.puUsd) || 0) * (p.cant || 0)).toLocaleString('de-DE')}</div>
-                    <div style={{ width: '40px', textAlign: 'center' }}><button onClick={() => setForm({...form, partidas: form.partidas.filter((_, idx) => idx !== i)})} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}>🗑️</button></div>
+                    <div style={{ width: '80px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.cant} onChange={(e) => manejarCambioPartida(i, 'cant', e.target.value)} style={{ textAlign: 'center' }} /></div>
+                    <div style={{ width: '90px', padding: '6px' }}><select className="sf-table-input" value={p.uni} onChange={(e) => manejarCambioPartida(i, 'uni', e.target.value)}>{unidades.map(u => <option key={u}>{u}</option>)}</select></div>
+                    <div style={{ width: '460px', padding: '10px' }}><textarea className="sf-table-input" value={p.desc} onChange={(e) => manejarCambioPartida(i, 'desc', e.target.value)} style={{ resize: 'none' }} rows="1" /></div>
+                    <div style={{ width: '200px', padding: '6px' }}><input className="sf-table-input" value={p.ben} onChange={(e) => manejarCambioPartida(i, 'ben', e.target.value)} /></div>
+                    <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puBs} onChange={(e) => manejarCambioPartida(i, 'puBs', e.target.value)} style={{ textAlign: 'right' }} disabled={p.puUsd > 0} /></div>
+                    <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puUsd} onChange={(e) => manejarCambioPartida(i, 'puUsd', e.target.value)} style={{ textAlign: 'right' }} disabled={p.puBs > 0} /></div>
+                    <div style={{ width: '120px', padding: '6px', textAlign: 'right', fontWeight: 'bold' }}>{((parseFloat(p.puBs) || parseFloat(p.puUsd) || 0) * (p.cant || 0)).toLocaleString('de-DE')}</div>
+                    <div style={{ width: '40px', textAlign: 'center' }}><button onClick={() => setForm({...form, partidas: form.partidas.filter((_, idx) => idx !== i)})} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '1rem' }}>🗑️</button></div>
                   </div>
                 ))}
               </div>
@@ -441,12 +442,12 @@ const historialFiltrado = historial.filter(h =>
 
             <div style={{ marginTop: '25px', display: 'flex', justifyContent: 'space-between' }}>
               <div style={{ display: 'flex', gap: '10px' }}>
-                <button onClick={() => setForm({...form, partidas: [...form.partidas, { id: Date.now(), selected: false, cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '' }]})} style={{ border: '2px dashed #cbd5e1', background: 'none', padding: '10px 20px', borderRadius: '10px', color: '#64748b', fontWeight: 'bold' }}>+ AÑADIR RENGLÓN</button>
-                <button onClick={handleCrearRequisicion} style={{ border: 'none', backgroundColor: '#22c55e', padding: '10px 20px', borderRadius: '10px', color: 'white', fontWeight: 'bold', cursor: 'pointer' }}>📝 CREAR REQUISICIÓN</button>
+                <button className="sf-btn sf-btn-add" onClick={() => setForm({...form, partidas: [...form.partidas, { id: Date.now(), selected: false, cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '' }]})}>+ AÑADIR RENGLÓN</button>
+                <button className="sf-btn sf-btn-success" onClick={handleCrearRequisicion}>📝 CREAR REQUISICIÓN</button>
               </div>
               <div style={{ display: 'flex', gap: '10px' }}>
-                <button onClick={() => setShowModal(false)} style={{ padding: '12px 30px', borderRadius: '12px', border: '1px solid #cbd5e1', background: 'white' }}>CERRAR</button>
-                <button onClick={registrarOActualizar} style={{ padding: '12px 45px', borderRadius: '12px', background: '#0f172a', color: 'white', border: 'none', fontWeight: 'bold' }}>{isEditing ? 'ACTUALIZAR' : 'REGISTRAR'}</button>
+                <button className="sf-btn sf-btn-close" onClick={() => setShowModal(false)}>CERRAR</button>
+                <button className="sf-btn sf-btn-primary" onClick={registrarOActualizar}>{isEditing ? 'ACTUALIZAR' : 'REGISTRAR'}</button>
               </div>
             </div>
           </div>
