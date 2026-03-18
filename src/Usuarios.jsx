@@ -19,11 +19,12 @@ const Usuarios = () => {
   });
 
   const ADMIN_EMAIL = 'jcontreras.totalclean@gmail.com';
-  const CARGOS = ["Gerente General", "Gerente", "Coordinador"];
+  const CARGOS = ["Gerente General", "Gerente", "Coordinador", "Analista"];
   const DEPARTAMENTOS = [
     "Mantenimiento", "Estimación y Control Interno", "Operaciones", "Seguridad",
     "Recursos Humanos", "Almacén", "Administración Maracaibo",
-    "Administración El Tigre", "Contabilidad", "Servicios Generales,",
+    "Administración El Tigre", "Contabilidad", "Servicios Generales",
+    "Compras"
   ];
 
   useEffect(() => {
@@ -133,6 +134,7 @@ const Usuarios = () => {
       if (rol === 'Gerente General') colors = { bg: '#fff7ed', text: '#c2410c' };
       if (rol === 'Gerente') colors = { bg: '#f0fdf4', text: '#15803d' };
       if (rol === 'Coordinador') colors = { bg: '#f0f9ff', text: '#0369a1' };
+      if (rol === 'Analista') colors = { bg: '#f5f3ff', text: '#7c3aed' };
       return { padding: '5px 12px', borderRadius: '10px', fontSize: '0.75rem', fontWeight: '600', backgroundColor: colors.bg, color: colors.text };
     }
   };

@@ -1,0 +1,16 @@
+{
+  "id": "0fb4b6ac-d187-401b-9cbc-f97e48337482",
+  "solicitud_id": "0931e78b-baaa-435d-ab2f-a080a8dcf7d5",
+  "n_renglon": 1,
+  "centro_costo": "BONIFICACIÓN SOCIOS",
+  "clasificacion": "Gastos Adm Ofi Principal",
+  "categoria": "Sistemas, Licencias y Otros Outsourcing",
+  "cantidad": 1,
+  "unidad": "UNID",
+  "descripcion": "cardon",
+  "beneficiario": "Cardon",
+  "pu_bs": 0,
+  "pu_usd": 50,
+  "total_renglon_usd": 0,
+  "pago_realizado": false
+}

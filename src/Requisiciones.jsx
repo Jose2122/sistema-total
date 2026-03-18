@@ -47,8 +47,22 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
       // APLICACIÓN DE REGLAS DE JERARQUÍA
       if (!currentUser.esAdminReal && currentUser.rol !== 'Gerente General') {
         if (currentUser.rol === 'Gerente') {
-          query = query.eq('gerencia', currentUser.departamento);
+          // Obtener nombres de subalternos (Coordinadores y Analistas) en el mismo departamento
+          const { data: subalternos } = await supabase
+            .from('perfiles')
+            .select('nombre, apellido')
+            .eq('departamento', currentUser.departamento)
+            .in('rol', ['Coordinador', 'Analista']);
+
+          const nombresPermitidos = [
+            `${currentUser.nombre} ${currentUser.apellido}`,
+            ...(subalternos || []).map(s => `${s.nombre} ${s.apellido}`)
+          ];
+
+          query = query.eq('gerencia', currentUser.departamento)
+                       .in('solicitante', nombresPermitidos);
         } else {
+          // Coordinador / Analista: Solo lo propio
           query = query.eq('solicitante', `${currentUser.nombre} ${currentUser.apellido}`);
         }
       }
