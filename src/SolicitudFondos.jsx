@@ -26,6 +26,7 @@ const StockSmartTotalClean = () => {
   const [centrosCosto, setCentrosCosto] = useState([]);
   const [todasClasificaciones, setTodasClasificaciones] = useState([]);
   const [todasCategorias, setTodasCategorias] = useState([]);
+  const [gerentesDisponibles, setGerentesDisponibles] = useState([]);
 
   // --- DATOS MAESTROS ESTÁTICOS ---
   const gerenciasData = {
@@ -143,28 +144,25 @@ const StockSmartTotalClean = () => {
         return;
       }
 
+      // Cargar lista de Gerentes para el selector de responsable
+      const { data: dataGerentes } = await supabase
+        .from('perfiles')
+        .select('nombre, apellido, departamento')
+        .eq('rol', 'Gerente')
+        .order('nombre');
+      if (dataGerentes) setGerentesDisponibles(dataGerentes);
+
       let query = supabase.from('solicitudes_fondos').select('*');
 
-      // REGLAS DE JERARQUÍA
+      // REGLAS DE JERARQUÍA — Solo Gerentes crean solicitudes de fondos
       if (!userContext.esAdminReal && userContext.rol !== 'Gerente General') {
         if (userContext.rol === 'Gerente') {
-          // Obtener nombres de subalternos en el mismo departamento
-          const { data: subalternos } = await supabase
-            .from('perfiles')
-            .select('nombre, apellido')
-            .eq('departamento', userContext.departamento)
-            .in('rol', ['Coordinador', 'Analista']);
-          
-          const nombresPermitidos = [
-            `${userContext.nombre} ${userContext.apellido}`,
-            ...(subalternos || []).map(s => `${s.nombre} ${s.apellido}`)
-          ];
-          
+          // Gerente: Solo ve las suyas propias
           query = query.eq('gerencia_nombre', userContext.departamento)
-                       .in('responsable_nombre', nombresPermitidos);
+                       .eq('responsable_nombre', `${userContext.nombre} ${userContext.apellido}`);
         } else {
-          // Coordinador / Analista: Solo lo propio
-          query = query.eq('responsable_nombre', `${userContext.nombre} ${userContext.apellido}`);
+          // Coordinador / Analista: Ve todas las solicitudes de su departamento
+          query = query.eq('gerencia_nombre', userContext.departamento);
         }
       }
 
@@ -216,8 +214,12 @@ const StockSmartTotalClean = () => {
     if (showModal && !isEditing && currentUser) {
       setForm(prev => ({
         ...prev,
-        responsable: `${currentUser.nombre} ${currentUser.apellido}`,
-        gerencia: currentUser.departamento
+        responsable: (currentUser.rol === 'Gerente' || currentUser.esAdminReal)
+          ? `${currentUser.nombre} ${currentUser.apellido}`
+          : prev.responsable,
+        gerencia: (currentUser.rol === 'Gerente' || currentUser.esAdminReal)
+          ? currentUser.departamento
+          : prev.gerencia
       }));
     }
   }, [showModal, isEditing, currentUser]);
@@ -457,8 +459,13 @@ const StockSmartTotalClean = () => {
             <button onClick={() => {
               setIsEditing(false);
               setForm({
-                id: '', fecha: new Date().toISOString().split('T')[0], sede: 'MARACAIBO',
-                gerencia: '', responsable: '',
+                id: '',
+                fecha: new Date().toISOString().split('T')[0],
+                sede: 'MARACAIBO',
+                gerencia: currentUser?.departamento || '',
+                responsable: (currentUser?.rol === 'Gerente' || currentUser?.esAdminReal)
+                  ? `${currentUser.nombre} ${currentUser.apellido}`
+                  : '',
                 partidas: [{ id: Date.now(), selected: false, cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '' }],
                 imprevistos: [{ id: Date.now() + 1, selected: false, cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '' }]
               });
@@ -539,30 +546,55 @@ const StockSmartTotalClean = () => {
 
               <div style={{ display: 'flex', flexDirection: 'column' }}>
                 <label style={{ fontSize: '10px', fontWeight: 'bold', color: '#363636', marginBottom: '5px' }}>GERENCIA SOLICITANTE</label>
-                <select
-                  className="sf-input"
-                  value={form.gerencia}
-                  onChange={(e) => {
-                    const nuevaGerencia = e.target.value;
-                    const primerResponsable = gerenciasData[nuevaGerencia] ? gerenciasData[nuevaGerencia][0] : '';
-                    setForm({ ...form, gerencia: nuevaGerencia, responsable: primerResponsable });
-                  }}
-                >
-                  <option value="">Seleccione Gerencia...</option>
-                  {Object.keys(gerenciasData).map(g => <option key={g} value={g}>{g}</option>)}
-                </select>
+                {(currentUser?.esAdminReal || currentUser?.rol === 'Gerente General') ? (
+                  <select
+                    className="sf-input"
+                    value={form.gerencia}
+                    onChange={(e) => {
+                      const nuevaGerencia = e.target.value;
+                      const primerGerente = gerentesDisponibles.find(g => g.departamento === nuevaGerencia);
+                      setForm({
+                        ...form,
+                        gerencia: nuevaGerencia,
+                        responsable: primerGerente ? `${primerGerente.nombre} ${primerGerente.apellido}` : ''
+                      });
+                    }}
+                  >
+                    <option value="">Seleccione Gerencia...</option>
+                    {[...new Set(gerentesDisponibles.map(g => g.departamento))].map(dep => (
+                      <option key={dep} value={dep}>{dep}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input className="sf-input" value={form.gerencia} readOnly style={{ backgroundColor: '#f8fafc', color: '#475569' }} />
+                )}
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column' }}>
                 <label style={{ fontSize: '10px', fontWeight: 'bold', color: '#363636', marginBottom: '5px' }}>RESPONSABLE DE GASTO</label>
-                <select
-                  className="sf-input"
-                  value={form.responsable}
-                  onChange={(e) => setForm({ ...form, responsable: e.target.value })}
-                >
-                  <option value="">Seleccione Responsable...</option>
-                  {gerenciasData[form.gerencia]?.map(r => <option key={r} value={r}>{r}</option>)}
-                </select>
+                {(currentUser?.esAdminReal || currentUser?.rol === 'Gerente General') ? (
+                  <select
+                    className="sf-input"
+                    value={form.responsable}
+                    onChange={(e) => setForm({ ...form, responsable: e.target.value })}
+                  >
+                    <option value="">Seleccione Responsable...</option>
+                    {gerentesDisponibles
+                      .filter(g => !form.gerencia || g.departamento === form.gerencia)
+                      .map(g => {
+                        const nombre = `${g.nombre} ${g.apellido}`;
+                        return <option key={nombre} value={nombre}>{nombre}</option>;
+                      })
+                    }
+                  </select>
+                ) : (
+                  <input
+                    className="sf-input"
+                    value={form.responsable}
+                    readOnly
+                    style={{ backgroundColor: '#f8fafc', color: '#475569', fontWeight: '600' }}
+                  />
+                )}
               </div>
             </div>
 
@@ -714,7 +746,7 @@ const StockSmartTotalClean = () => {
               </div>
             )}
 
-            <div style={{ marginTop: '25px', display: 'flex', justifyContent: 'space-between' }}>
+            <div style={{ marginTop: '25px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
               <div style={{ display: 'flex', gap: '10px' }}>
                 <button className="sf-btn sf-btn-add" onClick={() => setForm({ ...form, partidas: [...form.partidas, { id: Date.now(), selected: false, cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '' }] })}>+ AÑADIR RENGLÓN</button>
                 <button className="sf-btn" onClick={() => setMostrarImprevistos(!mostrarImprevistos)} style={{ border: '1px solid #f59e0b', color: '#d97706', background: mostrarImprevistos ? '#fffbeb' : 'white' }}>
@@ -722,15 +754,17 @@ const StockSmartTotalClean = () => {
                 </button>
                 <button className="sf-btn sf-btn-success" onClick={handleCrearRequisicion}>📝 CREAR REQUISICIÓN</button>
                 {mostrarImprevistos && (
-                  <button className="sf-btn" style={{ background: '#f59e0b', color: 'white', border: 'none' }} onClick={handleEmitirTicketFromImprevisto}>🎟️ EMITIR TICKET DE PAGO</button>
+                  <button className="sf-btn" style={{ background: '#f59e0b', color: 'white', border: 'none' }} onClick={handleEmitirTicketFromImprevisto}>🏟️ EMITIR TICKET DE PAGO</button>
                 )}
               </div>
-              <div style={{ display: 'flex', gap: '10px' }}>
+
+              {/* BOTONES */}
+              <div style={{ display: 'flex', gap: '10px', alignSelf: 'flex-end' }}>
                 <button className="sf-btn sf-btn-close" onClick={() => setShowModal(false)}>CERRAR</button>
                 <button className="sf-btn sf-btn-primary" onClick={registrarOActualizar}>{isEditing ? 'ACTUALIZAR' : 'REGISTRAR'}</button>
               </div>
-            </div>
-          </div>
+            </div> 
+          </div> 
 
           {abrirReq && (
             <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10000 }}>

@@ -32,40 +32,28 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
       const ADMIN_EMAIL = 'jcontreras.totalclean@gmail.com';
       setCurrentUser({
         ...perfil,
-        esAdminReal: session.user.email === ADMIN_EMAIL
+        esAdminReal: session.user.email === ADMIN_EMAIL,
+        firma_url: perfil.url_firma_digital // Mapeo de la columna solicitada
       });
     }
   }, []);
 
-  // --- LÓGICA DE CARGA DESDE SUPABASE CON FILTROS DE JERARQUÍA ---
+  // --- LÓGICA DE CARGA DESDE SUPABASE CON FILTROS JERÁRQUICOS POR FASE ---
   const cargarHistorialDesdeBD = useCallback(async () => {
     if (!currentUser) return;
     setLoading(true);
     try {
       let query = supabase.from('requisiciones').select('*');
 
-      // APLICACIÓN DE REGLAS DE JERARQUÍA
+      // FLUJO JERÁRQUICO DE VISIBILIDAD POR FASE (ESTADO_APROBACION)
       if (!currentUser.esAdminReal && currentUser.rol !== 'Gerente General') {
-        if (currentUser.rol === 'Gerente') {
-          // Obtener nombres de subalternos (Coordinadores y Analistas) en el mismo departamento
-          const { data: subalternos } = await supabase
-            .from('perfiles')
-            .select('nombre, apellido')
-            .eq('departamento', currentUser.departamento)
-            .in('rol', ['Coordinador', 'Analista']);
-
-          const nombresPermitidos = [
-            `${currentUser.nombre} ${currentUser.apellido}`,
-            ...(subalternos || []).map(s => `${s.nombre} ${s.apellido}`)
-          ];
-
-          query = query.eq('gerencia', currentUser.departamento)
-                       .in('solicitante', nombresPermitidos);
-        } else {
-          // Coordinador / Analista: Solo lo propio
-          query = query.eq('solicitante', `${currentUser.nombre} ${currentUser.apellido}`);
-        }
+        // Analista, Coordinador y Gerente de Área ven todo lo de su gerencia
+        query = query.eq('gerencia', currentUser.departamento);
+      } else if (currentUser.rol === 'Gerente General') {
+        // Gerente General SOLO ve las enviadas para su revisión
+        query = query.eq('estado_aprobacion', 'enviada_general');
       }
+      // Admin ve todo
 
       const { data, error } = await query.order('fecha_emision', { ascending: false });
 
@@ -86,7 +74,11 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
           justificacion: db.justificacion,
           fecha_requerida: db.fecha_requerida,
           gerencia: db.gerencia,
-          firma_gerente: db.firma_gerente,
+          aprobado_gerente_area: db.aprobado_gerente_area || false,
+          aprobado_gerente_general: db.aprobado_gerente_general || false,
+          estado_aprobacion: db.estado_aprobacion || 'pendiente_area',
+          motivo_rechazo: db.motivo_rechazo || '',
+          firma_gerente_general: db.firma_gerente_general,
           observaciones: db.observaciones || ''
         }));
         setHistorial(historialMapeado);
@@ -104,12 +96,20 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
   // --- LÓGICA DE FILTRADO EN TIEMPO REAL ---
   const historialFiltrado = useMemo(() => {
     return historial.filter(req => {
+      const configEstado = {
+        'pendiente_area': { color: '#ef4444', texto: 'PENDIENTE ÁREA' },
+        'enviada_general': { color: '#eab308', texto: 'ENVIADA GENERAL' },
+        'aprobado_final': { color: '#22c55e', texto: 'APROBADO FINAL' },
+        'rechazada': { color: '#64748b', texto: 'RECHAZADA' }
+      };
+      const estado = configEstado[req.estado_aprobacion] || { color: '#94a3b8', texto: 'DESCONOCIDO' };
+
       const matchTexto =
         req.solicitante.toLowerCase().includes(busqueda.toLowerCase()) ||
         req.correlativo.toLowerCase().includes(busqueda.toLowerCase());
 
       const matchDepto = filtroDepto === 'Todos' || req.gerencia === filtroDepto;
-      const matchStatus = filtroAprobacion === 'Todos' || req.aprobacion === filtroAprobacion;
+      const matchStatus = filtroAprobacion === 'Todos' || req.estado_aprobacion === filtroAprobacion;
 
       return matchTexto && matchDepto && matchStatus;
     });
@@ -258,38 +258,82 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
     setShowModal(true);
   };
 
-  const manejarAprobar = async () => {
-    if (!editandoId || currentUser?.rol !== 'Gerente General') {
-      alert("Solo el Gerente General tiene permisos.");
-      return;
-    }
+  const manejarRechazarGerenteArea = async () => {
+    if (!editandoId || currentUser?.rol !== 'Gerente') return;
+    const motivo = window.prompt('Indique el motivo del rechazo:');
+    if (!motivo) return alert('El motivo de rechazo es obligatorio.');
+    
     setLoading(true);
     try {
       const { error } = await supabase.from('requisiciones').update({
-        aprobacion: true,
-        aprobacion_nombre: 'Aprobado',
-        status_compra: 'Completado',
-        firma_gerente: currentUser.firma_url
+        estado_aprobacion: 'rechazada',
+        motivo_rechazo: motivo,
+        aprobacion_nombre: 'Rechazado por Área',
+        aprobado_gerente_area: false
       }).eq('id', editandoId);
       if (error) throw error;
-      alert("Aprobada con éxito.");
+      alert('Requisición rechazada.');
       await cargarHistorialDesdeBD();
       setShowModal(false);
       resetearFormulario();
     } catch (err) { alert(err.message); } finally { setLoading(false); }
   };
 
-  const manejarRechazar = async () => {
-    if (!editandoId || currentUser?.rol !== 'Gerente General') return;
-    const motivo = window.prompt("Indique el motivo del rechazo:");
+  const manejarAprobarGerenteArea = async () => {
+    if (!editandoId || currentUser?.rol !== 'Gerente') {
+      alert('Solo el Gerente de Área puede realizar esta aprobación.');
+      return;
+    }
     setLoading(true);
     try {
       const { error } = await supabase.from('requisiciones').update({
-        aprobacion: false,
-        aprobacion_nombre: 'Rechazado',
-        status_compra: 'En Espera',
-        justificacion: motivo ? `${justificacion} | MOTIVO RECHAZO: ${motivo}` : justificacion,
-        firma_gerente: null
+        aprobado_gerente_area: true,
+        firma_gerente: currentUser.firma_url || null, // Firma Nivel 1 guardada en firma_gerente
+        estado_aprobacion: 'enviada_general',
+        aprobacion_nombre: 'Aprobado por Área'
+      }).eq('id', editandoId);
+      if (error) throw error;
+      alert('Aprobada por Gerente de Área. Enviada al Gerente General.');
+      await cargarHistorialDesdeBD();
+      setShowModal(false);
+      resetearFormulario();
+    } catch (err) { alert(err.message); } finally { setLoading(false); }
+  };
+
+  const manejarAprobarGeneral = async () => {
+    if (!editandoId || (!currentUser?.esAdminReal && currentUser?.rol !== 'Gerente General')) {
+      alert('Solo el Gerente General tiene permisos para la aprobación final.');
+      return;
+    }
+    setLoading(true);
+    try {
+      const { error } = await supabase.from('requisiciones').update({
+        aprobado_gerente_general: true,
+        firma_gerente_general: currentUser.firma_url || null, // Firma Nivel 2
+        estado_aprobacion: 'aprobado_final',
+        aprobacion_nombre: 'Aprobación Final',
+        status_compra: 'Completado'
+      }).eq('id', editandoId);
+      if (error) throw error;
+      alert("Aprobación final exitosa.");
+      await cargarHistorialDesdeBD();
+      setShowModal(false);
+      resetearFormulario();
+    } catch (err) { alert(err.message); } finally { setLoading(false); }
+  };
+
+  const manejarRechazarGeneral = async () => {
+    if (!editandoId || (!currentUser?.esAdminReal && currentUser?.rol !== 'Gerente General')) return;
+    const motivo = window.prompt("Indique el motivo del rechazo:");
+    if (!motivo) return alert('El motivo de rechazo es obligatorio.');
+
+    setLoading(true);
+    try {
+      const { error } = await supabase.from('requisiciones').update({
+        estado_aprobacion: 'rechazada',
+        motivo_rechazo: motivo,
+        aprobacion_nombre: 'Rechazado por General',
+        aprobado_gerente_general: false
       }).eq('id', editandoId);
       if (error) throw error;
       alert("Requisición rechazada.");
@@ -299,8 +343,52 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
     } catch (err) { alert(err.message); } finally { setLoading(false); }
   };
 
-  const manejarGenerar = async () => {
+  const manejarReenviar = async () => {
+    if (!editandoId) return;
     setLoading(true);
+    try {
+      const { error } = await supabase.from('requisiciones').update({
+        estado_aprobacion: 'pendiente_area',
+        motivo_rechazo: null,
+        aprobacion_nombre: 'Re-enviada (Pendiente Área)',
+        // Se preservan los datos editados en los inputs (justificacion, renglones, etc. se guardan al "Generar/Actualizar")
+        items: renglones,
+        justificacion,
+        observaciones,
+        centro_costo: `${centroCostoNombre} (${centroCostoID})`,
+        prioridad
+      }).eq('id', editandoId);
+      if (error) throw error;
+      alert("Requisición re-enviada correctamente.");
+      await cargarHistorialDesdeBD();
+      setShowModal(false);
+      resetearFormulario();
+    } catch (err) { alert(err.message); } finally { setLoading(false); }
+  };
+
+  const manejarGenerarOActualizar = async () => {
+    setLoading(true);
+    if (editandoId) {
+      // Si está en modo edición (ej. re-enviando o corrigiendo)
+      try {
+        const { error } = await supabase.from('requisiciones').update({
+          fecha_requerida: fechaRequerida,
+          centro_costo: `${centroCostoNombre} (${centroCostoID})`,
+          prioridad,
+          items: renglones,
+          justificacion,
+          observaciones,
+          total_bs: totalGeneral
+        }).eq('id', editandoId);
+        if (error) throw error;
+        alert("Cambios guardados.");
+        await cargarHistorialDesdeBD();
+        setShowModal(false);
+        resetearFormulario();
+      } catch (err) { alert(err.message); } finally { setLoading(false); }
+      return;
+    }
+
     const nuevoCorrelativo = `REQ-${String(historial.length + 1).padStart(3, '0')}`;
     const nuevaReqBD = {
       correlativo_req: nuevoCorrelativo,
@@ -313,6 +401,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
       status_compra: 'Pendiente',
       aprobacion: false,
       aprobacion_nombre: 'Pendiente',
+      estado_aprobacion: 'pendiente_area',
       total_bs: totalGeneral,
       items: renglones,
       justificacion,
@@ -408,9 +497,10 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
             onChange={(e) => setFiltroAprobacion(e.target.value)}
           >
             <option value="Todos">Todos los Estados</option>
-            <option value="Pendiente">Pendientes</option>
-            <option value="Aprobado">Aprobadas</option>
-            <option value="Rechazado">Rechazadas</option>
+            <option value="pendiente_area">Pendiente Área</option>
+            <option value="enviada_general">Enviada General</option>
+            <option value="aprobado_final">Aprobado Final</option>
+            <option value="rechazada">Rechazadas</option>
           </select>
         </div>
       </div>
@@ -441,10 +531,16 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
                 <td>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
                     <div style={{
-                      width: '8px', height: '8px', borderRadius: '50%',
-                      backgroundColor: req.aprobacion === 'Aprobado' ? 'var(--success)' : (req.aprobacion === 'Rechazado' ? 'var(--danger)' : 'var(--warning)')
+                      width: '10px', height: '10px', borderRadius: '50%',
+                      backgroundColor: 
+                        req.estado_aprobacion === 'aprobado_final' ? '#22c55e' : 
+                        req.estado_aprobacion === 'enviada_general' ? '#eab308' :
+                        req.estado_aprobacion === 'rechazada' ? '#64748b' : '#ef4444',
+                      boxShadow: '0 0 5px rgba(0,0,0,0.1)'
                     }}></div>
-                    {req.aprobacion}
+                    <span style={{ fontSize: '0.7rem', fontWeight: '800', textTransform: 'uppercase' }}>
+                      {req.estado_aprobacion?.replace('_', ' ')}
+                    </span>
                   </div>
                 </td>
                 <td><span style={{ backgroundColor: '#fef9c3', color: '#854d0e', padding: '4px 10px', borderRadius: '12px', fontSize: '0.65rem', fontWeight: 'bold' }}>{req.status}</span></td>
@@ -529,6 +625,17 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
                   placeholder="Notas adicionales sobre la entrega, especificaciones técnicas, etc."
                 />
               </div>
+
+              {editandoId && historial.find(h => h.id === editandoId)?.estado_aprobacion === 'rechazada' && (
+                <div style={{ marginBottom: '25px', padding: '15px', backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '12px' }}>
+                  <label style={{ fontSize: '0.65rem', fontWeight: '900', color: '#991b1b', textTransform: 'uppercase', marginBottom: '5px', display: 'block' }}>
+                    ⚠️ MOTIVO DE RECHAZO
+                  </label>
+                  <p style={{ margin: 0, color: '#b91c1c', fontSize: '0.9rem', fontWeight: '500' }}>
+                    {historial.find(h => h.id === editandoId)?.motivo_rechazo || 'No especificado'}
+                  </p>
+                </div>
+              )}
 
               <table className="tc-table" style={{ fontSize: '0.85rem' }}>
                 <thead>
@@ -622,47 +729,85 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
                   </div>
                 </div>
               </div>
-            </div>
 
-            <div style={{ marginTop: '30px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+              <div style={{ marginTop: '30px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+                {/* PANEL DE DOBLE FIRMA */}
+                <div style={{ display: 'flex', gap: '40px', alignItems: 'flex-end' }}>
+                  {/* FIRMA 1: GERENTE DE ÁREA */}
+                  <div className="signature-line" style={{ borderTop: '2px solid #e2e8f0', paddingTop: '10px', minWidth: '150px', textAlign: 'center' }}>
+                    {historial.find(h => h.id === editandoId)?.firma_gerente && (
+                      <img src={historial.find(h => h.id === editandoId).firma_gerente} alt="Firma Gerente Area" style={{ width: '130px', maxHeight: '60px', mixBlendMode: 'darken' }} />
+                    )}
+                    <p style={{ margin: '5px 0 0', fontWeight: '900', fontSize: '0.75rem', textTransform: 'uppercase' }}>
+                      {historial.find(h => h.id === editandoId)?.aprobado_gerente_area ? 'APROBADO' : 'GERENTE DE ÁREA'}
+                    </p>
+                    <p style={{ margin: 0, fontSize: '0.6rem', color: 'var(--slate-400)', fontWeight: 'bold' }}>NIVEL 1: ÁREA</p>
+                  </div>
 
-              {/* FIRMA MOVIDA CERCA DE BOTONES */}
-              <div className="signature-line">
-                {historial.find(h => h.id === editandoId)?.firma_gerente && (
-                  <img src={historial.find(h => h.id === editandoId).firma_gerente} alt="Firma" style={{ width: '160px', mixBlendMode: 'darken' }} />
-                )}
-                <p style={{ margin: 0, fontWeight: '900' }}>CARLOS VEGA</p>
-                <p style={{ margin: 0, fontSize: '0.65rem', color: 'var(--slate-400)' }}>GERENTE GENERAL</p>
-                <p style={{ margin: 0, fontSize: '0.6rem', color: 'var(--primary)' }}>TOTAL CLEAN C.A.</p>
-              </div>
+                  {/* FIRMA 2: GERENTE GENERAL */}
+                  <div className="signature-line" style={{ borderTop: '2px solid #e2e8f0', paddingTop: '10px', minWidth: '150px', textAlign: 'center' }}>
+                    {historial.find(h => h.id === editandoId)?.firma_gerente_general && (
+                      <img src={historial.find(h => h.id === editandoId).firma_gerente_general} alt="Firma GG" style={{ width: '150px', maxHeight: '70px', mixBlendMode: 'darken' }} />
+                    )}
+                    <p style={{ margin: '5px 0 0', fontWeight: '900', fontSize: '0.75rem', textTransform: 'uppercase' }}>
+                      {historial.find(h => h.id === editandoId)?.aprobado_gerente_general ? 'CARLOS VEGA' : 'GERENTE GENERAL'}
+                    </p>
+                    <p style={{ margin: 0, fontSize: '0.6rem', color: 'var(--slate-400)', fontWeight: 'bold' }}>NIVEL 2: GENERAL</p>
+                  </div>
+                </div>
 
-              <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
-                <button className="btn-tc btn-tc-secondary" onClick={() => { setShowModal(false); onClose?.(); resetearFormulario(); }}>Cerrar</button>
-                <button className="btn-tc btn-tc-dark" onClick={exportarPDF}>📥 PDF</button>
+                <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
+                  <button className="btn-tc btn-tc-secondary" onClick={() => { setShowModal(false); onClose?.(); resetearFormulario(); }}>Cerrar</button>
+                  <button className="btn-tc btn-tc-dark" onClick={exportarPDF}>📥 PDF</button>
 
-                {editandoId ? (
-                  (currentUser?.rol === 'Gerente General' || currentUser?.esAdminReal) && (
+                  {editandoId ? (
                     <>
-                      <button className="btn-tc btn-tc-danger" onClick={manejarRechazar} disabled={loading}>
-                        {loading ? <Loader2 className="animate-spin" size={16} /> : "RECHAZAR"}
-                      </button>
-                      <button className="btn-tc btn-tc-success" onClick={manejarAprobar} disabled={loading}>
-                        {loading ? <Loader2 className="animate-spin" size={16} /> : "APROBAR REQUISICIÓN"}
-                      </button>
+                      {/* ACCIONES PARA ANALISTA / COORDINADOR (Re-enviar si está rechazada) */}
+                      {(currentUser?.rol === 'Analista' || currentUser?.rol === 'Coordinador') && 
+                        historial.find(h => h.id === editandoId)?.estado_aprobacion === 'rechazada' && (
+                        <button className="btn-tc btn-tc-primary" onClick={manejarReenviar} disabled={loading}>
+                          {loading ? <Loader2 className="animate-spin" size={16} /> : 'MODIFICAR Y RE-ENVIAR'}
+                        </button>
+                      )}
+
+                      {/* BOTONES PARA GERENTE DE ÁREA (Nivel 1) */}
+                      {currentUser?.rol === 'Gerente' && 
+                        historial.find(h => h.id === editandoId)?.estado_aprobacion === 'pendiente_area' && (
+                        <>
+                          <button className="btn-tc btn-tc-danger" onClick={manejarRechazarGerenteArea} disabled={loading}>
+                            {loading ? <Loader2 className="animate-spin" size={16} /> : 'RECHAZAR'}
+                          </button>
+                          <button className="btn-tc btn-tc-success" onClick={manejarAprobarGerenteArea} disabled={loading}>
+                            {loading ? <Loader2 className="animate-spin" size={16} /> : '✓ APROBAR ÁREA'}
+                          </button>
+                        </>
+                      )}
+
+                      {/* BOTONES PARA GERENTE GENERAL (Nivel 2) */}
+                      {(currentUser?.rol === 'Gerente General' || currentUser?.esAdminReal) && 
+                         historial.find(h => h.id === editandoId)?.estado_aprobacion === 'enviada_general' && (
+                        <>
+                          <button className="btn-tc btn-tc-danger" onClick={manejarRechazarGeneral} disabled={loading}>
+                            {loading ? <Loader2 className="animate-spin" size={16} /> : 'RECHAZAR'}
+                          </button>
+                          <button className="btn-tc btn-tc-success" onClick={manejarAprobarGeneral} disabled={loading}>
+                            {loading ? <Loader2 className="animate-spin" size={16} /> : '✓ APROBACIÓN FINAL'}
+                          </button>
+                        </>
+                      )}
                     </>
-                  )
-                ) : (
-                  <button className="btn-tc btn-tc-primary" onClick={manejarGenerar} disabled={loading}>
-                    {loading ? <Loader2 className="animate-spin" size={16} /> : "GENERAR REQUISICIÓN"}
-                  </button>
-                )}
+                  ) : (
+                    <button className="btn-tc btn-tc-primary" onClick={manejarGenerarOActualizar} disabled={loading}>
+                      {loading ? <Loader2 className="animate-spin" size={16} /> : 'GENERAR REQUISICIÓN'}
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           </div>
         </div>
       )}
-    </motion.div>
-  );
+      </motion.div>
+    );
 };
-
 export default Requisiciones;
