@@ -144,11 +144,11 @@ const StockSmartTotalClean = () => {
         return;
       }
 
-      // Cargar lista de Gerentes para el selector de responsable
+      // Cargar lista de responsables (Gerentes, Coordinadores, Analistas)
       const { data: dataGerentes } = await supabase
         .from('perfiles')
         .select('nombre, apellido, departamento')
-        .eq('rol', 'Gerente')
+        .in('rol', ['Gerente', 'Coordinador', 'Analista'])
         .order('nombre');
       if (dataGerentes) setGerentesDisponibles(dataGerentes);
 
@@ -156,13 +156,12 @@ const StockSmartTotalClean = () => {
 
       // REGLAS DE JERARQUÍA — Solo Gerentes crean solicitudes de fondos
       if (!userContext.esAdminReal && userContext.rol !== 'Gerente General') {
-        if (userContext.rol === 'Gerente') {
-          // Gerente: Solo ve las suyas propias
-          query = query.eq('gerencia_nombre', userContext.departamento)
-                       .eq('responsable_nombre', `${userContext.nombre} ${userContext.apellido}`);
-        } else {
-          // Coordinador / Analista: Ve todas las solicitudes de su departamento
+        if (userContext.rol === 'Gerente' || userContext.rol === 'Coordinador' || userContext.rol === 'Analista') {
+          // Ven todo lo de su departamento/gerencia
           query = query.eq('gerencia_nombre', userContext.departamento);
+        } else {
+          // Otros roles: solo lo propio
+          query = query.eq('responsable_nombre', `${userContext.nombre} ${userContext.apellido}`);
         }
       }
 
@@ -214,10 +213,10 @@ const StockSmartTotalClean = () => {
     if (showModal && !isEditing && currentUser) {
       setForm(prev => ({
         ...prev,
-        responsable: (currentUser.rol === 'Gerente' || currentUser.esAdminReal)
+        responsable: (['Gerente', 'Coordinador', 'Analista'].includes(currentUser.rol) || currentUser.esAdminReal)
           ? `${currentUser.nombre} ${currentUser.apellido}`
           : prev.responsable,
-        gerencia: (currentUser.rol === 'Gerente' || currentUser.esAdminReal)
+        gerencia: (['Gerente', 'Coordinador', 'Analista'].includes(currentUser.rol) || currentUser.esAdminReal)
           ? currentUser.departamento
           : prev.gerencia
       }));
@@ -249,6 +248,7 @@ const StockSmartTotalClean = () => {
           puBs: p.pu_bs,
           puUsd: p.pu_usd,
           pago_realizado: p.pago_realizado || false,
+          requisicion_id: p.requisicion_id || null,
           selected: false
         })),
         imprevistos: partidasRaw.filter(p => p.clasificacion.includes('[*]') || p.clasificacion === 'Gastos Imprevistos' || p.clasificacion === 'Ticket de Pago' || p.clasificacion === 'Solicitud de ticket').length > 0
@@ -264,6 +264,7 @@ const StockSmartTotalClean = () => {
               puBs: p.pu_bs,
               puUsd: p.pu_usd,
               pago_realizado: p.pago_realizado || false,
+              requisicion_id: p.requisicion_id || null,
               selected: false
             }))
           : [{ id: Date.now() + 1, selected: false, cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '', pago_realizado: false }]
@@ -463,7 +464,7 @@ const StockSmartTotalClean = () => {
                 fecha: new Date().toISOString().split('T')[0],
                 sede: 'MARACAIBO',
                 gerencia: currentUser?.departamento || '',
-                responsable: (currentUser?.rol === 'Gerente' || currentUser?.esAdminReal)
+                responsable: (['Gerente', 'Coordinador', 'Analista'].includes(currentUser?.rol) || currentUser?.esAdminReal)
                   ? `${currentUser.nombre} ${currentUser.apellido}`
                   : '',
                 partidas: [{ id: Date.now(), selected: false, cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '' }],
@@ -591,8 +592,9 @@ const StockSmartTotalClean = () => {
                   <input
                     className="sf-input"
                     value={form.responsable}
-                    readOnly
-                    style={{ backgroundColor: '#f8fafc', color: '#475569', fontWeight: '600' }}
+                    onChange={(e) => setForm({ ...form, responsable: e.target.value })}
+                    style={{ backgroundColor: 'white', color: '#1e293b', fontWeight: '600' }}
+                    placeholder="Escriba el nombre del responsable"
                   />
                 )}
               </div>
@@ -618,9 +620,19 @@ const StockSmartTotalClean = () => {
 
               <div style={{ maxHeight: '40vh', overflowY: 'auto' }}>
                 {form.partidas.map((p, i) => (
-                  <div key={p.id} className="sf-table-row" style={{ background: p.selected ? '#e0f2fe' : 'transparent' }}>
+                  <div key={p.id} className="sf-table-row" style={{ 
+                    background: p.requisicion_id ? '#f1f5f9' : (p.selected ? '#e0f2fe' : 'transparent'),
+                    opacity: p.requisicion_id ? 1 : 1
+                  }}>
                     <div style={{ width: '40px', textAlign: 'center' }}>
-                      <input type="checkbox" checked={p.selected || false} onChange={(e) => manejarCambioPartida(i, 'selected', e.target.checked)} style={{ cursor: 'pointer', transform: 'scale(1.2)' }} />
+                      <input 
+                        type="checkbox" 
+                        checked={p.selected || false} 
+                        onChange={(e) => manejarCambioPartida(i, 'selected', e.target.checked)} 
+                        style={{ cursor: p.requisicion_id ? 'not-allowed' : 'pointer', transform: 'scale(1.2)' }} 
+                        disabled={!!p.requisicion_id}
+                        title={p.requisicion_id ? "Esta partida ya está vinculada a una requisición" : ""}
+                      />
                     </div>
                     <div style={{ width: '45px', textAlign: 'center', fontWeight: 'bold', color: '#94a3b8' }}>{i + 1}</div>
                     <div style={{ width: '200px', padding: '6px' }}>
@@ -696,9 +708,19 @@ const StockSmartTotalClean = () => {
 
                   <div style={{ maxHeight: '30vh', overflowY: 'auto' }}>
                     {form.imprevistos.map((imp, i) => (
-                      <div key={imp.id} className="sf-table-row" style={{ background: imp.selected ? '#fffcf0' : 'transparent' }}>
+                      <div key={imp.id} className="sf-table-row" style={{ 
+                        background: imp.requisicion_id ? '#f1f5f9' : (imp.selected ? '#fffcf0' : 'transparent'),
+                        opacity: imp.requisicion_id ? 1 : 1
+                      }}>
                         <div style={{ width: '40px', textAlign: 'center' }}>
-                          <input type="checkbox" checked={imp.selected || false} onChange={(e) => manejarCambioImprevisto(i, 'selected', e.target.checked)} style={{ cursor: 'pointer', transform: 'scale(1.2)' }} />
+                          <input 
+                            type="checkbox" 
+                            checked={imp.selected || false} 
+                            onChange={(e) => manejarCambioImprevisto(i, 'selected', e.target.checked)} 
+                            style={{ cursor: imp.requisicion_id ? 'not-allowed' : 'pointer', transform: 'scale(1.2)' }} 
+                            disabled={!!imp.requisicion_id}
+                            title={imp.requisicion_id ? "Esta partida ya está vinculada a una requisición" : ""}
+                          />
                         </div>
                         <div style={{ width: '45px', textAlign: 'center', fontWeight: 'bold', color: '#d97706' }}>{i + 1}</div>
                         <div style={{ width: '200px', padding: '6px' }}>

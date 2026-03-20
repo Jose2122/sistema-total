@@ -14,6 +14,7 @@ const Usuarios = () => {
   const [formData, setFormData] = useState({ 
     id: null, nombre: '', apellido: '', correo: '', 
     rol: '', departamento: '', firma_url: '',
+    foto_url: '', // Nueva columna
     password: '', 
     current_password_display: '' 
   });
@@ -50,6 +51,25 @@ const Usuarios = () => {
       const { data } = supabase.storage.from('firmas').getPublicUrl(fileName);
       setFormData({ ...formData, firma_url: data.publicUrl });
       alert("Firma cargada con éxito.");
+    } catch (error) {
+      alert('Error: ' + error.message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const subirFoto = async (event) => {
+    try {
+      setUploading(true);
+      const file = event.target.files[0];
+      if (!file) return;
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${formData.correo.split('@')[0]}_foto_${Math.random()}.${fileExt}`;
+      let { error: uploadError } = await supabase.storage.from('avatars').upload(fileName, file, { upsert: true });
+      if (uploadError) throw uploadError;
+      const { data } = supabase.storage.from('avatars').getPublicUrl(fileName);
+      setFormData({ ...formData, foto_url: data.publicUrl });
+      alert("Foto de perfil cargada con éxito.");
     } catch (error) {
       alert('Error: ' + error.message);
     } finally {
@@ -227,8 +247,23 @@ const Usuarios = () => {
               {usuariosFiltrados.map(u => (
                 <tr key={u.id} className="row-hover">
                   <td style={estilos.td}>
-                    <div style={{ fontWeight: 'bold' }}>{u.nombre} {u.apellido}</div>
-                    <div style={{ fontSize: '0.75rem', color: '#64748b' }}>{u.correo}</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+                      <div style={{ 
+                        width: '40px', height: '40px', borderRadius: '50%', backgroundColor: '#f1f5f9', 
+                        overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.05)', border: '1px solid #e2e8f0'
+                      }}>
+                        {u.foto_url ? (
+                          <img src={u.foto_url} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        ) : (
+                          <span style={{ fontSize: '1rem', fontWeight: 'bold', color: '#94a3b8' }}>{u.nombre?.[0]}{u.apellido?.[0]}</span>
+                        )}
+                      </div>
+                      <div>
+                        <div style={{ fontWeight: 'bold' }}>{u.nombre} {u.apellido}</div>
+                        <div style={{ fontSize: '0.75rem', color: '#64748b' }}>{u.correo}</div>
+                      </div>
+                    </div>
                   </td>
                   <td style={estilos.td}><span style={estilos.badge(u.rol)}>{u.rol || 'Sin Cargo'}</span></td>
                   <td style={estilos.td}><span style={{ color: '#64748b' }}>{u.departamento || 'Sin asignar'}</span></td>
@@ -249,6 +284,34 @@ const Usuarios = () => {
           <div style={{ backgroundColor: 'white', padding: '35px', borderRadius: '28px', width: '500px', maxHeight: '90vh', overflowY: 'auto' }}>
             <h3 style={{ marginTop: 0, marginBottom: '25px', color: '#0f172a' }}>{formData.id ? 'Editar Perfil' : 'Nuevo Registro'}</h3>
             
+            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '25px' }}>
+              <div style={{ position: 'relative' }}>
+                <div style={{ 
+                  width: '90px', height: '90px', borderRadius: '18px', backgroundColor: '#f8fafc', 
+                  border: '2px dashed #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  overflow: 'hidden' 
+                }}>
+                  {formData.foto_url ? (
+                    <img src={formData.foto_url} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  ) : (
+                    <span style={{ fontSize: '2rem', color: '#cbd5e1' }}>👤</span>
+                  )}
+                </div>
+                <input type="file" id="p-foto" accept="image/*" onChange={subirFoto} style={{ display: 'none' }} />
+                <label 
+                  htmlFor="p-foto" 
+                  style={{ 
+                    position: 'absolute', bottom: '-8px', right: '-8px', backgroundColor: '#0ea5e9', 
+                    width: '32px', height: '32px', borderRadius: '10px', display: 'flex', 
+                    alignItems: 'center', justifyContent: 'center', color: 'white', cursor: 'pointer',
+                    boxShadow: '0 4px 6px rgba(0,0,0,0.1)', border: '2px solid white'
+                  }}
+                >
+                  📷
+                </label>
+              </div>
+            </div>
+
             {/* Información Personal */}
             <div style={{ marginBottom: '20px' }}>
               <label style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#64748b', display: 'block', marginBottom: '10px', textTransform: 'uppercase' }}>Información Personal</label>

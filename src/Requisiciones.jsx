@@ -47,11 +47,16 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
 
       // FLUJO JERÁRQUICO DE VISIBILIDAD POR FASE (ESTADO_APROBACION)
       if (!currentUser.esAdminReal && currentUser.rol !== 'Gerente General') {
-        // Analista, Coordinador y Gerente de Área ven todo lo de su gerencia
-        query = query.eq('gerencia', currentUser.departamento);
+        if (currentUser.rol === 'Gerente' || currentUser.rol === 'Coordinador' || currentUser.rol === 'Analista') {
+          // Ven todo lo de su departamento/gerencia
+          query = query.eq('gerencia', currentUser.departamento);
+        } else {
+          // Otros roles: solo lo propio (opcional, según seguridad)
+          query = query.eq('usuario_id', currentUser.id);
+        }
       } else if (currentUser.rol === 'Gerente General') {
-        // Gerente General SOLO ve las enviadas para su revisión
-        query = query.eq('estado_aprobacion', 'enviada_general');
+        // Gerente General ve las enviadas para su revisión y las que ya aprobó totalmente
+        query = query.in('estado_aprobacion', ['enviada_general', 'aprobado_final']);
       }
       // Admin ve todo
 
@@ -172,8 +177,11 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
   // --- EFECTOS DE SINCRONIZACIÓN ---
   useEffect(() => {
     if (isOpen) {
+      if (currentUser) {
+        setSolicitante(`${currentUser.nombre} ${currentUser.apellido}`);
+      }
+
       if (datosPredefinidos) {
-        setSolicitante(datosPredefinidos.responsable_gasto || datosPredefinidos.responsable || '');
         setDepartamento(datosPredefinidos.gerencia_solicitante || datosPredefinidos.gerencia || 'Operaciones');
         setJustificacion(datosPredefinidos.justificacion || '');
         setObservaciones(datosPredefinidos.observaciones || '');
@@ -351,12 +359,20 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
         estado_aprobacion: 'pendiente_area',
         motivo_rechazo: null,
         aprobacion_nombre: 'Re-enviada (Pendiente Área)',
-        // Se preservan los datos editados en los inputs (justificacion, renglones, etc. se guardan al "Generar/Actualizar")
+        // Limpiar firmas y aprobaciones anteriores
+        firma_gerente: null,
+        firma_gerente_general: null,
+        aprobado_gerente_area: false,
+        aprobado_gerente_general: false,
+        // Se preservan los datos editados en los inputs
         items: renglones,
         justificacion,
         observaciones,
         centro_costo: `${centroCostoNombre} (${centroCostoID})`,
-        prioridad
+        prioridad,
+        fecha_requerida: fechaRequerida,
+        solicitante: solicitante,
+        gerencia: departamento
       }).eq('id', editandoId);
       if (error) throw error;
       alert("Requisición re-enviada correctamente.");
@@ -410,8 +426,18 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
     };
 
     try {
-      const { error } = await supabase.from('requisiciones').insert([nuevaReqBD]);
+      const { data: nuevaReq, error } = await supabase.from('requisiciones').insert([nuevaReqBD]).select().single();
       if (error) throw error;
+
+      // SI VIENE DE SOLICITUD DE FONDOS, VINCULAR LAS PARTIDAS USADAS
+      if (datosPredefinidos?.partidasSeleccionadas && nuevaReq) {
+        const idsPartidas = datosPredefinidos.partidasSeleccionadas.map(p => p.id);
+        await supabase
+          .from('partidas_fondos')
+          .update({ requisicion_id: nuevaReq.id })
+          .in('id', idsPartidas);
+      }
+
       alert("Generada y guardada.");
       await cargarHistorialDesdeBD();
       setShowModal(false);
@@ -442,8 +468,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
       <div className="dashboard-container">
         {[
           { label: 'REQUISICIONES', val: historial.length, col: '#0ea5e9' },
-          { label: 'PENDIENTES', val: historial.filter(r => r.aprobacion === 'Pendiente').length, col: '#facc15' },
-          { label: 'APROBADAS', val: historial.filter(r => r.aprobacion === 'Aprobado').length, col: '#22c55e' }
+          { label: 'PENDIENTES', val: historial.filter(r => r.estado_aprobacion === 'pendiente_area' || r.estado_aprobacion === 'enviada_general').length, col: '#facc15' },
+          { label: 'APROBADAS', val: historial.filter(r => r.estado_aprobacion === 'aprobado_final').length, col: '#22c55e' }
         ].map((x, i) => (
           <div key={i} className="stat-card" style={{ borderLeft: `6px solid ${x.col}` }}>
             <div className="stat-label">{x.label}</div>
@@ -513,8 +539,9 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
               <th>ID</th>
               <th>FECHA</th>
               <th>SOLICITANTE</th>
+              <th>GERENCIA</th>
               <th>CENTRO DE COSTO</th>
-              <th>APROBACIÓN</th>
+              {currentUser?.rol !== 'Gerente General' && <th>APROBACIÓN</th>}
               <th>STATUS</th>
               <th>PRIORIDAD</th>
               <th>TOTAL (C/IVA)</th>
@@ -527,22 +554,25 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
                 <td style={{ fontWeight: 'bold', color: 'var(--primary)' }}>{req.correlativo}</td>
                 <td style={{ color: 'var(--slate-400)' }}>{req.fecha}</td>
                 <td style={{ fontWeight: '500' }}>{req.solicitante}</td>
+                <td style={{ fontSize: '0.8rem', color: '#64748b' }}>{req.gerencia}</td>
                 <td>{req.centroCosto}</td>
-                <td>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                    <div style={{
-                      width: '10px', height: '10px', borderRadius: '50%',
-                      backgroundColor: 
-                        req.estado_aprobacion === 'aprobado_final' ? '#22c55e' : 
-                        req.estado_aprobacion === 'enviada_general' ? '#eab308' :
-                        req.estado_aprobacion === 'rechazada' ? '#64748b' : '#ef4444',
-                      boxShadow: '0 0 5px rgba(0,0,0,0.1)'
-                    }}></div>
-                    <span style={{ fontSize: '0.7rem', fontWeight: '800', textTransform: 'uppercase' }}>
-                      {req.estado_aprobacion?.replace('_', ' ')}
-                    </span>
-                  </div>
-                </td>
+                {currentUser?.rol !== 'Gerente General' && (
+                  <td>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                      <div style={{
+                        width: '10px', height: '10px', borderRadius: '50%',
+                        backgroundColor: 
+                          req.estado_aprobacion === 'aprobado_final' ? '#22c55e' : 
+                          req.estado_aprobacion === 'enviada_general' ? '#eab308' :
+                          req.estado_aprobacion === 'rechazada' ? '#64748b' : '#ef4444',
+                        boxShadow: '0 0 5px rgba(0,0,0,0.1)'
+                      }}></div>
+                      <span style={{ fontSize: '0.7rem', fontWeight: '800', textTransform: 'uppercase' }}>
+                        {req.estado_aprobacion?.replace('_', ' ')}
+                      </span>
+                    </div>
+                  </td>
+                )}
                 <td><span style={{ backgroundColor: '#fef9c3', color: '#854d0e', padding: '4px 10px', borderRadius: '12px', fontSize: '0.65rem', fontWeight: 'bold' }}>{req.status}</span></td>
                 <td><span style={{ color: req.prioridad === 'Alta' ? 'var(--danger)' : 'var(--primary)', fontWeight: 'bold' }}>{req.prioridad}</span></td>
                 <td style={{ fontWeight: 'bold' }}>Bs. {req.total?.toLocaleString('de-DE')}</td>
@@ -593,7 +623,12 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
                 </div>
                 <div>
                   <label className="stat-label">SOLICITANTE</label>
-                  <input className="input-tc" type="text" value={solicitante} readOnly />
+                  <input 
+                    className="input-tc" 
+                    type="text" 
+                    value={solicitante} 
+                    onChange={(e) => setSolicitante(e.target.value)} 
+                  />
                 </div>
                 <div>
                   <label className="stat-label">CENTRO DE COSTOS</label>

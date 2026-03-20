@@ -156,22 +156,11 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
       let query = supabase.from('tickets_directos').select('id, gerente_nombre, departamento, fecha_emision, codigo_control, total_usd, status, factura_url, fecha, items, solicitud_ref');
       
       if (!currentUser.esAdminGlobal || !verTodos) {
-        if (currentUser.rol === 'Gerente') {
-          // Obtener IDs de subalternos (Coordinadores y Analistas) en el mismo departamento
-          const { data: subalternos } = await supabase
-            .from('perfiles')
-            .select('id')
-            .eq('departamento', currentUser.departamento)
-            .in('rol', ['Coordinador', 'Analista']);
-
-          const idsPermitidos = [
-            currentUser.id,
-            ...(subalternos || []).map(s => s.id)
-          ];
-
-          query = query.in('usuario_id', idsPermitidos);
+        if (currentUser.rol === 'Gerente' || currentUser.rol === 'Coordinador' || currentUser.rol === 'Analista') {
+          // Ven todo lo de su departamento
+          query = query.eq('departamento', currentUser.departamento);
         } else {
-          // Coordinador / Analista: Solo lo propio
+          // Otros roles: Solo lo propio
           query = query.eq('usuario_id', currentUser.id);
         }
       }
