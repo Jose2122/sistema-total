@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Loader2 } from 'lucide-react';
 import './Requisiciones.css';
 
-const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
+const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
   // --- ESTADOS DEL SISTEMA ---
   const [showModal, setShowModal] = useState(false);
   const [historial, setHistorial] = useState([]);
@@ -18,6 +18,10 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
   const [busqueda, setBusqueda] = useState('');
   const [filtroDepto, setFiltroDepto] = useState('Todos');
   const [filtroAprobacion, setFiltroAprobacion] = useState('Todos');
+  const [filtroCC, setFiltroCC] = useState('Todos');
+  const [filtroStatusCompra, setFiltroStatusCompra] = useState('Todos');
+  const [fechaDesde, setFechaDesde] = useState('');
+  const [fechaHasta, setFechaHasta] = useState('');
 
   // --- LÓGICA DE CARGA DE USUARIO ACTUAL ---
   const obtenerSesionUsuario = useCallback(async () => {
@@ -101,24 +105,28 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
   // --- LÓGICA DE FILTRADO EN TIEMPO REAL ---
   const historialFiltrado = useMemo(() => {
     return historial.filter(req => {
-      const configEstado = {
-        'pendiente_area': { color: '#ef4444', texto: 'PENDIENTE ÁREA' },
-        'enviada_general': { color: '#eab308', texto: 'ENVIADA GENERAL' },
-        'aprobado_final': { color: '#22c55e', texto: 'APROBADO FINAL' },
-        'rechazada': { color: '#64748b', texto: 'RECHAZADA' }
-      };
-      const estado = configEstado[req.estado_aprobacion] || { color: '#94a3b8', texto: 'DESCONOCIDO' };
-
       const matchTexto =
         req.solicitante.toLowerCase().includes(busqueda.toLowerCase()) ||
         req.correlativo.toLowerCase().includes(busqueda.toLowerCase());
 
       const matchDepto = filtroDepto === 'Todos' || req.gerencia === filtroDepto;
       const matchStatus = filtroAprobacion === 'Todos' || req.estado_aprobacion === filtroAprobacion;
+      const matchCC = filtroCC === 'Todos' || req.centroCosto.includes(filtroCC);
+      const matchStatusCompra = filtroStatusCompra === 'Todos' || req.status.toUpperCase() === filtroStatusCompra.toUpperCase();
 
-      return matchTexto && matchDepto && matchStatus;
+      let matchFecha = true;
+      if (fechaDesde && req.fecha < fechaDesde) matchFecha = false;
+      if (fechaHasta && req.fecha > fechaHasta) matchFecha = false;
+
+      return matchTexto && matchDepto && matchStatus && matchCC && matchStatusCompra && matchFecha;
+    }).sort((a, b) => {
+      // Prioridad Alta primero
+      if (a.prioridad === 'Alta' && b.prioridad !== 'Alta') return -1;
+      if (a.prioridad !== 'Alta' && b.prioridad === 'Alta') return 1;
+      // Luego por fecha desc (ya viene ordenado de BD, pero por si acaso)
+      return new Date(b.fecha) - new Date(a.fecha);
     });
-  }, [historial, busqueda, filtroDepto, filtroAprobacion]);
+  }, [historial, busqueda, filtroDepto, filtroAprobacion, filtroCC, filtroStatusCompra, fechaDesde, fechaHasta]);
 
   // --- ESTADOS DEL FORMULARIO ---
   const [prioridad, setPrioridad] = useState('Normal');
@@ -132,6 +140,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
   const [renglones, setRenglones] = useState([
     { id: Date.now(), clasificacion: '', categoria: '', cant: 1, uni: 'UNID', descripcion: '', beneficiario: '', pu: 0, total: 0, status: 'En Espera' }
   ]);
+  const [previewCorrelativo, setPreviewCorrelativo] = useState('');
 
   // --- LISTAS DE REFERENCIA ---
   const listaCentrosCostos = [
@@ -145,6 +154,30 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
     { id: '1.00.1', nombre: 'OFICINA PRINCIPAL MCBO' },
     { id: '0', nombre: 'INVERSIONES Y OTROS' }
   ];
+
+  const mappingCentrosCosto = {
+    "MTTO MAYOR-BOSCAN": "MMB", "MTTO MAYOR-BAJO GRANDE": "MMBG",
+    "EXCELENCIA OPERACIONAL": "EXO", "CAMIONES DE VACÍO-BOSCAN": "CVB",
+    "CAMIONES DE VACÍO-BAJO G.": "CVBG", "PROYECTOS MENORES": "PYM",
+    "SUCURSAL EL TIGRE": "SET", "OFICINA PRINCIPAL MCBO": "OPM", "INVERSIONES Y OTROS": "INV"
+  };
+
+  const mappingSiglasGerencia = {
+    "Administración Maracaibo": "ADM-MCB",
+    "Administración El Tigre": "ADM-TGR",
+    "Operaciones": "OPE",
+    "Mantenimiento": "MTT",
+    "Seguridad": "SHA",
+    "SIAHO": "SHA",
+    "Recursos Humanos": "RRH",
+    "Estimación": "EST",
+    "Estimación y Control": "EST",
+    "Almacén": "ALM",
+    "Gerencia General": "GG",
+    "Servicios Generales": "SVG",
+    "Contabilidad": "CNT",
+    "Compras": "CMP"
+  };
 
   const listaGerencias = [
     "Administración Maracaibo", "Administración El Tigre", "Operaciones", "Mantenimiento",
@@ -172,6 +205,10 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
     return { texto: 'EN ESPERA', color: '#64748b' };
   };
 
+  const getInitials = (nombre, apellido) => {
+    return `${nombre?.charAt(0) || ''}${apellido?.charAt(0) || ''}`.toUpperCase();
+  };
+
   const estadoGlobal = obtenerEstadoGlobal();
 
   // --- EFECTOS DE SINCRONIZACIÓN ---
@@ -196,6 +233,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
             cant: Number(p.cant) || 1,
             uni: p.uni || 'UNID',
             descripcion: p.desc || '',
+            beneficiario: p.ben || '',
             pu: Number(p.puUsd || p.puBs || 0),
             total: (Number(p.cant) || 1) * Number(p.puUsd || p.puBs || 0),
             status: 'En Espera'
@@ -215,6 +253,32 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
     if (seleccionado) setCentroCostoNombre(seleccionado.nombre);
   }, [centroCostoID]);
 
+  // --- LÓGICA DE PREVIEW DE CORRELATIVO ---
+  useEffect(() => {
+    const actualizarPreview = async () => {
+      if (!showModal || editandoId) return;
+      const sigla = mappingSiglasGerencia[departamento] || 'REQ';
+      const { data } = await supabase
+        .from('requisiciones')
+        .select('correlativo_req')
+        .like('correlativo_req', `${sigla}-%`)
+        .order('correlativo_req', { ascending: false })
+        .limit(1);
+
+      let max = 0;
+      if (data && data.length > 0) {
+        const correlativoMax = data[0].correlativo_req;
+        const partes = correlativoMax.split('-');
+        if (partes.length === 2) {
+          const num = parseInt(partes[1], 10);
+          if (!isNaN(num)) max = num;
+        }
+      }
+      setPreviewCorrelativo(`${sigla}-${String(max + 1).padStart(4, '0')}`);
+    };
+    actualizarPreview();
+  }, [departamento, showModal, editandoId]);
+
   // --- MANEJADORES DE ACCIÓN ---
   const actualizarFila = (id, campo, valor) => {
     setRenglones(prev => prev.map(f => {
@@ -229,10 +293,40 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
     }));
   };
 
-  const manejarEliminar = async (id) => {
-    if (!window.confirm("¿Eliminar esta requisición de forma permanente?")) return;
+  const liberarPartidasFondos = async (requisicionId) => {
+    try {
+      const { error } = await supabase
+        .from('partidas_fondos')
+        .update({ status: 'Disponible', requisicion_id: null })
+        .eq('requisicion_id', requisicionId);
+      if (error) throw error;
+    } catch (err) {
+      console.error("Error al liberar partidas:", err.message);
+    }
+  };
+
+  const anularRequisicion = async (id) => {
+    if (!window.confirm('¿Estás seguro de ANULAR esta requisición? Los renglones asociados en Fondos quedarán disponibles nuevamente.')) return;
     setLoading(true);
     try {
+      const { error } = await supabase
+        .from('requisiciones')
+        .update({ estado_aprobacion: 'ANULADA', aprobacion_nombre: 'REQ. ANULADA' })
+        .eq('id', id);
+      if (error) throw error;
+
+      await liberarPartidasFondos(id);
+      
+      setHistorial(prev => prev.map(req => req.id === id ? { ...req, estado_aprobacion: 'ANULADA' } : req));
+      alert('Requisición ANULADA correctamente.');
+    } catch (err) { alert(err.message); } finally { setLoading(false); }
+  };
+
+  const manejarEliminar = async (id) => {
+    if (!window.confirm("¿Eliminar esta requisición de forma permanente? Esta acción liberará los renglones en Fondos.")) return;
+    setLoading(true);
+    try {
+      await liberarPartidasFondos(id);
       const { error } = await supabase.from('requisiciones').delete().eq('id', id);
       if (error) throw error;
       alert("Eliminada correctamente.");
@@ -270,7 +364,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
     if (!editandoId || currentUser?.rol !== 'Gerente') return;
     const motivo = window.prompt('Indique el motivo del rechazo:');
     if (!motivo) return alert('El motivo de rechazo es obligatorio.');
-    
+
     setLoading(true);
     try {
       const { error } = await supabase.from('requisiciones').update({
@@ -385,6 +479,11 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
   const manejarGenerarOActualizar = async () => {
     setLoading(true);
     if (editandoId) {
+      if (!justificacion?.trim()) {
+        alert("La justificación es obligatoria.");
+        setLoading(false);
+        return;
+      }
       // Si está en modo edición (ej. re-enviando o corrigiendo)
       try {
         const { error } = await supabase.from('requisiciones').update({
@@ -405,7 +504,33 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
       return;
     }
 
-    const nuevoCorrelativo = `REQ-${String(historial.length + 1).padStart(3, '0')}`;
+    if (!justificacion?.trim()) {
+      alert("La justificación es obligatoria.");
+      setLoading(false);
+      return;
+    }
+
+    const siglaGerencia = mappingSiglasGerencia[departamento] || 'REQ';
+    
+    // --- LÓGICA DE CORRELATIVO INDEPENDIENTE ---
+    const { data: registrosMismaSigla } = await supabase
+      .from('requisiciones')
+      .select('correlativo_req')
+      .like('correlativo_req', `${siglaGerencia}-%`)
+      .order('correlativo_req', { ascending: false })
+      .limit(1);
+
+    let maxNumero = 0;
+    if (registrosMismaSigla && registrosMismaSigla.length > 0) {
+      const correlativoMax = registrosMismaSigla[0].correlativo_req;
+      const partes = correlativoMax.split('-');
+      if (partes.length === 2) {
+        const num = parseInt(partes[1], 10);
+        if (!isNaN(num)) maxNumero = num;
+      }
+    }
+    const nuevoCorrelativo = `${siglaGerencia}-${String(maxNumero + 1).padStart(4, '0')}`;
+
     const nuevaReqBD = {
       correlativo_req: nuevoCorrelativo,
       fecha_emision: new Date().toISOString(),
@@ -422,7 +547,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
       items: renglones,
       justificacion,
       observaciones,
-      origen: datosPredefinidos ? 'Sistema' : 'Manual'
+      origen: datosPredefinidos ? `REF: ${datosPredefinidos.id_control}` : 'Manual'
     };
 
     try {
@@ -430,16 +555,18 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
       if (error) throw error;
 
       // SI VIENE DE SOLICITUD DE FONDOS, VINCULAR LAS PARTIDAS USADAS
+      let idsPartidas = [];
       if (datosPredefinidos?.partidasSeleccionadas && nuevaReq) {
-        const idsPartidas = datosPredefinidos.partidasSeleccionadas.map(p => p.id);
+        idsPartidas = datosPredefinidos.partidasSeleccionadas.map(p => p.id);
         await supabase
           .from('partidas_fondos')
-          .update({ requisicion_id: nuevaReq.id })
+          .update({ requisicion_id: nuevaReq.id, status: 'Bloqueado' })
           .in('id', idsPartidas);
       }
 
       alert("Generada y guardada.");
       await cargarHistorialDesdeBD();
+      onSuccess?.(nuevaReq.id, idsPartidas);
       setShowModal(false);
       onClose?.();
       resetearFormulario();
@@ -482,9 +609,6 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
       <div className="table-container" style={{ marginBottom: '15px', padding: '15px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
           <h2 style={{ margin: 0, fontSize: '1.4rem', fontWeight: '700', color: '#1e293b' }}>Historial de Requisiciones</h2>
-          <button className="btn-tc btn-tc-primary" style={{ display: 'flex', alignItems: 'center', gap: '8px' }} onClick={() => { setEditandoId(null); setShowModal(true); }}>
-            <span>+ Nueva Requisición</span>
-          </button>
         </div>
 
         <div style={{
@@ -512,7 +636,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
             value={filtroDepto}
             onChange={(e) => setFiltroDepto(e.target.value)}
           >
-            <option value="Todos">Todas las Gerencias</option>
+            <option value="Todos">Gerencias</option>
             {listaGerencias.map(g => <option key={g} value={g}>{g}</option>)}
           </select>
 
@@ -522,12 +646,41 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
             value={filtroAprobacion}
             onChange={(e) => setFiltroAprobacion(e.target.value)}
           >
-            <option value="Todos">Todos los Estados</option>
+            <option value="Todos">Aprobación</option>
             <option value="pendiente_area">Pendiente Área</option>
             <option value="enviada_general">Enviada General</option>
             <option value="aprobado_final">Aprobado Final</option>
             <option value="rechazada">Rechazadas</option>
           </select>
+
+          <select
+            className="input-tc"
+            style={{ flex: 1, margin: 0, backgroundColor: 'white' }}
+            value={filtroCC}
+            onChange={(e) => setFiltroCC(e.target.value)}
+          >
+            <option value="Todos">C. Costo</option>
+            {listaCentrosCostos.map(cc => <option key={cc.id} value={cc.nombre}>{cc.nombre}</option>)}
+          </select>
+
+          <select
+            className="input-tc"
+            style={{ flex: 1, margin: 0, backgroundColor: 'white' }}
+            value={filtroStatusCompra}
+            onChange={(e) => setFiltroStatusCompra(e.target.value)}
+          >
+            <option value="Todos">Status</option>
+            <option value="EN ESPERA">EN ESPERA</option>
+            <option value="EN PROCESO">EN PROCESO</option>
+            <option value="COMPLETADO">COMPLETADO</option>
+          </select>
+
+          <div style={{ display: 'flex', gap: '5px', alignItems: 'center', backgroundColor: 'white', padding: '0 10px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
+            <span style={{ fontSize: '10px', fontWeight: 'bold', color: '#64748b' }}>DEL:</span>
+            <input type="date" value={fechaDesde} onChange={(e) => setFechaDesde(e.target.value)} style={{ border: 'none', fontSize: '12px', outline: 'none' }} />
+            <span style={{ fontSize: '10px', fontWeight: 'bold', color: '#64748b' }}>AL:</span>
+            <input type="date" value={fechaHasta} onChange={(e) => setFechaHasta(e.target.value)} style={{ border: 'none', fontSize: '12px', outline: 'none' }} />
+          </div>
         </div>
       </div>
 
@@ -561,10 +714,11 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
                     <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
                       <div style={{
                         width: '10px', height: '10px', borderRadius: '50%',
-                        backgroundColor: 
-                          req.estado_aprobacion === 'aprobado_final' ? '#22c55e' : 
-                          req.estado_aprobacion === 'enviada_general' ? '#eab308' :
-                          req.estado_aprobacion === 'rechazada' ? '#64748b' : '#ef4444',
+                        backgroundColor:
+                          req.estado_aprobacion === 'aprobado_final' ? '#22c55e' :
+                            req.estado_aprobacion === 'enviada_general' ? '#eab308' :
+                              req.estado_aprobacion === 'ANULADA' ? '#94a3b8' :
+                                req.estado_aprobacion === 'rechazada' ? '#64748b' : '#ef4444',
                         boxShadow: '0 0 5px rgba(0,0,0,0.1)'
                       }}></div>
                       <span style={{ fontSize: '0.7rem', fontWeight: '800', textTransform: 'uppercase' }}>
@@ -574,13 +728,28 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
                   </td>
                 )}
                 <td><span style={{ backgroundColor: '#fef9c3', color: '#854d0e', padding: '4px 10px', borderRadius: '12px', fontSize: '0.65rem', fontWeight: 'bold' }}>{req.status}</span></td>
-                <td><span style={{ color: req.prioridad === 'Alta' ? 'var(--danger)' : 'var(--primary)', fontWeight: 'bold' }}>{req.prioridad}</span></td>
+                <td>
+                  <span style={{
+                    backgroundColor: req.prioridad === 'Alta' ? '#fee2e2' : '#e0f2fe',
+                    color: req.prioridad === 'Alta' ? '#ef4444' : '#0ea5e9',
+                    padding: '4px 10px',
+                    borderRadius: '12px',
+                    fontSize: '0.7rem',
+                    fontWeight: '900',
+                    border: `1px solid ${req.prioridad === 'Alta' ? '#fecaca' : '#bae6fd'}`
+                  }}>
+                    {req.prioridad === 'Alta' ? '⚠️ ALTA' : 'NORMAL'}
+                  </span>
+                </td>
                 <td style={{ fontWeight: 'bold' }}>Bs. {req.total?.toLocaleString('de-DE')}</td>
                 <td style={{ textAlign: 'center' }}>
                   <div style={{ display: 'flex', justifyContent: 'center', gap: '15px' }}>
-                    <button onClick={() => verRequisicion(req)} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '1.2rem' }}>👁️</button>
-                    {currentUser?.esAdminReal && (
-                      <button onClick={() => manejarEliminar(req.id)} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '1.2rem' }}>🗑️</button>
+                    <button onClick={() => verRequisicion(req)} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '1.2rem' }} title="Ver Detalles">👁️</button>
+                    {req.estado_aprobacion !== 'ANULADA' && (
+                      <button onClick={() => anularRequisicion(req.id)} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '1.2rem' }} title="Anular Requisición">🚫</button>
+                    )}
+                    {(currentUser?.esAdminReal || currentUser?.rol === 'Gerente') && (
+                      <button onClick={() => manejarEliminar(req.id)} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '1.2rem' }} title="Borrar Registro">🗑️</button>
                     )}
                   </div>
                 </td>
@@ -599,6 +768,11 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
                   <h2 style={{ margin: 0, color: 'var(--slate-900)' }}>Requisición de Recursos</h2>
+                  {(datosPredefinidos?.id_control || (editandoId && historial.find(h => h.id === editandoId)?.origen?.startsWith('REF:'))) && (
+                    <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#64748b', marginTop: '4px' }}>
+                      {datosPredefinidos?.id_control ? `REF: ${datosPredefinidos.id_control}` : historial.find(h => h.id === editandoId)?.origen}
+                    </div>
+                  )}
                   <div className="status-purchase-badge" style={{ marginTop: '8px' }}>
                     <span className="stat-label" style={{ fontSize: '9px' }}>STATUS COMPRA:</span>
                     <span style={{ fontSize: '10px', color: estadoGlobal.color, fontWeight: '900' }}>{estadoGlobal.texto}</span>
@@ -609,7 +783,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
                   <button className={`btn-tc ${prioridad === 'Normal' ? 'btn-tc-primary' : 'btn-tc-secondary'}`} onClick={() => setPrioridad('Normal')}>NORMAL</button>
                   <button className={`btn-tc ${prioridad === 'Alta' ? 'btn-tc-danger' : 'btn-tc-secondary'}`} onClick={() => setPrioridad('Alta')}>ALTA</button>
                   <div style={{ backgroundColor: '#fef08a', padding: '10px 15px', borderRadius: '8px', fontWeight: '900' }}>
-                    N° {editandoId ? historial.find(h => h.id === editandoId)?.correlativo.split('-')[1] : String(historial.length + 1).padStart(3, '0')}
+                    {editandoId ? (historial.find(h => h.id === editandoId)?.correlativo) : previewCorrelativo}
                   </div>
                 </div>
               </div>
@@ -623,12 +797,19 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
                 </div>
                 <div>
                   <label className="stat-label">SOLICITANTE</label>
-                  <input 
-                    className="input-tc" 
-                    type="text" 
-                    value={solicitante} 
-                    onChange={(e) => setSolicitante(e.target.value)} 
-                  />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '5px' }}>
+                    <div style={{
+                      width: '32px', height: '32px', borderRadius: '50%',
+                      backgroundColor: 'var(--primary)', color: 'white',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: '0.75rem', fontWeight: 'bold'
+                    }}>
+                      {getInitials(currentUser?.nombre, currentUser?.apellido)}
+                    </div>
+                    <span style={{ fontSize: '1rem', fontWeight: '600', color: 'var(--slate-800)' }}>
+                      {solicitante}
+                    </span>
+                  </div>
                 </div>
                 <div>
                   <label className="stat-label">CENTRO DE COSTOS</label>
@@ -645,8 +826,15 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
               </div>
 
               <div style={{ marginBottom: '15px' }}>
-                <label className="stat-label">JUSTIFICACIÓN DE LA SOLICITUD</label>
-                <input className="input-tc" type="text" value={justificacion} onChange={(e) => setJustificacion(e.target.value)} />
+                <label className="stat-label">JUSTIFICACIÓN DE LA SOLICITUD <span style={{ color: 'var(--danger)' }}>*</span></label>
+                <input
+                  className="input-tc"
+                  type="text"
+                  value={justificacion}
+                  onChange={(e) => setJustificacion(e.target.value)}
+                  placeholder="Explique el motivo de la requisición (Obligatorio)"
+                  required
+                />
               </div>
 
               {/* CAMPO DE OBSERVACIONES */}
@@ -681,6 +869,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
                     <th>CANT.</th>
                     <th>UNI.</th>
                     <th>DESCRIPCIÓN</th>
+                    <th style={{ width: '150px' }}>BENEFICIARIO</th>
                     <th style={{ textAlign: 'right' }}>P.U.</th>
                     <th style={{ textAlign: 'right' }}>TOTAL</th>
                     <th>STATUS</th>
@@ -708,6 +897,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
                           </select>
                         </td>
                         <td><input className="input-tc" value={f.descripcion} onChange={(e) => actualizarFila(f.id, 'descripcion', e.target.value)} /></td>
+                        <td><input className="input-tc" value={f.beneficiario} onChange={(e) => actualizarFila(f.id, 'beneficiario', e.target.value)} placeholder="Beneficiario" /></td>
                         <td><input className="input-tc" type="number" value={f.pu} style={{ textAlign: 'right' }} onChange={(e) => actualizarFila(f.id, 'pu', e.target.value)} /></td>
                         <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{f.total.toLocaleString('de-DE')}</td>
                         <td>
@@ -748,7 +938,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
                 </tbody>
               </table>
 
-              <button className="btn-add-row" onClick={() => setRenglones([...renglones, { id: Date.now(), status: 'En Espera', cant: 1, uni: 'UNID', pu: 0, total: 0 }])}>
+              <button className="btn-add-row" onClick={() => setRenglones([...renglones, { id: Date.now(), status: 'En Espera', cant: 1, uni: 'UNID', descripcion: '', beneficiario: '', pu: 0, total: 0 }])}>
                 + AÑADIR RENGLÓN
               </button>
 
@@ -756,11 +946,11 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
                 <div className="totals-container">
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
                     <span className="stat-label">SUB-TOTAL:</span>
-                    <span style={{ fontWeight: 'bold' }}>Bs. {subTotal.toLocaleString('de-DE')}</span>
+                    <span style={{ fontWeight: 'bold' }}>$ {subTotal.toLocaleString('de-DE')}</span>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '2px solid var(--slate-200)', paddingTop: '10px' }}>
                     <span style={{ fontWeight: '900' }}>TOTAL GENERAL:</span>
-                    <span style={{ fontSize: '1.2rem', fontWeight: '900', color: 'var(--primary)' }}>Bs. {totalGeneral.toLocaleString('de-DE')}</span>
+                    <span style={{ fontSize: '1.2rem', fontWeight: '900', color: 'var(--primary)' }}>$ {totalGeneral.toLocaleString('de-DE')}</span>
                   </div>
                 </div>
               </div>
@@ -798,38 +988,38 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
                   {editandoId ? (
                     <>
                       {/* ACCIONES PARA ANALISTA / COORDINADOR (Re-enviar si está rechazada) */}
-                      {(currentUser?.rol === 'Analista' || currentUser?.rol === 'Coordinador') && 
+                      {(currentUser?.rol === 'Analista' || currentUser?.rol === 'Coordinador') &&
                         historial.find(h => h.id === editandoId)?.estado_aprobacion === 'rechazada' && (
-                        <button className="btn-tc btn-tc-primary" onClick={manejarReenviar} disabled={loading}>
-                          {loading ? <Loader2 className="animate-spin" size={16} /> : 'MODIFICAR Y RE-ENVIAR'}
-                        </button>
-                      )}
+                          <button className="btn-tc btn-tc-primary" onClick={manejarReenviar} disabled={loading}>
+                            {loading ? <Loader2 className="animate-spin" size={16} /> : 'MODIFICAR Y RE-ENVIAR'}
+                          </button>
+                        )}
 
                       {/* BOTONES PARA GERENTE DE ÁREA (Nivel 1) */}
-                      {currentUser?.rol === 'Gerente' && 
+                      {currentUser?.rol === 'Gerente' &&
                         historial.find(h => h.id === editandoId)?.estado_aprobacion === 'pendiente_area' && (
-                        <>
-                          <button className="btn-tc btn-tc-danger" onClick={manejarRechazarGerenteArea} disabled={loading}>
-                            {loading ? <Loader2 className="animate-spin" size={16} /> : 'RECHAZAR'}
-                          </button>
-                          <button className="btn-tc btn-tc-success" onClick={manejarAprobarGerenteArea} disabled={loading}>
-                            {loading ? <Loader2 className="animate-spin" size={16} /> : '✓ APROBAR ÁREA'}
-                          </button>
-                        </>
-                      )}
+                          <>
+                            <button className="btn-tc btn-tc-danger" onClick={manejarRechazarGerenteArea} disabled={loading}>
+                              {loading ? <Loader2 className="animate-spin" size={16} /> : 'RECHAZAR'}
+                            </button>
+                            <button className="btn-tc btn-tc-success" onClick={manejarAprobarGerenteArea} disabled={loading}>
+                              {loading ? <Loader2 className="animate-spin" size={16} /> : '✓ APROBAR ÁREA'}
+                            </button>
+                          </>
+                        )}
 
                       {/* BOTONES PARA GERENTE GENERAL (Nivel 2) */}
-                      {(currentUser?.rol === 'Gerente General' || currentUser?.esAdminReal) && 
-                         historial.find(h => h.id === editandoId)?.estado_aprobacion === 'enviada_general' && (
-                        <>
-                          <button className="btn-tc btn-tc-danger" onClick={manejarRechazarGeneral} disabled={loading}>
-                            {loading ? <Loader2 className="animate-spin" size={16} /> : 'RECHAZAR'}
-                          </button>
-                          <button className="btn-tc btn-tc-success" onClick={manejarAprobarGeneral} disabled={loading}>
-                            {loading ? <Loader2 className="animate-spin" size={16} /> : '✓ APROBACIÓN FINAL'}
-                          </button>
-                        </>
-                      )}
+                      {(currentUser?.rol === 'Gerente General' || currentUser?.esAdminReal) &&
+                        historial.find(h => h.id === editandoId)?.estado_aprobacion === 'enviada_general' && (
+                          <>
+                            <button className="btn-tc btn-tc-danger" onClick={manejarRechazarGeneral} disabled={loading}>
+                              {loading ? <Loader2 className="animate-spin" size={16} /> : 'RECHAZAR'}
+                            </button>
+                            <button className="btn-tc btn-tc-success" onClick={manejarAprobarGeneral} disabled={loading}>
+                              {loading ? <Loader2 className="animate-spin" size={16} /> : '✓ APROBACIÓN FINAL'}
+                            </button>
+                          </>
+                        )}
                     </>
                   ) : (
                     <button className="btn-tc btn-tc-primary" onClick={manejarGenerarOActualizar} disabled={loading}>
@@ -842,7 +1032,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos }) => {
           </div>
         </div>
       )}
-      </motion.div>
-    );
+    </motion.div>
+  );
 };
 export default Requisiciones;

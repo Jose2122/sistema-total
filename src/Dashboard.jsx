@@ -5,6 +5,7 @@ import Requisiciones from './Requisiciones';
 import Usuarios from './Usuarios';
 import SolicitudFondos from './SolicitudFondos';
 import TicketExpress from './TicketExpress';
+import Compras from './Compras';
 
 function Dashboard() {
   const navigate = useNavigate();
@@ -103,6 +104,7 @@ function Dashboard() {
     if (seccionActiva === 'usuarios') return <Usuarios />;
     if (seccionActiva === 'fondos') return <SolicitudFondos />;
     if (seccionActiva === 'tickets') return <TicketExpress />;
+    if (seccionActiva === 'compras') return <Compras />;
 
     const current = config[seccionActiva] || config.dashboard;
 

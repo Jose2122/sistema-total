@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from './supabaseClient';
 import Requisiciones from './Requisiciones';
 import TicketExpress from './TicketExpress';
@@ -48,20 +48,15 @@ const StockSmartTotalClean = () => {
   // --- LÓGICA DE SIGLAS GERENCIA ---
   const obtenerSiglas = (nombreGerencia) => {
     if (!nombreGerencia) return '---';
-    const mapeo = {
-      "Operaciones": "O",
-      "Mantenimiento": "M",
-      "Seguridad": "S",
-      "Recursos Humanos": "RRHH",
-      "Estimación": "E",
-      "Almacén": "ALM",
-      "Servicios Generales": "SG",
-      "Administración Maracaibo": "ADM-MCBO",
-      "Administración El Tigre": "ADM-ET",
-      "Gerencia General": "GG",
-      "Contabilidad": "C"
+    const mappingGerencias = {
+      "Administración Maracaibo": "ADM-MCB", "Administración El Tigre": "ADM-TGR",
+      "Operaciones": "OPE", "Mantenimiento": "MTT", "Seguridad": "SHA",
+      "SIAHO": "SHA",
+      "Recursos Humanos": "RRH", "Estimación": "EST", "Almacén": "ALM",
+      "Gerencia General": "GG", "Servicios Generales": "SVG", "Contabilidad": "CNT",
+      "Compras": "CMP"
     };
-    return mapeo[nombreGerencia] || nombreGerencia.split(' ').map(w => w[0]).join('').toUpperCase();
+    return mappingGerencias[nombreGerencia] || "---";
   };
 
   // --- ESTADO INICIAL DEL FORMULARIO ---
@@ -78,6 +73,8 @@ const StockSmartTotalClean = () => {
 
   // --- ESTADO PARA FILTROS ---
   const [busqueda, setBusqueda] = useState("");
+  const [filtroGerencia, setFiltroGerencia] = useState("Todos");
+  const [filtroSemana, setFiltroSemana] = useState("");
 
   // --- FUNCIÓN PARA ELIMINAR ---
   const eliminarSolicitud = async (id_db) => {
@@ -99,12 +96,26 @@ const StockSmartTotalClean = () => {
   };
 
   // --- LÓGICA DE FILTRADO ---
-  const historialFiltrado = historial.filter(h =>
-    h.id.toLowerCase().includes(busqueda.toLowerCase()) ||
-    h.responsable.toLowerCase().includes(busqueda.toLowerCase()) ||
-    h.gerencia.toLowerCase().includes(busqueda.toLowerCase())
-  );
-  
+  const mappingGerenciasDropdown = {
+    "ADM-MCB": "Administración Maracaibo", "ADM-TGR": "Administración El Tigre",
+    "OPE": "Operaciones", "MTT": "Mantenimiento", "SHA": "Seguridad",
+    "RRH": "Recursos Humanos", "EST": "Estimación", "ALM": "Almacén",
+    "GG": "Gerencia General", "SVG": "Servicios Generales", "CNT": "Contabilidad", "CMP": "Compras"
+  };
+
+  const historialFiltrado = historial.filter(h => {
+    const matchTexto =
+      h.id.toLowerCase().includes(busqueda.toLowerCase()) ||
+      h.responsable.toLowerCase().includes(busqueda.toLowerCase());
+
+    const matchGerencia = filtroGerencia === "Todos" || h.id.startsWith(filtroGerencia);
+
+    // Filtro por semana (si se ingresa un número, buscar en el ID)
+    const matchSemana = !filtroSemana || h.id.includes(`SEMANA ${filtroSemana}`);
+
+    return matchTexto && matchGerencia && matchSemana;
+  });
+
   const obtenerSesionUsuario = async () => {
     const { data: { session } } = await supabase.auth.getSession();
     if (session?.user?.email) {
@@ -122,92 +133,93 @@ const StockSmartTotalClean = () => {
     }
   };
 
+  const cargarTodo = useCallback(async () => {
+    setLoading(true);
+
+    // Asegurar que tenemos al usuario antes de filtrar
+    let userContext = currentUser;
+    if (!userContext) {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user?.email) {
+        const { data: perfil } = await supabase.from('perfiles').select('*').eq('correo', session.user.email).single();
+        const ADMIN_EMAIL = 'jcontreras.totalclean@gmail.com';
+        userContext = { ...perfil, esAdminReal: session.user.email === ADMIN_EMAIL };
+        setCurrentUser(userContext);
+      }
+    }
+
+    if (!userContext) {
+      setLoading(false);
+      return;
+    }
+
+    // Cargar lista de responsables (Gerentes, Coordinadores, Analistas)
+    const { data: dataGerentes } = await supabase
+      .from('perfiles')
+      .select('nombre, apellido, departamento')
+      .in('rol', ['Gerente', 'Coordinador', 'Analista'])
+      .order('nombre');
+    if (dataGerentes) setGerentesDisponibles(dataGerentes);
+
+    let query = supabase.from('solicitudes_fondos').select('*');
+
+    // REGLAS DE JERARQUÍA — Solo Gerentes crean solicitudes de fondos
+    if (!userContext.esAdminReal && userContext.rol !== 'Gerente General') {
+      if (userContext.rol === 'Gerente' || userContext.rol === 'Coordinador' || userContext.rol === 'Analista') {
+        // Ven todo lo de su departamento/gerencia
+        query = query.eq('gerencia_nombre', userContext.departamento);
+      } else {
+        // Otros roles: solo lo propio
+        query = query.eq('responsable_nombre', `${userContext.nombre} ${userContext.apellido}`);
+      }
+    }
+
+    const { data: dataHist } = await query.order('created_at', { ascending: false });
+
+    if (dataHist) {
+      setHistorial(dataHist.map(h => ({
+        ...h,
+        id_db: h.id,
+        id: h.codigo_control,
+        total: parseFloat(h.total_usd || 0) + parseFloat(h.total_bs || 0),
+        responsable: h.responsable_nombre,
+        gerencia: h.gerencia_nombre
+      })));
+    }
+
+    const { data: dataCC } = await supabase.from('maestros_centros_costo').select('nombre').eq('activo', true).order('nombre');
+    if (dataCC) setCentrosCosto(dataCC.map(c => c.nombre));
+
+    const { data: dataClas } = await supabase
+      .from('maestros_clasificaciones')
+      .select('nombre, maestros_centros_costo(nombre)')
+      .eq('activo', true);
+
+    if (dataClas) {
+      setTodasClasificaciones(dataClas.filter(c => c.maestros_centros_costo).map(c => ({
+        nombre: c.nombre,
+        padre: c.maestros_centros_costo.nombre
+      })));
+    }
+
+    const { data: dataSub } = await supabase
+      .from('maestros_sub_clasificaciones')
+      .select('nombre, maestros_clasificaciones(nombre)')
+      .eq('activo', true);
+
+    if (dataSub) {
+      setTodasCategorias(dataSub.filter(s => s.maestros_clasificaciones).map(s => ({
+        nombre: s.nombre,
+        padre: s.maestros_clasificaciones.nombre
+      })));
+    }
+    setLoading(false);
+  }, [currentUser]);
+
   // --- EFECTO DE CARGA INICIAL ---
   useEffect(() => {
-    const cargarTodo = async () => {
-      setLoading(true);
-      
-      // Asegurar que tenemos al usuario antes de filtrar
-      let userContext = currentUser;
-      if (!userContext) {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session?.user?.email) {
-          const { data: perfil } = await supabase.from('perfiles').select('*').eq('correo', session.user.email).single();
-          const ADMIN_EMAIL = 'jcontreras.totalclean@gmail.com';
-          userContext = { ...perfil, esAdminReal: session.user.email === ADMIN_EMAIL };
-          setCurrentUser(userContext);
-        }
-      }
-
-      if (!userContext) {
-        setLoading(false);
-        return;
-      }
-
-      // Cargar lista de responsables (Gerentes, Coordinadores, Analistas)
-      const { data: dataGerentes } = await supabase
-        .from('perfiles')
-        .select('nombre, apellido, departamento')
-        .in('rol', ['Gerente', 'Coordinador', 'Analista'])
-        .order('nombre');
-      if (dataGerentes) setGerentesDisponibles(dataGerentes);
-
-      let query = supabase.from('solicitudes_fondos').select('*');
-
-      // REGLAS DE JERARQUÍA — Solo Gerentes crean solicitudes de fondos
-      if (!userContext.esAdminReal && userContext.rol !== 'Gerente General') {
-        if (userContext.rol === 'Gerente' || userContext.rol === 'Coordinador' || userContext.rol === 'Analista') {
-          // Ven todo lo de su departamento/gerencia
-          query = query.eq('gerencia_nombre', userContext.departamento);
-        } else {
-          // Otros roles: solo lo propio
-          query = query.eq('responsable_nombre', `${userContext.nombre} ${userContext.apellido}`);
-        }
-      }
-
-      const { data: dataHist } = await query.order('created_at', { ascending: false });
-
-      if (dataHist) {
-        setHistorial(dataHist.map(h => ({
-          ...h,
-          id_db: h.id,
-          id: h.codigo_control,
-          total: parseFloat(h.total_usd || 0) + parseFloat(h.total_bs || 0),
-          responsable: h.responsable_nombre,
-          gerencia: h.gerencia_nombre
-        })));
-      }
-
-      const { data: dataCC } = await supabase.from('maestros_centros_costo').select('nombre').eq('activo', true).order('nombre');
-      if (dataCC) setCentrosCosto(dataCC.map(c => c.nombre));
-
-      const { data: dataClas } = await supabase
-        .from('maestros_clasificaciones')
-        .select('nombre, maestros_centros_costo(nombre)')
-        .eq('activo', true);
-
-      if (dataClas) {
-        setTodasClasificaciones(dataClas.filter(c => c.maestros_centros_costo).map(c => ({
-          nombre: c.nombre,
-          padre: c.maestros_centros_costo.nombre
-        })));
-      }
-
-      const { data: dataSub } = await supabase
-        .from('maestros_sub_clasificaciones')
-        .select('nombre, maestros_clasificaciones(nombre)')
-        .eq('activo', true);
-
-      if (dataSub) {
-        setTodasCategorias(dataSub.filter(s => s.maestros_clasificaciones).map(s => ({
-          nombre: s.nombre,
-          padre: s.maestros_clasificaciones.nombre
-        })));
-      }
-      setLoading(false);
-    };
     cargarTodo();
-  }, [currentUser]);
+  }, [cargarTodo]);
 
   useEffect(() => {
     if (showModal && !isEditing && currentUser) {
@@ -249,24 +261,26 @@ const StockSmartTotalClean = () => {
           puUsd: p.pu_usd,
           pago_realizado: p.pago_realizado || false,
           requisicion_id: p.requisicion_id || null,
+          status: p.status || 'Disponible',
           selected: false
         })),
         imprevistos: partidasRaw.filter(p => p.clasificacion.includes('[*]') || p.clasificacion === 'Gastos Imprevistos' || p.clasificacion === 'Ticket de Pago' || p.clasificacion === 'Solicitud de ticket').length > 0
           ? partidasRaw.filter(p => p.clasificacion.includes('[*]') || p.clasificacion === 'Gastos Imprevistos' || p.clasificacion === 'Ticket de Pago' || p.clasificacion === 'Solicitud de ticket').map(p => ({
-              id: p.id,
-              cc: p.centro_costo,
-              clasif: p.clasificacion.replace(' [*]', ''),
-              cat: p.categoria,
-              cant: p.cantidad,
-              uni: p.unidad,
-              desc: p.descripcion,
-              ben: p.beneficiario,
-              puBs: p.pu_bs,
-              puUsd: p.pu_usd,
-              pago_realizado: p.pago_realizado || false,
-              requisicion_id: p.requisicion_id || null,
-              selected: false
-            }))
+            id: p.id,
+            cc: p.centro_costo,
+            clasif: p.clasificacion.replace(' [*]', ''),
+            cat: p.categoria,
+            cant: p.cantidad,
+            uni: p.unidad,
+            desc: p.descripcion,
+            ben: p.beneficiario,
+            puBs: p.pu_bs,
+            puUsd: p.pu_usd,
+            pago_realizado: p.pago_realizado || false,
+            requisicion_id: p.requisicion_id || null,
+            status: p.status || 'Disponible',
+            selected: false
+          }))
           : [{ id: Date.now() + 1, selected: false, cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '', pago_realizado: false }]
       });
       if (partidasRaw.some(p => p.clasificacion === 'Gastos Imprevistos' || p.clasificacion === 'Ticket de Pago')) {
@@ -309,9 +323,7 @@ const StockSmartTotalClean = () => {
 
   const numSemana = getWeekNumber(form.fecha);
   const siglasGerencia = obtenerSiglas(form.gerencia);
-  const idBase = `${siglasGerencia} - SEMANA ${numSemana}`;
-  // Si es nuevo, le agregamos un prefijo de tiempo corto para asegurar unicidad
-  const idDinamico = isEditing ? form.id : `${idBase} / ${Date.now().toString().slice(-4)}`;
+  const idDinamico = isEditing ? form.id : `${siglasGerencia} - SEMANA ${numSemana}`;
 
   const sumas = {
     bs: form.partidas.reduce((acc, p) => acc + (parseFloat(p.puBs) || 0) * (p.cant || 1), 0) +
@@ -324,8 +336,23 @@ const StockSmartTotalClean = () => {
 
   const registrarOActualizar = async () => {
     try {
+      let finalCodigoControl = idDinamico;
+
+      // --- VALIDACIÓN DE UNICIDAD SEMANAL (NO DUPLICADOS) ---
+      if (!isEditing) {
+        const { data: checkData } = await supabase
+          .from('solicitudes_fondos')
+          .select('id')
+          .eq('codigo_control', idDinamico);
+
+        if (checkData && checkData.length > 0) {
+          return alert("Ya existe una Solicitud de Fondo para esta semana. Por favor, edite la existente para evitar redundancias.");
+        }
+        finalCodigoControl = idDinamico;
+      }
+
       const cabecera = {
-        codigo_control: idDinamico,
+        codigo_control: finalCodigoControl,
         fecha_operativa: form.fecha,
         sede: form.sede,
         gerencia_nombre: form.gerencia,
@@ -359,7 +386,9 @@ const StockSmartTotalClean = () => {
         beneficiario: p.ben,
         pu_bs: parseFloat(p.puBs) || 0,
         pu_usd: parseFloat(p.puUsd) || 0,
-        pago_realizado: p.pago_realizado || false
+        pago_realizado: p.pago_realizado || false,
+        requisicion_id: p.requisicion_id || null,
+        status: p.status || 'Disponible'
       }));
 
       if (mostrarImprevistos) {
@@ -375,7 +404,9 @@ const StockSmartTotalClean = () => {
           beneficiario: imp.ben,
           pu_bs: parseFloat(imp.puBs) || 0,
           pu_usd: parseFloat(imp.puUsd) || 0,
-          pago_realizado: imp.pago_realizado || false
+          pago_realizado: imp.pago_realizado || false,
+          requisicion_id: imp.requisicion_id || null,
+          status: imp.status || 'Disponible'
         }));
         renglones.push(...renglonesImprevistos);
       }
@@ -384,19 +415,45 @@ const StockSmartTotalClean = () => {
       if (errorPartidas) throw errorPartidas;
 
       alert("¡Guardado con éxito!");
-      window.location.reload();
+      await cargarTodo();
+      setShowModal(false);
     } catch (err) {
       alert("Error al guardar: " + err.message);
     }
   };
 
+  const handleRequisicionFinalizada = (nuevaReqId, idsPartidas) => {
+    // Actualizar estado local para evitar recarga
+    const actualizarLista = (lista) => lista.map(p =>
+      idsPartidas.includes(p.id) ? { ...p, status: 'Bloqueado', requisicion_id: nuevaReqId, selected: false } : p
+    );
+
+    setForm(prev => ({
+      ...prev,
+      partidas: actualizarLista(prev.partidas),
+      imprevistos: actualizarLista(prev.imprevistos)
+    }));
+
+    // Si queremos que desaparezcan del modal de selección, ya están filtrados por requisicion_id
+  };
+
   const handleCrearRequisicion = () => {
     const seleccionadas = form.partidas.filter(p => p.selected);
     if (seleccionadas.length === 0) return alert("Selecciona al menos una partida");
+
+    // VALIDACIÓN DE CC ÚNICO
+    const ccsUnicos = [...new Set(seleccionadas.map(p => p.cc).filter(cc => cc))];
+    if (ccsUnicos.length > 1) {
+      return alert("No se puede crear la requisición: Todos los ítems deben pertenecer al mismo Centro de Costo.");
+    }
+
     setDataParaReq({
       id_control: idDinamico, responsable: form.responsable, gerencia: form.gerencia,
       centro_costo: seleccionadas[0].cc, origen_proceso: `Generado desde Fondos: ${idDinamico}`,
-      justificacion: "", partidasSeleccionadas: seleccionadas
+      justificacion: "", partidasSeleccionadas: seleccionadas.map(p => ({
+        ...p,
+        ben: p.ben
+      }))
     });
     setAbrirReq(true);
   };
@@ -445,35 +502,65 @@ const StockSmartTotalClean = () => {
 
       <div style={{ backgroundColor: 'white', padding: '30px', borderRadius: '20px', boxShadow: '0 4px 20px rgba(0,0,0,0.02)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '25px', alignItems: 'center' }}>
-          <h2 style={{ fontSize: '1.3rem', color: '#1e293b', margin: 0 }}>Gestión de Solicitudes de fondo TotalClean</h2>
+          <h2 style={{ fontSize: '1.3rem', color: '#1e293b', margin: 0 }}>Gestión de Solicitudes </h2>
 
-          <div style={{ display: 'flex', gap: '15px' }}>
-            {/* INPUT DE FILTRO */}
+          <button onClick={() => {
+            setIsEditing(false);
+            setForm({
+              id: '',
+              fecha: new Date().toISOString().split('T')[0],
+              sede: 'MARACAIBO',
+              gerencia: currentUser?.departamento || '',
+              responsable: (['Gerente', 'Coordinador', 'Analista'].includes(currentUser?.rol) || currentUser?.esAdminReal)
+                ? `${currentUser.nombre} ${currentUser.apellido}`
+                : '',
+              partidas: [{ id: Date.now(), selected: false, cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '' }],
+              imprevistos: [{ id: Date.now() + 1, selected: false, cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '' }]
+            });
+            setMostrarImprevistos(false);
+            setShowModal(true);
+          }} style={{ padding: '12px 25px', backgroundColor: '#0ea5e9', color: 'white', border: 'none', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer' }}>+ Nueva Solicitud</button>
+        </div>
+
+        {/* BARRA DE FILTROS AL ESTILO REQUISICIONES */}
+        <div style={{
+          display: 'flex',
+          gap: '15px',
+          backgroundColor: '#f8fafc',
+          padding: '12px',
+          borderRadius: '12px',
+          border: '1px solid #e2e8f0',
+          marginBottom: '20px'
+        }}>
+          <div style={{ flex: 1.5, position: 'relative' }}>
+            <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }}>🔍</span>
             <input
               type="text"
-              placeholder="🔍 Buscar por ID, Responsable o Gerencia..."
+              placeholder="Buscar por ID o Responsable..."
               value={busqueda}
               onChange={(e) => setBusqueda(e.target.value)}
-              style={{ padding: '10px 15px', borderRadius: '10px', border: '1px solid #e2e8f0', width: '300px', fontSize: '13px' }}
+              style={{ width: '100%', padding: '10px 15px 10px 35px', borderRadius: '10px', border: '1px solid #e2e8f0', fontSize: '13px', boxSizing: 'border-box' }}
             />
-
-            <button onClick={() => {
-              setIsEditing(false);
-              setForm({
-                id: '',
-                fecha: new Date().toISOString().split('T')[0],
-                sede: 'MARACAIBO',
-                gerencia: currentUser?.departamento || '',
-                responsable: (['Gerente', 'Coordinador', 'Analista'].includes(currentUser?.rol) || currentUser?.esAdminReal)
-                  ? `${currentUser.nombre} ${currentUser.apellido}`
-                  : '',
-                partidas: [{ id: Date.now(), selected: false, cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '' }],
-                imprevistos: [{ id: Date.now() + 1, selected: false, cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '' }]
-              });
-              setMostrarImprevistos(false);
-              setShowModal(true);
-            }} style={{ padding: '12px 25px', backgroundColor: '#0ea5e9', color: 'white', border: 'none', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer' }}>+ Nueva Solicitud</button>
           </div>
+
+          <select
+            value={filtroGerencia}
+            onChange={(e) => setFiltroGerencia(e.target.value)}
+            style={{ flex: 1, padding: '10px', borderRadius: '10px', border: '1px solid #e2e8f0', fontSize: '13px', backgroundColor: 'white' }}
+          >
+            <option value="Todos">Todas las Gerencias (Siglas)</option>
+            {Object.keys(mappingGerenciasDropdown).map(sigla => (
+              <option key={sigla} value={sigla}>{sigla} - {mappingGerenciasDropdown[sigla]}</option>
+            ))}
+          </select>
+
+          <input
+            type="number"
+            placeholder="N° Semana (1-52)"
+            value={filtroSemana}
+            onChange={(e) => setFiltroSemana(e.target.value)}
+            style={{ flex: 0.8, padding: '10px', borderRadius: '10px', border: '1px solid #e2e8f0', fontSize: '13px', backgroundColor: 'white' }}
+          />
         </div>
 
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -503,13 +590,15 @@ const StockSmartTotalClean = () => {
                     >
                       Ver / Editar
                     </button>
-                    <button
-                      onClick={() => eliminarSolicitud(h.id_db)}
-                      style={{ color: '#ef4444', background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.1rem' }}
-                      title="Eliminar Solicitud"
-                    >
-                      🗑️
-                    </button>
+                    {(currentUser?.rol === 'Gerente' || currentUser?.esAdminReal) && (
+                      <button
+                        onClick={() => eliminarSolicitud(h.id_db)}
+                        style={{ color: '#ef4444', background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.1rem' }}
+                        title="Eliminar Solicitud"
+                      >
+                        🗑️
+                      </button>
+                    )}
                   </div>
                 </td>
               </tr>
@@ -532,8 +621,8 @@ const StockSmartTotalClean = () => {
                 <div style={{ background: '#0f172a', color: 'white', padding: '4px 12px', borderRadius: '6px', fontSize: '12px', display: 'inline-block', marginTop: '8px', fontWeight: 'bold' }}>ID: {idDinamico}</div>
               </div>
               <div style={{ display: 'flex', gap: '40px', textAlign: 'right' }}>
-                <div><label style={{ fontSize: '10px', fontWeight: 'bold', color: '#64748b' }}>SUB-TOTAL BS.</label><div style={{ fontSize: '1.2rem', fontWeight: 'bold', color: '#b45309' }}>Bs. {sumas.bs.toLocaleString('de-DE')}</div></div>
-                <div><label style={{ fontSize: '10px', fontWeight: 'bold', color: '#64748b' }}>SUB-TOTAL USD</label><div style={{ fontSize: '1.2rem', fontWeight: 'bold', color: '#15803d' }}>$ {sumas.usd.toLocaleString('de-DE')}</div></div>
+                <div><label style={{ fontSize: '10px', fontWeight: 'bold', color: '#64748b' }}>$ PAGADEROS EN BS</label><div style={{ fontSize: '1.2rem', fontWeight: 'bold', color: '#b45309' }}>$. {sumas.bs.toLocaleString('de-DE')}</div></div>
+                <div><label style={{ fontSize: '10px', fontWeight: 'bold', color: '#64748b' }}>$ PAGADEROS EN $</label><div style={{ fontSize: '1.2rem', fontWeight: 'bold', color: '#15803d' }}>$ {sumas.usd.toLocaleString('de-DE')}</div></div>
                 <div style={{ borderLeft: '2px solid #e2e8f0', paddingLeft: '30px' }}><label style={{ fontSize: '10px', fontWeight: '900', color: '#64748b' }}>TOTAL GENERAL</label><div style={{ fontSize: '2rem', fontWeight: '950', color: '#0f172a' }}>$ {(sumas.bs + sumas.usd).toLocaleString('de-DE')}</div></div>
               </div>
             </div>
@@ -612,26 +701,26 @@ const StockSmartTotalClean = () => {
                 <div style={{ width: '90px', padding: '12px' }}>UNID</div>
                 <div style={{ width: '460px', padding: '12px' }}>DESCRIPCIÓN DEL GASTO</div>
                 <div style={{ width: '200px', padding: '12px' }}>BENEFICIARIO</div>
-                <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>P.U BS</div>
-                <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>P.U USD</div>
+                <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>P.U $/BS</div>
+                <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>P.U $/$</div>
                 <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>TOTAL $</div>
                 <div style={{ width: '60px', padding: '12px', textAlign: 'center' }}>PAGO</div>
               </div>
 
               <div style={{ maxHeight: '40vh', overflowY: 'auto' }}>
                 {form.partidas.map((p, i) => (
-                  <div key={p.id} className="sf-table-row" style={{ 
-                    background: p.requisicion_id ? '#f1f5f9' : (p.selected ? '#e0f2fe' : 'transparent'),
-                    opacity: p.requisicion_id ? 1 : 1
+                  <div key={p.id} className="sf-table-row" style={{
+                    background: (p.requisicion_id || p.status === 'Bloqueado') ? '#f1f5f9' : (p.selected ? '#e0f2fe' : 'transparent'),
+                    opacity: 1
                   }}>
                     <div style={{ width: '40px', textAlign: 'center' }}>
-                      <input 
-                        type="checkbox" 
-                        checked={p.selected || false} 
-                        onChange={(e) => manejarCambioPartida(i, 'selected', e.target.checked)} 
-                        style={{ cursor: p.requisicion_id ? 'not-allowed' : 'pointer', transform: 'scale(1.2)' }} 
-                        disabled={!!p.requisicion_id}
-                        title={p.requisicion_id ? "Esta partida ya está vinculada a una requisición" : ""}
+                      <input
+                        type="checkbox"
+                        checked={p.selected || false}
+                        onChange={(e) => manejarCambioPartida(i, 'selected', e.target.checked)}
+                        style={{ cursor: (p.requisicion_id || p.status === 'Bloqueado') ? 'not-allowed' : 'pointer', transform: 'scale(1.2)' }}
+                        disabled={!!p.requisicion_id || p.status === 'Bloqueado'}
+                        title={(p.requisicion_id || p.status === 'Bloqueado') ? "Esta partida está bloqueada por una requisición activa" : ""}
                       />
                     </div>
                     <div style={{ width: '45px', textAlign: 'center', fontWeight: 'bold', color: '#94a3b8' }}>{i + 1}</div>
@@ -677,17 +766,17 @@ const StockSmartTotalClean = () => {
                 <div style={{ display: 'flex', alignItems: 'center', marginBottom: '15px' }}>
                   <div style={{ flex: 1, height: '2px', background: 'linear-gradient(90deg, transparent, #f59e0b, transparent)' }}></div>
                   <h3 style={{ margin: '0 20px', color: '#b45309', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <i className="fa-solid fa-triangle-exclamation"></i> Solicitud de ticket
+                    <i className="fa-solid fa-triangle-exclamation"></i> SOLICITUD DE TICKET DE PAGO
                   </h3>
                   <div style={{ flex: 1, height: '2px', background: 'linear-gradient(90deg, transparent, #f59e0b, transparent)' }}></div>
                 </div>
 
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '25px', marginBottom: '12px', padding: '0 10px' }}>
-                   <div style={{ background: '#fffbeb', border: '1px solid #fef3c7', padding: '5px 15px', borderRadius: '8px', display: 'flex', gap: '15px' }}>
-                      <span style={{ fontSize: '11px', fontWeight: 'bold', color: '#d97706' }}>TICKET DE PAGO:</span>
-                      <span style={{ fontSize: '11px', fontWeight: '800', color: '#b45309' }}>Bs. {sumas.imprevistosBs.toLocaleString('de-DE')}</span>
-                      <span style={{ fontSize: '11px', fontWeight: '800', color: '#b45309' }}>$ {sumas.imprevistosUsd.toLocaleString('de-DE')}</span>
-                   </div>
+                  <div style={{ background: '#fffbeb', border: '1px solid #fef3c7', padding: '5px 15px', borderRadius: '8px', display: 'flex', gap: '15px' }}>
+                    <span style={{ fontSize: '11px', fontWeight: 'bold', color: '#d97706' }}>BALANCE DE TICKET DE PAGO:</span>
+                    <span style={{ fontSize: '11px', fontWeight: '800', color: '#b45309' }}>$/Bs. {sumas.imprevistosBs.toLocaleString('de-DE')}</span>
+                    <span style={{ fontSize: '11px', fontWeight: '800', color: '#b45309' }}>$ {sumas.imprevistosUsd.toLocaleString('de-DE')}</span>
+                  </div>
                 </div>
 
                 <div className="sf-table-wrapper" style={{ border: '1px solid #fcd34d', boxShadow: '0 4px 15px rgba(245, 158, 11, 0.05)' }}>
@@ -700,26 +789,26 @@ const StockSmartTotalClean = () => {
                     <div style={{ width: '90px', padding: '12px' }}>UNID</div>
                     <div style={{ width: '460px', padding: '12px' }}>DESCRIPCIÓN DEL GASTO</div>
                     <div style={{ width: '200px', padding: '12px' }}>BENEFICIARIO</div>
-                    <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>P.U BS</div>
-                    <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>P.U USD</div>
+                    <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>P.U $/BS</div>
+                    <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>P.U $/$</div>
                     <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>TOTAL $</div>
                     <div style={{ width: '60px', padding: '12px', textAlign: 'center' }}>PAGO</div>
                   </div>
 
                   <div style={{ maxHeight: '30vh', overflowY: 'auto' }}>
                     {form.imprevistos.map((imp, i) => (
-                      <div key={imp.id} className="sf-table-row" style={{ 
-                        background: imp.requisicion_id ? '#f1f5f9' : (imp.selected ? '#fffcf0' : 'transparent'),
-                        opacity: imp.requisicion_id ? 1 : 1
+                      <div key={imp.id} className="sf-table-row" style={{
+                        background: (imp.requisicion_id || imp.status === 'Bloqueado') ? '#f1f5f9' : (imp.selected ? '#fffcf0' : 'transparent'),
+                        opacity: 1
                       }}>
                         <div style={{ width: '40px', textAlign: 'center' }}>
-                          <input 
-                            type="checkbox" 
-                            checked={imp.selected || false} 
-                            onChange={(e) => manejarCambioImprevisto(i, 'selected', e.target.checked)} 
-                            style={{ cursor: imp.requisicion_id ? 'not-allowed' : 'pointer', transform: 'scale(1.2)' }} 
-                            disabled={!!imp.requisicion_id}
-                            title={imp.requisicion_id ? "Esta partida ya está vinculada a una requisición" : ""}
+                          <input
+                            type="checkbox"
+                            checked={imp.selected || false}
+                            onChange={(e) => manejarCambioImprevisto(i, 'selected', e.target.checked)}
+                            style={{ cursor: (imp.requisicion_id || imp.status === 'Bloqueado') ? 'not-allowed' : 'pointer', transform: 'scale(1.2)' }}
+                            disabled={!!imp.requisicion_id || imp.status === 'Bloqueado'}
+                            title={(imp.requisicion_id || imp.status === 'Bloqueado') ? "Esta partida está bloqueada por una requisición activa" : ""}
                           />
                         </div>
                         <div style={{ width: '45px', textAlign: 'center', fontWeight: 'bold', color: '#d97706' }}>{i + 1}</div>
@@ -761,7 +850,7 @@ const StockSmartTotalClean = () => {
                   </div>
                   <div style={{ padding: '12px', background: '#fffcf0', borderTop: '1px solid #fef3c7', display: 'flex', justifyContent: 'center' }}>
                     <button className="sf-btn" onClick={() => setForm({ ...form, imprevistos: [...form.imprevistos, { id: Date.now(), selected: false, cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '', pago_realizado: false }] })} style={{ color: '#d97706', border: '2px dashed #f59e0b', background: '#fffbeb', padding: '8px 40px', borderRadius: '10px', fontWeight: 'bold', cursor: 'pointer', transition: 'all 0.2s' }}>
-                      <i className="fa-solid fa-plus-circle"></i> AÑADIR OTRO GASTO IMPREVISTO
+                      <i className="fa-solid fa-plus-circle"></i> AÑADIR OTRO TICKET DE PAGO
                     </button>
                   </div>
                 </div>
@@ -770,7 +859,7 @@ const StockSmartTotalClean = () => {
 
             <div style={{ marginTop: '25px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
               <div style={{ display: 'flex', gap: '10px' }}>
-                <button className="sf-btn sf-btn-add" onClick={() => setForm({ ...form, partidas: [...form.partidas, { id: Date.now(), selected: false, cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '' }] })}>+ AÑADIR RENGLÓN</button>
+                <button className="sf-btn sf-btn-add" onClick={() => setForm({ ...form, partidas: [...form.partidas, { id: Date.now(), selected: false, cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '' }] })}>+ AÑADIR RENGLÓN PARA REQUISICIÓN</button>
                 <button className="sf-btn" onClick={() => setMostrarImprevistos(!mostrarImprevistos)} style={{ border: '1px solid #f59e0b', color: '#d97706', background: mostrarImprevistos ? '#fffbeb' : 'white' }}>
                   {mostrarImprevistos ? '- OCULTAR TICKET' : '+ MOSTRAR TICKET'}
                 </button>
@@ -785,13 +874,18 @@ const StockSmartTotalClean = () => {
                 <button className="sf-btn sf-btn-close" onClick={() => setShowModal(false)}>CERRAR</button>
                 <button className="sf-btn sf-btn-primary" onClick={registrarOActualizar}>{isEditing ? 'ACTUALIZAR' : 'REGISTRAR'}</button>
               </div>
-            </div> 
-          </div> 
+            </div>
+          </div>
 
           {abrirReq && (
             <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10000 }}>
               <div style={{ width: '90%', maxWidth: '1200px' }}>
-                <Requisiciones isOpen={abrirReq} onClose={() => setAbrirReq(false)} datosPredefinidos={dataParaReq} />
+                <Requisiciones
+                  isOpen={abrirReq}
+                  onClose={() => setAbrirReq(false)}
+                  datosPredefinidos={dataParaReq}
+                  onSuccess={handleRequisicionFinalizada}
+                />
               </div>
             </div>
           )}
@@ -799,9 +893,9 @@ const StockSmartTotalClean = () => {
           {abrirTicketModal && (
             <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10000 }}>
               <div style={{ width: '95%', maxWidth: '1400px' }}>
-                <TicketExpress 
-                  isOpen={abrirTicketModal} 
-                  onClose={() => setAbrirTicketModal(false)} 
+                <TicketExpress
+                  isOpen={abrirTicketModal}
+                  onClose={() => setAbrirTicketModal(false)}
                   datosPredefinidos={dataParaTicket}
                 />
               </div>

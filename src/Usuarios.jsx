@@ -15,6 +15,8 @@ const Usuarios = () => {
     id: null, nombre: '', apellido: '', correo: '', 
     rol: '', departamento: '', firma_url: '',
     foto_url: '', // Nueva columna
+    contrato: '', // Nuevo campo solicitado
+    activo: true, // Nuevo estado para baja lógica
     password: '', 
     current_password_display: '' 
   });
@@ -26,6 +28,12 @@ const Usuarios = () => {
     "Recursos Humanos", "Almacén", "Administración Maracaibo",
     "Administración El Tigre", "Contabilidad", "Servicios Generales",
     "Compras"
+  ];
+
+  const CENTROS_COSTO = [
+    "MTTO MAYOR-BOSCAN", "MTTO MAYOR-BAJO GRANDE", "EXCELENCIA OPERACIONAL",
+    "CAMIONES DE VACÍO-BOSCAN", "CAMIONES DE VACÍO-BAJO G.", "PROYECTOS MENORES",
+    "SUCURSAL EL TIGRE", "OFICINA PRINCIPAL MCBO", "INVERSIONES Y OTROS"
   ];
 
   useEffect(() => {
@@ -128,7 +136,7 @@ const Usuarios = () => {
         if (password && password.length >= 6) {
            await supabase.auth.updateUser({ password: password });
         }
-        const { error } = await supabase.from('perfiles').update(datosPerfil).eq('id', formData.id);
+        const { error } = await supabase.from('perfiles').update({ ...datosPerfil, activo: formData.activo }).eq('id', formData.id);
         if (error) throw error;
       } else {
         const { data: authData, error: authError } = await supabase.auth.signUp({ 
@@ -136,7 +144,7 @@ const Usuarios = () => {
           password: password || '123456' 
         });
         if (authError) throw authError;
-        await supabase.from('perfiles').insert([{ ...datosPerfil, id: authData.user.id }]);
+        await supabase.from('perfiles').insert([{ ...datosPerfil, id: authData.user.id, activo: true }]);
       }
       alert("Guardado exitosamente.");
       obtenerUsuarios();
@@ -156,7 +164,13 @@ const Usuarios = () => {
       if (rol === 'Coordinador') colors = { bg: '#f0f9ff', text: '#0369a1' };
       if (rol === 'Analista') colors = { bg: '#f5f3ff', text: '#7c3aed' };
       return { padding: '5px 12px', borderRadius: '10px', fontSize: '0.75rem', fontWeight: '600', backgroundColor: colors.bg, color: colors.text };
-    }
+    },
+    statusBadge: (activo) => ({
+      padding: '4px 10px', borderRadius: '8px', fontSize: '0.7rem', fontWeight: 'bold',
+      backgroundColor: activo ? '#f0fdf4' : '#fef2f2',
+      color: activo ? '#15803d' : '#ef4444',
+      border: `1px solid ${activo ? '#bcf7d9' : '#fecaca'}`
+    })
   };
 
   return (
@@ -186,7 +200,7 @@ const Usuarios = () => {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
             <h2 style={{ fontSize: '1.4rem', color: '#0f172a', margin: 0 }}>Gestión de Usuarios</h2>
             {currentUser?.esAdminReal && (
-              <button className="btn-primary" onClick={() => { setFormData({id:null, nombre:'', apellido:'', correo:'', rol:'', departamento:'', firma_url:'', password: '', current_password_display: ''}); setShowModal(true); }}>
+              <button className="btn-primary" onClick={() => { setFormData({id:null, nombre:'', apellido:'', correo:'', rol:'', departamento:'', contrato:'', activo: true, firma_url:'', password: '', current_password_display: ''}); setShowModal(true); }}>
                 + Nuevo Integrante
               </button>
             )}
@@ -240,6 +254,8 @@ const Usuarios = () => {
                 <th style={estilos.th}>Colaborador</th>
                 <th style={estilos.th}>Cargo</th>
                 <th style={estilos.th}>Departamento</th>
+                <th style={estilos.th}>Contrato</th>
+                <th style={estilos.th}>Estado</th>
                 <th style={estilos.th}>Acciones</th>
               </tr>
             </thead>
@@ -267,9 +283,30 @@ const Usuarios = () => {
                   </td>
                   <td style={estilos.td}><span style={estilos.badge(u.rol)}>{u.rol || 'Sin Cargo'}</span></td>
                   <td style={estilos.td}><span style={{ color: '#64748b' }}>{u.departamento || 'Sin asignar'}</span></td>
+                  <td style={estilos.td}><span style={{ color: '#0ea5e9', fontWeight: 'bold' }}>{u.contrato || 'N/A'}</span></td>
+                  <td style={estilos.td}>
+                    <span style={estilos.statusBadge(u.activo !== false)}>
+                      {u.activo !== false ? 'ACTIVO' : 'INACTIVO'}
+                    </span>
+                  </td>
                   <td style={estilos.td}>
                     {currentUser?.esAdminReal ? (
-                      <button onClick={() => { setFormData({...u, password: '', current_password_display: u.password || '---'}); setShowModal(true); }} style={{ color: '#0ea5e9', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.8rem' }}>Editar Perfil</button>
+                      <div style={{ display: 'flex', gap: '10px' }}>
+                        <button onClick={() => { setFormData({...u, password: '', current_password_display: u.password || '---', activo: u.activo !== false}); setShowModal(true); }} style={{ color: '#0ea5e9', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.8rem' }}>Editar</button>
+                        <button 
+                          onClick={async () => {
+                            const nuevoEstado = u.activo === false;
+                            const { error } = await supabase.from('perfiles').update({ activo: nuevoEstado }).eq('id', u.id);
+                            if (!error) {
+                              alert(`Usuario ${nuevoEstado ? 'activado' : 'desactivado'}.`);
+                              obtenerUsuarios();
+                            }
+                          }} 
+                          style={{ color: u.activo !== false ? '#ef4444' : '#22c55e', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.8rem' }}
+                        >
+                          {u.activo !== false ? 'Desactivar' : 'Activar'}
+                        </button>
+                      </div>
                     ) : <span style={{color:'#cbd5e1', fontSize:'0.75rem'}}>Solo lectura</span>}
                   </td>
                 </tr>
@@ -325,7 +362,7 @@ const Usuarios = () => {
             {/* Asignación */}
             <div style={{ marginBottom: '20px' }}>
               <label style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#64748b', display: 'block', marginBottom: '10px', textTransform: 'uppercase' }}>Asignación de Cargo</label>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginBottom: '15px' }}>
                 <select className="input-style" value={formData.rol} onChange={e => setFormData({...formData, rol: e.target.value})}>
                   <option value="">Cargo...</option>
                   {CARGOS.map(c => <option key={c} value={c}>{c}</option>)}
@@ -335,6 +372,10 @@ const Usuarios = () => {
                   {DEPARTAMENTOS.map(d => <option key={d} value={d}>{d}</option>)}
                 </select>
               </div>
+              <select className="input-style" style={{ width: '100%' }} value={formData.contrato} onChange={e => setFormData({...formData, contrato: e.target.value})}>
+                <option value="">Contrato (Centro de Costo)...</option>
+                {CENTROS_COSTO.map(cc => <option key={cc} value={cc}>{cc}</option>)}
+              </select>
             </div>
 
             {/* Seguridad */}

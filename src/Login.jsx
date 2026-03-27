@@ -50,6 +50,14 @@ const Auth = () => {
       console.error("Error al obtener perfil:", profileError.message);
     }
 
+    // --- VERIFICACIÓN DE ESTADO ACTIVO (BAJA LÓGICA) ---
+    if (perfil && perfil.activo === false) {
+      await supabase.auth.signOut();
+      alert("Sesión Inactiva. Por favor, contacte al administrador.");
+      setLoading(false);
+      return;
+    }
+
     // Guardamos la sesión de Auth y los datos del perfil de la tabla
     localStorage.setItem('user_totalclean_session', JSON.stringify(data.user));
     localStorage.setItem('user_profile', JSON.stringify(perfil)); // <--- Vital para filtros
