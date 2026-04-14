@@ -1,0 +1,339 @@
+/* 
+  REPORTES.CSS - TOTAL CLEAN "CENTRO DE REPORTES"
+  Efectos: Glassmorphism, Superposición de Capas, Micro-animaciones.
+*/
+
+:root {
+  --report-bg: #f8fafc;
+  --header-bg: rgba(255, 255, 255, 0.8);
+  --accent: #0ea5e9;
+  --glass: rgba(255, 255, 255, 0.7);
+  --border: rgba(226, 232, 240, 0.8);
+  --shadow-sm: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+  --shadow-lg: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+}
+
+.reports-container {
+  padding: 25px;
+  background-color: var(--report-bg);
+  min-height: 100vh;
+  box-sizing: border-box;
+  font-family: 'Inter', sans-serif;
+  animation: fadeIn 0.5s ease-out;
+}
+
+/* Panel de Filtros "Box Superpuesto" */
+.filters-overlap {
+  position: relative;
+  z-index: 10;
+  margin-bottom: -30px;
+  /* Superposición con la tabla */
+  padding: 24px;
+  background: var(--header-bg);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  align-items: flex-end;
+  transition: transform 0.3s ease;
+}
+
+.filters-overlap:hover {
+  transform: translateY(-2px);
+}
+
+.filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-width: 180px;
+}
+
+.filter-label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.report-input {
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  background: white;
+  font-size: 0.9rem;
+  color: #1e293b;
+  transition: all 0.2s ease;
+  outline: none;
+}
+
+.report-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px rgba(14, 165, 233, 0.1);
+}
+
+/* Botón de Exportación Premium */
+.btn-export {
+  background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);
+  color: white;
+  padding: 12px 24px;
+  border-radius: 12px;
+  border: none;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(14, 165, 233, 0.3);
+  transition: all 0.3s ease;
+}
+
+.btn-export:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 15px rgba(14, 165, 233, 0.4);
+}
+
+/* Tabla de Auditoría */
+.audit-table-wrapper {
+  background: white;
+  border-radius: 24px;
+  padding: 40px 24px 24px 24px;
+  /* Espacio para el panel superpuesto */
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+  max-height: 600px;
+  overflow-y: auto;
+  position: relative;
+}
+
+.audit-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0 0;
+  /* Changed spacing for sticky header consistency */
+}
+
+.audit-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background-color: #1e293b;
+  /* Dark background like bg-slate-800 */
+  color: white;
+  padding: 12px 8px;
+  /* Reduced padding px-2 equivalent */
+  font-size: 0.7rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  text-align: left;
+}
+
+.audit-table tr {
+  transition: transform 0.2s ease, background-color 0.2s ease;
+}
+
+.audit-table td {
+  padding: 12px 8px;
+  /* Reduced padding px-2 equivalent approx */
+  background: white;
+  font-size: 0.85rem;
+  color: #1e293b;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.audit-table tr:hover td {
+  background-color: #f8fafc;
+}
+
+/* Resaltado de Pendientes */
+.row-pending td {
+  background-color: #fffbeb !important;
+}
+
+.row-pending:hover td {
+  background-color: #fef3c7 !important;
+}
+
+.status-badge-pending {
+  background-color: #fef9c3;
+  color: #854d0e;
+  padding: 4px 10px;
+  border-radius: 8px;
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+/* Totales */
+.report-summary-footer {
+  margin-top: 25px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.summary-card {
+  background: #0f172a;
+  color: white;
+  padding: 20px 40px;
+  border-radius: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  box-shadow: var(--shadow-lg);
+}
+
+.summary-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  opacity: 0.7;
+  text-transform: uppercase;
+}
+
+.summary-value {
+  font-size: 1.8rem;
+  font-weight: 800;
+  color: #38bdf8;
+}
+
+/* Animaciones */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.history-icon {
+  color: #94a3b8;
+  cursor: pointer;
+  transition: color 0.2s ease;
+}
+
+.history-icon:hover {
+  color: var(--accent);
+}
+
+/* --- NUEVOS ESTILOS: TOTALES Y FILTROS STACKED --- */
+
+.totals-header-stacked {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: white;
+  padding: 10px 20px;
+  border-radius: 16px;
+  border: 1px solid #e2e8f0;
+  box-shadow: var(--shadow-sm);
+}
+
+.total-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 15px;
+  min-width: 200px;
+}
+
+.total-item.main {
+  border-top: 1px solid #f1f5f9;
+  margin-top: 4px;
+  padding-top: 4px;
+}
+
+.total-label {
+  font-size: 0.65rem;
+  font-weight: 800;
+  color: #64748b;
+  text-transform: uppercase;
+}
+
+.total-value {
+  font-size: 0.9rem;
+  font-weight: 800;
+  color: #1e293b;
+}
+
+.total-value.bs { color: #b45309; }
+.total-value.usd { color: #166534; }
+.total-value.general { 
+  color: var(--accent);
+  font-size: 1.1rem;
+}
+
+/* Filtros Stacked */
+.stacked-group {
+  display: flex;
+  flex-direction: column !important;
+  gap: 12px !important;
+  min-width: 250px !important;
+}
+
+.sub-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.report-input.small {
+  padding: 8px 12px;
+  font-size: 0.8rem;
+}
+
+/* Mobile Adjustments */
+@media (max-width: 768px) {
+  .filters-overlap {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+.totals-header-stacked {
+  background: #ffffff;
+  /* Incrementamos padding para que respire mejor */
+  padding: 22px 22px; 
+  border-radius: 16px;
+  border: 1px solid #e2e8f0;
+  /* Sombra más profunda para dar elevación */
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.08); 
+  min-width: 320px;
+}
+
+.total-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+  /* Tamaño base aumentado */
+  font-size: 1.9rem; 
+  color: #64748b;
+}
+
+.total-item.main {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 2px solid #f1f5f9;
+  /* El Total General ahora es imponente */
+  font-size: 1.6rem; 
+  font-weight:900;
+  color: #0f172a;
+}
+
+.total-value {
+  font-family: 'Inter', sans-serif; /* Cambiado a una fuente moderna para mejor lectura */
+  font-weight: 1000;
+  margin-left: 30px;
+}
+
+/* Colores específicos para los valores según la imagen */
+.total-value.bs { color: #b45309; }
+.total-value.usd { color: #15803d; }
+.total-value.general { color: #0284c7; }

@@ -1,4 +1,26 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, Component } from 'react';
+
+// === ERROR BOUNDARY — evita pantalla en blanco por crashes internos ===
+class TicketErrorBoundary extends Component {
+  constructor(props) { super(props); this.state = { hasError: false, error: null }; }
+  static getDerivedStateFromError(error) { return { hasError: true, error }; }
+  componentDidCatch(error, info) { console.error('[TicketExpress] Error capturado:', error, info); }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ padding: '40px', textAlign: 'center', color: '#ef4444' }}>
+          <h3>⚠️ Error al cargar el módulo de Ticket de Pago</h3>
+          <p style={{ color: '#64748b', fontSize: '0.85rem' }}>{this.state.error?.message}</p>
+          <button onClick={() => this.setState({ hasError: false, error: null })}
+            style={{ marginTop: '16px', padding: '10px 24px', background: '#0f172a', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>
+            🔄 Reintentar
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 import { supabase } from './supabaseClient';
 import {
   Plus,
@@ -13,8 +35,10 @@ import {
   History,
   FileImage,
   Loader2,
-  Eye
+  Eye,
+  Calendar
 } from 'lucide-react';
+import { format, getWeek } from 'date-fns';
 import './TicketExpress.css';
 
 const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = null }) => {
@@ -31,19 +55,22 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
   const obtenerSiglas = (nombreGerencia) => {
     if (!nombreGerencia) return '---';
     const mapeo = {
-      "Operaciones": "O",
-      "Mantenimiento": "M",
-      "Seguridad": "S",
-      "Recursos Humanos": "RRHH",
-      "Estimación": "E",
+      "Administración Maracaibo": "ADM-MCB",
+      "Administración El Tigre": "ADM-TGR",
+      "Operaciones": "OPE",
+      "Mantenimiento": "MTT",
+      "Seguridad": "SHA",
+      "SIAHO": "SHA",
+      "Recursos Humanos": "RRH",
+      "Estimación": "EST",
+      "Estimación y Control": "EST",
       "Almacén": "ALM",
-      "Servicios Generales": "SG",
-      "Administración Maracaibo": "ADM-MCBO",
-      "Administración El Tigre": "ADM-ET",
       "Gerencia General": "GG",
-      "Contabilidad": "C"
+      "Servicios Generales": "SVG",
+      "Contabilidad": "CNT",
+      "Compras": "CMP"
     };
-    return mapeo[nombreGerencia] || nombreGerencia.split(' ').map(w => w[0]).join('').toUpperCase();
+    return mapeo[nombreGerencia] || "GER";
   };
 
   const getWeekNumber = (d) => {
@@ -70,12 +97,52 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
     facturas_url: [],
     status: 'EMITIDO',
     id_control: '',
-    solicitud_ref: ''
+    solicitud_ref: '',
+    banco_origen: '',
+    clasificacion_admin: ''
   });
 
-  const numSemana = getWeekNumber(form.fecha);
-  const siglasGerencia = obtenerSiglas(currentUser?.departamento || form.departamento);
-  const idControlAutomatico = `${siglasGerencia} - SEMANA ${numSemana}`;
+  const [bancosDisponibles, setBancosDisponibles] = useState([]);
+  const [showConfirmPago, setShowConfirmPago] = useState(false);
+
+  const [idControlAutomatico, setIdControlAutomatico] = useState('TP-GER-26-0000');
+
+  useEffect(() => {
+    const generarID = async () => {
+      if (isEditing) return;
+      const sigla = obtenerSiglas(currentUser?.departamento || form.departamento);
+      const aa = new Date().getFullYear().toString().slice(-2);
+
+      // 1. Verificar si viene de una Requisición (RR)
+      if (form.solicitud_ref && form.solicitud_ref.startsWith('RR-')) {
+        const partesRR = form.solicitud_ref.split('-');
+        if (partesRR.length === 4) {
+          const numRR = partesRR[3];
+          setIdControlAutomatico(`TP-${sigla}-${aa}-${numRR}`);
+          return;
+        }
+      }
+
+      // 2. Si es directo, buscar el último correlativo TP del año actual
+      const { data } = await supabase
+        .from('tickets_directos')
+        .select('codigo_control')
+        .like('codigo_control', `TP-${sigla}-${aa}-%`)
+        .order('codigo_control', { ascending: false })
+        .limit(1);
+
+      let max = 0;
+      if (data && data.length > 0) {
+        const partes = data[0].codigo_control.split('-');
+        if (partes.length === 4) {
+          const num = parseInt(partes[3], 10);
+          if (!isNaN(num)) max = num;
+        }
+      }
+      setIdControlAutomatico(`TP-${sigla}-${aa}-${String(max + 1).padStart(4, '0')}`);
+    };
+    generarID();
+  }, [form.departamento, form.solicitud_ref, currentUser, isEditing]);
 
   useEffect(() => {
     if (isOpen) setShowModal(true);
@@ -102,34 +169,62 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
     }
   }, [datosPredefinidos, showModal]);
 
+  useEffect(() => {
+    const buscarGerente = async () => {
+      if (!form.departamento || form.departamento === '') return;
+      try {
+        const { data, error } = await supabase
+          .from('perfiles')
+          .select('nombre, apellido')
+          .eq('departamento', form.departamento)
+          .eq('rol', 'Gerente')
+          .limit(1)
+          .maybeSingle();
+        if (!error && data) {
+          setForm(prev => ({ ...prev, gerente: `${data.nombre} ${data.apellido}` }));
+        }
+      } catch (err) {
+        // Ignorar si no hay gerente registrado para ese departamento
+      }
+    };
+    if (form.departamento && !isEditing) {
+      buscarGerente();
+    }
+  }, [form.departamento, isEditing]);
+
+
   const unidades = ["UNID", "KG", "LTS", "SERV", "SG", "BOLSAS", "PZA"];
 
   // --- CARGAR SESIÓN Y PERFIL ---
   const cargarUsuario = useCallback(async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (user) {
-      const { data: perfil } = await supabase
-        .from('perfiles')
-        .select('*')
-        .eq('id', user.id)
-        .single();
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data: perfil } = await supabase
+          .from('perfiles')
+          .select('*')
+          .eq('id', user.id)
+          .single();
 
-      const adminEmails = ['jcontreras.totalclean@gmail.com'];
-      const userInfo = {
-        id: user.id,
-        nombre: perfil ? `${perfil.nombre} ${perfil.apellido}` : user.email.split('@')[0],
-        departamento: perfil ? perfil.departamento : 'General',
-        rol: perfil ? perfil.rol : 'Gerente',
-        esAdminGlobal: adminEmails.includes(user.email) || perfil?.rol === 'Gerente General'
-      };
+        const adminEmails = ['jcontreras.totalclean@gmail.com'];
+        const userInfo = {
+          id: user.id,
+          nombre: perfil ? `${perfil.nombre} ${perfil.apellido}` : user.email.split('@')[0],
+          departamento: perfil ? perfil.departamento : 'General',
+          rol: perfil ? perfil.rol : 'Gerente',
+          esAdminGlobal: adminEmails.includes(user.email) || perfil?.rol === 'Gerente General' || perfil?.rol === 'Administrador'
+        };
 
-      setCurrentUser(userInfo);
-      setForm(prev => ({
-        ...prev,
-        gerente: userInfo.nombre,
-        departamento: userInfo.departamento,
-        usuario_id: userInfo.id
-      }));
+        setCurrentUser(userInfo);
+        setForm(prev => ({
+          ...prev,
+          gerente: userInfo.nombre,
+          departamento: userInfo.departamento,
+          usuario_id: userInfo.id
+        }));
+      }
+    } catch (err) {
+      console.error('Error cargando usuario en TicketExpress:', err.message);
     }
   }, []);
 
@@ -147,6 +242,9 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
     if (dataSub) {
       setTodasCategorias(dataSub.map(s => ({ nombre: s.nombre, padre: s.maestros_clasificaciones?.nombre })));
     }
+
+    const { data: dataBancos } = await supabase.from('bancos').select('*').eq('activo', true).order('nombre');
+    if (dataBancos) setBancosDisponibles(dataBancos);
   }, []);
 
   // --- CARGAR HISTORIAL ---
@@ -154,19 +252,25 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
     if (!currentUser) return;
     setLoading(true);
     try {
-      let query = supabase.from('tickets_directos').select('id, gerente_nombre, departamento, fecha_emision, codigo_control, total_usd, status, factura_url, fecha, items, solicitud_ref');
+      let query = supabase.from('tickets_directos').select('id, gerente_nombre, departamento, fecha_emision, codigo_control, total_usd, status, factura_url, items, solicitud_ref, usuario_id');
 
-      if (!currentUser.esAdminGlobal || !verTodos) {
-        if (currentUser.rol === 'Gerente' || currentUser.rol === 'Coordinador' || currentUser.rol === 'Analista') {
-          // Ven todo lo de su departamento
+      // Si es Admin Global y tiene "Ver Todos" activado, NO filtra
+      const esVistaTotal = currentUser.esAdminGlobal && verTodos;
+
+      if (!esVistaTotal) {
+        if (currentUser.esAdminGlobal || currentUser.rol === 'Gerente General') {
+          // Admin global sin "Ver Todos" o Gerente General: ven todo de todas formas
+          // No aplicamos filtro
+        } else if (currentUser.rol === 'Gerente' || currentUser.rol === 'Coordinador' || currentUser.rol === 'Administrador') {
+          query = query.eq('departamento', currentUser.departamento);
+        } else if (currentUser.rol === 'Analista') {
           query = query.eq('departamento', currentUser.departamento);
         } else {
-          // Otros roles: Solo lo propio
           query = query.eq('usuario_id', currentUser.id);
         }
       }
 
-      const { data, error } = await query.order('fecha', { ascending: false });
+      const { data, error } = await query.order('fecha_emision', { ascending: false });
       if (error) throw error;
       setHistorial(data || []);
     } catch (err) {
@@ -174,7 +278,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
     } finally {
       setLoading(false);
     }
-  }, [currentUser]);
+  }, [currentUser, verTodos]);
 
   useEffect(() => {
     cargarUsuario();
@@ -188,6 +292,19 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
   // --- MANEJADORES DE FORMULARIO ---
   const manejarCambioPartida = (index, campo, valor) => {
     const nuevas = [...form.partidas];
+
+    // --- VALIDACIÓN DE CENTRO DE COSTO ÚNICO ---
+    if (campo === 'cc' && valor) {
+      const otrosCC = nuevas
+        .filter((_, idx) => idx !== index)
+        .map(p => p.cc)
+        .filter(cc => cc); // solo los que ya tienen CC asignado
+      if (otrosCC.length > 0 && !otrosCC.includes(valor)) {
+        alert("⚠️ No se pueden mezclar Centros de Costos en un mismo Ticket de Pago. Por favor, genere un ticket por separado.");
+        return; // Impedir el cambio
+      }
+    }
+
     nuevas[index][campo] = valor;
 
     if (campo === 'cc') { nuevas[index].clasif = ''; nuevas[index].cat = ''; }
@@ -208,6 +325,9 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
     let nuevoStatus = form.status;
     if (valor && form.status === 'EMITIDO') {
       nuevoStatus = 'PAGADO';
+      setShowConfirmPago(true);
+    } else if (!nuevas.some(p => p.pago_realizado)) {
+      nuevoStatus = 'EMITIDO';
     }
 
     setForm({ ...form, partidas: nuevas, status: nuevoStatus });
@@ -275,10 +395,18 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
     return form.partidas.reduce((acc, p) => acc + (parseFloat(p.total) || 0), 0);
   }, [form.partidas]);
 
+  const totalGeneral = subtotalTotal * 1.16;
+
   // --- EMITIR TICKET ---
   const emitirTicket = async () => {
     if (!form.partidas.every(p => p.cc && p.clasif && p.desc)) {
       return alert("Por favor complete los campos obligatorios de las partidas.");
+    }
+
+    // VALIDACIÓN DE CC ÚNICO
+    const ccsUnicos = [...new Set(form.partidas.map(p => p.cc).filter(cc => cc))];
+    if (ccsUnicos.length > 1) {
+      return alert("⚠️ No se pueden mezclar Centros de Costos en un mismo Ticket de Pago. Por favor, genere un ticket por separado.");
     }
 
     setLoading(true);
@@ -289,11 +417,13 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
         departamento: currentUser.departamento,
         fecha_emision: form.fecha,
         codigo_control: idControlAutomatico,
-        total_usd: subtotalTotal,
+        total_usd: totalGeneral,
         items: form.partidas.map(p => ({ ...p, pago_realizado: p.pago_realizado || false })),
         factura_url: form.facturas_url || [], // Guardamos el array aquí
         status: form.status || 'EMITIDO',
-        solicitud_ref: form.solicitud_ref || null
+        solicitud_ref: form.solicitud_ref || null,
+        banco_origen: form.banco_origen || null,
+        clasificacion_admin: form.clasificacion_admin || null
       };
 
       const { error } = await supabase.from('tickets_directos').insert([payload]);
@@ -323,9 +453,11 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
         .from('tickets_directos')
         .update({
           items: form.partidas,
-          total_usd: subtotalTotal,
+          total_usd: totalGeneral,
           factura_url: form.facturas_url || [],
-          status: form.status
+          status: form.status,
+          banco_origen: form.banco_origen,
+          clasificacion_admin: form.clasificacion_admin
         })
         .eq('id', form.id);
 
@@ -351,16 +483,22 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
       facturas_url: Array.isArray(t.factura_url) ? t.factura_url : (t.factura_url ? [t.factura_url] : []),
       status: t.status,
       id_control: t.codigo_control,
-      solicitud_ref: t.solicitud_ref || ''
+      solicitud_ref: t.solicitud_ref || '',
+      banco_origen: t.banco_origen || '',
+      clasificacion_admin: t.clasificacion_admin || ''
     });
     setShowModal(true);
   };
 
   // --- FILTRADO HISTORIAL ---
   const historialFiltrado = useMemo(() => {
+    if (!busqueda.trim()) return historial;
+    const b = busqueda.toLowerCase();
     return historial.filter(t =>
-      t.gerente_nombre?.toLowerCase().includes(busqueda.toLowerCase()) ||
-      t.departamento?.toLowerCase().includes(busqueda.toLowerCase())
+      t.codigo_control?.toLowerCase().includes(b) ||
+      t.gerente_nombre?.toLowerCase().includes(b) ||
+      t.departamento?.toLowerCase().includes(b) ||
+      t.solicitud_ref?.toLowerCase().includes(b)
     );
   }, [historial, busqueda]);
 
@@ -373,6 +511,28 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
           <h1 className="te-title">Ticket de Pago</h1>
           <p className="te-subtitle">Emisión de pagos directos sin aprobación - SmartTC</p>
         </div>
+        <button
+          className="te-btn te-btn-primary"
+          onClick={() => {
+            setIsEditing(false);
+            setForm({
+              id: '',
+              fecha: new Date().toISOString().split('T')[0],
+              gerente: currentUser?.nombre || '',
+              departamento: currentUser?.departamento || '',
+              usuario_id: currentUser?.id || '',
+              partidas: [{ id: Date.now(), cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', pu: '', total: 0 }],
+              facturas_url: [],
+              status: 'EMITIDO',
+              id_control: '',
+              solicitud_ref: ''
+            });
+            setShowModal(true);
+          }}
+          style={{ padding: '12px 25px' }}
+        >
+          <Plus size={16} /> Nuevo Ticket
+        </button>
       </div>
 
       {/* STATS CARDS */}
@@ -437,10 +597,10 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
           <tbody className="te-tbody">
             {loading ? (
               <tr><td colSpan="7" style={{ textAlign: 'center', padding: '40px' }}><Loader2 className="animate-spin" size={24} /> Cargando...</td></tr>
-            ) : historialFiltrado.map(t => (
+            ) : historialFiltrado?.map(t => (
               <tr key={t.id}>
                 <td className="te-td" style={{ fontWeight: '700', color: '#d97706' }}>{t.codigo_control || `TX-${String(t.id).padStart(4, '0')}`}</td>
-                <td className="te-td">{new Date(t.fecha_emision).toLocaleDateString()}</td>
+                <td className="te-td">{t.fecha_emision ? format(new Date(t.fecha_emision + 'T12:00:00'), 'dd/MM/yyyy') : 'N/A'}</td>
                 <td className="te-td">{t.gerente_nombre}</td>
                 <td className="te-td">{t.departamento}</td>
                 <td className="te-td" style={{ fontWeight: 'bold' }}>$ {t.total_usd?.toLocaleString('de-DE')}</td>
@@ -524,7 +684,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
                   </tr>
                 </thead>
                 <tbody className="te-tbody">
-                  {form.partidas.map((p, i) => (
+                  {form?.partidas?.map((p, i) => (
                     <tr key={p.id}>
                       <td className="te-td" style={{ fontWeight: '800', color: '#94a3b8', textAlign: 'center' }}>{i + 1}</td>
                       <td className="te-td">
@@ -608,11 +768,18 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
                 </div>
               </div>
 
-              <div style={{ display: 'flex', gap: '20px', alignItems: 'center' }}>
-                <div style={{ textAlign: 'right' }}>
-                  <div className="te-label" style={{ fontSize: '0.6rem' }}>Total General del Ticket</div>
-                  <div style={{ fontSize: '1.75rem', fontWeight: '900', color: form.status === 'PAGADO' ? '#10b981' : '#0f172a' }}>$ {subtotalTotal.toLocaleString('de-DE')}</div>
+              <div style={{ marginTop: '30px', display: 'flex', justifyContent: 'flex-end', alignItems: 'flex-end', gap: '30px' }}>
+                <div className="totals-container" style={{ minWidth: '250px', background: '#f8fafc', padding: '15px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                    <span className="stat-label" style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: 'bold' }}>SUB-TOTAL:</span>
+                    <span style={{ fontWeight: 'bold', color: '#475569' }}>$ {subtotalTotal.toLocaleString('de-DE')}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '2px solid #cbd5e1', paddingTop: '10px' }}>
+                    <span style={{ fontWeight: '900', fontSize: '0.85rem' }}>TOTAL (C/IVA):</span>
+                    <span style={{ fontSize: '1.2rem', fontWeight: '900', color: form.status === 'PAGADO' ? '#10b981' : '#0ea5e9' }}>$ {totalGeneral.toLocaleString('de-DE')}</span>
+                  </div>
                 </div>
+
                 {!isEditing ? (
                   <button className="te-btn te-btn-primary" style={{ padding: '16px 32px' }} onClick={emitirTicket} disabled={loading}>
                     {loading ? <Loader2 className="animate-spin" size={20} /> : <CheckCircle2 size={20} />} Emitir Ticket Directo
@@ -625,6 +792,72 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
               </div>
             </div>
 
+            {/* MODAL CONFIRMACIÓN DE PAGO (OVERLAY) */}
+            {showConfirmPago && (
+              <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <div style={{ backgroundColor: 'white', padding: '35px', borderRadius: '24px', width: '450px', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.3)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '15px', marginBottom: '25px', borderBottom: '1px solid #f1f5f9', paddingBottom: '15px' }}>
+                    <div style={{ backgroundColor: '#dcfce7', padding: '10px', borderRadius: '12px' }}>
+                      <CheckCircle2 color="#166534" size={28} />
+                    </div>
+                    <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: '800', color: '#0f172a' }}>Confirmación de Pago</h3>
+                  </div>
+                  
+                  <div style={{ marginBottom: '20px' }}>
+                    <label style={{ fontSize: '11px', fontWeight: '800', color: '#64748b', textTransform: 'uppercase', marginBottom: '8px', display: 'block' }}>Banco de Origen</label>
+                    <select 
+                      className="te-input" 
+                      style={{ width: '100%' }}
+                      value={form.banco_origen}
+                      onChange={(e) => setForm({...form, banco_origen: e.target.value})}
+                    >
+                      <option value="">Seleccione Banco...</option>
+                      {bancosDisponibles.map(b => (
+                        <option key={b.id} value={b.nombre}>{b.nombre} ({b.moneda})</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div style={{ marginBottom: '30px' }}>
+                    <label style={{ fontSize: '11px', fontWeight: '800', color: '#64748b', textTransform: 'uppercase', marginBottom: '8px', display: 'block' }}>Clasificación Administrativa</label>
+                    <select 
+                      className="te-input" 
+                      style={{ width: '100%' }}
+                      value={form.clasificacion_admin}
+                      onChange={(e) => setForm({...form, clasificacion_admin: e.target.value})}
+                    >
+                      <option value="">Seleccione Clasificación...</option>
+                      <option value="Semanal">Semanal</option>
+                      <option value="Mensual">Mensual</option>
+                      <option value="Reembolsos Pólizas">Reembolsos Pólizas</option>
+                      <option value="TEA">TEA</option>
+                    </select>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '12px' }}>
+                    <button 
+                      className="te-btn te-btn-outline" 
+                      style={{ flex: 1 }}
+                      onClick={() => {
+                        setShowConfirmPago(false);
+                        const resetPartidas = form.partidas.map(p => ({...p, pago_realizado: false}));
+                        setForm({...form, partidas: resetPartidas, status: 'EMITIDO'});
+                      }}
+                    >
+                      Cancelar
+                    </button>
+                    <button 
+                      className="te-btn te-btn-primary" 
+                      style={{ flex: 2 }}
+                      disabled={!form.banco_origen || !form.clasificacion_admin}
+                      onClick={() => setShowConfirmPago(false)}
+                    >
+                      Confirmar y Continuar
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -633,4 +866,10 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
   );
 };
 
-export default TicketExpress;
+const TicketExpressWithBoundary = (props) => (
+  <TicketErrorBoundary>
+    <TicketExpress {...props} />
+  </TicketErrorBoundary>
+);
+
+export default TicketExpressWithBoundary;

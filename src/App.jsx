@@ -1,6 +1,7 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
+import { Toaster } from 'react-hot-toast';
 import Auth from './Login'; 
 import Dashboard from './Dashboard'; 
 import SolicitudFondos from './SolicitudFondos';
@@ -28,6 +29,8 @@ function App() {
 
   return (
     <Router>
+      <Toaster position="top-right" toastOptions={{ duration: 4000 }} />
+
       <Routes>
         {/* Si hay sesión, al entrar a "/" te manda al Dashboard automáticamente */}
         <Route path="/" element={!session ? <Auth /> : <Navigate to="/dashboard" />} />

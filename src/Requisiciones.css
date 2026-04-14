@@ -121,7 +121,8 @@
 .tc-table th {
   padding: 10px 12px;
   color: var(--slate-600);
-  font-size: 0.75rem; /* Aumentado para visibilidad */
+  font-size: 0.75rem;
+  /* Aumentado para visibilidad */
   font-weight: 900;
   /* Super negrita */
   text-transform: uppercase;
@@ -134,7 +135,8 @@
 .tc-table td {
   padding: 10px 12px;
   border-bottom: 1px solid var(--slate-50);
-  font-size: 0.85rem; /* Aumentado para visibilidad */
+  font-size: 0.85rem;
+  /* Aumentado para visibilidad */
   color: var(--slate-800);
   transition: background-color 0.2s;
 }
@@ -213,7 +215,8 @@
   border-radius: 8px;
   /* Igual a SF */
   padding: 6px;
-  font-size: 0.85rem; /* Aumentado para visibilidad */
+  font-size: 0.85rem;
+  /* Aumentado para visibilidad */
   transition: all 0.3s cubic-bezier(0.19, 1, 0.22, 1);
 }
 
@@ -265,6 +268,24 @@
   padding: 6px 14px;
   border-radius: 10px;
   border: 1px solid var(--slate-200);
+}
+
+.badge-area {
+  background-color: #fee2e2 !important;
+  color: #ef4444 !important;
+  border: 1px solid #fecaca !important;
+}
+
+.badge-general {
+  background-color: #fef9c3 !important;
+  color: #854d0e !important;
+  border: 1px solid #fef08a !important;
+}
+
+.badge-final {
+  background-color: #dcfce7 !important;
+  color: #166534 !important;
+  border: 1px solid #bbf7d0 !important;
 }
 
 /* --- BOTONES DE ACCIÓN (Anti-Gravity Elegantes) --- */

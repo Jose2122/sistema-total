@@ -3,7 +3,8 @@ import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { supabase } from './supabaseClient';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Loader2 } from 'lucide-react';
+import { format } from 'date-fns';
+import { Loader2, MessageSquare, FileText, Upload, Paperclip } from 'lucide-react';
 import './Requisiciones.css';
 
 const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
@@ -22,6 +23,11 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
   const [filtroStatusCompra, setFiltroStatusCompra] = useState('Todos');
   const [fechaDesde, setFechaDesde] = useState('');
   const [fechaHasta, setFechaHasta] = useState('');
+  const [expandirHistorial, setExpandirHistorial] = useState({}); // { itemID: boolean }
+  const [editandoObs, setEditandoObs] = useState(false);
+  const [obsTemporal, setObsTemporal] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const [facturasUrls, setFacturasUrls] = useState([]);
 
   // --- LÓGICA DE CARGA DE USUARIO ACTUAL ---
   const obtenerSesionUsuario = useCallback(async () => {
@@ -59,8 +65,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
           query = query.eq('usuario_id', currentUser.id);
         }
       } else if (currentUser.rol === 'Gerente General') {
-        // Gerente General ve las enviadas para su revisión y las que ya aprobó totalmente
-        query = query.in('estado_aprobacion', ['enviada_general', 'aprobado_final']);
+        // Gerente General ve todo el historial (Consulta Extendida)
+        // No aplicamos filtros adicionales aquí
       }
       // Admin ve todo
 
@@ -77,7 +83,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
           aprobacion: db.aprobacion_nombre || (db.aprobacion ? 'Aprobado' : 'Pendiente'),
           status: db.status_compra || 'Pendiente',
           prioridad: db.prioridad,
-          total: db.total_bs,
+          total: Number(db.total_bs) || 0,
           detalles: db.items,
           fecha: db.fecha_emision ? db.fecha_emision.split('T')[0] : '',
           justificacion: db.justificacion,
@@ -88,7 +94,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
           estado_aprobacion: db.estado_aprobacion || 'pendiente_area',
           motivo_rechazo: db.motivo_rechazo || '',
           firma_gerente_general: db.firma_gerente_general,
-          observaciones: db.observaciones || ''
+          observaciones: db.observaciones || '',
+          facturas_url: db.facturas_url || []
         }));
         setHistorial(historialMapeado);
       }
@@ -100,7 +107,34 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
   }, [currentUser]);
 
   useEffect(() => { obtenerSesionUsuario(); }, [obtenerSesionUsuario]);
-  useEffect(() => { cargarHistorialDesdeBD(); }, [cargarHistorialDesdeBD]);
+  useEffect(() => {
+    cargarHistorialDesdeBD();
+
+    // SUSCRIPCIÓN REALTIME PARA OBS Y SOPORTES
+    const channel = supabase
+      .channel('requisiciones_realtime')
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'requisiciones'
+      }, (payload) => {
+        setHistorial(prev => prev.map(req => {
+          if (req.id === payload.new.id) {
+            return {
+              ...req,
+              observaciones: payload.new.observaciones || '',
+              facturas_url: payload.new.facturas_url || []
+            };
+          }
+          return req;
+        }));
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [cargarHistorialDesdeBD]);
 
   // --- LÓGICA DE FILTRADO EN TIEMPO REAL ---
   const historialFiltrado = useMemo(() => {
@@ -185,23 +219,39 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
     "Servicios Generales", "Contabilidad"
   ];
 
-  const unidades = ["UNID", "KG", "LTS", "SERV", "SG", "BOLSAS", "BOTELLÓN", "VIAJES"];
+  const unidades = ["UNID", "KG", "LTS", "SERV", "SG", "BOLSAS", "VIAJES"];
 
   const calcularTotales = () => {
-    const subTotal = renglones.reduce((acc, r) => acc + (Number(r.total) || 0), 0);
-    const iva = subTotal * 0.16;
-    const totalGeneral = subTotal + iva;
-    return { subTotal, iva, totalGeneral };
+    // Estimado: Cantidad original por precio estimado
+    const subTotalEstimado = renglones.reduce((acc, r) => {
+      const cantOri = Number(r.cantidad_pedida ?? r.cant) || 0;
+      const puEst = Number(r.pu_estimado ?? r.pu) || 0;
+      return acc + (cantOri * puEst);
+    }, 0);
+
+    // Ejecutado: Suma de historiales
+    const subTotalEjecutado = renglones.reduce((acc, r) => {
+      const ejecutadoItem = (r.historial_compras || []).reduce((sum, h) => {
+        if (h.tipo === 'JUSTIFICACION') return sum;
+        return sum + ((Number(h.cant) || 0) * (Number(h.pu) || 0));
+      }, 0);
+      return acc + ejecutadoItem;
+    }, 0);
+
+    const totalEstimado = subTotalEstimado * 1.16;
+    const totalEjecutado = subTotalEjecutado * 1.16;
+
+    return { subTotalEstimado, subTotalEjecutado, totalEstimado, totalEjecutado };
   };
 
-  const { subTotal, totalGeneral } = calcularTotales();
+  const { subTotalEstimado, subTotalEjecutado, totalEstimado, totalEjecutado } = calcularTotales();
 
   const obtenerEstadoGlobal = () => {
     if (renglones.length === 0) return { texto: 'SIN ITEMS', color: '#94a3b8' };
     const todosCompletados = renglones.every(r => r.status === 'Completado');
     const algunoEnProceso = renglones.some(r => r.status === 'Parcial' || r.status === 'Completado');
     if (todosCompletados) return { texto: 'COMPLETADO', color: '#22c55e' };
-    if (algunoEnProceso) return { texto: 'EN PROCESO', color: '#f59e0b' };
+    if (algunoEnProceso) return { texto: 'PARCIAL', color: '#f59e0b' };
     return { texto: 'EN ESPERA', color: '#64748b' };
   };
 
@@ -257,11 +307,13 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
   useEffect(() => {
     const actualizarPreview = async () => {
       if (!showModal || editandoId) return;
-      const sigla = mappingSiglasGerencia[departamento] || 'REQ';
+      const sigla = mappingSiglasGerencia[departamento] || 'GER';
+      const aa = new Date().getFullYear().toString().slice(-2);
+
       const { data } = await supabase
         .from('requisiciones')
         .select('correlativo_req')
-        .like('correlativo_req', `${sigla}-%`)
+        .like('correlativo_req', `RR-${sigla}-${aa}-%`)
         .order('correlativo_req', { ascending: false })
         .limit(1);
 
@@ -269,12 +321,12 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
       if (data && data.length > 0) {
         const correlativoMax = data[0].correlativo_req;
         const partes = correlativoMax.split('-');
-        if (partes.length === 2) {
-          const num = parseInt(partes[1], 10);
+        if (partes.length === 4) {
+          const num = parseInt(partes[3], 10);
           if (!isNaN(num)) max = num;
         }
       }
-      setPreviewCorrelativo(`${sigla}-${String(max + 1).padStart(4, '0')}`);
+      setPreviewCorrelativo(`RR-${sigla}-${aa}-${String(max + 1).padStart(4, '0')}`);
     };
     actualizarPreview();
   }, [departamento, showModal, editandoId]);
@@ -286,6 +338,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
         let v = valor;
         if (campo === 'cant' || campo === 'pu') v = Math.max(0, Number(valor) || 0);
         const act = { ...f, [campo]: v };
+        if (campo === 'pu') act.pu_estimado = v; // Sincronizar el estimado si se cambia el pu manualmente en la creación
         act.total = act.cant * act.pu;
         return act;
       }
@@ -316,7 +369,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
       if (error) throw error;
 
       await liberarPartidasFondos(id);
-      
+
       setHistorial(prev => prev.map(req => req.id === id ? { ...req, estado_aprobacion: 'ANULADA' } : req));
       alert('Requisición ANULADA correctamente.');
     } catch (err) { alert(err.message); } finally { setLoading(false); }
@@ -381,6 +434,82 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
     } catch (err) { alert(err.message); } finally { setLoading(false); }
   };
 
+  const guardarObservacionesDirecto = async () => {
+    if (!editandoId) return;
+    setLoading(true);
+    try {
+      const { error } = await supabase
+        .from('requisiciones')
+        .update({
+          observaciones: obsTemporal,
+          leido_compras_at: null
+        })
+        .eq('id', editandoId)
+        .select();
+      if (error) throw error;
+
+      setObservaciones(obsTemporal);
+      setHistorial(prev => prev.map(req => req.id === editandoId ? { ...req, observaciones: obsTemporal } : req));
+      setEditandoObs(false);
+      alert('Observaciones actualizadas correctamente.');
+    } catch (err) {
+      alert("Error al actualizar observaciones: " + err.message);
+    } finally {
+      setLoading(true); // Se mantiene cargando un momento para refresco visual
+      await cargarHistorialDesdeBD();
+      setLoading(false);
+    }
+  };
+
+  const subirFactura = async (event) => {
+    if (!editandoId) return alert("Guarde la requisición primero para poder adjuntar documentos.");
+    try {
+      setUploading(true);
+      const files = Array.from(event.target.files);
+      if (!files || files.length === 0) return;
+
+      const uploadPromises = files.map(async (file, index) => {
+        const fileExt = file.name.split('.').pop();
+        const fileName = `factura_${editandoId}_${Date.now()}_${index}.${fileExt}`;
+        const filePath = `private/${fileName}`;
+
+        const { error: uploadError } = await supabase.storage
+          .from('facturas')
+          .upload(filePath, file);
+
+        if (uploadError) throw uploadError;
+
+        // OBTENER LA URL PÚBLICA CORRECTAMENTE
+        const { data: { publicUrl } } = supabase.storage.from('facturas').getPublicUrl(filePath);
+        return publicUrl;
+      });
+
+      const nuevasDescargas = await Promise.all(uploadPromises);
+
+      // RECARGAR DATA ACTUAL PARA EVITAR SOBREESCRIBIR SI OTRO MODIFICÓ
+      const { data: currentReq } = await supabase.from('requisiciones').select('facturas_url').eq('id', editandoId).single();
+      const urlsActuales = currentReq?.facturas_url || [];
+      const nuevasUrls = [...urlsActuales, ...nuevasDescargas];
+
+      setFacturasUrls(nuevasUrls);
+
+      const { error: updateError } = await supabase
+        .from('requisiciones')
+        .update({ facturas_url: nuevasUrls })
+        .eq('id', editandoId);
+
+      if (updateError) throw updateError;
+
+      alert("Documentos adjuntados y guardados correctamente.");
+      event.target.value = ''; // Limpiar el input
+      cargarHistorialDesdeBD();
+    } catch (error) {
+      alert("Error al subir archivo: " + error.message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const manejarAprobarGerenteArea = async () => {
     if (!editandoId || currentUser?.rol !== 'Gerente') {
       alert('Solo el Gerente de Área puede realizar esta aprobación.');
@@ -414,7 +543,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
         firma_gerente_general: currentUser.firma_url || null, // Firma Nivel 2
         estado_aprobacion: 'aprobado_final',
         aprobacion_nombre: 'Aprobación Final',
-        status_compra: 'Completado'
+        status_compra: 'En espera'
       }).eq('id', editandoId);
       if (error) throw error;
       alert("Aprobación final exitosa.");
@@ -484,6 +613,14 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
         setLoading(false);
         return;
       }
+
+      // VALIDACIÓN PASIVA PERO ESTRICTA EN EJECUCIÓN (Clasificación única)
+      const clases = [...new Set(renglones.map(r => r.clasificacion).filter(c => c))];
+      if (clases.length > 1) {
+        alert("⚠️ Error: Todos los renglones deben tener la misma Clasificación.");
+        setLoading(false);
+        return;
+      }
       // Si está en modo edición (ej. re-enviando o corrigiendo)
       try {
         const { error } = await supabase.from('requisiciones').update({
@@ -493,9 +630,19 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
           items: renglones,
           justificacion,
           observaciones,
-          total_bs: totalGeneral
+          total_bs: Number(totalEstimado) || 0
         }).eq('id', editandoId);
         if (error) throw error;
+
+        // ALERTA DE CATEGORÍAS DIFERENTES
+        const catsUnicas = [...new Set(renglones.map(r => r.categoria).filter(c => c))];
+        if (catsUnicas.length > 1) {
+          if (!window.confirm("Se han detectado diferentes categorías en los renglones. ¿Está seguro de que desea guardar la requisición así?")) {
+            setLoading(false);
+            return;
+          }
+        }
+
         alert("Cambios guardados.");
         await cargarHistorialDesdeBD();
         setShowModal(false);
@@ -510,13 +657,14 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
       return;
     }
 
-    const siglaGerencia = mappingSiglasGerencia[departamento] || 'REQ';
-    
-    // --- LÓGICA DE CORRELATIVO INDEPENDIENTE ---
+    const siglaGerencia = mappingSiglasGerencia[departamento] || 'GER';
+    const aa = new Date().getFullYear().toString().slice(-2);
+
+    // --- LÓGICA DE CORRELATIVO INDEPENDIENTE CON RESETEO ANUAL ---
     const { data: registrosMismaSigla } = await supabase
       .from('requisiciones')
       .select('correlativo_req')
-      .like('correlativo_req', `${siglaGerencia}-%`)
+      .like('correlativo_req', `RR-${siglaGerencia}-${aa}-%`)
       .order('correlativo_req', { ascending: false })
       .limit(1);
 
@@ -524,12 +672,12 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
     if (registrosMismaSigla && registrosMismaSigla.length > 0) {
       const correlativoMax = registrosMismaSigla[0].correlativo_req;
       const partes = correlativoMax.split('-');
-      if (partes.length === 2) {
-        const num = parseInt(partes[1], 10);
+      if (partes.length === 4) {
+        const num = parseInt(partes[3], 10);
         if (!isNaN(num)) maxNumero = num;
       }
     }
-    const nuevoCorrelativo = `${siglaGerencia}-${String(maxNumero + 1).padStart(4, '0')}`;
+    const nuevoCorrelativo = `RR-${siglaGerencia}-${aa}-${String(maxNumero + 1).padStart(4, '0')}`;
 
     const nuevaReqBD = {
       correlativo_req: nuevoCorrelativo,
@@ -539,16 +687,33 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
       gerencia: departamento,
       centro_costo: `${centroCostoNombre} (${centroCostoID})`,
       prioridad,
-      status_compra: 'Pendiente',
+      status_compra: 'En espera',
       aprobacion: false,
       aprobacion_nombre: 'Pendiente',
       estado_aprobacion: 'pendiente_area',
-      total_bs: totalGeneral,
+      total_bs: Number(totalEstimado) || 0,
       items: renglones,
       justificacion,
       observaciones,
       origen: datosPredefinidos ? `REF: ${datosPredefinidos.id_control}` : 'Manual'
     };
+
+    // VALIDACIÓN PASIVA PERO ESTRICTA EN EJECUCIÓN (Clasificación única)
+    const clases = [...new Set(renglones.map(r => r.clasificacion).filter(c => c))];
+    if (clases.length > 1) {
+      alert("⚠️ Error: Todos los renglones deben tener la misma Clasificación.");
+      setLoading(false);
+      return;
+    }
+
+    // ALERTA DE CATEGORÍAS DIFERENTES ANTES DE GUARDAR NUEVA
+    const catsUnicas = [...new Set(renglones.map(r => r.categoria).filter(c => c))];
+    if (catsUnicas.length > 1) {
+      if (!window.confirm("Se han detectado diferentes categorías en los renglones. ¿Está seguro de que desea guardar la requisición así?")) {
+        setLoading(false);
+        return;
+      }
+    }
 
     try {
       const { data: nuevaReq, error } = await supabase.from('requisiciones').insert([nuevaReqBD]).select().single();
@@ -594,9 +759,9 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
       {/* --- DASHBOARD SUPERIOR --- */}
       <div className="dashboard-container">
         {[
-          { label: 'REQUISICIONES', val: historial.length, col: '#0ea5e9' },
-          { label: 'PENDIENTES', val: historial.filter(r => r.estado_aprobacion === 'pendiente_area' || r.estado_aprobacion === 'enviada_general').length, col: '#facc15' },
-          { label: 'APROBADAS', val: historial.filter(r => r.estado_aprobacion === 'aprobado_final').length, col: '#22c55e' }
+          { label: 'TOTAL DE REQUISICIONES', val: historial.length, col: '#0ea5e9' },
+          { label: 'REQUISICIONES PENDIENTES', val: historial.filter(r => r.estado_aprobacion === 'pendiente_area' || r.estado_aprobacion === 'enviada_general').length, col: '#facc15' },
+          { label: 'REQUISICIONES APROBADAS', val: historial.filter(r => r.estado_aprobacion === 'aprobado_final').length, col: '#22c55e' }
         ].map((x, i) => (
           <div key={i} className="stat-card" style={{ borderLeft: `6px solid ${x.col}` }}>
             <div className="stat-label">{x.label}</div>
@@ -669,9 +834,9 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
             value={filtroStatusCompra}
             onChange={(e) => setFiltroStatusCompra(e.target.value)}
           >
-            <option value="Todos">Status</option>
+            <option value="Todos">Status de Compra</option>
             <option value="EN ESPERA">EN ESPERA</option>
-            <option value="EN PROCESO">EN PROCESO</option>
+            <option value="PARCIAL">PARCIAL</option>
             <option value="COMPLETADO">COMPLETADO</option>
           </select>
 
@@ -691,11 +856,12 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
             <tr>
               <th>ID</th>
               <th>FECHA</th>
+              <th>CATEGORÍA</th>
               <th>SOLICITANTE</th>
               <th>GERENCIA</th>
               <th>CENTRO DE COSTO</th>
-              {currentUser?.rol !== 'Gerente General' && <th>APROBACIÓN</th>}
-              <th>STATUS</th>
+              <th>STATUS DE APROBACIÓN</th>
+              <th>STATUS DE COMPRA</th>
               <th>PRIORIDAD</th>
               <th>TOTAL (C/IVA)</th>
               <th style={{ textAlign: 'center' }}>ACCIONES</th>
@@ -704,47 +870,84 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
           <tbody>
             {historialFiltrado.map(req => (
               <tr key={req.id}>
-                <td style={{ fontWeight: 'bold', color: 'var(--primary)' }}>{req.correlativo}</td>
-                <td style={{ color: 'var(--slate-400)' }}>{req.fecha}</td>
+                <td
+                  style={{ fontWeight: 'bold', color: 'var(--primary)', cursor: 'pointer', textDecoration: 'underline' }}
+                  onClick={() => verRequisicion(req)}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    {req.correlativo}
+                    {req.observaciones && (
+                      <MessageSquare
+                        size={14}
+                        style={{
+                          color: req.leido_compras_at === null ? '#f59e0b' : '#16a34a',
+                          fill: req.leido_compras_at === null ? '#fef3c7' : '#dcfce7'
+                        }}
+                        title={`Observaciones: ${req.observaciones} \nStatus: ${req.leido_compras_at === null ? 'Pendiente por Compras' : 'Leído por Compras'}`}
+                      />
+                    )}
+                    {req.facturas_url?.length > 0 && (
+                      <Paperclip size={14} style={{ color: '#0ea5e9' }} title="Tiene adjuntos" />
+                    )}
+                  </div>
+                </td>
+                <td style={{ color: 'var(--slate-400)' }}>{req.fecha ? format(new Date(req.fecha + 'T12:00:00'), 'dd/MM/yyyy') : 'N/A'}</td>
+                <td style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#64748b' }}>
+                  {req.estado_aprobacion === 'ANULADA' ? '-' : (req.detalles?.[0]?.categoria || 'N/A')}
+                </td>
                 <td style={{ fontWeight: '500' }}>{req.solicitante}</td>
                 <td style={{ fontSize: '0.8rem', color: '#64748b' }}>{req.gerencia}</td>
                 <td>{req.centroCosto}</td>
-                {currentUser?.rol !== 'Gerente General' && (
-                  <td>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                      <div style={{
-                        width: '10px', height: '10px', borderRadius: '50%',
-                        backgroundColor:
-                          req.estado_aprobacion === 'aprobado_final' ? '#22c55e' :
-                            req.estado_aprobacion === 'enviada_general' ? '#eab308' :
-                              req.estado_aprobacion === 'ANULADA' ? '#94a3b8' :
-                                req.estado_aprobacion === 'rechazada' ? '#64748b' : '#ef4444',
-                        boxShadow: '0 0 5px rgba(0,0,0,0.1)'
-                      }}></div>
-                      <span style={{ fontSize: '0.7rem', fontWeight: '800', textTransform: 'uppercase' }}>
-                        {req.estado_aprobacion?.replace('_', ' ')}
-                      </span>
-                    </div>
-                  </td>
-                )}
-                <td><span style={{ backgroundColor: '#fef9c3', color: '#854d0e', padding: '4px 10px', borderRadius: '12px', fontSize: '0.65rem', fontWeight: 'bold' }}>{req.status}</span></td>
                 <td>
-                  <span style={{
-                    backgroundColor: req.prioridad === 'Alta' ? '#fee2e2' : '#e0f2fe',
-                    color: req.prioridad === 'Alta' ? '#ef4444' : '#0ea5e9',
-                    padding: '4px 10px',
-                    borderRadius: '12px',
-                    fontSize: '0.7rem',
-                    fontWeight: '900',
-                    border: `1px solid ${req.prioridad === 'Alta' ? '#fecaca' : '#bae6fd'}`
-                  }}>
-                    {req.prioridad === 'Alta' ? '⚠️ ALTA' : 'NORMAL'}
-                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                    <span className={`status-purchase-badge ${req.estado_aprobacion === 'aprobado_final' ? 'badge-final' :
+                        req.estado_aprobacion === 'enviada_general' ? 'badge-general' :
+                          req.estado_aprobacion === 'ANULADA' ? '' :
+                            req.estado_aprobacion === 'rechazada' ? '' : 'badge-area'
+                      }`} style={{ fontSize: '0.65rem', fontWeight: '800', textTransform: 'uppercase', padding: '4px 8px', borderRadius: '8px' }}>
+                      {req.estado_aprobacion === 'aprobado_final' ? 'APROBADA' :
+                        req.estado_aprobacion === 'pendiente_area' || req.estado_aprobacion === 'enviada_area' ? 'GERENTE DE ÁREA' :
+                          req.estado_aprobacion === 'enviada_general' ? 'GERENTE GENERAL' :
+                            req.estado_aprobacion?.replace('_', ' ') || 'PENDIENTE'}
+                    </span>
+                  </div>
                 </td>
-                <td style={{ fontWeight: 'bold' }}>Bs. {req.total?.toLocaleString('de-DE')}</td>
+                <td>
+                  {req.estado_aprobacion === 'ANULADA' ? '-' : (
+                    <span style={{
+                      backgroundColor:
+                        req.status?.toUpperCase() === 'COMPLETADO' ? '#dcfce7' :
+                          req.status?.toUpperCase() === 'PARCIAL' ? '#ffedd5' : '#fef9c3',
+                      color:
+                        req.status?.toUpperCase() === 'COMPLETADO' ? '#166534' :
+                          req.status?.toUpperCase() === 'PARCIAL' ? '#9a3412' : '#854d0e',
+                      padding: '4px 10px', borderRadius: '12px', fontSize: '0.65rem', fontWeight: 'bold'
+                    }}>
+                      {req.status}
+                    </span>
+                  )}
+                </td>
+                <td>
+                  {req.estado_aprobacion === 'ANULADA' ? '-' : (
+                    <span style={{
+                      backgroundColor: req.prioridad === 'Alta' ? '#fee2e2' : '#e0f2fe',
+                      color: req.prioridad === 'Alta' ? '#ef4444' : '#0ea5e9',
+                      padding: '4px 10px',
+                      borderRadius: '12px',
+                      fontSize: '0.7rem',
+                      fontWeight: '900',
+                      border: `1px solid ${req.prioridad === 'Alta' ? '#fecaca' : '#bae6fd'}`
+                    }}>
+                      {req.prioridad === 'Alta' ? '⚠️ ALTA' : 'NORMAL'}
+                    </span>
+                  )}
+                </td>
+                <td style={{ fontWeight: 'bold' }}>
+                  {req.estado_aprobacion === 'ANULADA' ? '-' : `$ ${req.total?.toLocaleString('de-DE')}`}
+                </td>
                 <td style={{ textAlign: 'center' }}>
                   <div style={{ display: 'flex', justifyContent: 'center', gap: '15px' }}>
-                    <button onClick={() => verRequisicion(req)} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '1.2rem' }} title="Ver Detalles">👁️</button>
+                    <button onClick={() => verRequisicion(req)} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '1.2rem' }} title="Ver Detalles"></button>
                     {req.estado_aprobacion !== 'ANULADA' && (
                       <button onClick={() => anularRequisicion(req.id)} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '1.2rem' }} title="Anular Requisición">🚫</button>
                     )}
@@ -774,7 +977,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
                     </div>
                   )}
                   <div className="status-purchase-badge" style={{ marginTop: '8px' }}>
-                    <span className="stat-label" style={{ fontSize: '9px' }}>STATUS COMPRA:</span>
+                    <span className="stat-label" style={{ fontSize: '9px' }}>STATUS DE COMPRA:</span>
                     <span style={{ fontSize: '10px', color: estadoGlobal.color, fontWeight: '900' }}>{estadoGlobal.texto}</span>
                   </div>
                 </div>
@@ -839,14 +1042,58 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
 
               {/* CAMPO DE OBSERVACIONES */}
               <div style={{ marginBottom: '25px' }}>
-                <label className="stat-label">OBSERVACIONES</label>
-                <textarea
-                  className="input-tc"
-                  style={{ minHeight: '60px', paddingTop: '10px' }}
-                  value={observaciones}
-                  onChange={(e) => setObservaciones(e.target.value)}
-                  placeholder="Notas adicionales sobre la entrega, especificaciones técnicas, etc."
-                />
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '5px' }}>
+                  <label className="stat-label" style={{ marginBottom: 0 }}>OBSERVACIONES</label>
+                  {editandoId && !editandoObs && (
+                    <button
+                      onClick={() => {
+                        setObsTemporal(observaciones);
+                        setEditandoObs(true);
+                      }}
+                      style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '1rem', padding: 0 }}
+                      title="Editar Observaciones"
+                    >
+                      ✏️
+                    </button>
+                  )}
+                </div>
+
+                {editandoObs ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <textarea
+                      className="input-tc"
+                      style={{ minHeight: '80px', paddingTop: '10px' }}
+                      value={obsTemporal}
+                      onChange={(e) => setObsTemporal(e.target.value)}
+                      placeholder="Actualice las observaciones aquí..."
+                    />
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <button
+                        className="btn-tc btn-tc-success"
+                        style={{ padding: '4px 12px', fontSize: '0.7rem' }}
+                        onClick={guardarObservacionesDirecto}
+                      >
+                        ✓ GUARDAR
+                      </button>
+                      <button
+                        className="btn-tc btn-tc-secondary"
+                        style={{ padding: '4px 12px', fontSize: '0.7rem' }}
+                        onClick={() => setEditandoObs(false)}
+                      >
+                        CANCELAR
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <textarea
+                    className="input-tc"
+                    style={{ minHeight: '60px', paddingTop: '10px' }}
+                    value={observaciones}
+                    onChange={(e) => setObservaciones(e.target.value)}
+                    placeholder="Notas adicionales sobre la entrega, especificaciones técnicas, etc."
+                    disabled={editandoId && !editandoObs}
+                  />
+                )}
               </div>
 
               {editandoId && historial.find(h => h.id === editandoId)?.estado_aprobacion === 'rechazada' && (
@@ -863,124 +1110,218 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
               <table className="tc-table" style={{ fontSize: '0.85rem' }}>
                 <thead>
                   <tr style={{ backgroundColor: 'var(--slate-50)' }}>
-                    <th>RENG.</th>
-                    <th>CLASIFICACIÓN</th>
-                    <th>CATEGORÍA</th>
-                    <th>CANT.</th>
-                    <th>UNI.</th>
-                    <th>DESCRIPCIÓN</th>
-                    <th style={{ width: '150px' }}>BENEFICIARIO</th>
-                    <th style={{ textAlign: 'right' }}>P.U.</th>
-                    <th style={{ textAlign: 'right' }}>TOTAL</th>
-                    <th>STATUS</th>
-                    <th></th>
+                    <th style={{ width: '10px' }}>RENGLÓN</th>
+                    <th style={{ width: '200px' }}>CLASIFICACIÓN</th>
+                    <th style={{ width: '200px' }}>CATEGORÍA</th>
+                    <th style={{ width: '70px' }}>CANT.</th>
+                    <th style={{ width: '110px' }}>UNI.</th>
+                    <th style={{ width: '500px' }}>DESCRIPCIÓN</th>
+                    <th style={{ width: '300px' }}>BENEFICIARIO</th>
+                    <th style={{ width: '60px', textAlign: 'right' }}>P.U.</th>
+                    <th style={{ width: '60px', textAlign: 'right' }}>TOTAL</th>
+                    <th style={{ width: '10px', textAlign: 'center' }}>TRAZAB.</th>
+                    <th style={{ width: '5px' }}></th>
                   </tr>
                 </thead>
                 <tbody>
                   <AnimatePresence>
                     {renglones.map((f, index) => (
-                      <motion.tr
-                        key={f.id}
-                        className="renglon-row"
-                        initial={{ opacity: 0, height: 0, scaleY: 0.8 }}
-                        animate={{ opacity: 1, height: 'auto', scaleY: 1 }}
-                        exit={{ opacity: 0, height: 0, scaleY: 0.8, overflow: 'hidden' }}
-                        transition={{ duration: 0.3 }}
-                      >
-                        <td style={{ textAlign: 'center' }}>{index + 1}</td>
-                        <td><input className="input-tc" value={f.clasificacion} onChange={(e) => actualizarFila(f.id, 'clasificacion', e.target.value)} /></td>
-                        <td><input className="input-tc" value={f.categoria} onChange={(e) => actualizarFila(f.id, 'categoria', e.target.value)} /></td>
-                        <td><input className="input-tc" type="number" value={f.cant} onChange={(e) => actualizarFila(f.id, 'cant', e.target.value)} /></td>
-                        <td>
-                          <select className="input-tc" value={f.uni} onChange={(e) => actualizarFila(f.id, 'uni', e.target.value)}>
-                            {unidades.map(u => <option key={u} value={u}>{u}</option>)}
-                          </select>
-                        </td>
-                        <td><input className="input-tc" value={f.descripcion} onChange={(e) => actualizarFila(f.id, 'descripcion', e.target.value)} /></td>
-                        <td><input className="input-tc" value={f.beneficiario} onChange={(e) => actualizarFila(f.id, 'beneficiario', e.target.value)} placeholder="Beneficiario" /></td>
-                        <td><input className="input-tc" type="number" value={f.pu} style={{ textAlign: 'right' }} onChange={(e) => actualizarFila(f.id, 'pu', e.target.value)} /></td>
-                        <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{f.total.toLocaleString('de-DE')}</td>
-                        <td>
-                          <select
-                            className="input-tc"
-                            style={{
-                              fontSize: '0.8rem',
-                              fontWeight: 'bold',
-                              backgroundColor: f.status === 'Completado' ? '#f0fdf4' : f.status === 'Parcial' ? '#fff7ed' : 'transparent',
-                              color: f.status === 'Completado' ? '#15803d' : f.status === 'Parcial' ? '#ea580c' : 'var(--slate-600)'
-                            }}
-                            value={f.status}
-                            onChange={(e) => actualizarFila(f.id, 'status', e.target.value)}
-                          >
-                            <option value="En Espera">En Espera</option>
-                            <option value="Parcial">Parcial</option>
-                            <option value="Completado">Completado</option>
-                          </select>
-                        </td>
-                        <td style={{ textAlign: 'center' }}>
-                          <button
-                            onClick={() => setRenglones(renglones.filter(r => r.id !== f.id))}
-                            style={{
-                              color: 'var(--danger)', border: 'none', background: 'none',
-                              fontSize: '1.5rem', cursor: 'pointer', fontWeight: 'bold',
-                              transition: 'transform 0.2s', display: 'flex', alignItems: 'center'
-                            }}
-                            onMouseEnter={e => e.target.style.transform = 'scale(1.25)'}
-                            onMouseLeave={e => e.target.style.transform = 'scale(1)'}
-                            title="Eliminar Renglón"
-                          >
-                            ×
-                          </button>
-                        </td>
-                      </motion.tr>
+                      <React.Fragment key={f.id}>
+                        <motion.tr
+                          className="renglon-row"
+                          initial={{ opacity: 0, height: 0, scaleY: 0.8 }}
+                          animate={{ opacity: 1, height: 'auto', scaleY: 1 }}
+                          exit={{ opacity: 0, height: 0, scaleY: 0.8, overflow: 'hidden' }}
+                          transition={{ duration: 0.3 }}
+                        >
+                          <td style={{ textAlign: 'center' }}>{index + 1}</td>
+                          <td><input className="input-tc" value={f.clasificacion} onChange={(e) => actualizarFila(f.id, 'clasificacion', e.target.value)} /></td>
+                          <td><input className="input-tc" value={f.categoria} onChange={(e) => actualizarFila(f.id, 'categoria', e.target.value)} /></td>
+                          <td><input className="input-tc" type="number" value={f.cant} onChange={(e) => actualizarFila(f.id, 'cant', e.target.value)} /></td>
+                          <td>
+                            <select className="input-tc" value={f.uni} onChange={(e) => actualizarFila(f.id, 'uni', e.target.value)}>
+                              {unidades.map(u => <option key={u} value={u}>{u}</option>)}
+                            </select>
+                          </td>
+                          <td><input className="input-tc" value={f.descripcion} onChange={(e) => actualizarFila(f.id, 'descripcion', e.target.value)} /></td>
+                          <td><input className="input-tc" value={f.beneficiario} onChange={(e) => actualizarFila(f.id, 'beneficiario', e.target.value)} placeholder="Beneficiario" /></td>
+                          <td><input className="input-tc" type="number" value={f.pu} style={{ textAlign: 'right' }} onChange={(e) => actualizarFila(f.id, 'pu', e.target.value)} /></td>
+                          <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{f.total.toLocaleString('de-DE')}</td>
+                          <td style={{ textAlign: 'center' }}>
+                            <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', alignItems: 'center' }}>
+                              <button
+                                onClick={() => setExpandirHistorial(prev => ({ ...prev, [f.id]: !prev[f.id] }))}
+                                style={{ border: 'none', background: 'none', cursor: 'pointer', opacity: (f.historial_compras?.length > 0) ? 1 : 0.3 }}
+                                title="Ver Trazabilidad"
+                                disabled={!f.historial_compras?.length}
+                              >
+                                {expandirHistorial[f.id] ? '🔼' : '🕒'}
+                              </button>
+                            </div>
+                          </td>
+                          <td style={{ textAlign: 'center' }}>
+                          </td>
+                        </motion.tr>
+                        {expandirHistorial[f.id] && f.historial_compras?.length > 0 && (
+                          <tr>
+                            <td colSpan="11" style={{ padding: '0 0 15px 40px' }}>
+                              <div style={{ backgroundColor: 'white', borderRadius: '8px', border: '1px solid #e2e8f0', overflow: 'hidden', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
+                                <div style={{ padding: '8px 12px', backgroundColor: '#f8fafc', fontSize: '0.7rem', fontWeight: '900', color: '#475569', display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #e2e8f0' }}>
+                                  <span>TRAZABILIDAD Y JUSTIFICACIONES DEL ÍTEM</span>
+                                  <span style={{ color: 'var(--primary)' }}>{f.historial_compras.length} EVENTOS</span>
+                                </div>
+                                <table style={{ width: '100%', fontSize: '0.75rem', borderCollapse: 'collapse' }}>
+                                  <thead>
+                                    <tr style={{ backgroundColor: '#f1f5f9', color: '#64748b', fontSize: '0.65rem' }}>
+                                      <th style={{ padding: '8px', textAlign: 'left' }}>FECHA</th>
+                                      <th style={{ padding: '8px', textAlign: 'left' }}>EVENTO</th>
+                                      <th style={{ padding: '8px', textAlign: 'left' }}>DETALLE / MOTIVO</th>
+                                      <th style={{ padding: '8px', textAlign: 'center' }}>CANT.</th>
+                                      <th style={{ padding: '8px', textAlign: 'right' }}>P.U. REAL</th>
+                                      <th style={{ padding: '8px', textAlign: 'right' }}>TOTAL / COMENTARIO</th>
+                                      <th style={{ padding: '8px', textAlign: 'right' }}>USUARIO</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {f.historial_compras.map((h, idx) => (
+                                      <tr key={idx} style={{
+                                        borderBottom: idx < f.historial_compras.length - 1 ? '1px solid #f1f5f9' : 'none',
+                                        backgroundColor: h.tipo === 'JUSTIFICACION' ? '#fffbeb' : 'transparent'
+                                      }}>
+                                        <td style={{ padding: '8px', color: '#64748b' }}>{new Date(h.fecha).toLocaleDateString()}</td>
+                                        <td style={{ padding: '8px', fontWeight: 'bold', color: h.tipo === 'JUSTIFICACION' ? '#d97706' : '#16a34a' }}>
+                                          {h.tipo === 'JUSTIFICACION' ? '⚠️ JUSTIFICACIÓN' : '✅ COMPRA'}
+                                        </td>
+                                        <td style={{ padding: '8px' }}>
+                                          {h.tipo === 'JUSTIFICACION' ? (
+                                            <span style={{ fontStyle: 'italic', color: '#92400e', fontWeight: '600' }}>{h.motivo}</span>
+                                          ) : 'Procesamiento de compra'}
+                                        </td>
+                                        <td style={{ padding: '8px', textAlign: 'center', fontWeight: '700' }}>{h.cant || '-'}</td>
+                                        <td style={{ padding: '8px', textAlign: 'right' }}>{h.pu ? `$ ${h.pu.toLocaleString('de-DE')}` : '-'}</td>
+                                        <td style={{ padding: '8px', textAlign: 'right' }}>
+                                          {h.tipo === 'JUSTIFICACION' ? (
+                                            <div style={{ fontSize: '0.7rem', color: '#475569', whiteSpace: 'pre-wrap', textAlign: 'left', backgroundColor: '#fef3c7', padding: '6px', borderRadius: '4px' }}>
+                                              {h.comentario}
+                                            </div>
+                                          ) : <span style={{ fontWeight: 'bold' }}>$ {(h.cant * h.pu).toLocaleString('de-DE')}</span>}
+                                        </td>
+                                        <td style={{ padding: '8px', textAlign: 'right', color: '#64748b', fontSize: '0.65rem' }}>{h.usuario_nombre}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
                     ))}
                   </AnimatePresence>
                 </tbody>
               </table>
 
-              <button className="btn-add-row" onClick={() => setRenglones([...renglones, { id: Date.now(), status: 'En Espera', cant: 1, uni: 'UNID', descripcion: '', beneficiario: '', pu: 0, total: 0 }])}>
-                + AÑADIR RENGLÓN
-              </button>
+              {/* SECCIÓN DE DOCUMENTOS DE SOPORTE (IMÁGENES DE COMPRA) */}
+              {editandoId && (
+                <div style={{ marginTop: '30px', padding: '20px', backgroundColor: '#f8fafc', borderRadius: '15px', border: '1px solid #e2e8f0' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
+                    <h4 style={{ margin: 0, fontSize: '0.9rem', color: '#1e293b', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <FileText size={18} /> DOCUMENTOS Y SOPORTES
+                    </h4>
+
+                    <label className="btn-tc btn-tc-primary" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.75rem' }}>
+                      {uploading ? <Loader2 className="animate-spin" size={14} /> : <Upload size={14} />}
+                      {uploading ? 'SUBIENDO...' : 'ADJUNTAR SOPORTE'}
+                      <input type="file" multiple style={{ display: 'none' }} onChange={subirFactura} disabled={uploading} />
+                    </label>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap' }}>
+                    {(historial.find(h => h.id === editandoId)?.facturas_url || []).map((url, idx) => {
+                      const isImg = /\.(jpg|jpeg|png|webp|avif|gif)$/i.test(url.split('?')[0]);
+                      return (
+                        <div key={idx} style={{ position: 'relative' }}>
+                          <a href={url} target="_blank" rel="noreferrer" style={{
+                            display: 'block',
+                            width: '100px', height: '100px',
+                            borderRadius: '12px',
+                            overflow: 'hidden',
+                            border: '2px solid #e2e8f0',
+                            backgroundColor: 'white',
+                            boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'
+                          }}>
+                            {isImg ? (
+                              <img src={url} alt={`Soporte ${idx}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            ) : (
+                              <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f8fafc', color: '#ef4444' }}>
+                                <FileText size={32} />
+                                <span style={{ fontSize: '0.6rem', fontWeight: 'bold', marginTop: '4px', color: '#64748b' }}>VER PDF</span>
+                              </div>
+                            )}
+                          </a>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
 
               <div style={{ marginTop: '30px', display: 'flex', justifyContent: 'flex-end', alignItems: 'flex-end' }}>
-                <div className="totals-container">
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                    <span className="stat-label">SUB-TOTAL:</span>
-                    <span style={{ fontWeight: 'bold' }}>$ {subTotal.toLocaleString('de-DE')}</span>
+                <div className="totals-container" style={{ minWidth: '350px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', color: '#64748b' }}>
+                    <span className="stat-label" style={{ color: 'inherit' }}>SUB-TOTAL ESTIMADO:</span>
+                    <span style={{ fontWeight: 'bold' }}>$ {subTotalEstimado.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span>
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '2px solid var(--slate-200)', paddingTop: '10px' }}>
-                    <span style={{ fontWeight: '900' }}>TOTAL GENERAL:</span>
-                    <span style={{ fontSize: '1.2rem', fontWeight: '900', color: 'var(--primary)' }}>$ {totalGeneral.toLocaleString('de-DE')}</span>
+                  {subTotalEjecutado > 0 && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', color: '#16a34a' }}>
+                      <span className="stat-label" style={{ color: 'inherit' }}>SUB-TOTAL EJECUTADO:</span>
+                      <span style={{ fontWeight: 'bold' }}>$ {subTotalEjecutado.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span>
+                    </div>
+                  )}
+
+                  <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '2px solid var(--slate-200)', paddingTop: '10px', color: '#64748b' }}>
+                    <span style={{ fontWeight: '900', fontSize: '1rem' }}>TOTAL ESTIMADO (C/IVA):</span>
+                    <span style={{ fontSize: '1.2rem', fontWeight: '900' }}>$ {totalEstimado.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span>
                   </div>
+
+                  {subTotalEjecutado > 0 && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: '10px', color: '#16a34a' }}>
+                      <span style={{ fontWeight: '900', fontSize: '1rem' }}>TOTAL EJECUTADO (C/IVA):</span>
+                      <span style={{ fontSize: '1.2rem', fontWeight: '900' }}>$ {totalEjecutado.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span>
+                    </div>
+                  )}
+
+                  {/* Diferencia */}
+                  {subTotalEjecutado > 0 && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: '10px', marginTop: '10px', borderTop: '1px dashed #cbd5e1' }}>
+                      <span style={{ fontWeight: '600', fontSize: '0.9rem', color: '#475569' }}>DIFERENCIA:</span>
+                      {(() => {
+                        if (totalEstimado === 0) {
+                          return <span style={{ fontSize: '0.9rem', fontWeight: 'bold', color: '#64748b' }}>+ $ {totalEjecutado.toLocaleString('de-DE', { minimumFractionDigits: 2 })} (Sin Est. Previa)</span>;
+                        }
+                        const diff = totalEjecutado - totalEstimado;
+                        const pje = (diff / totalEstimado) * 100;
+                        const isRed = diff > 0;
+                        const isGreen = diff < 0;
+                        const color = isRed ? '#ef4444' : isGreen ? '#16a34a' : '#64748b';
+                        const sign = diff > 0 ? '+' : '';
+
+                        // Prevent NaN or extreme values if close to 0
+                        const pjeStr = isFinite(pje) ? `${pje > 0 ? '+' : ''}${pje.toFixed(1)}%` : 'N/A';
+
+                        return (
+                          <span style={{ fontSize: '0.9rem', fontWeight: 'bold', color }}>
+                            {sign} $ {diff.toLocaleString('de-DE', { minimumFractionDigits: 2 })} ({pjeStr})
+                          </span>
+                        );
+                      })()}
+                    </div>
+                  )}
                 </div>
               </div>
 
-              <div style={{ marginTop: '30px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
-                {/* PANEL DE DOBLE FIRMA */}
-                <div style={{ display: 'flex', gap: '40px', alignItems: 'flex-end' }}>
-                  {/* FIRMA 1: GERENTE DE ÁREA */}
-                  <div className="signature-line" style={{ borderTop: '2px solid #e2e8f0', paddingTop: '10px', minWidth: '150px', textAlign: 'center' }}>
-                    {historial.find(h => h.id === editandoId)?.firma_gerente && (
-                      <img src={historial.find(h => h.id === editandoId).firma_gerente} alt="Firma Gerente Area" style={{ width: '130px', maxHeight: '60px', mixBlendMode: 'darken' }} />
-                    )}
-                    <p style={{ margin: '5px 0 0', fontWeight: '900', fontSize: '0.75rem', textTransform: 'uppercase' }}>
-                      {historial.find(h => h.id === editandoId)?.aprobado_gerente_area ? 'APROBADO' : 'GERENTE DE ÁREA'}
-                    </p>
-                    <p style={{ margin: 0, fontSize: '0.6rem', color: 'var(--slate-400)', fontWeight: 'bold' }}>NIVEL 1: ÁREA</p>
-                  </div>
-
-                  {/* FIRMA 2: GERENTE GENERAL */}
-                  <div className="signature-line" style={{ borderTop: '2px solid #e2e8f0', paddingTop: '10px', minWidth: '150px', textAlign: 'center' }}>
-                    {historial.find(h => h.id === editandoId)?.firma_gerente_general && (
-                      <img src={historial.find(h => h.id === editandoId).firma_gerente_general} alt="Firma GG" style={{ width: '150px', maxHeight: '70px', mixBlendMode: 'darken' }} />
-                    )}
-                    <p style={{ margin: '5px 0 0', fontWeight: '900', fontSize: '0.75rem', textTransform: 'uppercase' }}>
-                      {historial.find(h => h.id === editandoId)?.aprobado_gerente_general ? 'CARLOS VEGA' : 'GERENTE GENERAL'}
-                    </p>
-                    <p style={{ margin: 0, fontSize: '0.6rem', color: 'var(--slate-400)', fontWeight: 'bold' }}>NIVEL 2: GENERAL</p>
-                  </div>
-                </div>
-
+              <div style={{ marginTop: '30px', display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
                 <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
                   <button className="btn-tc btn-tc-secondary" onClick={() => { setShowModal(false); onClose?.(); resetearFormulario(); }}>Cerrar</button>
                   <button className="btn-tc btn-tc-dark" onClick={exportarPDF}>📥 PDF</button>
