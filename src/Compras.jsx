@@ -37,13 +37,17 @@ const Compras = () => {
   const obtenerSesionUsuario = useCallback(async () => {
     const { data: { session } } = await supabase.auth.getSession();
     if (session?.user?.email) {
+      const email = session.user.email.toLowerCase();
       const { data: perfil } = await supabase
         .from('perfiles')
         .select('*')
         .eq('correo', session.user.email)
         .single();
 
-      setCurrentUser(perfil);
+      if (perfil) {
+        const esAdminReal = email === 'jcontreras.totalclean@gmail.com' || email === 'cvega.totalclean@gmail.com';
+        setCurrentUser({ ...perfil, esAdminReal });
+      }
     }
   }, []);
 
@@ -233,7 +237,13 @@ const Compras = () => {
   };
 
   const eliminarEntradaHistorial = async (idRenglon, indexHistorial) => {
-    const esCompras = currentUser?.departamento?.includes('Compras') || currentUser?.departamento?.includes('Administración') || currentUser?.esAdminReal;
+    const rolUpper = (currentUser?.rol || '').toUpperCase();
+    const deptoUpper = (currentUser?.departamento || '').toUpperCase();
+    const esCompras = deptoUpper.includes('COMPRAS') || 
+                     deptoUpper.includes('ADMINISTRACIÓN') || 
+                     currentUser?.esAdminReal ||
+                     rolUpper === 'ADMIN' ||
+                     rolUpper === 'GERENTE GENERAL';
     if (!esCompras) return alert("Solo el personal de Compras / Administración puede eliminar registros del historial.");
 
     if (!window.confirm("¿Está seguro de eliminar esta entrada? El saldo pendiente se restaurará automáticamente.")) return;
@@ -915,7 +925,14 @@ const Compras = () => {
   };
 
   // --- RESTRICCIÓN DE ACCESO (VISTA) ---
-  const esDeCompras = currentUser?.departamento === 'Compras' || currentUser?.departamento === 'Administración Maracaibo' || currentUser?.departamento === 'Administración El Tigre' || currentUser?.esAdminReal || currentUser?.rol === 'Gerente General';
+  const rolUpperFinal = (currentUser?.rol || '').toUpperCase();
+  const deptoUpperFinal = (currentUser?.departamento || '').toUpperCase();
+  
+  const esDeCompras = deptoUpperFinal.includes('COMPRAS') || 
+                     deptoUpperFinal.includes('ADMINISTRACIÓN') || 
+                     currentUser?.esAdminReal || 
+                     rolUpperFinal === 'GERENTE GENERAL' ||
+                     rolUpperFinal === 'ADMIN';
 
   if (!esDeCompras && currentUser) {
     return <div style={{ padding: '40px', textAlign: 'center' }}>No tiene permisos para acceder al módulo de Compras.</div>;
@@ -1460,7 +1477,7 @@ const Compras = () => {
                                     </td>
                                     <td style={{ padding: '8px', textAlign: 'right', color: '#64748b' }}>{h.usuario_nombre}</td>
                                     <td style={{ padding: '8px', textAlign: 'center' }}>
-                                      {(currentUser?.departamento?.includes('Compras') || currentUser?.esAdminReal) && (
+                                      {(deptoUpperFinal.includes('COMPRAS') || currentUser?.esAdminReal || rolUpperFinal === 'ADMIN' || rolUpperFinal === 'GERENTE GENERAL') && (
                                         <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
                                           {(h.doc_tipo === 'NC' || h.metodo_pago?.includes('CRÉDITO')) && h.metodo_pago !== 'PAGADO (NC)' && (
                                             <button

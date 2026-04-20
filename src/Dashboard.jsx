@@ -12,15 +12,18 @@ import ReportesMaestro from './ReportesMaestro';
 import Proveedores from './Proveedores';
 import Administracion from './Administracion';
 import Atributos from './Atributos';
+import { Menu, X as CloseIcon, Search } from 'lucide-react';
 
 function Dashboard() {
   const navigate = useNavigate();
   const [seccionActiva, setSeccionActiva] = useState('requisiciones');
-  const [sidebarAbierto, setSidebarAbierto] = useState(true); // NUEVO ESTADO
+  const [sidebarAbierto, setSidebarAbierto] = useState(window.innerWidth > 768); 
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
   const [usuario, setUsuario] = useState({ nombre: '', apellido: '', rol: '', departamento: '' });
   const [cargando, setCargando] = useState(true);
   const [notificacionesLog, setNotificacionesLog] = useState([]);
   const [verNotificaciones, setVerNotificaciones] = useState(false);
+  const [busquedaMenu, setBusquedaMenu] = useState('');
 
   // Helper para obtener semana actual
   const getSemanaActual = () => {
@@ -29,6 +32,11 @@ function Dashboard() {
     d.setDate(d.getDate() + 3 - (d.getDay() + 6) % 7);
     const week1 = new Date(d.getFullYear(), 0, 4);
     return 1 + Math.round(((d.getTime() - week1.getTime()) / 86400000 - 3 + (week1.getDay() + 6) % 7) / 7);
+  };
+
+  const getInitials = (n, a) => {
+    if (!n) return 'TC';
+    return `${n.charAt(0)}${a ? a.charAt(0) : ''}`.toUpperCase();
   };
 
   useEffect(() => {
@@ -56,6 +64,14 @@ function Dashboard() {
 
     cargarDatosUsuario();
 
+    const handleResize = () => {
+      const mobile = window.innerWidth <= 768;
+      setIsMobile(mobile);
+      if (!mobile) setSidebarAbierto(true);
+      else setSidebarAbierto(false);
+    };
+    window.addEventListener('resize', handleResize);
+
     const style = document.createElement('style');
     style.innerHTML = `
       @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
@@ -67,6 +83,108 @@ function Dashboard() {
       .btn-exit-small { transition: all 0.2s ease; cursor: pointer; color: #f87171; border: none; background: none; font-weight: 700; font-size: 0.75rem; padding: 4px 8px; border-radius: 6px; }
       .btn-exit-small:hover { background-color: #fee2e2; color: #ef4444; }
       .notif-badge { position: absolute; top: -5px; right: -5px; background: #ef4444; color: white; font-size: 0.6rem; width: 16px; height: 16px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; border: 2px solid white; }
+      
+      /* SIDEBAR SEARCH */
+      .sidebar-search {
+        background: rgba(255,255,255,0.05);
+        border: 1px solid rgba(255,255,255,0.1);
+        border-radius: 12px;
+        color: white;
+        padding: 8px 12px;
+        margin: 10px 15px 25px 15px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        transition: all 0.3s;
+      }
+      .sidebar-search:focus-within {
+        background: rgba(255,255,255,0.1);
+        border-color: #38bdf8;
+      }
+      .sidebar-search input {
+        background: transparent;
+        border: none;
+        color: white;
+        font-size: 0.85rem;
+        width: 100%;
+        outline: none;
+      }
+
+      /* HIDE SCROLLBARS */
+      .sidebar-scrollable::-webkit-scrollbar { display: none; }
+      .sidebar-scrollable { 
+        -ms-overflow-style: none; 
+        scrollbar-width: none; 
+        overflow-y: auto;
+        overflow-x: hidden;
+        flex: 1;
+      }
+
+      /* MODERN MENU ITEMS (CENTRADOS) */
+      .menu-item-new {
+        margin: 4px auto;
+        padding: 10px 5px;
+        border-radius: 12px;
+        cursor: pointer;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
+        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        color: #94a3b8;
+        font-weight: 500;
+        width: 85%;
+        text-align: center;
+      }
+      .menu-item-new:hover {
+        background: rgba(255,255,255,0.05);
+        color: white;
+        transform: translateY(-2px);
+      }
+      .menu-item-new.active {
+        background: rgba(56, 189, 248, 0.1);
+        color: #38bdf8;
+        font-weight: 700;
+      }
+      .menu-item-new i {
+        font-size: 1.1rem;
+      }
+      .menu-item-new span {
+        font-size: 0.65rem;
+        line-height: 1.2;
+        width: 100%;
+        display: block;
+        word-wrap: break-word;
+      }
+
+      @media (max-width: 768px) {
+        .mobile-drawer {
+          position: fixed !important;
+          left: 0;
+          top: 0;
+          height: 100vh !important;
+          z-index: 2000;
+          width: 280px !important;
+          transform: translateX(-100%);
+          transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+        }
+        .mobile-drawer.open {
+          transform: translateX(0);
+        }
+        .sidebar-overlay {
+          position: fixed;
+          inset: 0;
+          background: rgba(0,0,0,0.5);
+          backdrop-filter: blur(2px);
+          z-index: 1999;
+          animation: fadeIn 0.2s ease;
+        }
+        .input-style, select, button {
+          font-size: 16px !important; /* Prevent iOS zoom */
+          padding: 12px 14px !important;
+          min-height: 44px; /* Touch target size */
+        }
+      }
     `;
     document.head.appendChild(style);
 
@@ -75,6 +193,7 @@ function Dashboard() {
 
     return () => {
       document.head.removeChild(style);
+      window.removeEventListener('resize', handleResize);
     };
   }, [navigate]);
 
@@ -226,8 +345,8 @@ function Dashboard() {
   const estilos = {
     contenedor: { display: 'flex', width: '100vw', height: '100vh', backgroundColor: '#f1f5f9', fontFamily: '"Inter", sans-serif' },
     sidebar: {
-      width: sidebarAbierto ? '130px' : '75px',
-      backgroundColor: '#030712', // Oscuro Charcoal casi Negro
+      width: sidebarAbierto ? '110px' : '75px',
+      backgroundColor: '#030712', // Charcoal casi Negro original
       color: '#cbd5e1',
       display: 'flex',
       flexDirection: 'column',
@@ -236,13 +355,50 @@ function Dashboard() {
       transition: 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)',
       position: 'relative',
       boxShadow: '4px 0 10px rgba(0,0,0,0.2)',
-      overflow: 'visible'
+      overflow: 'visible',
+      zIndex: 1000
     },
-    principal: { flex: 1, padding: '10px', overflowY: 'auto', height: '100vh', boxSizing: 'border-box', transition: 'all 0.3s' },
-    card: { backgroundColor: 'white', padding: '30px', borderRadius: '24px', boxShadow: '0 4px 15px rgba(0,0,0,0.03)', border: '1px solid #e2e8f0' },
-    gridStats: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '20px', marginBottom: '30px' },
-    miniCard: (color) => ({ backgroundColor: 'white', padding: '20px', borderRadius: '18px', borderLeft: `6px solid ${color}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }),
-    iconCircle: (bg) => ({ width: '48px', height: '48px', borderRadius: '12px', backgroundColor: bg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white' })
+    principal: { 
+      flex: 1, 
+      padding: isMobile ? '5px' : '10px', 
+      overflowY: 'auto', 
+      height: '100vh', 
+      boxSizing: 'border-box', 
+      transition: 'all 0.3s' 
+    },
+    card: { 
+      backgroundColor: 'white', 
+      padding: isMobile ? '15px' : '30px', 
+      borderRadius: isMobile ? '16px' : '24px', 
+      boxShadow: '0 4px 15px rgba(0,0,0,0.03)', 
+      border: '1px solid #e2e8f0' 
+    },
+    gridStats: { 
+      display: 'grid', 
+      gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(auto-fit, minmax(200px, 1fr))', 
+      gap: isMobile ? '8px' : '20px', 
+      marginBottom: isMobile ? '15px' : '30px' 
+    },
+    miniCard: (color) => ({ 
+      backgroundColor: 'white', 
+      padding: isMobile ? '12px' : '20px', 
+      borderRadius: '14px', 
+      borderLeft: `${isMobile ? '4px' : '6px'} solid ${color}`, 
+      display: 'flex', 
+      justifyContent: 'space-between', 
+      alignItems: 'center',
+      minHeight: isMobile ? '70px' : 'auto'
+    }),
+    iconCircle: (bg) => ({ 
+      width: isMobile ? '36px' : '48px', 
+      height: isMobile ? '36px' : '48px', 
+      borderRadius: '10px', 
+      backgroundColor: bg, 
+      display: 'flex', 
+      alignItems: 'center', 
+      justifyContent: 'center', 
+      color: 'white' 
+    })
   };
 
   const renderContenido = () => {
@@ -287,7 +443,11 @@ function Dashboard() {
   // Protección de seguridad: si la sección activa no está permitida, reset a la primera permitida
   useEffect(() => {
     if (!usuario?.id) return;
-    const esAdmin = usuario?.correo === 'jcontreras.totalclean@gmail.com' || usuario?.correo === 'cvega.totalclean@gmail.com' || usuario?.esAdminReal;
+    const esAdmin = usuario?.correo === 'jcontreras.totalclean@gmail.com' || 
+                   usuario?.correo === 'cvega.totalclean@gmail.com' || 
+                   usuario?.esAdminReal || 
+                   usuario?.rol === 'Admin' || 
+                   usuario?.rol === 'Gerente General';
     if (esAdmin) return;
 
     const modulosPermitidos = usuario?.permisos_modulos || [];
@@ -304,230 +464,133 @@ function Dashboard() {
 
   return (
     <div style={estilos.contenedor}>
-      <div style={estilos.sidebar}>
+      {/* OVERLAY PARA MÓVIL */}
+      {isMobile && sidebarAbierto && (
+        <div className="sidebar-overlay" onClick={() => setSidebarAbierto(false)}></div>
+      )}
+
+      <div style={estilos.sidebar} className={`sidebar ${isMobile ? 'mobile-drawer' : ''} ${sidebarAbierto ? 'open' : ''}`}>
 
         {/* BOTÓN TOGGLE SUTIL (ESTILO <<) */}
         <div
           onClick={() => setSidebarAbierto(!sidebarAbierto)}
           style={{
-            position: 'absolute', right: '-12px', top: '15px', backgroundColor: '#030712', color: 'white',
+            position: 'absolute', right: isMobile ? '10px' : '-12px', top: '15px', backgroundColor: '#030712', color: 'white',
             width: '24px', height: '24px', borderRadius: '50%', display: 'flex', alignItems: 'center',
             justifyContent: 'center', cursor: 'pointer', boxShadow: '0 4px 10px rgba(0,0,0,0.3)', zIndex: 100,
             transform: sidebarAbierto ? 'rotate(0deg)' : 'rotate(180deg)', transition: 'transform 0.3s',
             border: '2px solid #1e3a8a'
           }}
         >
-          <i className="fa-solid fa-angles-left" style={{ fontSize: '0.7rem' }}></i>
+          {isMobile ? <CloseIcon size={14} /> : <i className="fa-solid fa-angles-left" style={{ fontSize: '0.7rem' }}></i>}
         </div>
 
         {/* LOGO REMOVIDO POR SOLICITUD */}
-        <div style={{ marginBottom: '20px' }}></div>
-
-
-        {/* 
+        {/* BARRA DE BÚSQUEDA */}
         {sidebarAbierto && (
-          <div style={{ fontSize: '0.65rem', fontWeight: 'bold', color: '#6d6f72ff', marginBottom: '10px', letterSpacing: '1px', textAlign: 'left', paddingLeft: '15px' }}>
-            <i className="fa-solid fa-layer-group" style={{ marginRight: '6px' }}></i> DASHBOARD
+          <div className="sidebar-search">
+            <Search size={18} color="#94a3b8" />
+            <input 
+              type="text" 
+              placeholder="Search..." 
+              value={busquedaMenu}
+              onChange={(e) => setBusquedaMenu(e.target.value)}
+            />
           </div>
         )}
-        {[
-          { id: 'dashboard', icon: 'fa-house-chimney-window', label: 'Dashboard' },
-        ].map(item => (
-          <div key={item.id} className="menu-item" style={{
-            padding: '12px 10px', borderRadius: '10px', marginBottom: '8px', cursor: 'pointer', display: 'flex', 
-            flexDirection: 'column', alignItems: 'center', gap: '4px',
-            justifyContent: 'center',
-            backgroundColor: seccionActiva === item.id ? '#1e293b' : 'transparent',
-            color: seccionActiva === item.id ? '#38bdf8' : '#cbd5e1',
-            width: '90%',
-            transition: 'all 0.2s ease'
-          }} onClick={() => setSeccionActiva(item.id)} title={item.label}>
-            <div style={{ position: 'relative' }}>
-              <i className={`fa-solid ${item.icon}`} style={{ fontSize: '1.1rem' }}></i>
-              {(item.id === 'requisiciones' || item.id === 'dashboard') && notificacionesLog.length > 0 && (
-                <div style={{ 
-                  position: 'absolute', top: '-8px', right: '-10px', background: '#ef4444', color: 'white', 
-                  fontSize: '0.65rem', minWidth: '18px', height: '18px', borderRadius: '50%', 
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', 
-                  border: '2px solid #1E3A8A' 
-                }}>
-                  {notificacionesLog.filter(n => n.nuevo).length || notificacionesLog.length}
-                </div>
-              )}
-            </div>
-            {sidebarAbierto && (
-              <span style={{ 
-                fontSize: '0.65rem', fontWeight: '700', marginTop: '6px', textAlign: 'center',
-                lineHeight: '1', width: '100%', whiteSpace: 'normal', display: 'block'
-              }}>
-                {item.label}
-              </span>
-            )}
+
+        {!sidebarAbierto && (
+          <div style={{ padding: '8px', display: 'flex', justifyContent: 'center', marginBottom: '15px' }}>
+             <Search size={20} color="#94a3b8" />
           </div>
-        ))}
-        */}
+        )}
 
-        <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
-          {(usuario?.correo === 'jcontreras.totalclean@gmail.com' || 
-            usuario?.correo === 'cvega.totalclean@gmail.com' ||
-            usuario?.esAdminReal ||
-            usuario?.permisos_modulos?.some(p => ['compras', 'reportes', 'proveedores'].includes(p))) && sidebarAbierto && (
-            <div style={{ fontSize: '0.65rem', fontWeight: 'bold', color: '#6d6f72ff', marginBottom: '10px', letterSpacing: '1px', textAlign: 'left', paddingLeft: '15px' }}>
-              <i className="fa-solid fa-layer-group" style={{ marginRight: '6px' }}></i> COMPRAS
-            </div>
-          )}
+        <div className="sidebar-scrollable">
           {[
-            { id: 'compras', icon: 'fa-cart-plus', label: 'Compras' },
-            { id: 'reportesmaestro', icon: 'fa-chart-line', label: 'Reportes Maestro' },
-            { id: 'reportes', icon: 'fa-file-contract', label: 'Reporte de Compras' },
-            { id: 'proveedores', icon: 'fa-address-book', label: 'Proveedores' },
-
-          ].filter(item => 
-            usuario?.correo === 'jcontreras.totalclean@gmail.com' || 
-            usuario?.correo === 'cvega.totalclean@gmail.com' ||
-            usuario?.esAdminReal ||
-            usuario?.permisos_modulos?.includes(item.id)
-          ).map(item => (
-            <div key={item.id} className="menu-item" style={{
-              padding: '12px 10px', borderRadius: '10px', marginBottom: '8px', cursor: 'pointer', display: 'flex', 
-              flexDirection: 'column', alignItems: 'center', gap: '4px',
-              justifyContent: 'center',
-              backgroundColor: seccionActiva === item.id ? '#1e293b' : 'transparent',
-              color: seccionActiva === item.id ? '#38bdf8' : '#cbd5e1',
-              width: '90%',
-              transition: 'all 0.2s ease'
-            }} onClick={() => setSeccionActiva(item.id)} title={item.label}>
-              <i className={`fa-solid ${item.icon}`} style={{ fontSize: '1.1rem' }}></i>
-              {sidebarAbierto && (
-                <span style={{ 
-                  fontSize: '0.65rem', fontWeight: '700', marginTop: '6px', textAlign: 'center',
-                  lineHeight: '1', width: '100%', whiteSpace: 'normal', display: 'block'
-                }}>
-                  {item.label}
-                </span>
-              )}
-            </div>
-          ))}
-
-
-
-          {sidebarAbierto && (
-            <div style={{ fontSize: '0.65rem', fontWeight: 'bold', color: '#475569', margin: '20px 0 10px 0', letterSpacing: '1px', textAlign: 'left', paddingLeft: '15px' }}>
-              <i className="fa-solid fa-list-check" style={{ marginRight: '6px' }}></i> GESTIONES
-            </div>
-          )}
-          {[
-            { id: 'requisiciones', icon: 'fa-file-signature', label: 'Requisiciones' },
-            { id: 'fondos', icon: 'fa-hand-holding-dollar', label: 'Solicitud de Fondos' },
-            { id: 'tickets', icon: 'fa-ticket', label: 'Ticket de Pago' },
-
-          ].filter(item => 
-            usuario?.correo === 'jcontreras.totalclean@gmail.com' || 
-            usuario?.correo === 'cvega.totalclean@gmail.com' ||
-            usuario?.esAdminReal ||
-            usuario?.permisos_modulos?.includes(item.id)
-          ).map(item => (
-            <div key={item.id} className="menu-item" style={{
-              padding: '12px 10px', borderRadius: '10px', marginBottom: '8px', cursor: 'pointer', display: 'flex', 
-              flexDirection: 'column', alignItems: 'center', gap: '4px',
-              justifyContent: 'center',
-              backgroundColor: seccionActiva === item.id ? '#1e293b' : 'transparent',
-              color: seccionActiva === item.id ? '#38bdf8' : '#cbd5e1',
-              width: '90%',
-              transition: 'all 0.2s ease'
-            }} onClick={() => setSeccionActiva(item.id)} title={item.label}>
-              <div style={{ position: 'relative' }}>
-                <i className={`fa-solid ${item.icon}`} style={{ fontSize: '1.1rem' }}></i>
-                {(item.id === 'requisiciones' || item.id === 'fondos' || item.id === 'tickets') && notificacionesLog.some(n => n.nuevo) && (
+            { id: 'compras', icon: 'fa-cart-plus', label: 'Compras', cat: 'COMPRAS' },
+            { id: 'reportesmaestro', icon: 'fa-chart-line', label: 'Reportes Maestro', cat: 'COMPRAS' },
+            { id: 'reportes', icon: 'fa-file-contract', label: 'Reporte de Compras', cat: 'COMPRAS' },
+            { id: 'proveedores', icon: 'fa-address-book', label: 'Proveedores', cat: 'COMPRAS' },
+            { id: 'requisiciones', icon: 'fa-file-signature', label: 'Requisiciones', cat: 'GESTIONES' },
+            { id: 'fondos', icon: 'fa-hand-holding-dollar', label: 'Solicitud de Fondos', cat: 'GESTIONES' },
+            { id: 'tickets', icon: 'fa-ticket', label: 'Ticket de Pago', cat: 'GESTIONES' },
+            { id: 'usuarios', icon: 'fa-users', label: 'Usuarios', cat: 'CONFIGURACIÓN' },
+            { id: 'atributos', icon: 'fa-database', label: 'Atributos', cat: 'CONFIGURACIÓN' },
+          ].reduce((acc, item) => {
+            const hasPerm = usuario?.correo === 'jcontreras.totalclean@gmail.com' || 
+                           usuario?.correo === 'cvega.totalclean@gmail.com' ||
+                           usuario?.esAdminReal ||
+                           usuario?.rol === 'Admin' || 
+                           usuario?.rol === 'Gerente General' ||
+                           usuario?.permisos_modulos?.includes(item.id);
+            
+            const matchesSearch = item.label.toLowerCase().includes(busquedaMenu.toLowerCase());
+            
+            if (hasPerm && matchesSearch) {
+              if (acc.length === 0 || acc[acc.length - 1].type !== 'header' || acc[acc.length - 1].cat !== item.cat) {
+                 const lastItem = acc.length > 0 ? acc[acc.length-1] : null;
+                 if (!lastItem || lastItem.cat !== item.cat) {
+                    acc.push({ type: 'header', label: item.cat, cat: item.cat });
+                 }
+              }
+              acc.push({ ...item, type: 'item' });
+            }
+            return acc;
+          }, []).map((node, index) => (
+            node.type === 'header' ? (
+              sidebarAbierto && (
+                <div key={`header-${index}`} style={{ fontSize: '0.6rem', fontWeight: '900', color: '#475569', margin: '20px 0 10px 0', letterSpacing: '0.5px', textAlign: 'center' }}>
+                  {node.label}
+                </div>
+              )
+            ) : (
+              <div 
+                key={node.id} 
+                className={`menu-item-new ${seccionActiva === node.id ? 'active' : ''}`}
+                onClick={() => { setSeccionActiva(node.id); if(isMobile) setSidebarAbierto(false); }}
+                title={node.label}
+              >
+                <i className={`fa-solid ${node.icon}`}></i>
+                {sidebarAbierto && (
+                  <span>{node.label}</span>
+                )}
+                {node.id === 'requisiciones' && notificacionesLog.some(n => n.nuevo) && (
                   <div style={{ 
-                    position: 'absolute', top: '-8px', right: '-10px', background: '#ef4444', color: 'white', 
-                    fontSize: '0.65rem', minWidth: '18px', height: '18px', borderRadius: '50%', 
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', 
-                    border: '2px solid #030712' 
+                    position: 'absolute', top: '2px', right: '12px', background: '#ef4444', color: 'white', 
+                    fontSize: '0.6rem', minWidth: '16px', height: '16px', borderRadius: '50%', 
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold',
+                    border: '1px solid #030712'
                   }}>
                     {notificacionesLog.filter(n => n.nuevo).length}
                   </div>
                 )}
               </div>
-              {sidebarAbierto && (
-                <span style={{ 
-                  fontSize: '0.65rem', fontWeight: '700', marginTop: '6px', textAlign: 'center',
-                  lineHeight: '1', width: '100%', whiteSpace: 'normal', display: 'block'
-                }}>
-                  {item.label}
-                </span>
-              )}
-            </div>
+            )
           ))}
-
-
-          {sidebarAbierto && (
-            <div style={{ fontSize: '0.65rem', fontWeight: 'bold', color: '#475569', margin: '20px 0 10px 0', letterSpacing: '1px', textAlign: 'left', paddingLeft: '15px' }}>
-              <i className="fa-solid fa-gears" style={{ marginRight: '6px' }}></i> CONFIGURACIÓN
-            </div>
-          )}
-          {(usuario?.correo === 'jcontreras.totalclean@gmail.com' || 
-            usuario?.correo === 'cvega.totalclean@gmail.com' ||
-            usuario?.esAdminReal ||
-            usuario?.permisos_modulos?.includes('usuarios')) && (
-            <div className="menu-item" style={{
-              padding: '12px 10px', borderRadius: '10px', marginBottom: '8px', cursor: 'pointer', display: 'flex',
-              flexDirection: 'column', alignItems: 'center', gap: '4px',
-              justifyContent: 'center',
-              backgroundColor: seccionActiva === 'usuarios' ? '#1e293b' : 'transparent',
-              color: seccionActiva === 'usuarios' ? '#38bdf8' : '#cbd5e1',
-              width: '90%',
-              transition: 'all 0.2s ease'
-            }} onClick={() => setSeccionActiva('usuarios')} title="Usuarios">
-              <i className="fa-solid fa-users" style={{ fontSize: '1.1rem' }}></i>
-              {sidebarAbierto && <span style={{ fontSize: '0.65rem', fontWeight: '700', marginTop: '6px', textAlign: 'center' }}>Usuarios</span>}
-            </div>
-          )}
-          {(usuario?.correo === 'jcontreras.totalclean@gmail.com' || 
-            usuario?.correo === 'cvega.totalclean@gmail.com') && (
-            <div className="menu-item" style={{
-              padding: '12px 10px', borderRadius: '10px', marginBottom: '8px', cursor: 'pointer', display: 'flex',
-              flexDirection: 'column', alignItems: 'center', gap: '4px',
-              justifyContent: 'center',
-              backgroundColor: seccionActiva === 'atributos' ? '#1e293b' : 'transparent',
-              color: seccionActiva === 'atributos' ? '#38bdf8' : '#cbd5e1',
-              width: '90%',
-              transition: 'all 0.2s ease'
-            }} onClick={() => setSeccionActiva('atributos')} title="Atributos">
-              <i className="fa-solid fa-database" style={{ fontSize: '1.1rem' }}></i>
-              {sidebarAbierto && <span style={{ fontSize: '0.65rem', fontWeight: '700', marginTop: '6px', textAlign: 'center' }}>Atributos</span>}
-            </div>
-          )}
-          {/*
-          <div className="menu-item" style={{
-            padding: '12px 10px', borderRadius: '10px', marginBottom: '8px', cursor: 'pointer', display: 'flex',
-            flexDirection: 'column', alignItems: 'center', gap: '4px',
-            justifyContent: 'center',
-            backgroundColor: seccionActiva === 'administracion' ? '#1e293b' : 'transparent',
-            color: seccionActiva === 'administracion' ? '#38bdf8' : '#cbd5e1',
-            width: '90%',
-            transition: 'all 0.2s ease'
-          }} onClick={() => setSeccionActiva('administracion')} title="Administración">
-            <i className="fa-solid fa-gears" style={{ fontSize: '1.1rem' }}></i>
-            {sidebarAbierto && <span style={{ fontSize: '0.65rem', fontWeight: '700', marginTop: '6px', textAlign: 'center' }}>Admon</span>}
-          </div>
-          */}
         </div>
 
-        {/* METADATA USUARIO REMOVIDO POR SOLICITUD */}
         <div style={{ marginBottom: '20px' }}></div>
       </div>
 
       <div style={estilos.principal}>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', marginBottom: '30px', position: 'relative' }}>
+        <div style={{ display: 'flex', justifyContent: isMobile ? 'space-between' : 'flex-end', alignItems: 'center', marginBottom: isMobile ? '12px' : '30px', position: 'relative' }}>
+          
+          {isMobile && (
+            <button 
+              onClick={() => setSidebarAbierto(true)}
+              style={{ background: '#030712', color: 'white', border: 'none', padding: '10px', borderRadius: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
+            >
+              <Menu size={20} />
+            </button>
+          )}
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-            <div style={{ backgroundColor: 'white', padding: '10px 20px', borderRadius: '15px', display: 'flex', alignItems: 'center', gap: '10px', boxShadow: '0 2px 8px rgba(0,0,0,0.04)', fontWeight: '700', color: '#1e3a8a' }}>
-              <i className="fa-solid fa-id-card" style={{ color: '#0ea5e9' }}></i> {usuario.rol?.toUpperCase()}
+          <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? '8px' : '15px' }}>
+            <div style={{ backgroundColor: 'white', padding: isMobile ? '4px 8px' : '10px 20px', borderRadius: isMobile ? '10px' : '15px', display: 'flex', alignItems: 'center', gap: isMobile ? '6px' : '10px', boxShadow: '0 2px 8px rgba(0,0,0,0.04)', fontWeight: '700', color: '#1e3a8a', fontSize: isMobile ? '0.7rem' : '1rem' }}>
+              {!isMobile && <i className="fa-solid fa-id-card" style={{ color: '#0ea5e9' }}></i>} {!isMobile ? usuario.rol?.toUpperCase() : getInitials(usuario.nombre, usuario.apellido)}
               <div style={{ borderLeft: '1px solid #e2e8f0', height: '20px', marginLeft: '5px', marginRight: '5px' }}></div>
-              <i className="fa-solid fa-user" style={{ color: '#64748b' }}></i> {usuario.nombre}
+              <i className="fa-solid fa-user" style={{ color: '#64748b' }}></i> {!isMobile && usuario.nombre}
               <div style={{ borderLeft: '1px solid #e2e8f0', height: '20px', marginLeft: '5px', marginRight: '5px' }}></div>
-              <button onClick={cerrarSesion} className="btn-exit-small" style={{ fontSize: '0.7rem', fontWeight: 'bold' }}><i className="fa-solid fa-power-off"></i> SALIR</button>
+              <button onClick={cerrarSesion} className="btn-exit-small" style={{ fontSize: '0.7rem', fontWeight: 'bold' }}><i className="fa-solid fa-power-off"></i> {!isMobile && 'SALIR'}</button>
             </div>
 
             <div

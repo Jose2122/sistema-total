@@ -74,18 +74,44 @@ const Usuarios = () => {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const userEmail = session?.user?.email;
-      const { data, error } = await supabase.from('perfiles').select('*').order('apellido', { ascending: true });
+      if (!userEmail) return;
 
-      if (!error) {
-        const miPerfil = data.find(u => u.correo === userEmail);
-        const esAdminReal = userEmail === ADMIN_EMAIL;
-        setCurrentUser({ ...miPerfil, esAdminReal });
-        const lista = (esAdminReal || miPerfil?.rol === 'Gerente General') ? data : data.filter(u => u.departamento === miPerfil?.departamento);
-        
+      // 1. Obtener mi propio perfil primero
+      const { data: miPerfilLocal } = await supabase.from('perfiles').select('*').eq('id', session.user.id).single();
+      const emailLower = (userEmail || '').toLowerCase();
+      const esAdminReal = emailLower === 'jcontreras.totalclean@gmail.com' || emailLower === 'cvega.totalclean@gmail.com';
+      const rolUpper = (miPerfilLocal?.rol || '').trim().toUpperCase();
+      const esGlobalAdmin = esAdminReal || rolUpper === 'GERENTE GENERAL' || rolUpper === 'ADMIN';
+
+      setCurrentUser({ ...miPerfilLocal, esAdminReal });
+
+      let dataFinal = [];
+
+      if (esGlobalAdmin) {
+        // ADMINS: Siguen viendo todo directamente
+        const { data: allUsers } = await supabase.from('perfiles').select('*').order('apellido', { ascending: true });
+        dataFinal = allUsers || [];
+      } else {
+        // NO-ADMINS: Usar el PUENTE (Edge Function) para evitar bloqueos de RLS
+        console.log("[OBTENER USUARIOS] Usando Puente de Visibilidad (Edge Function)...");
+        const { data: fnData, error: fnError } = await supabase.functions.invoke('admin-user-manager', {
+          body: { action: 'get_department_users' }
+        });
+
+        if (fnError || fnData?.error) {
+          console.error("[OBTENER USUARIOS] Error en puente:", fnError || fnData?.error);
+          // Fallback a solo yo si falla el puente
+          dataFinal = miPerfilLocal ? [miPerfilLocal] : [];
+        } else {
+          dataFinal = fnData.users || [];
+        }
+      }
+
+      if (dataFinal.length > 0) {
         // Mapeo dinámico para rellenar gerencia_id basado en el nombre del departamento si está vacío
-        const listaConIDs = lista.map(u => {
+        const listaConIDs = dataFinal.map(u => {
           if (u.gerencia_id) return u;
-          const matchingG = gerencias.find(g => g.nombre === u.departamento);
+          const matchingG = gerencias.find(g => (g.nombre || '').trim().toUpperCase() === (u.departamento || '').trim().toUpperCase());
           return { ...u, gerencia_id: matchingG?.id || '' };
         });
 
@@ -153,7 +179,8 @@ const Usuarios = () => {
   }, [busqueda, filtroDpto, filtroCargo, usuarios]);
 
   const guardarUsuario = async () => {
-    if (!currentUser?.esAdminReal && currentUser?.rol !== 'Gerente General') return;
+    const rolUpper = (currentUser?.rol || '').toUpperCase();
+    if (!currentUser?.esAdminReal && rolUpper !== 'GERENTE GENERAL' && rolUpper !== 'ADMIN') return;
     if(!formData.rol || !formData.gerencia_id) return toast.error("Asigne Cargo y Gerencia.");
     
     setLoading(true);
@@ -277,7 +304,7 @@ const Usuarios = () => {
       <div style={estilos.tarjeta}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '25px' }}>
           <h2 style={{ fontSize: '1.4rem', color: '#0f172a', margin: 0 }}>Gestión de Usuarios</h2>
-          {(currentUser?.esAdminReal || currentUser?.rol === 'Gerente General') && (
+          {(currentUser?.esAdminReal || (currentUser?.rol || '').toUpperCase() === 'GERENTE GENERAL' || (currentUser?.rol || '').toUpperCase() === 'ADMIN') && (
             <button className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '8px' }} onClick={() => { setFormData({id:null, nombre:'', apellido:'', correo:'', rol:'', departamento:'', gerencia_id:'', contrato:'', activo: true, foto_url:'', password: '', permisos_modulos: ["requisiciones", "fondos", "tickets", "usuarios"], capacidades: {}}); setShowModal(true); }}>
               <UserPlus size={18} /> Nuevo Integrante
             </button>

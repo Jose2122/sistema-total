@@ -906,7 +906,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
               <div style={{ display: 'flex', gap: '16px', alignItems: 'center', flexWrap: 'wrap' }}>
                 <label className="te-btn te-btn-outline" style={{ cursor: 'pointer' }}>
                   <Upload size={16} /> Añadir Soporte
-                  <input type="file" hidden accept="image/*,application/pdf" onChange={manejarSubidaSoporte} />
+                  <input type="file" hidden accept="image/*,application/pdf" onChange={manejarSubidaSoporte} capture="environment" />
                 </label>
                 <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
                   {(form.facturas_url || []).map((url, idx) => {

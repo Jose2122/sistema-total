@@ -42,20 +42,38 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
 
   // --- LÓGICA DE CARGA DE USUARIO ACTUAL ---
   const obtenerSesionUsuario = useCallback(async () => {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (session?.user?.email) {
-      const { data: perfil } = await supabase
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.user) return;
+
+      const email = session.user.email.toLowerCase();
+      
+      // FORZAR lectura de perfil fresco (Sin caché)
+      const { data: perfil, error: pError } = await supabase
         .from('perfiles')
         .select('*')
-        .eq('correo', session.user.email)
+        .eq('id', session.user.id)
         .single();
 
-      const ADMIN_EMAIL = 'jcontreras.totalclean@gmail.com';
-      setCurrentUser({
-        ...perfil,
-        esAdminReal: session.user.email === ADMIN_EMAIL,
-        firma_url: perfil.url_firma_digital // Mapeo de la columna solicitada
-      });
+      if (pError) {
+        console.error("[VISIBILIDAD] Error leyendo perfil:", pError.message);
+        return;
+      }
+
+      if (perfil) {
+        const esAdminReal = email === 'jcontreras.totalclean@gmail.com' || email === 'cvega.totalclean@gmail.com';
+        const userData = {
+          ...perfil,
+          esAdminReal,
+          departamento: (perfil.departamento || '').trim(),
+          rol: (perfil.rol || '').trim(),
+          firma_url: perfil.url_firma_digital
+        };
+        setCurrentUser(userData);
+        console.log("[VISIBILIDAD] Sesión sincronizada para:", email);
+      }
+    } catch (err) {
+      console.error("[VISIBILIDAD] Error fatal obteniendo sesión:", err.message);
     }
   }, []);
 
@@ -66,17 +84,32 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
     try {
       let query = supabase.from('requisiciones').select('*');
 
+      const rolUpper = (currentUser.rol || '').toUpperCase();
+      const deptoUpper = (currentUser.departamento || '').toUpperCase();
+      const tienePermisoDepto = currentUser.capacidades?.ver_departamento === true;
+
+      console.log(`[VISIBILIDAD REQUISICIONES] Usuario: ${currentUser.correo} | Depto: ${currentUser.departamento} | Rol: ${rolUpper} | Permiso Especial: ${tienePermisoDepto}`);
+
       // FLUJO JERÁRQUICO DE VISIBILIDAD POR FASE (ESTADO_APROBACION)
-      if (!currentUser.esAdminReal && currentUser.rol !== 'Gerente General') {
-        if (currentUser.rol === 'Compras') {
-          // Usuarios de Compras solo ven sus propias requisiciones
-          query = query.eq('user_id', currentUser.id);
-        } else if (currentUser.rol === 'Gerente' || currentUser.rol === 'Coordinador' || currentUser.rol === 'Analista') {
-          // Ven todo lo de su departamento/gerencia
-          query = query.eq('gerencia', currentUser.departamento);
+      if (!currentUser.esAdminReal && rolUpper !== 'GERENTE GENERAL' && rolUpper !== 'ADMIN') {
+        const puedeVerDepto = tienePermisoDepto || ['GERENTE', 'COORDINADOR', 'ANALISTA', 'COMPRAS'].includes(rolUpper) || deptoUpper.includes('COMPRAS');
+
+        if (puedeVerDepto) {
+          // Ven todo lo de su departamento/gerencia (Fuzzy Match + Case-insensitive)
+          const filtroDepto = (currentUser.departamento || '').trim();
+          
+          // Lógica de SINÓNIMOS para Seguridad
+          if (filtroDepto.toUpperCase() === 'SEGURIDAD' || filtroDepto.toUpperCase() === 'SIAHO') {
+            query = query.or(`gerencia.ilike.%Seguridad%,gerencia.ilike.%SIAHO%,gerencia.ilike.%SHA%`);
+            console.log(`[VISIBILIDAD REQUISICIONES] Aplicando filtro de búsqueda múltiple (SIAHO/SHA/Seguridad)`);
+          } else {
+            query = query.ilike('gerencia', `%${filtroDepto}%`);
+            console.log(`[VISIBILIDAD REQUISICIONES] Aplicando filtro de departamento: %${filtroDepto}%`);
+          }
         } else {
-          // Otros roles: solo lo propio
+          // Otros roles sin permiso explícito: solo lo propio
           query = query.eq('solicitante', `${currentUser.nombre} ${currentUser.apellido}`);
+          console.log(`[VISIBILIDAD REQUISICIONES] Aplicando filtro restrictivo personal: ${currentUser.nombre}`);
         }
       }
 
@@ -459,7 +492,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
   };
 
   const manejarRechazarGeneral = () => {
-    if (!editandoId || (!currentUser?.esAdminReal && currentUser?.rol !== 'Gerente General')) return;
+    const rolUpper = (currentUser?.rol || '').toUpperCase();
+    if (!editandoId || (!currentUser?.esAdminReal && rolUpper !== 'GERENTE GENERAL' && rolUpper !== 'ADMIN')) return;
     setMotivoRechazo('');
     setRechazoAction('general');
     setShowRechazoModal(true);
@@ -593,7 +627,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
   };
 
   const manejarAprobarGeneral = async () => {
-    if (!editandoId || (!currentUser?.esAdminReal && currentUser?.rol !== 'Gerente General')) {
+    const rolUpper = (currentUser?.rol || '').toUpperCase();
+    if (!editandoId || (!currentUser?.esAdminReal && rolUpper !== 'GERENTE GENERAL' && rolUpper !== 'ADMIN')) {
       alert('Solo el Gerente General tiene permisos para la aprobación final.');
       return;
     }
@@ -984,7 +1019,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
           <tbody>
             {historialFiltrado.map(req => (
               <tr key={req.id}>
-                <td
+                <td data-label="CORRELATIVO"
                   style={{ fontWeight: 'bold', color: 'var(--primary)', cursor: 'pointer', textDecoration: 'underline' }}
                   onClick={() => verRequisicion(req)}
                 >
@@ -1018,7 +1053,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
                   </div>
                 </td>
 
-                <td style={{ textAlign: 'center' }}>
+                <td data-label="ESTADO" style={{ textAlign: 'center' }}>
                   <span style={{
                     fontSize: '0.7rem',
                     fontWeight: '900',
@@ -1036,24 +1071,24 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
                   </span>
                 </td>
 
-                <td style={{ color: 'var(--slate-400)' }}>{req.fecha ? format(new Date(req.fecha + 'T12:00:00'), 'dd/MM/yyyy') : 'N/A'}</td>
+                <td data-label="FECHA" style={{ color: 'var(--slate-400)' }}>{req.fecha ? format(new Date(req.fecha + 'T12:00:00'), 'dd/MM/yyyy') : 'N/A'}</td>
 
-                <td>
+                <td data-label="SOLICITANTE">
                   <div style={{ fontWeight: '500' }}>{req.solicitante}</div>
                   <div style={{ fontSize: '0.7rem', color: '#64748b' }}>{req.gerencia}</div>
                 </td>
 
-                <td style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#64748b' }}>
+                <td data-label="CATEGORÍA" style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#64748b' }}>
                   {req.estado_aprobacion === 'ANULADA' ? '-' : (req.detalles?.[0]?.categoria || 'N/A')}
                 </td>
 
-                <td>{req.centroCosto}</td>
+                <td data-label="CENTRO COSTO">{req.centroCosto}</td>
 
-                <td style={{ fontWeight: 'bold' }}>
+                <td data-label="TOTAL" style={{ fontWeight: 'bold' }}>
                   {req.estado_aprobacion === 'ANULADA' ? '-' : `$ ${req.total?.toLocaleString('de-DE')}`}
                 </td>
 
-                <td style={{ textAlign: 'center' }}>
+                <td data-label="STATUS COMPRA" style={{ textAlign: 'center' }}>
                   {req.estado_aprobacion === 'ANULADA' ? '-' : (
                     <span style={{
                       color:
@@ -1069,13 +1104,13 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
                 </td>
 
                 {currentUser?.rol !== 'Gerente General' && (
-                  <td style={{ textAlign: 'center' }}>
+                  <td data-label="ACCIONES" style={{ textAlign: 'center' }}>
                     <div style={{ display: 'flex', justifyContent: 'center', gap: '15px' }}>
-                      <button onClick={() => verRequisicion(req)} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '1.2rem' }} title="Ver Detalles"></button>
+                      <button onClick={() => verRequisicion(req)} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '1.2rem' }} title="Ver Detalles">👁️</button>
                       {req.estado_aprobacion !== 'ANULADA' && currentUser?.rol !== 'Gerente General' && (
                         <button onClick={() => anularRequisicion(req.id)} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '1.2rem' }} title="Anular Requisición">🚫</button>
                       )}
-                      {(currentUser?.esAdminReal || currentUser?.rol === 'Gerente') && (
+                      {(currentUser?.esAdminReal || currentUser?.rol === 'Gerente' || currentUser?.rol === 'Admin' || currentUser?.rol === 'Gerente General') && (
                         <button onClick={() => manejarEliminar(req.id)} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '1.2rem' }} title="Borrar Registro">🗑️</button>
                       )}
                     </div>
@@ -1398,7 +1433,15 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
                     <label className="btn-tc btn-tc-primary" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.75rem' }}>
                       {uploading ? <Loader2 className="animate-spin" size={14} /> : <Upload size={14} />}
                       {uploading ? 'SUBIENDO...' : 'ADJUNTAR SOPORTE'}
-                      <input type="file" multiple style={{ display: 'none' }} onChange={subirFactura} disabled={uploading} />
+                      <input 
+                        type="file" 
+                        multiple 
+                        style={{ display: 'none' }} 
+                        onChange={subirFactura} 
+                        disabled={uploading} 
+                        accept="image/*,application/pdf"
+                        capture="environment"
+                      />
                     </label>
                   </div>
 
@@ -1516,7 +1559,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
                         )}
 
                       {/* BOTONES PARA GERENTE GENERAL (Nivel 2) */}
-                      {(currentUser?.rol === 'Gerente General' || currentUser?.esAdminReal) &&
+                      {(currentUser?.rol === 'Gerente General' || currentUser?.rol === 'Admin' || currentUser?.esAdminReal) &&
                         historial.find(h => h.id === editandoId)?.estado_aprobacion === 'enviada_general' && (
                           <>
                             <button className="btn-tc btn-tc-danger" onClick={manejarRechazarGeneral} disabled={loading}>

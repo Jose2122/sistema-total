@@ -149,19 +149,37 @@ const StockSmartTotalClean = () => {
   });
 
   const obtenerSesionUsuario = async () => {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (session?.user?.email) {
-      const { data: perfil } = await supabase
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.user) return;
+
+      const email = session.user.email.toLowerCase();
+
+      // FORZAR lectura de perfil fresco (Sin caché)
+      const { data: perfil, error: pError } = await supabase
         .from('perfiles')
         .select('*')
-        .eq('correo', session.user.email)
+        .eq('id', session.user.id)
         .single();
 
-      const ADMIN_EMAIL = 'jcontreras.totalclean@gmail.com';
-      setCurrentUser({
-        ...perfil,
-        esAdminReal: session.user.email === ADMIN_EMAIL
-      });
+      if (pError) {
+        console.log("[VISIBILIDAD FONDOS] Error leyendo perfil:", pError.message);
+        return;
+      }
+
+      if (perfil) {
+        const esAdminReal = email === 'jcontreras.totalclean@gmail.com' || email === 'cvega.totalclean@gmail.com';
+        const userData = {
+          ...perfil,
+          esAdminReal,
+          departamento: (perfil.departamento || '').trim(),
+          rol: (perfil.rol || '').trim()
+        };
+        setCurrentUser(userData);
+        console.log("[VISIBILIDAD FONDOS] Sesión sincronizada para:", email);
+      }
+    } catch (err) {
+      console.error("[VISIBILIDAD FONDOS] Error fatal:", err.message);
     }
   };
 
@@ -188,15 +206,23 @@ const StockSmartTotalClean = () => {
   const cargarTodo = useCallback(async () => {
     setLoading(true);
 
-    // Asegurar que tenemos al usuario antes de filtrar
+    // Asegurar que tenemos al usuario antes de filtrar (con datos frescos)
     let userContext = currentUser;
     if (!userContext) {
       const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user?.email) {
-        const { data: perfil } = await supabase.from('perfiles').select('*').eq('correo', session.user.email).single();
-        const ADMIN_EMAIL = 'jcontreras.totalclean@gmail.com';
-        userContext = { ...perfil, esAdminReal: session.user.email === ADMIN_EMAIL };
-        setCurrentUser(userContext);
+      if (session?.user) {
+        const { data: perfil } = await supabase.from('perfiles').select('*').eq('id', session.user.id).single();
+        if (perfil) {
+          const email = session.user.email.toLowerCase();
+          const esAdminReal = email === 'jcontreras.totalclean@gmail.com' || email === 'cvega.totalclean@gmail.com';
+          userContext = { 
+            ...perfil, 
+            esAdminReal,
+            departamento: (perfil.departamento || '').trim(),
+            rol: (perfil.rol || '').trim() 
+          };
+          setCurrentUser(userContext);
+        }
       }
     }
 
@@ -215,14 +241,32 @@ const StockSmartTotalClean = () => {
 
     let query = supabase.from('solicitudes_fondos').select('*');
 
-    // REGLAS DE JERARQUÍA — Solo Gerentes crean solicitudes de fondos
-    if (!userContext.esAdminReal && userContext.rol !== 'Gerente General') {
-      if (userContext.rol === 'Gerente' || userContext.rol === 'Coordinador' || userContext.rol === 'Analista') {
-        // Ven todo lo de su departamento/gerencia
-        query = query.eq('gerencia_nombre', userContext.departamento);
+    const rolUpper = (userContext.rol || '').toUpperCase();
+    const deptoUpper = (userContext.departamento || '').toUpperCase();
+    const tienePermisoDepto = userContext.capacidades?.ver_departamento === true;
+
+    console.log(`[VISIBILIDAD FONDOS] Usuario: ${userContext.correo} | Depto: ${userContext.departamento} | Rol: ${rolUpper} | Permiso Especial: ${tienePermisoDepto}`);
+
+    // REGLAS DE JERARQUÍA
+    if (!userContext.esAdminReal && rolUpper !== 'GERENTE GENERAL' && rolUpper !== 'ADMIN') {
+      const puedeVerDepto = tienePermisoDepto || ['GERENTE', 'COORDINADOR', 'ANALISTA', 'COMPRAS'].includes(rolUpper) || deptoUpper.includes('COMPRAS');
+
+      if (puedeVerDepto) {
+        // Ven todo lo de su departamento/gerencia (Fuzzy Match + Case-insensitive)
+        const filtroDepto = (userContext.departamento || '').trim();
+
+        // Lógica de SINÓNIMOS para Seguridad
+        if (filtroDepto.toUpperCase() === 'SEGURIDAD' || filtroDepto.toUpperCase() === 'SIAHO') {
+          query = query.or(`gerencia_nombre.ilike.%Seguridad%,gerencia_nombre.ilike.%SIAHO%,gerencia_nombre.ilike.%SHA%`);
+          console.log(`[VISIBILIDAD FONDOS] Aplicando filtro de búsqueda múltiple (SIAHO/SHA/Seguridad)`);
+        } else {
+          query = query.ilike('gerencia_nombre', `%${filtroDepto}%`);
+          console.log(`[VISIBILIDAD FONDOS] Aplicando filtro de departamento: %${filtroDepto}%`);
+        }
       } else {
-        // Otros roles: solo lo propio
+        // Otros roles sin permiso explícito: solo lo propio
         query = query.eq('responsable_nombre', `${userContext.nombre} ${userContext.apellido}`);
+        console.log(`[VISIBILIDAD FONDOS] Aplicando filtro restrictivo personal: ${userContext.nombre}`);
       }
     }
 
@@ -283,10 +327,10 @@ const StockSmartTotalClean = () => {
 
       setForm(prev => ({
         ...prev,
-        responsable: (['Gerente', 'Coordinador', 'Analista'].includes(currentUser.rol) || currentUser.esAdminReal)
+        responsable: (['Gerente', 'Coordinador', 'Analista', 'Admin'].includes(currentUser.rol) || currentUser.esAdminReal)
           ? (gerenteNombre || `${currentUser.nombre} ${currentUser.apellido}`)
           : prev.responsable,
-        gerencia: (['Gerente', 'Coordinador', 'Analista'].includes(currentUser.rol) || currentUser.esAdminReal)
+        gerencia: (['Gerente', 'Coordinador', 'Analista', 'Admin'].includes(currentUser.rol) || currentUser.esAdminReal)
           ? currentUser.departamento
           : prev.gerencia
       }));
@@ -509,7 +553,8 @@ const StockSmartTotalClean = () => {
     if (!ccPreVal || !fechaPreVal) return setErrorCheck("Seleccione Fecha y Centro de Costo");
     
     // --- EXCEPCIÓN DE ADMINISTRADOR / GERENTE GENERAL ---
-    const isPrivileged = currentUser?.esAdminReal || currentUser?.rol === 'Gerente General';
+    const rolUpper = (currentUser?.rol || '').toUpperCase();
+    const isPrivileged = currentUser?.esAdminReal || rolUpper === 'GERENTE GENERAL' || rolUpper === 'ADMIN';
     setEsAdminBypass(isPrivileged);
 
     setLoadingCheck(true);
@@ -1352,7 +1397,7 @@ const StockSmartTotalClean = () => {
               <tr><td colSpan="6" style={{ textAlign: 'center', padding: '40px', color: '#64748b' }}>Cargando registros...</td></tr>
             ) : historialFiltrado.map((h, i) => (
               <tr key={i} style={{ borderBottom: '1px solid #f8fafc', fontSize: '0.80rem', backgroundColor: i % 2 === 0 ? '#ffffff' : '#f8fafc' }}>
-                <td style={{ padding: '12px' }}>
+                <td data-label="ID CONTROL" style={{ padding: '12px' }}>
                   <button
                     type="button"
                     onClick={(e) => {
@@ -1375,33 +1420,33 @@ const StockSmartTotalClean = () => {
                     {h.id}
                   </button>
                 </td>
-                <td style={{ fontWeight: 'bold', color: '#64748b' }}>
+                <td data-label="SEMANA" style={{ fontWeight: 'bold', color: '#64748b' }}>
                   <div>SEM {getWeek(new Date(h.fecha_operativa + 'T12:00:00'), { weekStartsOn: 1 })}</div>
                   <div style={{ fontSize: '0.7rem', color: '#0ea5e9', marginTop: '3px' }}>{extractPeriodoFromId(h.id)}</div>
                 </td>
-                <td>
+                <td data-label="RESPONSABLE">
                   <div style={{ fontWeight: '500' }}>{h.responsable}</div>
                   <div style={{ fontSize: '0.7rem', color: '#64748b' }}>{h.gerencia}</div>
                 </td>
-                <td style={{ color: '#b45309', fontWeight: '600' }}>
+                <td data-label="PAGO BS" style={{ color: '#b45309', fontWeight: '600' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', paddingRight: '10px' }}>
                     <span>$</span>
                     <span>{parseFloat(h.total_bs || 0).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                   </div>
                 </td>
-                <td style={{ color: '#15803d', fontWeight: '600' }}>
+                <td data-label="PAGO USD" style={{ color: '#15803d', fontWeight: '600' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', paddingRight: '10px' }}>
                     <span>$</span>
                     <span>{parseFloat(h.total_usd || 0).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                   </div>
                 </td>
-                <td style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>
+                <td data-label="TOTAL" style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                     <span>$</span>
                     <span>{h.total.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                   </div>
                 </td>
-                <td style={{ textAlign: 'center' }}>
+                <td data-label="ACCIONES" style={{ textAlign: 'center' }}>
                   <div style={{ display: 'flex', gap: '15px', justifyContent: 'center', alignItems: 'center' }}>
                     <button
                       onClick={(e) => {
@@ -1424,7 +1469,7 @@ const StockSmartTotalClean = () => {
                     >
 
                     </button>
-                    {(currentUser?.rol === 'Gerente' || currentUser?.esAdminReal) && (
+                    {(currentUser?.rol === 'Gerente' || currentUser?.rol === 'Admin' || currentUser?.esAdminReal) && (
                       <button
                         onClick={() => eliminarSolicitud(h.id_db)}
                         style={{ color: '#ef4444', background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.2rem' }}
@@ -1560,7 +1605,7 @@ const StockSmartTotalClean = () => {
 
               <div style={{ display: 'flex', flexDirection: 'column' }}>
                 <label style={{ fontSize: '10px', fontWeight: 'bold', color: '#363636', marginBottom: '5px' }}>GERENCIA SOLICITANTE</label>
-                {(currentUser?.esAdminReal || currentUser?.rol === 'Gerente General') ? (
+                {(currentUser?.esAdminReal || currentUser?.rol === 'Gerente General' || currentUser?.rol === 'Admin') ? (
                   <select
                     className="sf-input"
                     value={form.gerencia}
@@ -1920,7 +1965,7 @@ const StockSmartTotalClean = () => {
                             fecha: fechaPreVal,
                             sede: 'MARACAIBO',
                             gerencia: currentUser?.departamento || '',
-                            responsable: (['Gerente', 'Coordinador', 'Analista'].includes(currentUser?.rol) || currentUser?.esAdminReal)
+                            responsable: (['Gerente', 'Coordinador', 'Analista', 'Admin'].includes(currentUser?.rol) || currentUser?.esAdminReal)
                               ? `${currentUser.nombre} ${currentUser.apellido}`
                               : '',
                             partidas: [{ id: Date.now(), selected: false, cc: ccPreVal, clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '' }],

@@ -776,7 +776,14 @@ const ModuloTicketsPago = () => {
                   <label className="stat-label" style={{ marginBottom: 0 }}>DOCUMENTOS Y SOPORTES VINCULADOS</label>
                   <label className="btn-tc btn-tc-primary" style={{ cursor: 'pointer', padding: '6px 12px', fontSize: '0.7rem' }}>
                     <Upload size={14} /> ADJUNTAR SOPORTE
-                    <input type="file" multiple style={{ display: 'none' }} accept="image/*,application/pdf" onChange={handleImagenChange} />
+                    <input 
+                      type="file" 
+                      multiple 
+                      style={{ display: 'none' }} 
+                      accept="image/*,application/pdf" 
+                      onChange={handleImagenChange} 
+                      capture="environment"
+                    />
                   </label>
                 </div>
 

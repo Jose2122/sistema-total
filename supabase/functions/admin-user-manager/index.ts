@@ -4,6 +4,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 
 serve(async (req) => {
@@ -13,11 +14,14 @@ serve(async (req) => {
   }
 
   try {
-    const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? ''
-    const supabaseServiceKey = Deno.env.get('ADMIN_SERVICE_KEY') ?? ''
-    const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? ''
+    const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
+    const supabaseServiceKey = Deno.env.get('ADMIN_SERVICE_KEY') || Deno.env.get('admin_service_key') || '';
+    const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY') || '';
 
-    // 1. Cliente con privilegio de Service Role (para acciones de administración)
+    console.log('--- Inicia Proceso admin-user-manager ---');
+    if (!supabaseServiceKey) console.error('ADVERTENCIA: No se encontró admin_service_key en las variables de entorno.');
+
+    // 1. Cliente Admin (usando específicamente la clave de administración manual)
     const adminClient = createClient(supabaseUrl, supabaseServiceKey, {
       auth: { autoRefreshToken: false, persistSession: false }
     })
@@ -30,31 +34,67 @@ serve(async (req) => {
 
     const { data: { user }, error: authError } = await userClient.auth.getUser()
     if (authError || !user) {
-      return new Response(JSON.stringify({ error: 'No autorizado' }), {
+      console.error('Error de autenticación JWT:', authError?.message);
+      return new Response(JSON.stringify({ error: 'No autorizado: Sesión inválida' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         status: 401,
       })
     }
+
+    console.log('Usuario solicitante:', user.email);
 
     // 3. Validar Rol (Solo Admin o Gerente General)
     const { data: perfil, error: perfilError } = await adminClient
       .from('perfiles')
       .select('rol')
       .eq('id', user.id)
-      .single()
+      .maybeSingle()
 
     const rol = perfil?.rol?.toLowerCase() || ''
-    const esAdmin = rol === 'admin' || rol === 'gerente general' || user.email === 'jcontreras.totalclean@gmail.com'
+    const emailLower = user.email?.toLowerCase() || ''
+    
+    // Lista de correos maestros (SIEMPRE tienen acceso)
+    const esMasterEmail = emailLower === 'jcontreras.totalclean@gmail.com' || emailLower === 'cvega.totalclean@gmail.com';
+    const esAdmin = rol === 'admin' || rol === 'gerente general' || esMasterEmail;
 
-    if (perfilError || !esAdmin) {
-      return new Response(JSON.stringify({ error: 'Permisos insuficientes para realizar esta acción' }), {
+    console.log('Validación:', { rol, esAdmin, esMasterEmail });
+
+    // Procesar Acción
+    const body = await req.json();
+    const { action, data } = body;
+    console.log('Acción solicitada:', action);
+
+    // --- ACCIÓN QUE BYPASSEA RLS PARA USUARIOS DE DEPARTAMENTO ---
+    if (action === 'get_department_users') {
+      const userDepto = perfil?.departamento || '';
+      const deptoUpper = userDepto.trim().toUpperCase();
+      console.log(`[GET_DEPT_USERS] Requerido por dept: ${userDepto}`);
+
+      let query = adminClient.from('perfiles').select('*');
+      
+      if (deptoUpper === 'SEGURIDAD' || deptoUpper === 'SIAHO' || deptoUpper === 'SHA') {
+        query = query.or(`departamento.ilike.%Seguridad%,departamento.ilike.%SIAHO%,departamento.ilike.%SHA%`);
+      } else {
+        query = query.ilike('departamento', `%${userDepto.trim()}%`);
+      }
+
+      const { data: users, error: fetchError } = await query.order('apellido');
+      if (fetchError) throw fetchError;
+
+      return new Response(JSON.stringify({ users }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 200,
+      });
+    }
+
+    // --- ACCIONES RESTRINGIDAS A ADMINS ---
+    if (!esAdmin) {
+      console.error('Permiso denegado para:', emailLower);
+      return new Response(JSON.stringify({ error: 'Permisos insuficientes: Se requiere rol Admin o Gerente para esta acción' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         status: 403,
       })
     }
-
-    // 4. Procesar Acción
-    const { action, data } = await req.json()
 
     switch (action) {
       case 'create_user': {
@@ -66,6 +106,7 @@ serve(async (req) => {
           user_metadata
         })
         if (createError) throw createError
+        console.log('Usuario creado exitosamente en Auth');
         return new Response(JSON.stringify({ user: authData.user }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           status: 200,
@@ -78,6 +119,7 @@ serve(async (req) => {
           password: password
         })
         if (updateError) throw updateError
+        console.log('Contraseña actualizada vía Admin');
         return new Response(JSON.stringify({ message: 'Contraseña actualizada' }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           status: 200,
@@ -88,6 +130,7 @@ serve(async (req) => {
         const { id } = data
         const { error: deleteError } = await adminClient.auth.admin.deleteUser(id)
         if (deleteError) throw deleteError
+        console.log('Usuario eliminado vía Admin');
         return new Response(JSON.stringify({ message: 'Usuario eliminado' }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           status: 200,
@@ -95,6 +138,7 @@ serve(async (req) => {
       }
 
       default:
+        console.error('Acción no reconocida:', action);
         return new Response(JSON.stringify({ error: 'Acción no reconocida' }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           status: 400,
@@ -102,8 +146,8 @@ serve(async (req) => {
     }
 
   } catch (error) {
-    console.error('Error en Edge Function:', error.message)
-    return new Response(JSON.stringify({ error: error.message }), {
+    console.error('ERROR FATAL EN EDGE FUNCTION:', error.message)
+    return new Response(JSON.stringify({ error: error.message, detail: 'Revisa los logs del dashboard para más info' }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 500,
     })
