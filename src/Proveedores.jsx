@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from './supabaseClient';
 import { Loader2, Plus, Search, Mail, Phone, MapPin, XCircle, Edit, Trash2 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
@@ -9,6 +9,7 @@ const Proveedores = () => {
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [busqueda, setBusqueda] = useState('');
+  const [filtroCategoria, setFiltroCategoria] = useState('Todos');
   const [saving, setSaving] = useState(false);
 
   const [formData, setFormData] = useState({
@@ -18,6 +19,7 @@ const Proveedores = () => {
     correo: '',
     telefono: '',
     direccion: '',
+    categoria: '',
     status: true
   });
 
@@ -43,10 +45,53 @@ const Proveedores = () => {
     }
   };
 
+  const handleRifChange = (e) => {
+    const input = e.target.value.toUpperCase();
+    const firstChar = input.length > 0 ? input[0] : '';
+    
+    // Solo permitir letras válidas al inicio
+    let validLetter = '';
+    if (['V', 'J', 'E', 'G'].includes(firstChar)) {
+      validLetter = firstChar;
+    } else if (input.length > 0) {
+      // Si el primer carácter no es válido, ignorarlo o podrías dejarlo vacío
+    }
+
+    // Extraer solo los números después de la letra inicial
+    let digits = input.substring(0, 12).replace(/[^0-9]/g, '');
+    if (input.length > 0 && ['V', 'J', 'E', 'G'].includes(input[0])) {
+      // Si el usuario escribió la letra y luego números
+      digits = input.substring(1).replace(/[^0-9]/g, '');
+    }
+
+    let formatted = '';
+    if (validLetter) {
+        formatted = validLetter + '-';
+        if (digits.length > 0) {
+            // Cuerpo central (hasta 8 dígitos)
+            formatted += digits.substring(0, 8);
+            if (digits.length > 8) {
+                // Dígito verificador
+                formatted += '-' + digits.substring(8, 9);
+            }
+        }
+    }
+    
+    setFormData({ ...formData, rif: formatted });
+  };
+
   const guardarProveedor = async (e) => {
     e.preventDefault();
-    if (!formData.rif || !formData.razon_social) {
-      return toast.error('RIF y Razón Social son obligatorios');
+    
+    // Validación de formato RIF: V/J/E/G seguido de 8 dígitos, con un noveno opcional
+    // Ejemplos válidos: J-12345678-0 o V-12345678
+    const rifRegex = /^[VJEG]-\d{8}(-\d)?$/;
+    if (!rifRegex.test(formData.rif)) {
+      return toast.error('Formatos válidos: J-12345678-0 o V-12345678 (8 dígitos mínimos)');
+    }
+
+    if (!formData.razon_social) {
+      return toast.error('La Razón Social es obligatoria');
     }
 
     setSaving(true);
@@ -60,6 +105,7 @@ const Proveedores = () => {
             correo: formData.correo,
             telefono: formData.telefono,
             direccion: formData.direccion,
+            categoria: formData.categoria,
             status: formData.status
           })
           .eq('id', formData.id);
@@ -74,6 +120,7 @@ const Proveedores = () => {
             correo: formData.correo,
             telefono: formData.telefono,
             direccion: formData.direccion,
+            categoria: formData.categoria,
             status: formData.status
           }]);
         if (error) throw error;
@@ -109,6 +156,7 @@ const Proveedores = () => {
       correo: '',
       telefono: '',
       direccion: '',
+      categoria: '',
       status: true
     });
   };
@@ -118,10 +166,20 @@ const Proveedores = () => {
     setShowModal(true);
   };
 
-  const proveedoresFiltrados = proveedores.filter(p => 
-    p.razon_social?.toLowerCase().includes(busqueda.toLowerCase()) ||
-    p.rif?.toLowerCase().includes(busqueda.toLowerCase())
-  );
+  const categoriasUnicas = useMemo(() => {
+    const cats = new Set();
+    proveedores.forEach(p => {
+      if (p.categoria) cats.add(p.categoria);
+    });
+    return Array.from(cats).sort();
+  }, [proveedores]);
+
+  const proveedoresFiltrados = proveedores.filter(p => {
+    const matchTexto = p.razon_social?.toLowerCase().includes(busqueda.toLowerCase()) ||
+                       p.rif?.toLowerCase().includes(busqueda.toLowerCase());
+    const matchCat = filtroCategoria === 'Todos' || p.categoria === filtroCategoria;
+    return matchTexto && matchCat;
+  });
 
   return (
     <div className="prov-container">
@@ -150,6 +208,27 @@ const Proveedores = () => {
             value={busqueda}
             onChange={(e) => setBusqueda(e.target.value)}
           />
+          <select 
+            className="prov-cat-select"
+            style={{ 
+              padding: '10px 15px', 
+              borderRadius: '12px', 
+              border: '1px solid #e2e8f0', 
+              marginLeft: '15px',
+              fontSize: '0.85rem',
+              color: '#475569',
+              fontWeight: '600',
+              outline: 'none',
+              backgroundColor: 'white'
+             }}
+            value={filtroCategoria}
+            onChange={(e) => setFiltroCategoria(e.target.value)}
+          >
+            <option value="Todos">Todas las Categorías</option>
+            {categoriasUnicas.map(cat => (
+              <option key={cat} value={cat}>{cat}</option>
+            ))}
+          </select>
         </div>
 
         {loading ? (
@@ -164,6 +243,7 @@ const Proveedores = () => {
                 <tr style={{ backgroundColor: '#f8fafc', color: '#64748b', fontSize: '0.75rem', textAlign: 'left', borderBottom: '2px solid #e2e8f0' }}>
                   <th style={{ padding: '15px', width: '150px' }}>RIF</th>
                   <th>RAZÓN SOCIAL</th>
+                  <th>CATEGORÍA</th>
                   <th>CONTACTO</th>
                   <th>DIRECCIÓN</th>
                   <th style={{ textAlign: 'center', width: '120px' }}>ESTADO</th>
@@ -175,6 +255,13 @@ const Proveedores = () => {
                   <tr key={p.id} style={{ borderBottom: '1px solid #f1f5f9', backgroundColor: index % 2 === 0 ? '#ffffff' : '#f8fafc', fontSize: '0.85rem' }}>
                     <td style={{ padding: '15px', fontWeight: 'bold', color: 'var(--prov-blue)', fontFamily: 'monospace', fontSize: '0.9rem' }}>{p.rif}</td>
                     <td style={{ fontWeight: '800', color: '#1e293b' }}>{p.razon_social}</td>
+                    <td style={{ color: '#64748b' }}>
+                      {p.categoria ? (
+                        <span style={{ backgroundColor: '#f1f5f9', padding: '4px 10px', borderRadius: '8px', fontSize: '0.7rem', fontWeight: '700' }}>
+                          {p.categoria}
+                        </span>
+                      ) : '-'}
+                    </td>
                     <td>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                         {p.correo && <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#475569' }}><Mail size={12} style={{ color: '#3b82f6' }} /> {p.correo}</div>}
@@ -243,7 +330,8 @@ const Proveedores = () => {
                       className="prov-input"
                       placeholder="J-12345678-0"
                       value={formData.rif}
-                      onChange={e => setFormData({...formData, rif: e.target.value.toUpperCase()})}
+                      onChange={handleRifChange}
+                      maxLength={12}
                       required
                     />
                   </div>
@@ -277,6 +365,20 @@ const Proveedores = () => {
                     onChange={e => setFormData({...formData, razon_social: e.target.value.toUpperCase()})}
                     required
                   />
+                </div>
+
+                <div className="prov-field">
+                  <label className="prov-label">Categoría del Proveedor</label>
+                  <input 
+                    className="prov-input"
+                    placeholder="Ej: SERVICIOS, REPUESTOS, ALIMENTOS..."
+                    value={formData.categoria}
+                    onChange={e => setFormData({...formData, categoria: e.target.value.toUpperCase()})}
+                    list="cat-suggestions"
+                  />
+                  <datalist id="cat-suggestions">
+                    {categoriasUnicas.map(cat => <option key={cat} value={cat} />)}
+                  </datalist>
                 </div>
 
                 <div className="prov-form-grid">

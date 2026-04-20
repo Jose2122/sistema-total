@@ -234,3 +234,11 @@
 .animate-fade-in {
   animation: fadeInSlide 0.4s ease-out forwards;
 }
+
+.te-metadata-box {
+  background-color: #f8fafc;
+  padding: 20px;
+  border-radius: 16px;
+  border: 1px solid #e2e8f0;
+  box-shadow: inset 0 2px 4px rgba(0,0,0,0.02);
+}

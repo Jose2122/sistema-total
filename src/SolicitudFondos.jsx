@@ -4,7 +4,7 @@ import Requisiciones from './Requisiciones';
 import TicketExpress from './TicketExpress';
 import { format, getWeek } from 'date-fns';
 import * as XLSX from 'xlsx';
-import { Loader2, Upload, FileText, Printer, FileSpreadsheet } from 'lucide-react';
+import { Loader2, Upload, FileText, Printer, FileSpreadsheet, BarChart3, Clock, Activity, CheckCircle2, DollarSign } from 'lucide-react';
 import './SolicitudFondos.css';
 
 const StockSmartTotalClean = () => {
@@ -24,6 +24,16 @@ const StockSmartTotalClean = () => {
   const [mostrarImprevistos, setMostrarImprevistos] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
   const [loading, setLoading] = useState(false);
+
+  // --- ESTADOS PARA VALIDACIÓN PREVIA Y CIERRE SEMANAL ---
+  const [showPreVal, setShowPreVal] = useState(false);
+  const [ccPreVal, setCcPreVal] = useState('');
+  const [fechaPreVal, setFechaPreVal] = useState(new Date().toISOString().split('T')[0]);
+  const [loadingCheck, setLoadingCheck] = useState(false);
+  const [errorCheck, setErrorCheck] = useState('');
+  const [solCheckExitosa, setSolCheckExitosa] = useState(false);
+  const [solicitudConflictiva, setSolicitudConflictiva] = useState(null);
+  const [esAdminBypass, setEsAdminBypass] = useState(false);
 
   // --- ESTADOS DE DATA MAESTRA ---
   const [centrosCosto, setCentrosCosto] = useState([]);
@@ -46,7 +56,7 @@ const StockSmartTotalClean = () => {
     "Contabilidad": ["Jorge Urdaneta"]
   };
 
-  const unidades = ["UNID", "KG", "LTS", "SERV", "SG", "VIAJES"];
+  const unidades = ["UNID", "KG", "LTS", "ML", "M2", "M3", "SERV", "SG", "VIAJES"];
 
   // --- LÓGICA DE SIGLAS GERENCIA ---
   const obtenerSiglas = (nombreGerencia) => {
@@ -155,6 +165,26 @@ const StockSmartTotalClean = () => {
     }
   };
 
+  // --- LOGICA DE DASHBOARD PREMIUM ---
+  const kpis = useMemo(() => {
+    const list = historial || [];
+    const totalInversion = list.reduce((acc, h) => acc + (h.total || 0), 0);
+    
+    // Calcular semana actual
+    const d = new Date();
+    const semAhora = getWeek(d, { weekStartsOn: 1 });
+    
+    const solicitudesSemana = list.filter(h => {
+      if (!h.fecha_operativa) return false;
+      return getWeek(new Date(h.fecha_operativa + 'T12:00:00'), { weekStartsOn: 1 }) === semAhora;
+    }).length;
+
+    const totalRegistros = list.length;
+    const promedio = totalRegistros > 0 ? totalInversion / totalRegistros : 0;
+
+    return { totalInversion, solicitudesSemana, totalRegistros, promedio };
+  }, [historial]);
+
   const cargarTodo = useCallback(async () => {
     setLoading(true);
 
@@ -209,30 +239,32 @@ const StockSmartTotalClean = () => {
       })));
     }
 
-    const { data: dataCC } = await supabase.from('maestros_centros_costo').select('nombre').eq('activo', true).order('nombre');
-    if (dataCC) setCentrosCosto(dataCC.map(c => c.nombre));
+    const { data: dataCC } = await supabase.from('maestros_centros_costo').select('id, nombre').eq('activo', true).order('nombre');
+    if (dataCC) setCentrosCosto(dataCC);
 
     const { data: dataClas } = await supabase
       .from('maestros_clasificaciones')
-      .select('nombre, maestros_centros_costo(nombre)')
+      .select('id, nombre, centro_costo_id')
       .eq('activo', true);
 
     if (dataClas) {
-      setTodasClasificaciones(dataClas.filter(c => c.maestros_centros_costo).map(c => ({
+      setTodasClasificaciones(dataClas.map(c => ({
+        id: c.id,
         nombre: c.nombre,
-        padre: c.maestros_centros_costo.nombre
+        padreId: c.centro_costo_id
       })));
     }
 
     const { data: dataSub } = await supabase
       .from('maestros_sub_clasificaciones')
-      .select('nombre, maestros_clasificaciones(nombre)')
+      .select('id, nombre, clasificacion_id')
       .eq('activo', true);
 
     if (dataSub) {
-      setTodasCategorias(dataSub.filter(s => s.maestros_clasificaciones).map(s => ({
+      setTodasCategorias(dataSub.map(s => ({
+        id: s.id,
         nombre: s.nombre,
-        padre: s.maestros_clasificaciones.nombre
+        padreId: s.clasificacion_id
       })));
     }
     setLoading(false);
@@ -265,7 +297,42 @@ const StockSmartTotalClean = () => {
   const cargarDetallesYEditar = async (solicitud) => {
     try {
       const targetId = solicitud.id_db || solicitud.id;
-      const { data: partidasRaw } = await supabase.from('partidas_fondos').select('*').eq('solicitud_id', targetId);
+      
+      // 1. Obtener Partidas
+      const { data: partidasRaw } = await supabase
+        .from('partidas_fondos')
+        .select('*, requisiciones(id, correlativo_req, items)')
+        .eq('solicitud_id', targetId);
+
+      // 2. Mapear Partidas con Lógica de Ejecución (P.U. REAL)
+      const procesarEjecucion = (p) => {
+        let montoReal = 0;
+        let montoPendiente = (p.pu_bs || p.pu_usd || 0) * (p.cantidad || 1); // Por defecto todo es pendiente
+
+        if (p.requisiciones && p.requisiciones.items) {
+          // Intentar hacer match del item de la requisición con esta partida
+          // Usamos descripción y cantidad como match primario para solicitudes de fondos
+          const itemReq = p.requisiciones.items.find(item => 
+            item.descripcion === p.descripcion && 
+            (item.cantidad_pedida === p.cantidad || item.cant === p.cantidad)
+          );
+
+          if (itemReq) {
+            // Calcular Ejecutado (Historial de Compras)
+            montoReal = (itemReq.historial_compras || []).reduce((sum, h) => {
+              if (h.tipo === 'JUSTIFICACION') return sum;
+              return sum + ((parseFloat(h.cant) || 0) * (parseFloat(h.pu) || 0));
+            }, 0);
+
+            // Calcular Pendiente (Cant Pendiente * PU Estimado)
+            const cantPendiente = parseFloat(itemReq.cantidad_pendiente ?? itemReq.cant) || 0;
+            const puEst = parseFloat(itemReq.pu_estimado ?? itemReq.pu) || 0;
+            montoPendiente = cantPendiente * puEst;
+          }
+        }
+
+        return { montoReal, montoPendiente };
+      };
 
       setForm({
         ...solicitud,
@@ -274,27 +341,12 @@ const StockSmartTotalClean = () => {
         fecha: solicitud.fecha_operativa,
         gerencia: solicitud.gerencia,
         responsable: solicitud.responsable,
-        partidas: partidasRaw.filter(p => !p.clasificacion.includes('[*]') && p.clasificacion !== 'Gastos Imprevistos' && p.clasificacion !== 'Ticket de Pago' && p.clasificacion !== 'Solicitud de ticket').map(p => ({
-          id: p.id,
-          cc: p.centro_costo,
-          clasif: p.clasificacion,
-          cat: p.categoria,
-          cant: p.cantidad,
-          uni: p.unidad,
-          desc: p.descripcion,
-          ben: p.beneficiario,
-          puBs: p.pu_bs,
-          puUsd: p.pu_usd,
-          pago_realizado: p.pago_realizado || false,
-          requisicion_id: p.requisicion_id || null,
-          status: p.status || 'Disponible',
-          selected: false
-        })),
-        imprevistos: partidasRaw.filter(p => p.clasificacion.includes('[*]') || p.clasificacion === 'Gastos Imprevistos' || p.clasificacion === 'Ticket de Pago' || p.clasificacion === 'Solicitud de ticket').length > 0
-          ? partidasRaw.filter(p => p.clasificacion.includes('[*]') || p.clasificacion === 'Gastos Imprevistos' || p.clasificacion === 'Ticket de Pago' || p.clasificacion === 'Solicitud de ticket').map(p => ({
+        partidas: partidasRaw.filter(p => !p.clasificacion.includes('[*]') && p.clasificacion !== 'Gastos Imprevistos' && p.clasificacion !== 'Ticket de Pago' && p.clasificacion !== 'Solicitud de ticket').map(p => {
+          const { montoReal, montoPendiente } = procesarEjecucion(p);
+          return {
             id: p.id,
             cc: p.centro_costo,
-            clasif: p.clasificacion.replace(' [*]', ''),
+            clasif: p.clasificacion,
             cat: p.categoria,
             cant: p.cantidad,
             uni: p.unidad,
@@ -304,10 +356,41 @@ const StockSmartTotalClean = () => {
             puUsd: p.pu_usd,
             pago_realizado: p.pago_realizado || false,
             requisicion_id: p.requisicion_id || null,
+            codigo_req: p.requisiciones?.correlativo_req || null,
+            ticket_id: p.ticket_id || null,
+            codigo_ticket: p.codigo_ticket || null,
             status: p.status || 'Disponible',
-            selected: false
-          }))
-          : [{ id: Date.now() + 1, selected: false, cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '', pago_realizado: false }]
+            selected: false,
+            montoReal,
+            montoPendiente
+          };
+        }),
+        imprevistos: partidasRaw.filter(p => p.clasificacion.includes('[*]') || p.clasificacion === 'Gastos Imprevistos' || p.clasificacion === 'Ticket de Pago' || p.clasificacion === 'Solicitud de ticket').length > 0
+          ? partidasRaw.filter(p => p.clasificacion.includes('[*]') || p.clasificacion === 'Gastos Imprevistos' || p.clasificacion === 'Ticket de Pago' || p.clasificacion === 'Solicitud de ticket').map(p => {
+            const { montoReal, montoPendiente } = procesarEjecucion(p);
+            return {
+              id: p.id,
+              cc: p.centro_costo,
+              clasif: p.clasificacion.replace(' [*]', ''),
+              cat: p.categoria,
+              cant: p.cantidad,
+              uni: p.unidad,
+              desc: p.descripcion,
+              ben: p.beneficiario,
+              puBs: p.pu_bs,
+              puUsd: p.pu_usd,
+              pago_realizado: p.pago_realizado || false,
+              requisicion_id: p.requisicion_id || null,
+              codigo_req: p.requisiciones?.correlativo_req || null,
+              ticket_id: p.ticket_id || null,
+              codigo_ticket: p.codigo_ticket || null,
+              status: p.status || 'Disponible',
+              selected: false,
+              montoReal,
+              montoPendiente
+            };
+          })
+          : [{ id: Date.now() + 1, selected: false, cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '', pago_realizado: false, montoReal: 0, montoPendiente: 0 }]
       });
       if (partidasRaw.some(p => p.clasificacion === 'Gastos Imprevistos' || p.clasificacion === 'Ticket de Pago')) {
         setMostrarImprevistos(true);
@@ -321,11 +404,18 @@ const StockSmartTotalClean = () => {
 
   const manejarCambioPartida = (index, campo, valor) => {
     const nuevas = [...form.partidas];
-    nuevas[index][campo] = valor;
+    let valorFinal = valor;
+
+    // BLOQUEO DE NEGATIVOS
+    if (['cant', 'puBs', 'puUsd'].includes(campo)) {
+      valorFinal = Math.max(0, parseFloat(valor) || 0);
+    }
+
+    nuevas[index][campo] = valorFinal;
     if (campo === 'cc') { nuevas[index].clasif = ''; nuevas[index].cat = ''; }
     if (campo === 'clasif') { nuevas[index].cat = ''; }
-    if (campo === 'puBs' && valor > 0) nuevas[index].puUsd = '';
-    if (campo === 'puUsd' && valor > 0) nuevas[index].puBs = '';
+    if (campo === 'puBs' && valorFinal > 0) nuevas[index].puUsd = '';
+    if (campo === 'puUsd' && valorFinal > 0) nuevas[index].puBs = '';
     setForm({ ...form, partidas: nuevas });
   };
 
@@ -344,11 +434,17 @@ const StockSmartTotalClean = () => {
       }
     }
 
-    nuevos[index][campo] = valor;
+    let valorFinal = valor;
+    // BLOQUEO DE NEGATIVOS
+    if (['cant', 'puBs', 'puUsd'].includes(campo)) {
+      valorFinal = Math.max(0, parseFloat(valor) || 0);
+    }
+
+    nuevos[index][campo] = valorFinal;
     if (campo === 'cc') { nuevos[index].clasif = ''; nuevos[index].cat = ''; }
     if (campo === 'clasif') { nuevos[index].cat = ''; }
-    if (campo === 'puBs' && valor > 0) nuevos[index].puUsd = '';
-    if (campo === 'puUsd' && valor > 0) nuevos[index].puBs = '';
+    if (campo === 'puBs' && valorFinal > 0) nuevos[index].puUsd = '';
+    if (campo === 'puUsd' && valorFinal > 0) nuevos[index].puBs = '';
     setForm({ ...form, imprevistos: nuevos });
   };
 
@@ -390,8 +486,77 @@ const StockSmartTotalClean = () => {
   const numSemana = getWeek(new Date(form.fecha + 'T12:00:00'), { weekStartsOn: 1 });
   const siglasGerencia = obtenerSiglas(form.gerencia);
   const aa = new Date(form.fecha).getFullYear().toString().slice(-2);
-  const idDinamico = isEditing ? form.id : `${siglasGerencia} - SEM ${numSemana} - ${aa}`;
+  
+  // Complementamos el identificador con el Centro de Costo (Primeras 4 letras o similar)
+  const ccCodigo = (form.partidas[0]?.cc || ccPreVal || 'S-C').substring(0, 5).toUpperCase();
+  const idDinamico = isEditing ? form.id : `${siglasGerencia}-${ccCodigo}-SEM ${numSemana}-${aa}`;
   const periodoSemana = getWeekRange(numSemana, new Date(form.fecha).getFullYear());
+
+  // --- LÓGICA DE CIERRE SEMANAL (DOMINGO 23:59:59) ---
+  const calculateDeadline = (fecha) => {
+    const d = new Date(fecha + 'T12:00:00');
+    const day = d.getDay() || 7;
+    const sunday = new Date(d);
+    sunday.setDate(d.getDate() + (7 - day));
+    sunday.setHours(23, 59, 59, 999);
+    return sunday;
+  };
+
+  const deadlineDate = calculateDeadline(form.fecha);
+  const isExpired = !isEditing && new Date() > deadlineDate;
+
+  const verificarDisponibilidad = async () => {
+    if (!ccPreVal || !fechaPreVal) return setErrorCheck("Seleccione Fecha y Centro de Costo");
+    
+    // --- EXCEPCIÓN DE ADMINISTRADOR / GERENTE GENERAL ---
+    const isPrivileged = currentUser?.esAdminReal || currentUser?.rol === 'Gerente General';
+    setEsAdminBypass(isPrivileged);
+
+    setLoadingCheck(true);
+    setErrorCheck('');
+    setSolicitudConflictiva(null);
+    
+    try {
+        const week = getWeek(new Date(fechaPreVal + 'T12:00:00'), { weekStartsOn: 1 });
+        const year = new Date(fechaPreVal).getFullYear();
+        const depto = currentUser?.departamento;
+
+        // Calculamos rango de fechas para la consulta segura
+        const d = new Date(fechaPreVal + 'T12:00:00');
+        const day = d.getDay() || 7;
+        const monday = new Date(d); monday.setDate(d.getDate() - (day - 1));
+        const sunday = new Date(monday); sunday.setDate(monday.getDate() + 6);
+        
+        const pad = (n) => String(n).padStart(2, '0');
+        const fStart = `${monday.getFullYear()}-${pad(monday.getMonth()+1)}-${pad(monday.getDate())}`;
+        const fEnd = `${sunday.getFullYear()}-${pad(sunday.getMonth()+1)}-${pad(sunday.getDate())}`;
+
+        // Verificamos si ya existe una solicitud para esa gerencia en esa semana
+        const { data: existencias, error } = await supabase
+            .from('solicitudes_fondos')
+            .select('*')
+            .eq('gerencia_nombre', depto)
+            .gte('fecha_operativa', fStart)
+            .lte('fecha_operativa', fEnd)
+            .limit(1);
+
+        if (error) throw error;
+
+        if (existencias && existencias.length > 0) {
+            const sol = existencias[0];
+            setSolicitudConflictiva(sol);
+            setErrorCheck(`Error: El departamento de ${depto} ya tiene una solicitud abierta para la Semana ${week} por ${sol.responsable_nombre}. Por favor, colabora en esa solicitud o espera a que se finalice.`);
+            setSolCheckExitosa(isPrivileged); // Si es admin, dejamos el check en éxito parcial
+        } else {
+            setSolCheckExitosa(true);
+            setErrorCheck('');
+        }
+    } catch (err) {
+        setErrorCheck("Error al validar: " + err.message);
+    } finally {
+        setLoadingCheck(false);
+    }
+  };
 
   // --- CÁLCULO DE TOTALES PARA PANEL DE INDICADORES ---
   const totalesVisibles = useMemo(() => {
@@ -733,6 +898,21 @@ const StockSmartTotalClean = () => {
     return s;
   }, [form.partidas, form.imprevistos]);
 
+  const dashEjecucion = useMemo(() => {
+    const estimado = (sumas.bs + sumas.usd) + (sumas.imprevistosBs + sumas.imprevistosUsd);
+    const ejecutado = form.partidas.reduce((acc, p) => acc + (p.montoReal || 0), 0) + 
+                     form.imprevistos.reduce((acc, p) => acc + (p.montoReal || 0), 0);
+    const pendiente = form.partidas.reduce((acc, p) => acc + (p.montoPendiente || 0), 0) +
+                     form.imprevistos.reduce((acc, p) => acc + (p.montoPendiente || 0), 0);
+    
+    return {
+      estimado,
+      ejecutado,
+      pendiente,
+      diferencia: estimado - ejecutado
+    };
+  }, [form.partidas, form.imprevistos, sumas]);
+
   const registrarOActualizar = async (keepOpen = false) => {
     try {
       let finalCodigoControl = idDinamico;
@@ -882,17 +1062,19 @@ const StockSmartTotalClean = () => {
     setDataParaTicket({
       fecha: form.fecha,
       gerencia: form.gerencia,
+      solicitante: form.responsable,
       solicitud_ref: idDinamico,
       partidasSeleccionadas: seleccionados.map(imp => ({
+        id: imp.id,
         cc: imp.cc,
-        clasif: imp.clasif,
-        cat: imp.cat,
-        cant: imp.cant,
-        uni: imp.uni,
-        desc: imp.desc,
-        ben: imp.ben,
-        puUsd: imp.puUsd,
-        puBs: imp.puBs
+        clasificacion: imp.clasif ? imp.clasif.replace(' [*]', '') : '',
+        categoria: imp.cat,
+        cantidad: (imp.cant !== undefined && imp.cant !== '') ? Number(imp.cant) : 1,
+        unidad: imp.uni || 'UNID',
+        descripcion: imp.desc || '',
+        beneficiario: imp.ben || form.responsable || '', // Fallback al responsable de la solicitud
+        puUsd: Number(imp.puUsd) || 0,
+        puBs: Number(imp.puBs) || 0
       }))
     });
     setAbrirTicketModal(true);
@@ -901,30 +1083,30 @@ const StockSmartTotalClean = () => {
   return (
     <div style={{ padding: '25px', backgroundColor: '#f1f5f9', minHeight: '100vh', fontFamily: 'Inter, sans-serif' }}>
 
-      {/* DASHBOARD HEADERS — REPLICA DE COMPRAS */}
-      <div style={{ display: 'flex', gap: '20px', marginBottom: '30px' }}>
-        <div style={{ flex: 1.2, backgroundColor: 'white', padding: '25px', borderRadius: '15px', borderLeft: '8px solid #b45309', boxShadow: '0 4px 6px rgba(0,0,0,0.05)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div>
-            <div style={{ color: '#92400e', fontSize: '12px', fontWeight: '900', textTransform: 'uppercase', letterSpacing: '1px' }}>Total Pagado en Bs ($)</div>
-            <div style={{ fontSize: '1.4rem', fontWeight: '800', color: '#1e293b', marginTop: '5px' }}>$ {totalesVisibles.bs.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+      {/* --- DASHBOARD UNIFICADO PREMIUM --- */}
+      <div className="rm-stats-grid" style={{ marginBottom: '32px' }}>
+        <div className="rm-stat-card secondary">
+          <div className="rm-stat-info">
+            <label>Dólares pagaderos en Bolívares</label>
+            <h3 style={{ color: '#0ea5e9' }}>$ {totalesVisibles.bs.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</h3>
           </div>
-          <div style={{ opacity: 0.2 }}><Printer size={40} /></div>
+          <div className="rm-stat-icon"><Clock size={22} /></div>
         </div>
 
-        <div style={{ flex: 1.2, backgroundColor: 'white', padding: '25px', borderRadius: '15px', borderLeft: '8px solid #15803d', boxShadow: '0 4px 6px rgba(0,0,0,0.05)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div>
-            <div style={{ color: '#166534', fontSize: '12px', fontWeight: '900', textTransform: 'uppercase', letterSpacing: '1px' }}>Total Pagado en USD ($)</div>
-            <div style={{ fontSize: '1.4rem', fontWeight: '800', color: '#1e293b', marginTop: '5px' }}>$ {totalesVisibles.usd.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+        <div className="rm-stat-card highlight">
+          <div className="rm-stat-info">
+            <label>Dólares pagaderos en divisas</label>
+            <h3 style={{ color: '#8b5cf6' }}>$ {totalesVisibles.usd.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</h3>
           </div>
-          <div style={{ opacity: 0.2 }}><Printer size={40} /></div>
+          <div className="rm-stat-icon"><BarChart3 size={22} /></div>
         </div>
 
-        <div style={{ flex: 1.5, backgroundColor: '#0f172a', padding: '25px', borderRadius: '15px', borderLeft: '8px solid #0ea5e9', boxShadow: '0 10px 15px rgba(0,0,0,0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div>
-            <div style={{ color: '#38bdf8', fontSize: '12px', fontWeight: '900', textTransform: 'uppercase', letterSpacing: '1px' }}>Total General Proyectado ($)</div>
-            <div style={{ fontSize: '2.2rem', fontWeight: '900', color: 'white', marginTop: '5px' }}>$ {totalesVisibles.general.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+        <div className="rm-stat-card primary">
+          <div className="rm-stat-info">
+            <label>Total General ($)</label>
+            <h3 style={{ fontSize: '1.8rem' }}>$ {totalesVisibles.general.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</h3>
           </div>
-          <div style={{ color: 'white', opacity: 0.3 }}><FileText size={48} /></div>
+          <div className="rm-stat-icon"><DollarSign size={22} /></div>
         </div>
       </div>
 
@@ -1098,22 +1280,15 @@ const StockSmartTotalClean = () => {
             </button>
             <button onClick={() => {
               setIsEditing(false);
-              setForm({
-                id: '',
-                fecha: new Date().toISOString().split('T')[0],
-                sede: 'MARACAIBO',
-                gerencia: currentUser?.departamento || '',
-                responsable: (['Gerente', 'Coordinador', 'Analista'].includes(currentUser?.rol) || currentUser?.esAdminReal)
-                  ? `${currentUser.nombre} ${currentUser.apellido}`
-                  : '',
-                partidas: [{ id: Date.now(), selected: false, cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '' }],
-                imprevistos: [{ id: Date.now() + 1, selected: false, cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '' }]
-              });
-              setMostrarImprevistos(false);
-              setShowModal(true);
+              setCcPreVal('');
+              setFechaPreVal(new Date().toISOString().split('T')[0]);
+              setErrorCheck('');
+              setSolCheckExitosa(false);
+              setShowPreVal(true);
             }} style={{ padding: '12px 25px', backgroundColor: '#0ea5e9', color: 'white', border: 'none', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer' }}>+ Nueva Solicitud</button>
           </div>
         </div>
+
 
         {/* BARRA DE FILTROS AL ESTILO REQUISICIONES */}
         <div style={{
@@ -1273,19 +1448,106 @@ const StockSmartTotalClean = () => {
       {showModal && (
         <div className="sf-modal-overlay">
           <div className="sf-modal-container">
+            {/* BANNER DE FECHA TOPE */}
+            <div style={{ 
+              backgroundColor: isExpired ? '#fef2f2' : '#f0f9ff', 
+              borderBottom: `1px solid ${isExpired ? '#fecaca' : '#bae6fd'}`,
+              padding: '10px 30px',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              margin: '-25px -25px 20px -25px',
+              borderRadius: '20px 20px 0 0'
+            }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+                    <div style={{ 
+                        backgroundColor: isExpired ? '#ef4444' : '#0ea5e9', 
+                        color: 'white', 
+                        padding: '4px 12px', 
+                        borderRadius: '20px', 
+                        fontSize: '11px', 
+                        fontWeight: '800' 
+                    }}>
+                        {isExpired ? 'SEMANA CERRADA' : 'SEMANA ACTIVA'}
+                    </div>
+                    <span style={{ fontSize: '12px', color: isExpired ? '#991b1b' : '#0369a1', fontWeight: '600' }}>
+                        Período: <span style={{ fontWeight: '800' }}>{periodoSemana}</span>
+                    </span>
+                </div>
+                <div style={{ fontSize: '12px', color: isExpired ? '#ef4444' : '#64748b', fontWeight: 'bold' }}>
+                    {isExpired ? (
+                        <span>🛑 Plazo vencido. No se pueden añadir nuevos registros.</span>
+                    ) : (
+                        <span>⏰ Fecha Tope Requisciones: <span style={{ color: '#0f172a' }}>Domingo {format(deadlineDate, 'dd/MM')} - 11:59 PM</span></span>
+                    )}
+                </div>
+            </div>
 
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '25px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '15px' }}>
               <div>
-                <h2 style={{ margin: 0, fontWeight: '900' }}>{isEditing ? 'Editar Registro' : 'Registro de Fondos'}</h2>
+                <h2 style={{ margin: 0, fontWeight: '900' }}>{isEditing ? 'Detalles de Ejecución' : 'Registro de Fondos'}</h2>
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginTop: '8px' }}>
-                  <div style={{ background: '#0f172a', color: 'white', padding: '4px 12px', borderRadius: '6px', fontSize: '12px', fontWeight: 'bold' }}>ID: {idDinamico}</div>
-                  <div style={{ background: '#0ea5e9', color: 'white', padding: '4px 12px', borderRadius: '6px', fontSize: '12px', fontWeight: 'bold' }}>📅 {isEditing ? extractPeriodoFromId(form.id) : periodoSemana}</div>
+                  <div style={{ background: '#0f172a', color: 'white', padding: '4px 12px', borderRadius: '6px', fontSize: '10px', fontWeight: 'bold' }}>ID: {idDinamico}</div>
+                  <div style={{ background: '#0ea5e9', color: 'white', padding: '4px 12px', borderRadius: '6px', fontSize: '10px', fontWeight: 'bold' }}>📅 {isEditing ? extractPeriodoFromId(form.id) : periodoSemana}</div>
                 </div>
               </div>
-              <div style={{ display: 'flex', gap: '40px', textAlign: 'right' }}>
-                <div><label style={{ fontSize: '10px', fontWeight: 'bold', color: '#64748b' }}>$ PAGADEROS EN BS</label><div style={{ fontSize: '1.2rem', fontWeight: 'bold', color: '#b45309' }}>$ {sumas.bs.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div></div>
-                <div><label style={{ fontSize: '10px', fontWeight: 'bold', color: '#64748b' }}>$ PAGADEROS EN $</label><div style={{ fontSize: '1.2rem', fontWeight: 'bold', color: '#15803d' }}>$ {sumas.usd.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div></div>
-                <div style={{ borderLeft: '2px solid #e2e8f0', paddingLeft: '30px' }}><label style={{ fontSize: '10px', fontWeight: '900', color: '#64748b' }}>TOTAL GENERAL</label><div style={{ fontSize: '2rem', fontWeight: '950', color: '#0f172a' }}>$ {(sumas.bs + sumas.usd).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div></div>
+
+              {/* DASHBOARD DE CONTROL DE EJECUCIÓN PREMIUM */}
+              <div style={{ display: 'flex', gap: '12px' }}>
+                <div className="rm-stat-card primary" style={{ padding: '12px 20px', minWidth: '160px', borderRadius: '14px' }}>
+                  <div className="rm-stat-info">
+                    <label style={{ fontSize: '10px' }}>Estimado</label>
+                    <h3 style={{ fontSize: '1.2rem' }}>$ {dashEjecucion.estimado.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</h3>
+                  </div>
+                  <div className="rm-stat-icon" style={{ width: '32px', height: '32px' }}><DollarSign size={16} /></div>
+                </div>
+
+                <div className="rm-stat-card success" style={{ padding: '12px 20px', minWidth: '160px', borderRadius: '14px' }}>
+                  <div className="rm-stat-info">
+                    <label style={{ fontSize: '10px' }}>Comprado</label>
+                    <h3 style={{ fontSize: '1.2rem', color: '#10b981' }}>$ {dashEjecucion.ejecutado.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</h3>
+                  </div>
+                  <div className="rm-stat-icon" style={{ width: '32px', height: '32px' }}><CheckCircle2 size={16} color="#10b981" /></div>
+                </div>
+
+                <div className="rm-stat-card highlight" style={{ padding: '12px 20px', minWidth: '160px', borderRadius: '14px' }}>
+                  <div className="rm-stat-info">
+                    <label style={{ fontSize: '10px' }}>Pendiente</label>
+                    <h3 style={{ fontSize: '1.2rem', color: '#f59e0b' }}>$ {dashEjecucion.pendiente.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</h3>
+                  </div>
+                  <div className="rm-stat-icon" style={{ width: '32px', height: '32px' }}><Clock size={16} color="#f59e0b" /></div>
+                </div>
+
+                <div className={`rm-stat-card ${dashEjecucion.diferencia < 0 ? 'danger' : 'info'}`} style={{ 
+                  padding: '12px 20px', 
+                  minWidth: '160px', 
+                  borderRadius: '14px',
+                  backgroundColor: dashEjecucion.diferencia < 0 ? '#fff1f2' : '#f0f9ff',
+                  borderColor: dashEjecucion.diferencia < 0 ? '#fecaca' : '#bae6fd'
+                }}>
+                  <div className="rm-stat-info">
+                    <label style={{ fontSize: '10px', color: dashEjecucion.diferencia < 0 ? '#e11d48' : '#0369a1' }}>
+                      {dashEjecucion.diferencia < 0 ? 'Exceso' : 'Ahorro'}
+                    </label>
+                    <h3 style={{ fontSize: '1.2rem', color: dashEjecucion.diferencia < 0 ? '#be123c' : '#0ea5e9' }}>
+                      $ {Math.abs(dashEjecucion.diferencia).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                    </h3>
+                  </div>
+                  <div className="rm-stat-icon" style={{ 
+                    width: '32px', 
+                    height: '32px',
+                    backgroundColor: dashEjecucion.diferencia < 0 ? '#ffe4e6' : '#e0f2fe'
+                  }}>
+                    {dashEjecucion.diferencia < 0 ? <AlertCircle size={16} color="#e11d48" /> : <Activity size={16} color="#0ea5e9" />}
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '40px', textAlign: 'right', alignItems: 'center' }}>
+                <div style={{ borderLeft: '2px solid #e2e8f0', paddingLeft: '30px' }}>
+                  <label style={{ fontSize: '10px', fontWeight: '900', color: '#64748b' }}>TOTAL SOLICITADO</label>
+                  <div style={{ fontSize: '1.8rem', fontWeight: '950', color: '#0f172a' }}>$ {(sumas.bs + sumas.usd).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                </div>
               </div>
             </div>
 
@@ -1314,7 +1576,7 @@ const StockSmartTotalClean = () => {
                     }}
                   >
                     <option value="">Seleccione Gerencia...</option>
-                    {[...new Set(gerentesDisponibles.map(g => g.departamento))].map(dep => (
+                    {[...new Set([...gerentesDisponibles.map(g => g.departamento), 'Contabilidad'])].sort().map(dep => (
                       <option key={dep} value={dep}>{dep}</option>
                     ))}
                   </select>
@@ -1339,6 +1601,7 @@ const StockSmartTotalClean = () => {
               <div className="sf-table-header">
                 <div style={{ width: '40px', padding: '12px', textAlign: 'center' }}>SEL</div>
                 <div style={{ width: '45px', padding: '12px' }}>N°</div>
+                <div style={{ width: '110px', padding: '12px' }}>REQ</div>
                 <div style={{ width: '200px', padding: '12px' }}>C. COSTO</div>
                 <div style={{ width: '215px', padding: '12px' }}>CLASIFICACIÓN</div>
                 <div style={{ width: '215px', padding: '12px' }}>CATEGORÍA</div>
@@ -1349,13 +1612,12 @@ const StockSmartTotalClean = () => {
                 <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>P.U $/BS</div>
                 <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>P.U $/$</div>
                 <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>TOTAL $</div>
-                <div style={{ width: '60px', padding: '12px', textAlign: 'center' }}>PAGO</div>
               </div>
 
               <div style={{ maxHeight: '40vh', overflowY: 'auto' }}>
                 {form.partidas.map((p, i) => (
                   <div key={p.id} className="sf-table-row" style={{
-                    background: (p.requisicion_id || p.status === 'Bloqueado') ? '#f1f5f9' : (p.selected ? '#e0f2fe' : 'transparent'),
+                    background: (p.requisicion_id || p.codigo_ticket || p.status === 'Bloqueado') ? '#f1f5f9' : (p.selected ? '#e0f2fe' : 'transparent'),
                     opacity: 1
                   }}>
                     <div style={{ width: '40px', textAlign: 'center' }}>
@@ -1363,43 +1625,56 @@ const StockSmartTotalClean = () => {
                         type="checkbox"
                         checked={p.selected || false}
                         onChange={(e) => manejarCambioPartida(i, 'selected', e.target.checked)}
-                        style={{ cursor: (p.requisicion_id || p.status === 'Bloqueado') ? 'not-allowed' : 'pointer', transform: 'scale(1.2)' }}
-                        disabled={!!p.requisicion_id || p.status === 'Bloqueado'}
-                        title={(p.requisicion_id || p.status === 'Bloqueado') ? "Esta partida está bloqueada por una requisición activa" : ""}
+                        style={{ cursor: (p.requisicion_id || p.codigo_ticket || p.status === 'Bloqueado') ? 'not-allowed' : 'pointer', transform: 'scale(1.2)' }}
+                        disabled={!!p.requisicion_id || !!p.codigo_ticket || p.status === 'Bloqueado'}
+                        title={p.codigo_ticket ? `Ticket Emitido: ${p.codigo_ticket}` : (p.requisicion_id ? "Bloqueado por Requisición" : "")}
                       />
                     </div>
-                    <div style={{ width: '45px', textAlign: 'center', fontWeight: 'bold', color: '#94a3b8' }}>{i + 1}</div>
+                    <div style={{ width: '45px', textAlign: 'center', fontWeight: 'bold', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'center' }}>
+                      {i + 1}
+                      {p.codigo_ticket && <span title={`Ticket: ${p.codigo_ticket}`}>🎟️</span>}
+                      {p.pago_realizado && <span title="Pago Completado">✅</span>}
+                    </div>
+                    <div style={{ width: '110px', padding: '6px', fontSize: '10px', fontWeight: 'bold', color: '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      {p.codigo_req || '---'}
+                    </div>
                     <div style={{ width: '200px', padding: '6px' }}>
-                      <select className="sf-table-input" value={p.cc} onChange={(e) => manejarCambioPartida(i, 'cc', e.target.value)} style={{ fontWeight: 'bold' }}>
+                      <select className="sf-table-input" value={p.cc} onChange={(e) => manejarCambioPartida(i, 'cc', e.target.value)} style={{ fontWeight: 'bold' }} disabled={!!p.codigo_ticket}>
                         <option value="">Seleccione C.C...</option>
-                        {centrosCosto.map(op => <option key={op} value={op}>{op}</option>)}
+                        {centrosCosto.map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>)}
                       </select>
                     </div>
                     <div style={{ width: '215px', padding: '6px' }}>
                       <select className="sf-table-input" value={p.clasif} onChange={(e) => manejarCambioPartida(i, 'clasif', e.target.value)} disabled={!p.cc}>
                         <option value="">Clasificación...</option>
-                        {todasClasificaciones.filter(cl => cl.padre === p.cc).map(op => <option key={op.nombre} value={op.nombre}>{op.nombre}</option>)}
+                        {(() => {
+                          const ccObj = centrosCosto.find(c => c.nombre === p.cc);
+                          return todasClasificaciones
+                            .filter(cl => cl.padreId === ccObj?.id)
+                            .map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>);
+                        })()}
                       </select>
                     </div>
                     <div style={{ width: '215px', padding: '6px' }}>
                       <select className="sf-table-input" value={p.cat} onChange={(e) => manejarCambioPartida(i, 'cat', e.target.value)} disabled={!p.clasif}>
                         <option value="">Categoría...</option>
-                        {[...new Set(todasCategorias.filter(ct => ct.padre === p.clasif).map(ct => ct.nombre))].map(nombre => (
-                          <option key={nombre} value={nombre}>{nombre}</option>
-                        ))}
+                        {(() => {
+                          const ccObj = centrosCosto.find(c => c.nombre === p.cc);
+                          const clObj = todasClasificaciones.find(cl => cl.nombre === p.clasif && cl.padreId === ccObj?.id);
+                          return todasCategorias
+                            .filter(ct => ct.padreId === clObj?.id)
+                            .map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>);
+                        })()}
                       </select>
                     </div>
-                    <div style={{ width: '80px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.cant} onChange={(e) => manejarCambioPartida(i, 'cant', e.target.value)} style={{ textAlign: 'center' }} /></div>
-                    <div style={{ width: '90px', padding: '6px' }}><select className="sf-table-input" value={p.uni} onChange={(e) => manejarCambioPartida(i, 'uni', e.target.value)}>{unidades.map(u => <option key={u}>{u}</option>)}</select></div>
-                    <div style={{ width: '460px', padding: '10px' }}><textarea className="sf-table-input" value={p.desc} onChange={(e) => manejarCambioPartida(i, 'desc', e.target.value)} style={{ resize: 'none' }} rows="1" /></div>
-                    <div style={{ width: '200px', padding: '6px' }}><input className="sf-table-input" value={p.ben} onChange={(e) => manejarCambioPartida(i, 'ben', e.target.value)} /></div>
-                    <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puBs} onChange={(e) => manejarCambioPartida(i, 'puBs', e.target.value)} style={{ textAlign: 'right' }} disabled={p.puUsd > 0} /></div>
-                    <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puUsd} onChange={(e) => manejarCambioPartida(i, 'puUsd', e.target.value)} style={{ textAlign: 'right' }} disabled={p.puBs > 0} /></div>
+                    <div style={{ width: '80px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.cant} onChange={(e) => manejarCambioPartida(i, 'cant', e.target.value)} style={{ textAlign: 'center' }} disabled={!!p.codigo_ticket} /></div>
+                    <div style={{ width: '90px', padding: '6px' }}><select className="sf-table-input" value={p.uni} onChange={(e) => manejarCambioPartida(i, 'uni', e.target.value)} disabled={!!p.codigo_ticket}>{unidades.map(u => <option key={u}>{u}</option>)}</select></div>
+                    <div style={{ width: '460px', padding: '10px' }}><textarea className="sf-table-input" value={p.desc} onChange={(e) => manejarCambioPartida(i, 'desc', e.target.value)} style={{ resize: 'none' }} rows="1" disabled={!!p.codigo_ticket} /></div>
+                    <div style={{ width: '200px', padding: '6px' }}><input className="sf-table-input" value={p.ben} onChange={(e) => manejarCambioPartida(i, 'ben', e.target.value)} disabled={!!p.codigo_ticket} /></div>
+                    <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puBs} onChange={(e) => manejarCambioPartida(i, 'puBs', e.target.value)} style={{ textAlign: 'right' }} disabled={p.puUsd > 0 || !!p.codigo_ticket} /></div>
+                    <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puUsd} onChange={(e) => manejarCambioPartida(i, 'puUsd', e.target.value)} style={{ textAlign: 'right' }} disabled={p.puBs > 0 || !!p.codigo_ticket} /></div>
                     <div style={{ width: '120px', padding: '6px', textAlign: 'right', fontWeight: 'bold' }}>{((parseFloat(p.puBs) || parseFloat(p.puUsd) || 0) * (p.cant || 0)).toLocaleString('de-DE')}</div>
-                    <div style={{ width: '60px', textAlign: 'center' }}>
-                      <input type="checkbox" checked={p.pago_realizado || false} onChange={(e) => manejarCambioPartida(i, 'pago_realizado', e.target.checked)} style={{ cursor: 'pointer', transform: 'scale(1.2)' }} />
-                    </div>
-                    <div style={{ width: '40px', textAlign: 'center' }}><button onClick={() => setForm({ ...form, partidas: form.partidas.filter((_, idx) => idx !== i) })} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '1rem' }} title="Eliminar renglón">🗑️</button></div>
+                    <div style={{ width: '40px', textAlign: 'center' }}><button onClick={() => setForm({ ...form, partidas: form.partidas.filter((_, idx) => idx !== i) })} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: (p.codigo_ticket || p.requisicion_id) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (p.codigo_ticket || p.requisicion_id) ? 0.3 : 1 }} disabled={!!p.codigo_ticket || !!p.requisicion_id} title="Eliminar renglón">🗑️</button></div>
                   </div>
                 ))}
               </div>
@@ -1427,6 +1702,7 @@ const StockSmartTotalClean = () => {
                 <div className="sf-table-wrapper" style={{ border: '1px solid #fcd34d', boxShadow: '0 4px 15px rgba(245, 158, 11, 0.05)' }}>
                   <div className="sf-table-header" style={{ background: '#fffcf0', borderBottom: '2px solid #fef3c7', color: '#b45309' }}>
                     <div style={{ width: '45px', padding: '12px' }}>N°</div>
+                    <div style={{ width: '110px', padding: '12px' }}>REQ</div>
                     <div style={{ width: '200px', padding: '12px' }}>C. COSTO</div>
                     <div style={{ width: '215px', padding: '12px' }}>CLASIFICACIÓN</div>
                     <div style={{ width: '215px', padding: '12px' }}>CATEGORÍA</div>
@@ -1437,7 +1713,6 @@ const StockSmartTotalClean = () => {
                     <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>P.U $/BS</div>
                     <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>P.U $/$</div>
                     <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>TOTAL $</div>
-                    <div style={{ width: '60px', padding: '12px', textAlign: 'center' }}>PAGO</div>
                   </div>
 
                   <div style={{ maxHeight: '30vh', overflowY: 'auto' }}>
@@ -1457,24 +1732,36 @@ const StockSmartTotalClean = () => {
                           />
                         </div>
                         <div style={{ width: '45px', textAlign: 'center', fontWeight: 'bold', color: '#d97706' }}>{i + 1}</div>
+                        <div style={{ width: '110px', padding: '6px', fontSize: '10px', fontWeight: 'bold', color: '#b45309', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          {imp.codigo_req || '---'}
+                        </div>
                         <div style={{ width: '200px', padding: '6px' }}>
                           <select className="sf-table-input" value={imp.cc} onChange={(e) => manejarCambioImprevisto(i, 'cc', e.target.value)} style={{ fontWeight: 'bold' }}>
                             <option value="">Seleccione C.C...</option>
-                            {centrosCosto.map(op => <option key={op} value={op}>{op}</option>)}
+                            {centrosCosto.map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>)}
                           </select>
                         </div>
                         <div style={{ width: '215px', padding: '6px' }}>
                           <select className="sf-table-input" value={imp.clasif} onChange={(e) => manejarCambioImprevisto(i, 'clasif', e.target.value)} disabled={!imp.cc}>
                             <option value="">Clasificación...</option>
-                            {todasClasificaciones.filter(cl => cl.padre === imp.cc).map(op => <option key={op.nombre} value={op.nombre}>{op.nombre}</option>)}
+                            {(() => {
+                              const ccObj = centrosCosto.find(c => c.nombre === imp.cc);
+                              return todasClasificaciones
+                                .filter(cl => cl.padreId === ccObj?.id)
+                                .map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>);
+                            })()}
                           </select>
                         </div>
                         <div style={{ width: '215px', padding: '6px' }}>
                           <select className="sf-table-input" value={imp.cat} onChange={(e) => manejarCambioImprevisto(i, 'cat', e.target.value)} disabled={!imp.clasif}>
                             <option value="">Categoría...</option>
-                            {[...new Set(todasCategorias.filter(ct => ct.padre === imp.clasif).map(ct => ct.nombre))].map(nombre => (
-                              <option key={nombre} value={nombre}>{nombre}</option>
-                            ))}
+                            {(() => {
+                              const ccObj = centrosCosto.find(c => c.nombre === imp.cc);
+                              const clObj = todasClasificaciones.find(cl => cl.nombre === imp.clasif && cl.padreId === ccObj?.id);
+                              return todasCategorias
+                                .filter(ct => ct.padreId === clObj?.id)
+                                .map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>);
+                            })()}
                           </select>
                         </div>
                         <div style={{ width: '80px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.cant} onChange={(e) => manejarCambioImprevisto(i, 'cant', e.target.value)} style={{ textAlign: 'center' }} /></div>
@@ -1484,9 +1771,6 @@ const StockSmartTotalClean = () => {
                         <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.puBs} onChange={(e) => manejarCambioImprevisto(i, 'puBs', e.target.value)} style={{ textAlign: 'right' }} disabled={imp.puUsd > 0} /></div>
                         <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.puUsd} onChange={(e) => manejarCambioImprevisto(i, 'puUsd', e.target.value)} style={{ textAlign: 'right' }} disabled={imp.puBs > 0} /></div>
                         <div style={{ width: '120px', padding: '6px', textAlign: 'right', fontWeight: 'bold' }}>{((parseFloat(imp.puBs) || parseFloat(imp.puUsd) || 0) * (imp.cant || 1)).toLocaleString('de-DE')}</div>
-                        <div style={{ width: '60px', textAlign: 'center' }}>
-                          <input type="checkbox" checked={imp.pago_realizado || false} onChange={(e) => manejarCambioImprevisto(i, 'pago_realizado', e.target.checked)} style={{ cursor: 'pointer', transform: 'scale(1.2)' }} />
-                        </div>
                         <div style={{ width: '40px', textAlign: 'center' }}>
                           <button onClick={() => setForm({ ...form, imprevistos: form.imprevistos.filter((_, idx) => idx !== i) })} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '1rem' }} title="Eliminar imprevisto">🗑️</button>
                         </div>
@@ -1504,20 +1788,37 @@ const StockSmartTotalClean = () => {
 
             <div style={{ marginTop: '25px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
               <div style={{ display: 'flex', gap: '10px' }}>
-                <button className="sf-btn sf-btn-add" onClick={() => setForm({ ...form, partidas: [...form.partidas, { id: Date.now(), selected: false, cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '' }] })}>+ AÑADIR RENGLÓN PARA REQUISICIÓN</button>
+                <button 
+                  className="sf-btn sf-btn-add" 
+                  onClick={() => setForm({ ...form, partidas: [...form.partidas, { id: Date.now(), selected: false, cc: form.partidas[0]?.cc || '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '' }] })}
+                  disabled={isExpired}
+                  style={{ opacity: isExpired ? 0.5 : 1, cursor: isExpired ? 'not-allowed' : 'pointer' }}
+                >
+                  + AÑADIR RENGLÓN PARA REQUISICIÓN
+                </button>
                 <button className="sf-btn" onClick={() => setMostrarImprevistos(!mostrarImprevistos)} style={{ border: '1px solid #f59e0b', color: '#d97706', background: mostrarImprevistos ? '#fffbeb' : 'white' }}>
                   {mostrarImprevistos ? '- OCULTAR TICKET' : '+ MOSTRAR TICKET'}
                 </button>
-                <button className="sf-btn sf-btn-success" onClick={handleCrearRequisicion}>📝 CREAR REQUISICIÓN</button>
+                <button className="sf-btn sf-btn-success" onClick={handleCrearRequisicion} disabled={isExpired} style={{ opacity: isExpired ? 0.5 : 1 }}>📝 CREAR REQUISICIÓN</button>
                 {mostrarImprevistos && (
-                  <button className="sf-btn" style={{ background: '#f59e0b', color: 'white', border: 'none' }} onClick={handleEmitirTicketFromImprevisto}>🏟️ EMITIR TICKET DE PAGO</button>
+                  <button className="sf-btn" style={{ background: '#f59e0b', color: 'white', border: 'none', opacity: isExpired ? 0.5 : 1 }} onClick={handleEmitirTicketFromImprevisto} disabled={isExpired}>🏟️ EMITIR TICKET DE PAGO</button>
                 )}
               </div>
 
               {/* BOTONES */}
               <div style={{ display: 'flex', gap: '10px', alignSelf: 'flex-end' }}>
                 <button className="sf-btn sf-btn-close" onClick={() => setShowModal(false)}>CERRAR</button>
-                <button className="sf-btn sf-btn-primary" onClick={registrarOActualizar}>{isEditing ? 'ACTUALIZAR' : 'REGISTRAR'}</button>
+                <button 
+                  className="sf-btn" 
+                  style={{ background: '#f8fafc', border: '1px solid #cbd5e1', color: '#475569', padding: '12px 25px', opacity: isExpired ? 0.5 : 1 }} 
+                  onClick={() => registrarOActualizar(true)}
+                  disabled={isExpired}
+                >
+                  GUARDAR
+                </button>
+                <button className="sf-btn sf-btn-primary" onClick={() => registrarOActualizar(false)} disabled={isExpired} style={{ opacity: isExpired ? 0.5 : 1 }}>
+                  {isEditing ? 'ACTUALIZAR Y FINALIZAR' : 'REGISTRAR Y FINALIZAR'}
+                </button>
               </div>
             </div>
           </div>
@@ -1546,6 +1847,139 @@ const StockSmartTotalClean = () => {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* MODAL DE PRE-VALIDACIÓN */}
+      {showPreVal && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15, 23, 42, 0.9)', backdropFilter: 'blur(12px)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 2000 }}>
+          <div style={{ backgroundColor: 'white', width: '450px', borderRadius: '28px', padding: '40px', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)', textAlign: 'center' }}>
+            <div style={{ width: '70px', height: '70px', backgroundColor: '#e0f2fe', borderRadius: '20px', display: 'flex', justifyContent: 'center', alignItems: 'center', margin: '0 auto 25px', color: '#0ea5e9' }}>
+               <FileText size={35} />
+            </div>
+            
+            <h2 style={{ fontSize: '1.6rem', color: '#0f172a', fontWeight: '800', marginBottom: '10px' }}>Nueva Solicitud</h2>
+            <p style={{ color: '#64748b', fontSize: '14px', marginBottom: '30px', lineHeight: '1.5' }}>Seleccione el Centro de Costo y la Fecha para verificar la disponibilidad de la semana.</p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', textAlign: 'left', marginBottom: '30px' }}>
+                <div>
+                   <label style={{ fontSize: '11px', fontWeight: '800', color: '#0f172a', textTransform: 'uppercase', display: 'block', marginBottom: '8px' }}>Centro de Costo</label>
+                   <select 
+                     className="sf-input" 
+                     value={ccPreVal} 
+                     onChange={(e) => { setCcPreVal(e.target.value); setSolCheckExitosa(false); }}
+                     style={{ width: '100%', padding: '12px' }}
+                   >
+                     <option value="">Seleccione Proyecto...</option>
+                     {centrosCosto.map(cc => <option key={cc.id} value={cc.nombre}>{cc.nombre}</option>)}
+                   </select>
+                </div>
+                <div>
+                   <label style={{ fontSize: '11px', fontWeight: '800', color: '#0f172a', textTransform: 'uppercase', display: 'block', marginBottom: '8px' }}>Fecha Operativa</label>
+                   <input 
+                     type="date" 
+                     className="sf-input" 
+                     value={fechaPreVal} 
+                     onChange={(e) => { setFechaPreVal(e.target.value); setSolCheckExitosa(false); }}
+                     style={{ width: '100%', padding: '12px' }}
+                   />
+                </div>
+            </div>
+
+            {errorCheck && (
+              <div style={{ backgroundColor: '#fef2f2', border: '1px solid #fee2e2', color: '#b91c1c', padding: '15px', borderRadius: '15px', fontSize: '13px', marginBottom: '25px', fontWeight: '500' }}>
+                ⚠️ {errorCheck}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: '15px', flexDirection: 'column' }}>
+               <div style={{ display: 'flex', gap: '15px' }}>
+                  <button 
+                    onClick={() => setShowPreVal(false)} 
+                    style={{ flex: 1, padding: '15px', borderRadius: '16px', border: '1px solid #e2e8f0', backgroundColor: 'white', color: '#64748b', fontWeight: 'bold', cursor: 'pointer' }}
+                  >
+                    CANCELAR
+                  </button>
+                  
+                  {!solCheckExitosa && !solicitudConflictiva ? (
+                    <button 
+                      onClick={verificarDisponibilidad} 
+                      disabled={loadingCheck || !ccPreVal || !fechaPreVal}
+                      style={{ flex: 1.5, padding: '15px', borderRadius: '16px', border: 'none', backgroundColor: '#0f172a', color: 'white', fontWeight: 'bold', cursor: (loadingCheck || !ccPreVal || !fechaPreVal) ? 'not-allowed' : 'pointer', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '10px' }}
+                    >
+                      {loadingCheck ? <Loader2 className="spinner" size={18} /> : null}
+                      {loadingCheck ? 'VERIFICANDO...' : 'VERIFICAR'}
+                    </button>
+                  ) : null}
+
+                  {(solCheckExitosa && !solicitudConflictiva) && (
+                    <button 
+                      onClick={() => {
+                        setForm({
+                            id: '',
+                            fecha: fechaPreVal,
+                            sede: 'MARACAIBO',
+                            gerencia: currentUser?.departamento || '',
+                            responsable: (['Gerente', 'Coordinador', 'Analista'].includes(currentUser?.rol) || currentUser?.esAdminReal)
+                              ? `${currentUser.nombre} ${currentUser.apellido}`
+                              : '',
+                            partidas: [{ id: Date.now(), selected: false, cc: ccPreVal, clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '' }],
+                            imprevistos: [{ id: Date.now() + 1, selected: false, cc: ccPreVal, clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '' }]
+                        });
+                        setMostrarImprevistos(false);
+                        setShowPreVal(false);
+                        setShowModal(true);
+                      }} 
+                      style={{ flex: 1.5, padding: '15px', borderRadius: '16px', border: 'none', backgroundColor: '#15803d', color: 'white', fontWeight: 'bold', cursor: 'pointer' }}
+                    >
+                      CREAR NUEVA ✅
+                    </button>
+                  )}
+               </div>
+
+               {solicitudConflictiva && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    <button 
+                      onClick={() => {
+                        setShowPreVal(false);
+                        cargarDetallesYEditar({
+                            ...solicitudConflictiva,
+                            id_db: solicitudConflictiva.id,
+                            id: solicitudConflictiva.codigo_control,
+                            responsable: solicitudConflictiva.responsable_nombre,
+                            gerencia: solicitudConflictiva.gerencia_nombre
+                        });
+                      }}
+                      style={{ width: '100%', padding: '15px', borderRadius: '16px', border: 'none', backgroundColor: '#0ea5e9', color: 'white', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+                    >
+                      <i className="fa-solid fa-users"></i> UNIRSE A LA SOLICITUD DE {solicitudConflictiva.responsable_nombre.toUpperCase()}
+                    </button>
+
+                    {esAdminBypass && (
+                      <button 
+                        onClick={() => {
+                          setForm({
+                              id: '',
+                              fecha: fechaPreVal,
+                              sede: 'MARACAIBO',
+                              gerencia: currentUser?.departamento || '',
+                              responsable: `${currentUser.nombre} ${currentUser.apellido}`,
+                              partidas: [{ id: Date.now(), selected: false, cc: ccPreVal, clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '' }],
+                              imprevistos: [{ id: Date.now() + 1, selected: false, cc: ccPreVal, clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '' }]
+                          });
+                          setMostrarImprevistos(false);
+                          setShowPreVal(false);
+                          setShowModal(true);
+                        }}
+                        style={{ width: '100%', padding: '10px', borderRadius: '12px', border: '1px dashed #94a3b8', backgroundColor: '#f8fafc', color: '#475569', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}
+                      >
+                        IGNORAR Y CONTINUAR (EXCEPCIÓN DE ADMINISTRADOR)
+                      </button>
+                    )}
+                  </div>
+               )}
+            </div>
+          </div>
         </div>
       )}
     </div>

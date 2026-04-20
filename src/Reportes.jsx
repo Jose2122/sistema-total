@@ -1,24 +1,25 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from './supabaseClient';
 import { motion, AnimatePresence } from 'framer-motion';
-import {
-  FileSpreadsheet,
-  Calendar,
-  Filter,
-  Clock,
-  Search,
-  ChevronDown,
-  LayoutDashboard,
-  Tag,
-  AlertCircle,
-  TrendingDown,
-  MessageSquare,
-  Paperclip
-} from 'lucide-react';
-import ExcelJS from 'exceljs';
-import { saveAs } from 'file-saver';
 import { format } from 'date-fns';
+import { 
+  FileSpreadsheet, 
+  Calendar, 
+  Filter, 
+  Clock, 
+  Search, 
+  ChevronDown, 
+  LayoutDashboard, 
+  Tag, 
+  AlertCircle, 
+  TrendingDown, 
+  MessageSquare, 
+  Paperclip,
+  DollarSign,
+  BarChart3
+} from 'lucide-react';
 import './Reportes.css';
+import './ReportesMaestro.css';
 
 const Reportes = () => {
   const [loading, setLoading] = useState(false);
@@ -35,6 +36,7 @@ const Reportes = () => {
   const [filtroPrioridad, setFiltroPrioridad] = useState('Todos');
   const [busqueda, setBusqueda] = useState('');
   const [filtroJustificacion, setFiltroJustificacion] = useState('Todos');
+  const [filtroStatus, setFiltroStatus] = useState('Todos');
 
   // --- TABLAS DE REFERENCIA (Sincronizadas con Requisiciones.jsx) ---
   const listaCentrosCostos = [
@@ -160,7 +162,7 @@ const Reportes = () => {
             rawItem: item,
             tipoDoc: 'REQUISICIÓN',
             metodoPago: compras.length > 0 ? compras[compras.length - 1].metodo_pago : 'N/A',
-            justificada: historial.some(h => h.tipo === 'JUSTIFICACION'),
+            statusCompra: doc.status_compra || 'En espera',
             historial_compras: historial,
             observaciones: doc.observaciones || '',
             facturas_url: doc.facturas_url || []
@@ -187,7 +189,7 @@ const Reportes = () => {
             rawItem: item,
             tipoDoc: 'TICKET PAGO',
             metodoPago: '$ / BS', // Por defecto en tickets directos
-            justificada: false,
+            statusCompra: 'Completado',
             historial_compras: [],
             observaciones: doc.observaciones || '',
             facturas_url: doc.facturas_url || []
@@ -203,15 +205,16 @@ const Reportes = () => {
       const matchCat = filtroCategoria === 'Todos' || r.categoria === filtroCategoria;
       const matchPrio = filtroPrioridad === 'Todos' || r.prioridad === filtroPrioridad;
 
+      const matchJustif = filtroJustificacion === 'Todos' || r.historial_compras.some(h => h.tipo === 'JUSTIFICACION' && h.motivo === filtroJustificacion);
+      const matchStatus = filtroStatus === 'Todos' || r.statusCompra === filtroStatus;
+
       let matchFecha = true;
       if (fechaDesde && r.fechaPago < fechaDesde) matchFecha = false;
       if (fechaHasta && r.fechaPago > fechaHasta) matchFecha = false;
 
-      const matchJustif = filtroJustificacion === 'Todos' || r.historial_compras.some(h => h.tipo === 'JUSTIFICACION' && h.motivo === filtroJustificacion);
-
-      return matchBusqueda && matchCC && matchGerencia && matchCat && matchPrio && matchFecha && matchJustif;
+      return matchBusqueda && matchCC && matchGerencia && matchCat && matchPrio && matchFecha && matchJustif && matchStatus;
     });
-  }, [dataRaw, busqueda, filtroCC, filtroGerencia, filtroCategoria, filtroPrioridad, fechaDesde, fechaHasta, filtroJustificacion]);
+  }, [dataRaw, busqueda, filtroCC, filtroGerencia, filtroCategoria, filtroPrioridad, fechaDesde, fechaHasta, filtroJustificacion, filtroStatus]);
 
   const totals = useMemo(() => {
     return rows.reduce((acc, r) => {
@@ -241,8 +244,21 @@ const Reportes = () => {
     titleCell.alignment = { vertical: 'middle', horizontal: 'center' };
     worksheet.getRow(1).height = 40;
 
-    // Encabezados
-    const headers = ['FECHA SOLICITUD', 'FECHA PAGO', 'TIPO', 'ID CONTROL', 'EQUIPO / DESCRIPCIÓN', 'CENTRO DE COSTO', 'GERENCIA', 'CANT. PEDIDA', 'CANT. COMPRADA', 'P.U. REAL ($)', 'TOTAL ESTIMADO ($)', 'TOTAL EJECUTADO ($)'];
+    // Encabezados según solicitud
+    const headers = [
+      'ID', 
+      'FECHA DE SOLICITUD', 
+      'STATUS', 
+      'CATEGORÍA', 
+      'DESCRIPCIÓN', 
+      'CENTRO DE COSTO', 
+      'GERENCIA', 
+      'CANTIDAD PEDIDA', 
+      'CANTIDAD COMPRADA', 
+      'MONEDA', 
+      'TOTAL ESTIMADO ($)', 
+      'TOTAL EJECUTADO ($)'
+    ];
     worksheet.addRow(headers);
     const headerRow = worksheet.getRow(2);
     headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
@@ -252,37 +268,32 @@ const Reportes = () => {
     // Datos
     rows.forEach(r => {
       const row = worksheet.addRow([
-        r.fechaSolicitud !== 'N/A' ? new Date(r.fechaSolicitud + 'T12:00:00') : 'N/A',
-        r.fechaPago !== 'Pendiente' && r.fechaPago !== 'N/A' ? new Date(r.fechaPago + 'T12:00:00') : r.fechaPago,
-        r.tipoDoc,
         r.idReq,
+        r.fechaSolicitud !== 'N/A' ? new Date(r.fechaSolicitud + 'T12:00:00') : 'N/A',
+        (r.statusCompra || 'En espera').toUpperCase(),
+        r.categoria,
         r.descripcion,
         r.centroCosto,
         r.gerencia,
         r.cantPedida,
         r.cantComprada,
-        r.puReal,
+        r.metodoPago || 'N/A',
         r.totalEstimado,
         r.totalEjecutado
       ]);
 
-      // Aplicar formato de fecha a las celdas específicas
+      // Aplicar formato de fecha
       if (r.fechaSolicitud !== 'N/A') {
-        row.getCell(1).numFmt = 'dd/mm/yyyy';
-      }
-      if (r.fechaPago !== 'Pendiente' && r.fechaPago !== 'N/A') {
         row.getCell(2).numFmt = 'dd/mm/yyyy';
       }
 
-      // Forzar ID como texto para preservar ceros (Columna 4 es ID CONTROL)
-      row.getCell(4).numFmt = '@';
+      // Format ID as text
+      row.getCell(1).numFmt = '@';
     });
 
     // Formato de moneda para columnas de precio y total
-    const colJ = worksheet.getColumn(10); // P.U. REAL
     const colK = worksheet.getColumn(11); // TOTAL ESTIMADO
     const colL = worksheet.getColumn(12); // TOTAL EJECUTADO
-    colJ.numFmt = '"$"#,##0.00;[Red]"$"#,##0.00';
     colK.numFmt = '"$"#,##0.00;[Red]"$"#,##0.00';
     colL.numFmt = '"$"#,##0.00;[Red]"$"#,##0.00';
 
@@ -307,7 +318,49 @@ const Reportes = () => {
 
     // Generar Archivo
     const buffer = await workbook.xlsx.writeBuffer();
-    saveAs(new Blob([buffer]), `Reporte_Operativo_TC_${new Date().toISOString().split('T')[0]}.xlsx`);
+    saveAs(new Blob([buffer]), `Reporte_Compras_TC_${new Date().toISOString().split('T')[0]}.xlsx`);
+  };
+
+  const exportPendingToExcel = async () => {
+    const pendientes = rows.filter(r => r.cantComprada < r.cantPedida);
+    if (pendientes.length === 0) return alert("No hay ítems pendientes por comprar en la selección actual.");
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Pendientes por Comprar');
+
+    worksheet.mergeCells('A1:H1');
+    const titleCell = worksheet.getCell('A1');
+    titleCell.value = 'TOTAL CLEAN C.A. - ÍTEMS PENDIENTES POR COMPRAR';
+    titleCell.font = { name: 'Arial Black', size: 14, color: { argb: 'FFFFFFFF' } };
+    titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF59E0B' } };
+    titleCell.alignment = { vertical: 'middle', horizontal: 'center' };
+
+    const headers = ['ID', 'FECHA SOLICITUD', 'CATEGORÍA', 'DESCRIPCIÓN', 'CENTRO DE COSTO', 'GERENCIA', 'CANT PEDIDA', 'CANT COMPRADA'];
+    worksheet.addRow(headers);
+    const headerRow = worksheet.getRow(2);
+    headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+
+    pendientes.forEach(r => {
+      const row = worksheet.addRow([
+        r.idReq,
+        r.fechaSolicitud !== 'N/A' ? new Date(r.fechaSolicitud + 'T12:00:00') : 'N/A',
+        r.categoria,
+        r.descripcion,
+        r.centroCosto,
+        r.gerencia,
+        r.cantPedida,
+        r.cantComprada
+      ]);
+      if (r.fechaSolicitud !== 'N/A') row.getCell(2).numFmt = 'dd/mm/yyyy';
+      row.getCell(1).numFmt = '@';
+    });
+
+    worksheet.columns.forEach(col => { col.width = 18; });
+    worksheet.getColumn(4).width = 40;
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    saveAs(new Blob([buffer]), `Items_Pendientes_TC_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
   return (
@@ -316,37 +369,53 @@ const Reportes = () => {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
     >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '30px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
         <div>
           <h1 style={{ margin: 0, fontSize: '2rem', fontWeight: '900', color: '#0f172a', letterSpacing: '-1px' }}>Reporte de Compras</h1>
           <p style={{ color: '#64748b', fontSize: '1rem', fontWeight: '500' }}>Gestión financiera y operativa de adquisiciones</p>
         </div>
+      </div>
 
-        <div style={{ display: 'flex', gap: '55px', alignItems: 'flex-start' }}>
-          {/* Header de Totales stacked vertically */}
-          <div className="totals-header-stacked">
-            <div className="total-item">
-              <span className="total-label">Total $/Bs:</span>
-              <span className="total-value bs">$ {totals.bsTotal.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span>
-            </div>
-            <div className="total-item">
-              <span className="total-label">Total $/$:</span>
-              <span className="total-value usd">$ {totals.usdTotal.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span>
-            </div>
-            <div className="total-item main">
-              <span className="total-label">Total General ($):</span>
-              <span className="total-value general">$ {totals.generalTotal.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span>
-            </div>
+      {/* --- DASHBOARD DE ESTADÍSTICAS (FILA INDEPENDIENTE) --- */}
+      <div className="rm-stats-grid" style={{ marginBottom: '30px' }}>
+        <div className="rm-stat-card secondary">
+          <div className="rm-stat-info">
+            <label>Dólares pagaderos en Bolívares</label>
+            <h3 style={{ color: '#0ea5e9' }}>$ {totals.bsTotal.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</h3>
           </div>
+          <div className="rm-stat-icon"><Clock size={20} /></div>
+        </div>
 
-          <button className="btn-export" onClick={exportToExcel} style={{ alignSelf: 'center' }}>
-            <FileSpreadsheet size={20} />
-            EXPORTAR A EXCEL
-          </button>
+        <div className="rm-stat-card highlight">
+          <div className="rm-stat-info">
+            <label>Dólares pagaderos en divisas</label>
+            <h3 style={{ color: '#8b5cf6' }}>$ {totals.usdTotal.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</h3>
+          </div>
+          <div className="rm-stat-icon"><BarChart3 size={20} /></div>
+        </div>
+
+        <div className="rm-stat-card primary">
+          <div className="rm-stat-info">
+            <label>Total General ($)</label>
+            <h3 style={{ fontSize: '1.8rem' }}>$ {totals.generalTotal.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</h3>
+          </div>
+          <div className="rm-stat-icon"><DollarSign size={22} /></div>
         </div>
       </div>
 
-      <div className="filters-overlap">
+      <div className="filters-overlap" style={{ position: 'relative' }}>
+        {/* Botones de Exportación en la parte superior derecha */}
+        <div style={{ position: 'absolute', top: '15px', right: '20px', display: 'flex', gap: '10px', zIndex: 10 }}>
+          <button className="btn-export" onClick={exportToExcel} style={{ height: '36px', fontSize: '0.7rem', padding: '0 15px' }}>
+            <FileSpreadsheet size={14} />
+            EXPORTAR COMPRAS
+          </button>
+          <button className="btn-export" onClick={exportPendingToExcel} style={{ backgroundColor: '#f59e0b', borderColor: '#d97706', height: '36px', fontSize: '0.7rem', padding: '0 15px' }}>
+            <TrendingDown size={14} />
+            EXPORTAR FALTANTES
+          </button>
+        </div>
+
         {/* BLOQUE VERTICAL STACKED PARA FECHAS Y JUSTIFICACIONES */}
         <div className="filter-group stacked-group">
           <div className="sub-filter">
@@ -397,7 +466,15 @@ const Reportes = () => {
           </select>
         </div>
 
-
+        <div className="filter-group">
+          <label className="filter-label">Status Compra</label>
+          <select className="report-input" value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)}>
+            <option value="Todos">Todos los estados</option>
+            <option value="En espera">En Espera</option>
+            <option value="Parcial">Parcial</option>
+            <option value="Completado">Completado</option>
+          </select>
+        </div>
 
         <div className="filter-group" style={{ flex: 2 }}>
           <label className="filter-label"><Search size={12} style={{ marginRight: '5px' }} /> Buscar por Item / ID</label>
@@ -415,17 +492,13 @@ const Reportes = () => {
         <table className="audit-table">
           <thead>
             <tr>
-              <th>FECHA</th>
-              <th>CATEGORÍA</th>
-              <th>ID CONTROL</th>
-              <th>DESCRIPCIÓN</th>
-              <th>C. COSTO</th>
-              <th>GERENCIA</th>
-              <th style={{ textAlign: 'center' }}>PED.</th>
-              <th style={{ textAlign: 'center' }}>COMP.</th>
+              <th style={{ width: '130px' }}>IDENTIFICACIÓN</th>
+              <th style={{ width: '100px' }}>FECHAS</th>
+              <th>DETALLES DEL ÍTEM</th>
+              <th>UBICACIÓN</th>
+              <th style={{ textAlign: 'center', width: '100px' }}>CANT (P/C)</th>
               <th style={{ textAlign: 'center' }}>MONEDA</th>
-              <th style={{ textAlign: 'center' }}>JUSTIFICACIÓN</th>
-              <th style={{ textAlign: 'right' }}>TOTAL ($)</th>
+              <th style={{ textAlign: 'right', width: '120px' }}>TOTAL ($)</th>
             </tr>
           </thead>
           <tbody>
@@ -441,57 +514,51 @@ const Reportes = () => {
                     style={{ cursor: 'pointer' }}
                   >
                     <td>
-                      <div style={{ fontWeight: '700' }}>{r.fechaPago !== 'Pendiente' && r.fechaPago !== 'N/A' ? format(new Date(r.fechaPago + 'T12:00:00'), 'dd/MM/yyyy') : r.fechaPago}</div>
-                      <div style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Solic: {r.fechaSolicitud !== 'N/A' ? format(new Date(r.fechaSolicitud + 'T12:00:00'), 'dd/MM/yyyy') : 'N/A'}</div>
-                    </td>
-                    <td>
-                      <span style={{
-                        fontSize: '0.65rem',
-                        fontWeight: 'bold',
-                        backgroundColor: '#f1f5f9',
-                        color: '#475569',
-                        padding: '2px 8px',
-                        borderRadius: '6px',
-                        textTransform: 'uppercase'
-                      }}>
-                        {r.categoria}
-                      </span>
-                    </td>
-                    <td style={{ fontWeight: 'bold', color: r.tipoDoc === 'REQUISICIÓN' ? '#0ea5e9' : '#d97706' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                        {r.idReq}
-                        {r.observaciones && (
-                          <MessageSquare size={12} style={{ color: '#f59e0b' }} title={r.observaciones} />
-                        )}
-                        {r.facturas_url?.length > 0 && (
-                          <Paperclip size={12} style={{ color: '#0ea5e9' }} title="Tiene adjuntos" />
-                        )}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span style={{ fontWeight: '800', color: r.tipoDoc === 'REQUISICIÓN' ? '#0ea5e9' : '#d97706' }}>{r.idReq}</span>
+                        {r.justificada && <span title="Tiene justificación" style={{ cursor: 'help', color: '#d97706' }}>⚠️</span>}
                       </div>
                     </td>
-                    <td style={{ maxWidth: '250px', fontWeight: '500', wordBreak: 'break-word', whiteSpace: 'normal' }}>{r.descripcion}</td>
-                    <td><span style={{ fontSize: '0.65rem', backgroundColor: '#f1f5f9', padding: '3px 6px', borderRadius: '6px', fontWeight: 'bold' }}>{r.centroCosto.split('(')[0]}</span></td>
-                    <td style={{ fontSize: '0.75rem', fontWeight: '600', color: '#475569' }}>{r.gerencia}</td>
-                    <td style={{ textAlign: 'center', fontWeight: 'bold' }}>{r.cantPedida}</td>
-                    <td style={{ textAlign: 'center' }}>
-                      {r.cantComprada === 0 ? (
-                        <span className="status-badge-pending" style={{ fontSize: '0.6rem' }}>PENDIENTE</span>
-                      ) : (
-                        <span style={{ color: '#16a34a', fontWeight: '800' }}>{r.cantComprada}</span>
-                      )}
+                    <td>
+                      <div style={{ fontWeight: '700', fontSize: '0.8rem', color: '#1e293b' }}>
+                        {r.fechaPago !== 'Pendiente' && r.fechaPago !== 'N/A' ? format(new Date(r.fechaPago + 'T12:00:00'), 'dd/MM/yyyy') : r.fechaPago}
+                      </div>
+                      <div style={{ fontSize: '0.65rem', color: '#94a3b8', marginTop: '2px' }}>
+                        Solic: {r.fechaSolicitud !== 'N/A' ? format(new Date(r.fechaSolicitud + 'T12:00:00'), 'dd/MM/yyyy') : 'N/A'}
+                      </div>
                     </td>
+
+                    <td>
+                      <div style={{ fontWeight: '700', color: '#1e293b', fontSize: '0.85rem' }}>
+                        {r.descripcion}
+                      </div>
+                      <div style={{ fontSize: '0.7rem', fontWeight: '600', color: '#64748b' }}>
+                        {r.categoria}
+                      </div>
+                    </td>
+
+                    <td>
+                      <div style={{ fontWeight: '600', color: '#334155', fontSize: '0.8rem' }}>
+                        {r.centroCosto.split('(')[0]}
+                      </div>
+                      <div style={{ fontSize: '0.7rem', color: '#94a3b8' }}>
+                        {r.gerencia}
+                      </div>
+                    </td>
+
+                    <td style={{ textAlign: 'center', fontWeight: '700', fontSize: '0.85rem' }}>
+                      <span style={{ color: '#64748b' }}>{r.cantPedida}</span>
+                      <span style={{ margin: '0 4px', color: '#cbd5e1' }}>/</span>
+                      <span style={{ color: '#16a34a' }}>{r.cantComprada}</span>
+                    </td>
+
                     <td style={{ textAlign: 'center' }}>
                       <span style={{ fontSize: '0.65rem', backgroundColor: '#e2e8f0', padding: '3px 7px', borderRadius: '4px', fontWeight: 'bold' }}>
                         {r.metodoPago || '-'}
                       </span>
                     </td>
-                    <td style={{ textAlign: 'center' }}>
-                      {r.justificada ? (
-                        <span style={{ color: '#d97706', fontWeight: 'bold' }}>SÍ ⚠️</span>
-                      ) : (
-                        <span style={{ color: '#94a3b8' }}>NO</span>
-                      )}
-                    </td>
-                    <td style={{ textAlign: 'right', fontWeight: '800', color: r.total > 0 ? '#1e293b' : '#94a3b8' }}>
+
+                    <td style={{ textAlign: 'right', fontWeight: '800', fontSize: '0.9rem', color: '#0ea5e9' }}>
                       $ {r.total.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
                     </td>
                   </motion.tr>
@@ -499,7 +566,7 @@ const Reportes = () => {
                   {/* HISTORIAL EXPANDIBLE (ESTILO COMPRAS) */}
                   {expandirHistorial[`${r.idReq}-${i}`] && r.historial_compras?.length > 0 && (
                     <tr>
-                      <td colSpan="11" style={{ padding: '0 0 15px 40px' }}>
+                      <td colSpan="7" style={{ padding: '0 0 15px 40px' }}>
                         <motion.div
                           initial={{ opacity: 0, height: 0 }}
                           animate={{ opacity: 1, height: 'auto' }}

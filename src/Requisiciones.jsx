@@ -32,6 +32,13 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
   const [obsTemporal, setObsTemporal] = useState('');
   const [uploading, setUploading] = useState(false);
   const [facturasUrls, setFacturasUrls] = useState([]);
+  const [idReferenciaProyecto, setIdReferenciaProyecto] = useState('');
+  const [idsReferenciaPrevios, setIdsReferenciaPrevios] = useState([]);
+
+  // --- MAESTROS ---
+  const [centrosCosto, setCentrosCosto] = useState([]);
+  const [todasClasificaciones, setTodasClasificaciones] = useState([]);
+  const [todasCategorias, setTodasCategorias] = useState([]);
 
   // --- LÓGICA DE CARGA DE USUARIO ACTUAL ---
   const obtenerSesionUsuario = useCallback(async () => {
@@ -61,18 +68,17 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
 
       // FLUJO JERÁRQUICO DE VISIBILIDAD POR FASE (ESTADO_APROBACION)
       if (!currentUser.esAdminReal && currentUser.rol !== 'Gerente General') {
-        if (currentUser.rol === 'Gerente' || currentUser.rol === 'Coordinador' || currentUser.rol === 'Analista') {
+        if (currentUser.rol === 'Compras') {
+          // Usuarios de Compras solo ven sus propias requisiciones
+          query = query.eq('user_id', currentUser.id);
+        } else if (currentUser.rol === 'Gerente' || currentUser.rol === 'Coordinador' || currentUser.rol === 'Analista') {
           // Ven todo lo de su departamento/gerencia
           query = query.eq('gerencia', currentUser.departamento);
         } else {
-          // Otros roles: solo lo propio (opcional, según seguridad)
+          // Otros roles: solo lo propio
           query = query.eq('solicitante', `${currentUser.nombre} ${currentUser.apellido}`);
         }
-      } else if (currentUser.rol === 'Gerente General') {
-        // Gerente General ve todo el historial (Consulta Extendida)
-        // No aplicamos filtros adicionales aquí
       }
-      // Admin ve todo
 
       const { data, error } = await query.order('fecha_emision', { ascending: false });
 
@@ -99,9 +105,14 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
           motivo_rechazo: db.motivo_rechazo || '',
           firma_gerente_general: db.firma_gerente_general,
           observaciones: db.observaciones || '',
-          facturas_url: db.facturas_url || []
+          facturas_url: db.facturas_url || [],
+          id_referencia_proyecto: db.id_referencia_proyecto || ''
         }));
         setHistorial(historialMapeado);
+
+        // Extraer IDs de referencia únicos para el datalist
+        const prevIds = [...new Set(data.map(db => db.id_referencia_proyecto).filter(id => id))];
+        setIdsReferenciaPrevios(prevIds);
       }
     } catch (err) {
       console.error("Error cargando historial:", err.message);
@@ -110,9 +121,21 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
     }
   }, [currentUser]);
 
+  const cargarMasters = useCallback(async () => {
+    const { data: dataCC } = await supabase.from('maestros_centros_costo').select('id, nombre').eq('activo', true).order('nombre');
+    if (dataCC) setCentrosCosto(dataCC);
+
+    const { data: dataClas } = await supabase.from('maestros_clasificaciones').select('id, nombre, centro_costo_id').eq('activo', true);
+    if (dataClas) setTodasClasificaciones(dataClas.map(c => ({ id: c.id, nombre: c.nombre, padreId: c.centro_costo_id })));
+
+    const { data: dataSub } = await supabase.from('maestros_sub_clasificaciones').select('id, nombre, clasificacion_id').eq('activo', true);
+    if (dataSub) setTodasCategorias(dataSub.map(s => ({ id: s.id, nombre: s.nombre, padreId: s.clasificacion_id })));
+  }, []);
+
   useEffect(() => { obtenerSesionUsuario(); }, [obtenerSesionUsuario]);
   useEffect(() => {
     cargarHistorialDesdeBD();
+    cargarMasters();
 
     // SUSCRIPCIÓN REALTIME PARA OBS Y SOPORTES
     const channel = supabase
@@ -170,8 +193,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
   // --- ESTADOS DEL FORMULARIO ---
   const [prioridad, setPrioridad] = useState('Normal');
   const [solicitante, setSolicitante] = useState('');
-  const [centroCostoID, setCentroCostoID] = useState('1.00.2');
-  const [centroCostoNombre, setCentroCostoNombre] = useState('MTTO MAYOR-BOSCAN');
+  const [centroCosto, setCentroCosto] = useState('MTTO MAYOR-BOSCAN');
   const [departamento, setDepartamento] = useState('Operaciones');
   const [justificacion, setJustificacion] = useState('');
   const [observaciones, setObservaciones] = useState('');
@@ -181,25 +203,38 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
   ]);
   const [previewCorrelativo, setPreviewCorrelativo] = useState('');
 
-  // --- LISTAS DE REFERENCIA ---
-  const listaCentrosCostos = [
-    { id: '1.00.2', nombre: 'MTTO MAYOR-BOSCAN' },
-    { id: '1.00.8', nombre: 'MTTO MAYOR-BAJO GRANDE' },
-    { id: '1.00.7', nombre: 'EXCELENCIA OPERACIONAL' },
-    { id: '1.01.0', nombre: 'CAMIONES DE VACÍO-BOSCAN' },
-    { id: '1.01.1', nombre: 'CAMIONES DE VACÍO-BAJO G.' },
-    { id: '1.00.9', nombre: 'PROYECTOS MENORES' },
-    { id: '2.00.1', nombre: 'SUCURSAL EL TIGRE' },
-    { id: '1.00.1', nombre: 'OFICINA PRINCIPAL MCBO' },
-    { id: '0', nombre: 'INVERSIONES Y OTROS' }
-  ];
+  const manejarCambioIdProyecto = (e) => {
+    let valor = e.target.value.toUpperCase();
 
-  const mappingCentrosCosto = {
-    "MTTO MAYOR-BOSCAN": "MMB", "MTTO MAYOR-BAJO GRANDE": "MMBG",
-    "EXCELENCIA OPERACIONAL": "EXO", "CAMIONES DE VACÍO-BOSCAN": "CVB",
-    "CAMIONES DE VACÍO-BAJO G.": "CVBG", "PROYECTOS MENORES": "PYM",
-    "SUCURSAL EL TIGRE": "SET", "OFICINA PRINCIPAL MCBO": "OPM", "INVERSIONES Y OTROS": "INV"
+    // Si el usuario está borrando, permitimos cualquier entrada
+    if (e.nativeEvent.inputType === 'deleteContentBackward') {
+      setIdReferenciaProyecto(valor);
+      return;
+    }
+
+    // Aplicar máscara básica XXX-0000-0000
+    // Las letras iniciales
+    if (valor.length <= 3) {
+      valor = valor.replace(/[^A-Z]/g, '');
+    } else if (valor.length === 4 && valor[3] !== '-') {
+      valor = valor.slice(0, 3) + '-' + valor[3];
+    } else if (valor.length > 4 && valor.length <= 8) {
+      const parteNumerica = valor.slice(4).replace(/[^0-9]/g, '');
+      valor = valor.slice(0, 4) + parteNumerica;
+    } else if (valor.length === 9 && valor[8] !== '-') {
+      valor = valor.slice(0, 8) + '-' + valor[8];
+    } else if (valor.length > 9) {
+      // Dejar que siga escribiendo libremente pero validando números en el segundo segmento
+      const prefix = valor.slice(0, 9);
+      const rest = valor.slice(9);
+      valor = prefix + rest;
+    }
+
+    setIdReferenciaProyecto(valor);
   };
+
+  // --- LISTAS DE REFERENCIA ---
+  const listaCentrosCostos = centrosCosto;
 
   const mappingSiglasGerencia = {
     "Administración Maracaibo": "ADM-MCB",
@@ -224,7 +259,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
     "Servicios Generales", "Contabilidad"
   ];
 
-  const unidades = ["UNID", "KG", "LTS", "SERV", "SG", "BOLSAS", "VIAJES"];
+  const unidades = ["UNID", "KG", "LTS", "ML", "M2", "M3", "SERV", "SG", "BOLSAS", "VIAJES"];
 
   const calcularTotales = () => {
     // Estimado: Cantidad original por precio estimado
@@ -277,8 +312,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
         setDepartamento(datosPredefinidos.gerencia_solicitante || datosPredefinidos.gerencia || 'Operaciones');
         setJustificacion(datosPredefinidos.justificacion || '');
         setObservaciones(datosPredefinidos.observaciones || '');
-        const encontrarCC = listaCentrosCostos.find(c => c.nombre.toUpperCase() === (datosPredefinidos.centro_costo || '').toUpperCase());
-        if (encontrarCC) setCentroCostoID(encontrarCC.id);
+        setIdReferenciaProyecto(datosPredefinidos.id_referencia_proyecto || '');
+        setCentroCosto(datosPredefinidos.centro_costo || '');
 
         if (datosPredefinidos.partidasSeleccionadas) {
           const nuevosRenglones = datosPredefinidos.partidasSeleccionadas.map((p, idx) => ({
@@ -302,11 +337,6 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
       setShowModal(true);
     }
   }, [isOpen, datosPredefinidos, currentUser]);
-
-  useEffect(() => {
-    const seleccionado = listaCentrosCostos.find(c => c.id === centroCostoID);
-    if (seleccionado) setCentroCostoNombre(seleccionado.nombre);
-  }, [centroCostoID]);
 
   // --- LÓGICA DE PREVIEW DE CORRELATIVO ---
   useEffect(() => {
@@ -343,7 +373,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
         let v = valor;
         if (campo === 'cant' || campo === 'pu') v = Math.max(0, Number(valor) || 0);
         const act = { ...f, [campo]: v };
-        if (campo === 'pu') act.pu_estimado = v; // Sincronizar el estimado si se cambia el pu manualmente en la creación
+        if (campo === 'clasificacion') act.categoria = ''; // Reset hijo
+        if (campo === 'pu') act.pu_estimado = v;
         act.total = act.cant * act.pu;
         return act;
       }
@@ -399,6 +430,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
     }
     setJustificacion('');
     setObservaciones('');
+    setFacturasUrls([]);
+    setIdReferenciaProyecto('');
     setEditandoId(null);
     setFechaRequerida(new Date().toISOString().split('T')[0]);
     setRenglones([{ id: Date.now(), clasificacion: '', categoria: '', cant: 1, uni: 'UNID', descripcion: '', beneficiario: '', pu: 0, total: 0, status: 'En Espera' }]);
@@ -406,15 +439,15 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
 
   const verRequisicion = (req) => {
     setEditandoId(req.id);
-    setSolicitante(req.solicitante);
-    setJustificacion(req.justificacion);
-    setObservaciones(req.observaciones || '');
     setPrioridad(req.prioridad);
+    setJustificacion(req.justificacion);
+    setObservaciones(req.observaciones);
+    setIdReferenciaProyecto(req.id_referencia_proyecto || '');
+    setFacturasUrls(req.facturas_url || []);
     setFechaRequerida(req.fecha_requerida || req.fecha);
     setDepartamento(req.gerencia || 'Operaciones');
     setRenglones(req.detalles || []);
-    const ccID = req.centroCosto.match(/\(([^)]+)\)/);
-    if (ccID) setCentroCostoID(ccID[1]);
+    setCentroCosto(req.centroCosto);
     setShowModal(true);
   };
 
@@ -434,7 +467,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
 
   const confirmRechazo = async () => {
     if (!motivoRechazo.trim()) return alert('El motivo de rechazo es obligatorio.');
-    
+
     setLoading(true);
     try {
       let updatePayload = {
@@ -452,7 +485,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
 
       const { error } = await supabase.from('requisiciones').update(updatePayload).eq('id', editandoId);
       if (error) throw error;
-      
+
       alert('Requisición rechazada.');
       await cargarHistorialDesdeBD();
       setShowRechazoModal(false);
@@ -469,6 +502,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
         .from('requisiciones')
         .update({
           observaciones: obsTemporal,
+          id_referencia_proyecto: idReferenciaProyecto,
           leido_compras_at: null
         })
         .eq('id', editandoId)
@@ -565,13 +599,22 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
     }
     setLoading(true);
     try {
-      const { error } = await supabase.from('requisiciones').update({
+      const updates = {
         aprobado_gerente_general: true,
-        firma_gerente_general: currentUser.firma_url || null, // Firma Nivel 2
+        firma_gerente_general: currentUser.firma_url || null,
         estado_aprobacion: 'aprobado_final',
         aprobacion_nombre: 'Aprobación Final',
         status_compra: 'En espera'
-      }).eq('id', editandoId);
+      };
+
+      // Si no tiene fecha_aprobacion previa, la grabamos ahora (Inmutabilidad)
+      const currentReq = historial.find(h => h.id === editandoId);
+      if (!currentReq?.fecha_aprobacion) {
+        updates.fecha_aprobacion = new Date().toISOString();
+        updates.gerente_aprobador = `${currentUser.nombre} ${currentUser.apellido}`;
+      }
+
+      const { error } = await supabase.from('requisiciones').update(updates).eq('id', editandoId);
       if (error) throw error;
       alert("Aprobación final exitosa.");
       await cargarHistorialDesdeBD();
@@ -597,7 +640,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
         items: renglones,
         justificacion,
         observaciones,
-        centro_costo: `${centroCostoNombre} (${centroCostoID})`,
+        id_referencia_proyecto: idReferenciaProyecto,
+        centro_costo: centroCosto,
         prioridad,
         fecha_requerida: fechaRequerida,
         solicitante: solicitante,
@@ -620,6 +664,27 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
         return;
       }
 
+      // VALIDACIÓN ESTRICTA DE CLASIFICACIÓN
+      if (!centroCosto) {
+        alert("⚠️ El Centro de Costo es obligatorio.");
+        setLoading(false);
+        return;
+      }
+
+      for (let i = 0; i < renglones.length; i++) {
+        const r = renglones[i];
+        if (!r.clasificacion) {
+          alert(`⚠️ Renglón ${i + 1}: La Clasificación es obligatoria.`);
+          setLoading(false);
+          return;
+        }
+        if (!r.categoria) {
+          alert(`⚠️ Renglón ${i + 1}: La Categoría es obligatoria.`);
+          setLoading(false);
+          return;
+        }
+      }
+
       // VALIDACIÓN PASIVA PERO ESTRICTA EN EJECUCIÓN (Clasificación única)
       const clases = [...new Set(renglones.map(r => r.clasificacion).filter(c => c))];
       if (clases.length > 1) {
@@ -631,11 +696,12 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
       try {
         const { error } = await supabase.from('requisiciones').update({
           fecha_requerida: fechaRequerida,
-          centro_costo: `${centroCostoNombre} (${centroCostoID})`,
+          centro_costo: centroCosto,
           prioridad,
           items: renglones,
           justificacion,
           observaciones,
+          id_referencia_proyecto: idReferenciaProyecto,
           total_bs: Number(totalEstimado) || 0
         }).eq('id', editandoId);
         if (error) throw error;
@@ -691,7 +757,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
       fecha_requerida: fechaRequerida,
       solicitante,
       gerencia: departamento,
-      centro_costo: `${centroCostoNombre} (${centroCostoID})`,
+      centro_costo: centroCosto,
       prioridad,
       status_compra: 'En espera',
       aprobacion: false,
@@ -701,8 +767,30 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
       items: renglones,
       justificacion,
       observaciones,
+      id_referencia_proyecto: idReferenciaProyecto,
       origen: datosPredefinidos ? `REF: ${datosPredefinidos.id_control}` : 'Manual'
     };
+
+    // VALIDACIÓN ESTRICTA DE CLASIFICACIÓN PARA NUEVA REQ
+    if (!centroCosto) {
+      alert("⚠️ El Centro de Costo es obligatorio.");
+      setLoading(false);
+      return;
+    }
+
+    for (let i = 0; i < renglones.length; i++) {
+      const r = renglones[i];
+      if (!r.clasificacion) {
+        alert(`⚠️ Renglón ${i + 1}: La Clasificación es obligatoria.`);
+        setLoading(false);
+        return;
+      }
+      if (!r.categoria) {
+        alert(`⚠️ Renglón ${i + 1}: La Categoría es obligatoria.`);
+        setLoading(false);
+        return;
+      }
+    }
 
     // VALIDACIÓN PASIVA PERO ESTRICTA EN EJECUCIÓN (Clasificación única)
     const clases = [...new Set(renglones.map(r => r.clasificacion).filter(c => c))];
@@ -774,27 +862,27 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
         ].filter(x => !(currentUser?.rol === 'Gerente General' && x.filter === 'pendiente_area')).map((x, i) => {
           const colorUsar = currentUser?.rol === 'Gerente General' ? '#64748b' : x.col;
           return (
-          <div 
-            key={i} 
-            className="stat-card" 
-            onClick={() => setFiltroAprobacion(x.filter)}
-            style={{ 
-              borderLeft: `6px solid ${colorUsar}`, 
-              cursor: 'pointer',
-              backgroundColor: filtroAprobacion === x.filter ? '#f8fafc' : 'white',
-              transform: filtroAprobacion === x.filter ? 'scale(1.02)' : 'scale(1)',
-              transition: 'all 0.2s ease',
-              boxShadow: filtroAprobacion === x.filter ? '0 4px 12px rgba(0,0,0,0.1)' : '0 2px 4px rgba(0,0,0,0.05)',
-              position: 'relative',
-              overflow: 'hidden'
-            }}
-          >
-            {filtroAprobacion === x.filter && (
-               <div style={{ position: 'absolute', top: 0, right: 0, width: '4px', height: '100%', backgroundColor: colorUsar }}></div>
-            )}
-            <div className="stat-label" style={{ fontSize: '0.65rem', fontWeight: '800', color: '#64748b' }}>{x.label}</div>
-            <div className="stat-value" style={{ fontSize: '1.5rem', fontWeight: '900', color: colorUsar }}>{loading ? '...' : x.val}</div>
-          </div>
+            <div
+              key={i}
+              className="stat-card"
+              onClick={() => setFiltroAprobacion(x.filter)}
+              style={{
+                borderLeft: `6px solid ${colorUsar}`,
+                cursor: 'pointer',
+                backgroundColor: filtroAprobacion === x.filter ? '#f8fafc' : 'white',
+                transform: filtroAprobacion === x.filter ? 'scale(1.02)' : 'scale(1)',
+                transition: 'all 0.2s ease',
+                boxShadow: filtroAprobacion === x.filter ? '0 4px 12px rgba(0,0,0,0.1)' : '0 2px 4px rgba(0,0,0,0.05)',
+                position: 'relative',
+                overflow: 'hidden'
+              }}
+            >
+              {filtroAprobacion === x.filter && (
+                <div style={{ position: 'absolute', top: 0, right: 0, width: '4px', height: '100%', backgroundColor: colorUsar }}></div>
+              )}
+              <div className="stat-label" style={{ fontSize: '0.65rem', fontWeight: '800', color: '#64748b' }}>{x.label}</div>
+              <div className="stat-value" style={{ fontSize: '1.5rem', fontWeight: '900', color: colorUsar }}>{loading ? '...' : x.val}</div>
+            </div>
           );
         })}
       </div>
@@ -834,17 +922,17 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
             {listaGerencias.map(g => <option key={g} value={g}>{g}</option>)}
           </select>
 
-            <select
-              className="input-tc"
-              style={{ flex: 1, margin: 0, backgroundColor: 'white' }}
-              value={filtroCategoria}
-              onChange={(e) => setFiltroCategoria(e.target.value)}
-            >
-              <option value="Todos">Todas las Categorías</option>
-              {[...new Set(historial.flatMap(h => (h.detalles || []).map(d => d.categoria)).filter(c => c))].sort().map(cat => (
-                <option key={cat} value={cat}>{cat}</option>
-              ))}
-            </select>
+          <select
+            className="input-tc"
+            style={{ flex: 1, margin: 0, backgroundColor: 'white' }}
+            value={filtroCategoria}
+            onChange={(e) => setFiltroCategoria(e.target.value)}
+          >
+            <option value="Todos">Todas las Categorías</option>
+            {[...new Set(historial.flatMap(h => (h.detalles || []).map(d => d.categoria)).filter(c => c))].sort().map(cat => (
+              <option key={cat} value={cat}>{cat}</option>
+            ))}
+          </select>
 
           <select
             className="input-tc"
@@ -853,7 +941,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
             onChange={(e) => setFiltroCC(e.target.value)}
           >
             <option value="Todos">C. Costo</option>
-            {listaCentrosCostos.map(cc => <option key={cc.id} value={cc.nombre}>{cc.nombre}</option>)}
+            {centrosCosto.map(cc => <option key={cc.id} value={cc.nombre}>{cc.nombre}</option>)}
           </select>
 
           <select
@@ -862,7 +950,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
             value={filtroStatusCompra}
             onChange={(e) => setFiltroStatusCompra(e.target.value)}
           >
-            <option value="Todos">Status de Compra</option>
+            <option value="Todos">Estatus de Compra</option>
             <option value="EN ESPERA">EN ESPERA</option>
             <option value="PARCIAL">PARCIAL</option>
             <option value="COMPLETADO">COMPLETADO</option>
@@ -883,13 +971,13 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
           <thead>
             <tr>
               <th style={{ width: '150px' }}>ID</th>
-              <th style={{ textAlign: 'center', width: '160px' }}>STATUS DE APROBACIÓN</th>
+              <th style={{ textAlign: 'center', width: '160px' }}>ESTATUS DE APROBACIÓN</th>
               <th>FECHA</th>
               <th>SOLICITANTE / GERENCIA</th>
               <th>CATEGORÍA</th>
               <th>CENTRO DE COSTO</th>
               <th>TOTAL (C/IVA)</th>
-              <th style={{ textAlign: 'center', width: '140px' }}>STATUS DE COMPRA</th>
+              <th style={{ textAlign: 'center', width: '140px' }}>ESTATUS DE COMPRA</th>
               {currentUser?.rol !== 'Gerente General' && <th style={{ textAlign: 'center' }}>ACCIONES</th>}
             </tr>
           </thead>
@@ -902,17 +990,17 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     {/* Punto de color para prioridad */}
-                    <div 
-                      style={{ 
-                        width: '8px', 
-                        height: '8px', 
-                        borderRadius: '50%', 
+                    <div
+                      style={{
+                        width: '8px',
+                        height: '8px',
+                        borderRadius: '50%',
                         backgroundColor: req.prioridad === 'Alta' ? '#ef4444' : '#0ea5e9',
                         flexShrink: 0
-                      }} 
+                      }}
                       title={`Prioridad: ${req.prioridad}`}
                     ></div>
-                    
+
                     {req.correlativo}
                     {req.observaciones && (
                       <MessageSquare
@@ -929,15 +1017,15 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
                     )}
                   </div>
                 </td>
-                
+
                 <td style={{ textAlign: 'center' }}>
-                  <span style={{ 
-                    fontSize: '0.7rem', 
-                    fontWeight: '900', 
+                  <span style={{
+                    fontSize: '0.7rem',
+                    fontWeight: '900',
                     textTransform: 'uppercase',
                     color: req.estado_aprobacion === 'aprobado_final' ? '#16a34a' :
-                           req.estado_aprobacion === 'rechazada' ? '#ef4444' :
-                           req.estado_aprobacion === 'ANULADA' ? '#64748b' : '#0ea5e9',
+                      req.estado_aprobacion === 'rechazada' ? '#ef4444' :
+                        req.estado_aprobacion === 'ANULADA' ? '#64748b' : '#0ea5e9',
                     display: 'inline-block',
                     width: '100%'
                   }}>
@@ -971,7 +1059,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
                       color:
                         req.status?.toUpperCase() === 'COMPLETADO' ? '#16a34a' :
                           req.status?.toUpperCase() === 'PARCIAL' ? '#f59e0b' : '#ca8a04',
-                      fontSize: '0.7rem', 
+                      fontSize: '0.7rem',
                       fontWeight: '900',
                       textTransform: 'uppercase'
                     }}>
@@ -1003,7 +1091,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
       {/* --- MODAL DE FORMULARIO (NUEVA / EDITAR) --- */}
       {(isOpen || showModal) && (
         <div className="modal-overlay">
-          <div className="modal-card animate-modal">
+          <div className="modal-card animate-modal" style={{ maxWidth: '95%', width: '1300px' }}>
             <div id="area-pdf">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
@@ -1014,7 +1102,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
                     </div>
                   )}
                   <div className="status-purchase-badge" style={{ marginTop: '8px' }}>
-                    <span className="stat-label" style={{ fontSize: '9px' }}>STATUS DE COMPRA:</span>
+                    <span className="stat-label" style={{ fontSize: '9px' }}>ESTATUS DE COMPRA:</span>
                     <span style={{ fontSize: '10px', color: estadoGlobal.color, fontWeight: '900' }}>{estadoGlobal.texto}</span>
                   </div>
                 </div>
@@ -1053,8 +1141,17 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
                 </div>
                 <div>
                   <label className="stat-label">CENTRO DE COSTOS</label>
-                  <select className="input-tc" value={centroCostoID} onChange={(e) => setCentroCostoID(e.target.value)}>
-                    {listaCentrosCostos.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                  <select
+                    className="input-tc"
+                    value={centroCosto}
+                    onChange={(e) => {
+                      setCentroCosto(e.target.value);
+                      // Resetear clasificaciones y categorías de todos los renglones al cambiar CC
+                      setRenglones(prev => prev.map(r => ({ ...r, clasificacion: '', categoria: '' })));
+                    }}
+                  >
+                    <option value="">Seleccione Centro de Costo...</option>
+                    {centrosCosto.map(cc => <option key={cc.id} value={cc.nombre}>{cc.nombre}</option>)}
                   </select>
                 </div>
                 <div>
@@ -1062,6 +1159,34 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
                   <select className="input-tc" value={departamento} onChange={(e) => setDepartamento(e.target.value)}>
                     {listaGerencias.map(g => <option key={g} value={g}>{g}</option>)}
                   </select>
+                </div>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '5px' }}>
+                    <label className="stat-label" style={{ marginBottom: 0 }}>ID REF. PROYECTO / CONTRATO</label>
+                    {editandoId && !editandoObs && (
+                      <button
+                        onClick={() => {
+                          setObsTemporal(observaciones);
+                          setEditandoObs(true);
+                        }}
+                        style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '1rem', padding: 0 }}
+                        title="Editar Metadata"
+                      >
+                        ✏️
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    className="input-tc"
+                    list="ids-proyecto-previos"
+                    value={idReferenciaProyecto}
+                    onChange={manejarCambioIdProyecto}
+                    placeholder="XXX-0000-0000"
+                    disabled={editandoId && !editandoObs}
+                  />
+                  <datalist id="ids-proyecto-previos">
+                    {idsReferenciaPrevios.map(id => <option key={id} value={id} />)}
+                  </datalist>
                 </div>
               </div>
 
@@ -1419,7 +1544,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
       <AnimatePresence>
         {showRechazoModal && (
           <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 20000, padding: '20px' }}>
-            <motion.div 
+            <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
@@ -1427,7 +1552,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
             >
               <h3 style={{ margin: '0 0 10px 0', fontSize: '1.25rem', color: '#1e293b', fontWeight: '800' }}>Indique el motivo del rechazo:</h3>
               <p style={{ margin: '0 0 20px 0', fontSize: '0.85rem', color: '#64748b' }}>Esta información será visible para el solicitante de la requisición.</p>
-              
+
               <textarea
                 autoFocus
                 value={motivoRechazo}
@@ -1450,15 +1575,15 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
               />
 
               <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '25px' }}>
-                <button 
-                  className="btn-tc btn-tc-secondary" 
+                <button
+                  className="btn-tc btn-tc-secondary"
                   onClick={() => setShowRechazoModal(false)}
                   style={{ borderRadius: '12px', padding: '10px 20px' }}
                 >
                   CANCELAR
                 </button>
-                <button 
-                  className="btn-tc btn-tc-dark" 
+                <button
+                  className="btn-tc btn-tc-dark"
                   onClick={confirmRechazo}
                   disabled={loading}
                   style={{ borderRadius: '12px', padding: '10px 25px', backgroundColor: '#0f172a' }}

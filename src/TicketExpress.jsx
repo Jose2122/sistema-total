@@ -88,22 +88,30 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
 
   // --- FORMULARIO ---
   const [form, setForm] = useState({
-    id: '',
     fecha: new Date().toISOString().split('T')[0],
-    gerente: '',
     departamento: '',
-    usuario_id: '',
-    partidas: [{ id: Date.now(), cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', pu: '', total: 0 }],
-    facturas_url: [],
-    status: 'EMITIDO',
-    id_control: '',
+    gerente: '',
+    solicitante: '',
     solicitud_ref: '',
-    banco_origen: '',
-    clasificacion_admin: ''
+    clasificacion_admin: '',
+    partidas: [{ 
+      id: Date.now(), 
+      cc: '', 
+      clasificacion: '', 
+      categoria: '', 
+      cantidad: 1, 
+      unidad: 'UNID', 
+      descripcion: '', 
+      beneficiario: '', 
+      pu: '', 
+      total: 0, 
+      pago_realizado: false 
+    }],
+    facturas_url: [],
+    status: 'EMITIDO'
   });
 
   const [bancosDisponibles, setBancosDisponibles] = useState([]);
-  const [showConfirmPago, setShowConfirmPago] = useState(false);
 
   const [idControlAutomatico, setIdControlAutomatico] = useState('TP-GER-26-0000');
 
@@ -153,29 +161,43 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
     if (!showModal && onClose) onClose();
   }, [showModal, onClose]);
 
+  const datosCargadosRef = React.useRef(false);
+
   useEffect(() => {
-    if (datosPredefinidos && showModal) {
+    if (datosPredefinidos && isOpen && !datosCargadosRef.current) {
       try {
+        console.log("[TicketExpress] Aplicando datos predefinidos:", datosPredefinidos);
         setForm(prev => ({
           ...prev,
           fecha: datosPredefinidos.fecha || prev.fecha,
           departamento: datosPredefinidos.gerencia || prev.departamento,
+          solicitante: datosPredefinidos.solicitante || prev.solicitante,
           solicitud_ref: datosPredefinidos.solicitud_ref || '',
           partidas: (datosPredefinidos.partidasSeleccionadas && Array.isArray(datosPredefinidos.partidasSeleccionadas)) 
             ? datosPredefinidos.partidasSeleccionadas.map(p => ({
-                ...p,
                 id: p.id || Date.now() + Math.random(),
-                pago_realizado: false,
-                pu: p.puUsd || p.puBs || 0,
-                total: (parseFloat(p.puUsd || p.puBs || 0)) * (parseFloat(p.cant || 1))
+                cc: p.cc || '',
+                clasificacion: p.clasificacion || p.clasif || '',
+                categoria: p.categoria || p.cat || '',
+                cantidad: (p.cantidad !== undefined) ? Number(p.cantidad) : (p.cant !== undefined ? Number(p.cant) : 1),
+                unidad: p.unidad || p.uni || 'UNID',
+                descripcion: p.descripcion || p.desc || '',
+                beneficiario: p.beneficiario || p.ben || '',
+                pu: Number(p.puUsd || p.puBs || p.pu || 0),
+                total: (Number(p.puUsd || p.puBs || p.pu || 0)) * (Number(p.cantidad || p.cant || 1)),
+                pago_realizado: false
               })) 
             : prev.partidas
         }));
+        datosCargadosRef.current = true;
       } catch (err) {
         console.error("[TicketExpress] Error al mapear datos predefinidos:", err);
       }
     }
-  }, [datosPredefinidos, showModal]);
+    if (!isOpen) {
+      datosCargadosRef.current = false;
+    }
+  }, [datosPredefinidos, isOpen]);
 
   useEffect(() => {
     const buscarGerente = async () => {
@@ -227,6 +249,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
         setForm(prev => ({
           ...prev,
           gerente: userInfo.nombre,
+          solicitante: userInfo.nombre,
           departamento: userInfo.departamento,
           usuario_id: userInfo.id
         }));
@@ -238,17 +261,33 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
 
   // --- CARGAR DATA MAESTRA ---
   const cargarDataMaestra = useCallback(async () => {
-    const { data: dataCC } = await supabase.from('maestros_centros_costo').select('nombre').eq('activo', true).order('nombre');
-    if (dataCC) setCentrosCosto(dataCC.map(c => c.nombre));
+    const { data: dataCC } = await supabase.from('maestros_centros_costo').select('id, nombre').eq('activo', true).order('nombre');
+    if (dataCC) setCentrosCosto(dataCC);
 
-    const { data: dataClas } = await supabase.from('maestros_clasificaciones').select('nombre, maestros_centros_costo(nombre)').eq('activo', true);
+    const { data: dataClas } = await supabase
+      .from('maestros_clasificaciones')
+      .select('id, nombre, centro_costo_id')
+      .eq('activo', true);
+
     if (dataClas) {
-      setTodasClasificaciones(dataClas.map(c => ({ nombre: c.nombre, padre: c.maestros_centros_costo?.nombre })));
+      setTodasClasificaciones(dataClas.map(c => ({
+        id: c.id,
+        nombre: c.nombre,
+        padreId: c.centro_costo_id
+      })));
     }
 
-    const { data: dataSub } = await supabase.from('maestros_sub_clasificaciones').select('nombre, maestros_clasificaciones(nombre)').eq('activo', true);
+    const { data: dataSub } = await supabase
+      .from('maestros_sub_clasificaciones')
+      .select('id, nombre, clasificacion_id')
+      .eq('activo', true);
+
     if (dataSub) {
-      setTodasCategorias(dataSub.map(s => ({ nombre: s.nombre, padre: s.maestros_clasificaciones?.nombre })));
+      setTodasCategorias(dataSub.map(s => ({
+        id: s.id,
+        nombre: s.nombre,
+        padreId: s.clasificacion_id
+      })));
     }
 
     const { data: dataBancos } = await supabase.from('bancos').select('*').eq('activo', true).order('nombre');
@@ -300,29 +339,23 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
   // --- MANEJADORES DE FORMULARIO ---
   const manejarCambioPartida = (index, campo, valor) => {
     const nuevas = [...form.partidas];
+    let valorFinal = valor;
 
-    // --- VALIDACIÓN DE CENTRO DE COSTO ÚNICO ---
-    if (campo === 'cc' && valor) {
-      const otrosCC = nuevas
-        .filter((_, idx) => idx !== index)
-        .map(p => p.cc)
-        .filter(cc => cc); // solo los que ya tienen CC asignado
-      if (otrosCC.length > 0 && !otrosCC.includes(valor)) {
-        alert("⚠️ No se pueden mezclar Centros de Costos en un mismo Ticket de Pago. Por favor, genere un ticket por separado.");
-        return; // Impedir el cambio
-      }
+    // BLOQUEO DE NEGATIVOS
+    if (['cantidad', 'cant', 'pu'].includes(campo)) {
+      valorFinal = Math.max(0, parseFloat(valor) || 0);
     }
 
-    nuevas[index][campo] = valor;
+    nuevas[index][campo] = valorFinal;
 
-    if (campo === 'cc') { nuevas[index].clasif = ''; nuevas[index].cat = ''; }
-    if (campo === 'clasif') { nuevas[index].cat = ''; }
+    if (campo === 'cc') { nuevas[index].clasificacion = ''; nuevas[index].categoria = ''; }
+    if (campo === 'clasificacion') { nuevas[index].categoria = ''; }
 
-    // Recalcular total de la fila
-    const cant = parseFloat(nuevas[index].cant) || 0;
-    const pu = parseFloat(nuevas[index].pu) || 0;
-    nuevas[index].total = cant * pu;
-
+    if (['cantidad', 'cant', 'pu'].includes(campo)) {
+      const c = parseFloat(nuevas[index].cantidad || nuevas[index].cant) || 0;
+      const p = parseFloat(nuevas[index].pu) || 0;
+      nuevas[index].total = c * p;
+    }
     setForm({ ...form, partidas: nuevas });
   };
 
@@ -333,7 +366,6 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
     let nuevoStatus = form.status;
     if (valor && form.status === 'EMITIDO') {
       nuevoStatus = 'PAGADO';
-      setShowConfirmPago(true);
     } else if (!nuevas.some(p => p.pago_realizado)) {
       nuevoStatus = 'EMITIDO';
     }
@@ -344,7 +376,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
   const añadirRenglón = () => {
     setForm({
       ...form,
-      partidas: [...form.partidas, { id: Date.now(), cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', pu: '', total: 0 }]
+      partidas: [...form.partidas, { id: Date.now(), cc: '', clasificacion: '', categoria: '', cantidad: 1, unidad: 'UNID', descripcion: '', beneficiario: '', pu: '', total: 0 }]
     });
   };
 
@@ -407,7 +439,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
 
   // --- EMITIR TICKET ---
   const emitirTicket = async () => {
-    if (!form.partidas.every(p => p.cc && p.clasif && p.desc)) {
+    if (!form.partidas.every(p => p.cc && p.clasificacion && p.descripcion)) {
       return alert("Por favor complete los campos obligatorios de las partidas.");
     }
 
@@ -421,21 +453,36 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
     try {
       const payload = {
         usuario_id: currentUser.id,
-        gerente_nombre: currentUser.nombre,
-        departamento: currentUser.departamento,
+        gerente_nombre: form.solicitante || currentUser.nombre,
+        departamento: form.departamento,
         fecha_emision: form.fecha,
         codigo_control: idControlAutomatico,
         total_usd: totalGeneral,
-        items: form.partidas.map(p => ({ ...p, pago_realizado: p.pago_realizado || false })),
-        factura_url: form.facturas_url || [], // Guardamos el array aquí
+        items: form.partidas.map(p => ({
+          ...p,
+          pago_realizado: p.pago_realizado || false
+        })),
+        factura_url: form.facturas_url || [],
         status: form.status || 'EMITIDO',
         solicitud_ref: form.solicitud_ref || null,
-        banco_origen: form.banco_origen || null,
         clasificacion_admin: form.clasificacion_admin || null
       };
 
-      const { error } = await supabase.from('tickets_directos').insert([payload]);
+      const { data: newTicket, error } = await supabase.from('tickets_directos').insert([payload]).select().single();
       if (error) throw error;
+
+      // ACTUALIZAR PARTIDAS FONDOS SI EXISTEN
+      const idsRelacionados = form.partidas.map(p => p.id).filter(id => typeof id === 'number' || (typeof id === 'string' && id.length > 10)); // Los IDs de Supabase son largos
+      if (idsRelacionados.length > 0) {
+        await supabase
+          .from('partidas_fondos')
+          .update({ 
+            ticket_id: newTicket.id,
+            status: 'Bloqueado',
+            codigo_ticket: idControlAutomatico
+          })
+          .in('id', idsRelacionados);
+      }
 
       alert("🎟️ Ticket EMITIDO con éxito.");
       setShowModal(false);
@@ -443,7 +490,19 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
       // Reset form
       setForm({
         ...form,
-        partidas: [{ id: Date.now(), cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', pu: '', total: 0 }],
+        partidas: [{ 
+          id: Date.now(), 
+          cc: '', 
+          clasificacion: '', 
+          categoria: '', 
+          cantidad: 1, 
+          unidad: 'UNID', 
+          descripcion: '', 
+          beneficiario: '', 
+          pu: '', 
+          total: 0, 
+          pago_realizado: false 
+        }],
         facturas_url: [],
         status: 'EMITIDO'
       });
@@ -464,16 +523,59 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
           total_usd: totalGeneral,
           factura_url: form.facturas_url || [],
           status: form.status,
-          banco_origen: form.banco_origen,
           clasificacion_admin: form.clasificacion_admin
         })
         .eq('id', form.id);
 
       if (error) throw error;
+
+      // SI EL TICKET SE MARCÓ COMO PAGADO, ACTUALIZAR PARTIDAS FONDOS
+      if (form.status === 'PAGADO') {
+        const idsOriginales = form.partidas.map(p => p.id).filter(id => typeof id === 'number' || (typeof id === 'string' && id.length > 10));
+        if (idsOriginales.length > 0) {
+          await supabase
+            .from('partidas_fondos')
+            .update({ pago_realizado: true })
+            .in('id', idsOriginales);
+        }
+      }
+
       alert("✅ Cambios guardados con éxito.");
       cargarHistorial();
     } catch (err) {
       alert("Error al actualizar: " + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const anularTicket = async (t) => {
+    if (!window.confirm(`¿Estás seguro de que deseas ANULAR el ticket ${t.codigo_control}? Esto liberará los renglones asociados en Fondos.`)) return;
+    setLoading(true);
+    try {
+      // 1. Marcar ticket como ANULADO
+      const { error: errorT } = await supabase
+        .from('tickets_directos')
+        .update({ status: 'ANULADO' })
+        .eq('id', t.id);
+      if (errorT) throw errorT;
+
+      // 2. Liberar renglones vinculados
+      const { error: errorF } = await supabase
+        .from('partidas_fondos')
+        .update({ 
+          ticket_id: null, 
+          status: 'Disponible',
+          codigo_ticket: null,
+          pago_realizado: false
+        })
+        .eq('ticket_id', t.id);
+      if (errorF) throw errorF;
+
+      alert("🚫 Ticket ANULADO y renglones liberados.");
+      cargarHistorial();
+    } catch (err) {
+      alert("Error al anular: " + err.message);
     } finally {
       setLoading(false);
     }
@@ -485,6 +587,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
       id: t.id,
       fecha: t.fecha_emision,
       gerente: t.gerente_nombre,
+      solicitante: t.gerente_nombre, // Compatibilidad con tickets viejos
       departamento: t.departamento,
       usuario_id: t.usuario_id,
       partidas: t.items || [],
@@ -492,7 +595,6 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
       status: t.status,
       id_control: t.codigo_control,
       solicitud_ref: t.solicitud_ref || '',
-      banco_origen: t.banco_origen || '',
       clasificacion_admin: t.clasificacion_admin || ''
     });
     setShowModal(true);
@@ -529,7 +631,19 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
               gerente: currentUser?.nombre || '',
               departamento: currentUser?.departamento || '',
               usuario_id: currentUser?.id || '',
-              partidas: [{ id: Date.now(), cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', pu: '', total: 0 }],
+              partidas: [{ 
+                id: Date.now(), 
+                cc: '', 
+                clasificacion: '', 
+                categoria: '', 
+                cantidad: 1, 
+                unidad: 'UNID', 
+                descripcion: '', 
+                beneficiario: '', 
+                pu: '', 
+                total: 0, 
+                pago_realizado: false 
+              }],
               facturas_url: [],
               status: 'EMITIDO',
               id_control: '',
@@ -643,9 +757,16 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
                   </div>
                 </td>
                 <td className="te-td" style={{ textAlign: 'center' }}>
-                  <button className="te-btn te-btn-outline" style={{ padding: '6px' }} onClick={() => handleVerDetalle(t)} title="Ver Detalle">
-                    <Eye size={16} color="#d97706" />
-                  </button>
+                  <div style={{ display: 'flex', gap: '5px', justifyContent: 'center' }}>
+                    <button className="te-btn te-btn-outline" style={{ padding: '6px' }} onClick={() => handleVerDetalle(t)} title="Ver Detalle">
+                      <Eye size={16} color="#d97706" />
+                    </button>
+                    {t.status !== 'ANULADO' && (
+                      <button className="te-btn te-btn-outline" style={{ padding: '6px' }} onClick={() => anularTicket(t)} title="Anular Ticket">
+                        <Trash2 size={16} color="#ef4444" />
+                      </button>
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}
@@ -672,18 +793,35 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
             </div>
 
             {/* HEADER FORM */}
-            <div className="te-header-grid">
-              <div className="te-input-group">
-                <label className="te-label">Fecha Emisión</label>
-                <input className="te-input" type="date" value={form.fecha} onChange={(e) => setForm({ ...form, fecha: e.target.value })} />
-              </div>
-              <div className="te-input-group">
-                <label className="te-label">Gerente Responsable</label>
-                <input className="te-input" value={form.gerente} readOnly />
-              </div>
-              <div className="te-input-group">
-                <label className="te-label">Departamento</label>
-                <input className="te-input" value={form.departamento} readOnly />
+            <div className="te-metadata-box" style={{ marginBottom: '24px' }}>
+              <div className="te-header-grid">
+                <div className="te-input-group">
+                  <label className="te-label">Fecha Emisión</label>
+                  <input className="te-input" type="date" value={form.fecha} onChange={(e) => setForm({ ...form, fecha: e.target.value })} />
+                </div>
+                <div className="te-input-group">
+                  <label className="te-label">Solicitante</label>
+                  <input className="te-input" value={form.solicitante || form.gerente} readOnly />
+                </div>
+                <div className="te-input-group">
+                  <label className="te-label">Departamento</label>
+                  <input className="te-input" value={form.departamento} readOnly />
+                </div>
+                <div className="te-input-group">
+                  <label className="te-label">Clasificación Admin</label>
+                  <select 
+                    className="te-input" 
+                    value={form.clasificacion_admin}
+                    onChange={(e) => setForm({...form, clasificacion_admin: e.target.value})}
+                  >
+                    <option value="">Seleccione...</option>
+                    <option value="Semanal">Semanal</option>
+                    <option value="Mensual">Mensual</option>
+                    <option value="Nomina">Nomina</option>
+                    <option value="TEA">TEA</option>
+                    <option value="Reembolsos Pólizas">Reembolsos Pólizas</option>
+                  </select>
+                </div>
               </div>
             </div>
 
@@ -702,7 +840,6 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
                     <th className="te-th" style={{ width: '150px' }}>BENEFICIARIO</th>
                     <th className="te-th" style={{ width: '100px' }}>P.U ($)</th>
                     <th className="te-th" style={{ width: '100px' }}>TOTAL ($)</th>
-                    <th className="te-th" style={{ width: '60px', textAlign: 'center' }}>PAGO</th>
                     <th className="te-th"></th>
                   </tr>
                 </thead>
@@ -711,44 +848,53 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
                     <tr key={p.id}>
                       <td className="te-td" style={{ fontWeight: '800', color: '#94a3b8', textAlign: 'center' }}>{i + 1}</td>
                       <td className="te-td">
-                        <select className="te-cell-input" style={{ fontWeight: '700' }} value={p.cc} onChange={(e) => manejarCambioPartida(i, 'cc', e.target.value)} disabled={isEditing}>
+                        <select className="te-cell-input" style={{ fontWeight: '700' }} value={p.cc} onChange={(e) => manejarCambioPartida(i, 'cc', e.target.value)} disabled={isEditing || !!form.solicitud_ref}>
                           <option value="">C.C...</option>
-                          {centrosCosto.map(c => <option key={c} value={c}>{c}</option>)}
+                          {centrosCosto.map(c => <option key={c.id} value={c.nombre}>{c.nombre}</option>)}
                         </select>
                       </td>
                       <td className="te-td">
-                        <select className="te-cell-input" value={p.clasif} onChange={(e) => manejarCambioPartida(i, 'clasif', e.target.value)} disabled={!p.cc || isEditing}>
+                        <select className="te-cell-input" value={p.clasificacion} onChange={(e) => manejarCambioPartida(i, 'clasificacion', e.target.value)} disabled={!p.cc || isEditing || !!form.solicitud_ref}>
                           <option value="">Clasificación...</option>
-                          {todasClasificaciones.filter(c => c.padre === p.cc).map(c => <option key={c.nombre} value={c.nombre}>{c.nombre}</option>)}
+                          {(() => {
+                            const ccObj = centrosCosto.find(c => c.nombre === p.cc);
+                            return todasClasificaciones
+                              .filter(cl => cl.padreId === ccObj?.id)
+                              .map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>);
+                          })()}
                         </select>
                       </td>
                       <td className="te-td">
-                        <select className="te-cell-input" value={p.cat} onChange={(e) => manejarCambioPartida(i, 'cat', e.target.value)} disabled={!p.clasif || isEditing}>
+                        <select className="te-cell-input" value={p.categoria} onChange={(e) => manejarCambioPartida(i, 'categoria', e.target.value)} disabled={!p.clasificacion || isEditing || !!form.solicitud_ref}>
                           <option value="">Categoría...</option>
-                          {todasCategorias.filter(c => c.padre === p.clasif).map(c => <option key={c.nombre} value={c.nombre}>{c.nombre}</option>)}
+                          {(() => {
+                            const ccObj = centrosCosto.find(c => c.nombre === p.cc);
+                            const clObj = todasClasificaciones.find(cl => cl.nombre === p.clasificacion && cl.padreId === ccObj?.id);
+                            return todasCategorias
+                              .filter(ct => ct.padreId === clObj?.id)
+                              .map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>);
+                          })()}
                         </select>
                       </td>
-                      <td className="te-td"><input className="te-cell-input" type="number" value={p.cant} onChange={(e) => manejarCambioPartida(i, 'cant', e.target.value)} style={{ textAlign: 'center' }} disabled={isEditing} /></td>
+                      <td className="te-td"><input className="te-cell-input" type="number" value={p.cantidad} onChange={(e) => manejarCambioPartida(i, 'cantidad', e.target.value)} style={{ textAlign: 'center' }} disabled={isEditing || !!form.solicitud_ref} /></td>
                       <td className="te-td">
-                        <select className="te-cell-input" value={p.uni} onChange={(e) => manejarCambioPartida(i, 'uni', e.target.value)} disabled={isEditing}>
+                        <select className="te-cell-input" value={p.unidad} onChange={(e) => manejarCambioPartida(i, 'unidad', e.target.value)} disabled={isEditing || !!form.solicitud_ref}>
                           {unidades.map(u => <option key={u} value={u}>{u}</option>)}
                         </select>
                       </td>
-                      <td className="te-td"><input className="te-cell-input" value={p.desc} onChange={(e) => manejarCambioPartida(i, 'desc', e.target.value)} placeholder="¿En qué se gastará?" disabled={isEditing} /></td>
-                      <td className="te-td"><input className="te-cell-input" value={p.ben} onChange={(e) => manejarCambioPartida(i, 'ben', e.target.value)} placeholder="Beneficiario" disabled={isEditing} /></td>
+                      <td className="te-td"><input className="te-cell-input" value={p.descripcion} onChange={(e) => manejarCambioPartida(i, 'descripcion', e.target.value)} placeholder="¿En qué se gastará?" disabled={isEditing || !!form.solicitud_ref} /></td>
+                      <td className="te-td"><input className="te-cell-input" value={p.beneficiario} onChange={(e) => manejarCambioPartida(i, 'beneficiario', e.target.value)} placeholder="Beneficiario" disabled={isEditing || !!form.solicitud_ref} /></td>
                       <td className="te-td"><input className="te-cell-input" type="number" value={p.pu} onChange={(e) => manejarCambioPartida(i, 'pu', e.target.value)} style={{ textAlign: 'right', fontWeight: 'bold', color: isEditing ? '#2563eb' : 'inherit' }} placeholder="0.00" /></td>
                       <td className="te-td" style={{ textAlign: 'right', fontWeight: '800', color: '#b45309' }}>$ {p.total.toLocaleString('de-DE')}</td>
-                      <td className="te-td" style={{ textAlign: 'center' }}>
-                        <input type="checkbox" checked={p.pago_realizado || false} onChange={(e) => manejarCambioPago(i, e.target.checked)} style={{ cursor: 'pointer', transform: 'scale(1.3)' }} />
+                      <td className="te-td">
                       </td>
                       <td className="te-td">
-                        {!isEditing && <button onClick={() => eliminarRenglón(p.id)} style={{ border: 'none', background: 'none', color: '#ef4444', cursor: 'pointer' }}><Trash2 size={16} /></button>}
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-              {!isEditing && (
+              {!isEditing && !form.solicitud_ref && (
                 <div style={{ padding: '12px', background: '#f8fafc', borderTop: '1px solid #e2e880' }}>
                   <button className="te-btn te-btn-outline" onClick={añadirRenglón} style={{ fontSize: '0.75rem' }}><Plus size={14} /> Añadir otro renglón</button>
                 </div>
@@ -792,14 +938,18 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
               </div>
 
               <div style={{ marginTop: '30px', display: 'flex', justifyContent: 'flex-end', alignItems: 'flex-end', gap: '30px' }}>
-                <div className="totals-container" style={{ minWidth: '250px', background: '#f8fafc', padding: '15px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+                <div className="totals-container" style={{ minWidth: '320px', background: '#f8fafc', padding: '18px', borderRadius: '16px', border: '1px solid #e2e8f0', boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.02)' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                    <span className="stat-label" style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: 'bold' }}>SUB-TOTAL:</span>
-                    <span style={{ fontWeight: 'bold', color: '#475569' }}>$ {subtotalTotal.toLocaleString('de-DE')}</span>
+                    <span className="stat-label" style={{ fontSize: '0.7rem', color: '#64748b' }}>SUB-TOTAL (BASE):</span>
+                    <span style={{ fontWeight: '700', color: '#475569' }}>$ {subtotalTotal.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span>
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '2px solid #cbd5e1', paddingTop: '10px' }}>
-                    <span style={{ fontWeight: '900', fontSize: '0.85rem' }}>TOTAL (C/IVA):</span>
-                    <span style={{ fontSize: '1.2rem', fontWeight: '900', color: form.status === 'PAGADO' ? '#10b981' : '#0ea5e9' }}>$ {totalGeneral.toLocaleString('de-DE')}</span>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px' }}>
+                    <span className="stat-label" style={{ fontSize: '0.7rem', color: '#64748b' }}>IVA (16%):</span>
+                    <span style={{ fontWeight: '700', color: '#475569' }}>$ {(subtotalTotal * 0.16).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '2px solid #cbd5e1', paddingTop: '12px' }}>
+                    <span style={{ fontWeight: '900', fontSize: '0.9rem', color: '#0f172a' }}>TOTAL (CON IVA):</span>
+                    <span style={{ fontSize: '1.4rem', fontWeight: '900', color: '#d97706' }}>$ {totalGeneral.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span>
                   </div>
                 </div>
 
@@ -815,72 +965,6 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
               </div>
             </div>
 
-            {/* MODAL CONFIRMACIÓN DE PAGO (OVERLAY) */}
-            {showConfirmPago && (
-              <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <div style={{ backgroundColor: 'white', padding: '35px', borderRadius: '24px', width: '450px', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.3)' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '15px', marginBottom: '25px', borderBottom: '1px solid #f1f5f9', paddingBottom: '15px' }}>
-                    <div style={{ backgroundColor: '#dcfce7', padding: '10px', borderRadius: '12px' }}>
-                      <CheckCircle2 color="#166534" size={28} />
-                    </div>
-                    <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: '800', color: '#0f172a' }}>Confirmación de Pago</h3>
-                  </div>
-                  
-                  <div style={{ marginBottom: '20px' }}>
-                    <label style={{ fontSize: '11px', fontWeight: '800', color: '#64748b', textTransform: 'uppercase', marginBottom: '8px', display: 'block' }}>Banco de Origen</label>
-                    <select 
-                      className="te-input" 
-                      style={{ width: '100%' }}
-                      value={form.banco_origen}
-                      onChange={(e) => setForm({...form, banco_origen: e.target.value})}
-                    >
-                      <option value="">Seleccione Banco...</option>
-                      {bancosDisponibles.map(b => (
-                        <option key={b.id} value={b.nombre}>{b.nombre} ({b.moneda})</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div style={{ marginBottom: '30px' }}>
-                    <label style={{ fontSize: '11px', fontWeight: '800', color: '#64748b', textTransform: 'uppercase', marginBottom: '8px', display: 'block' }}>Clasificación Administrativa</label>
-                    <select 
-                      className="te-input" 
-                      style={{ width: '100%' }}
-                      value={form.clasificacion_admin}
-                      onChange={(e) => setForm({...form, clasificacion_admin: e.target.value})}
-                    >
-                      <option value="">Seleccione Clasificación...</option>
-                      <option value="Semanal">Semanal</option>
-                      <option value="Mensual">Mensual</option>
-                      <option value="Reembolsos Pólizas">Reembolsos Pólizas</option>
-                      <option value="TEA">TEA</option>
-                    </select>
-                  </div>
-
-                  <div style={{ display: 'flex', gap: '12px' }}>
-                    <button 
-                      className="te-btn te-btn-outline" 
-                      style={{ flex: 1 }}
-                      onClick={() => {
-                        setShowConfirmPago(false);
-                        const resetPartidas = form.partidas.map(p => ({...p, pago_realizado: false}));
-                        setForm({...form, partidas: resetPartidas, status: 'EMITIDO'});
-                      }}
-                    >
-                      Cancelar
-                    </button>
-                    <button 
-                      className="te-btn te-btn-primary" 
-                      style={{ flex: 2 }}
-                      disabled={!form.banco_origen || !form.clasificacion_admin}
-                      onClick={() => setShowConfirmPago(false)}
-                    >
-                      Confirmar y Continuar
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
         </div>
       )}

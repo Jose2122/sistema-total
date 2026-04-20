@@ -3,8 +3,9 @@ import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { supabase } from './supabaseClient';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Loader2, Upload, FileText, MessageSquare, Paperclip } from 'lucide-react';
+import { Loader2, Upload, FileText, MessageSquare, Paperclip, Clock, CheckCircle2, AlertCircle, ShoppingBag } from 'lucide-react';
 import './Requisiciones.css';
+import './ReportesMaestro.css';
 
 const Compras = () => {
   const [historial, setHistorial] = useState([]);
@@ -146,7 +147,10 @@ const Compras = () => {
         cantidad_pendiente,
         historial_compras: item.historial_compras || [],
         compra_actual_cant: 0,
-        compra_actual_pu: item.pu || 0 // Iniciamos con el último PU sugerido
+        compra_actual_pu: item.pu || 0, // Iniciamos con el último PU sugerido
+        doc_tipo_actual: item.doc_tipo || 'FAC',
+        doc_numero_actual: '', // Siempre vacío por defecto para evitar errores
+        proveedor_seleccionado_id: '' // Siempre vacío por defecto
       };
     });
 
@@ -186,6 +190,45 @@ const Compras = () => {
       setPreciosReferencia(referencias);
     } catch (err) {
       console.error("Error obteniendo precios de referencia:", err.message);
+    }
+  };
+
+  const liquidarNC = async (idRenglon, indexHistorial) => {
+    if (!window.confirm("¿Confirmar el pago de esta Nota de Crédito? El documento pasará a estado PAGADO.")) return;
+
+    setLoading(true);
+    try {
+      const renglonesActualizados = renglones.map(r => {
+        if (r.id === idRenglon) {
+          const nuevoHistorial = [...r.historial_compras];
+          const entrada = { ...nuevoHistorial[indexHistorial] };
+          entrada.metodo_pago = 'PAGADO (NC)';
+          entrada.doc_tipo = 'FAC'; // Se convierte en factura al pagarse
+          entrada.fecha_pago = new Date().toISOString(); // NUEVO: registrar fecha de pago
+          nuevoHistorial[indexHistorial] = entrada;
+
+          // RECALCULAR STATUS
+          const tieneCreditos = nuevoHistorial.some(h => h.doc_tipo === 'NC' || h.metodo_pago?.includes('CRÉDITO'));
+          let nuevoStatus = r.status;
+          if (!tieneCreditos && r.cantidad_pendiente === 0) nuevoStatus = 'Completado';
+
+          return { ...r, historial_compras: nuevoHistorial, status: nuevoStatus };
+        }
+        return r;
+      });
+
+      const { error } = await supabase
+        .from('requisiciones')
+        .update({ items: renglonesActualizados })
+        .eq('id', editandoId);
+
+      if (error) throw error;
+      setRenglones(renglonesActualizados);
+      alert("NC Liquidada correctamente.");
+    } catch (err) {
+      alert("Error: " + err.message);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -333,6 +376,75 @@ const Compras = () => {
     }
   };
 
+  const actualizarTotalesSolicitud = async (requisicionId) => {
+    try {
+      // 1. Buscar la solicitud vinculada a esta requisición
+      const { data: partidasRel } = await supabase
+        .from('partidas_fondos')
+        .select('solicitud_id')
+        .eq('requisicion_id', requisicionId)
+        .limit(1);
+
+      if (!partidasRel || partidasRel.length === 0) return;
+      const solicitudId = partidasRel[0].solicitud_id;
+
+      // 2. Obtener todas las partidas de esa solicitud con su data de compra
+      const { data: todasLasPartidas } = await supabase
+        .from('partidas_fondos')
+        .select('*, requisiciones(items)')
+        .eq('solicitud_id', solicitudId);
+
+      if (!todasLasPartidas) return;
+
+      let montoEstimado = 0;
+      let montoEjecutado = 0;
+      let montoPendiente = 0;
+
+      todasLasPartidas.forEach(p => {
+        const estRow = (parseFloat(p.pu_bs) || parseFloat(p.pu_usd) || 0) * (parseFloat(p.cantidad) || 1);
+        montoEstimado += estRow;
+
+        let ejecutadoRow = 0;
+        let pendienteRow = estRow;
+
+        if (p.requisiciones && p.requisiciones.items) {
+          const itemReq = p.requisiciones.items.find(item => 
+            item.descripcion === p.descripcion && 
+            (item.cantidad_pedida === p.cantidad || item.cant === p.cantidad)
+          );
+
+          if (itemReq) {
+            ejecutadoRow = (itemReq.historial_compras || []).reduce((sum, h) => {
+              if (h.tipo === 'JUSTIFICACION') return sum;
+              return sum + ((parseFloat(h.cant) || 0) * (parseFloat(h.pu) || 0));
+            }, 0);
+
+            const cantPend = parseFloat(itemReq.cantidad_pendiente ?? itemReq.cant) || 0;
+            const puEst = parseFloat(itemReq.pu_estimado ?? itemReq.pu) || 0;
+            pendienteRow = cantPend * puEst;
+          }
+        }
+
+        montoEjecutado += ejecutadoRow;
+        montoPendiente += pendienteRow;
+      });
+
+      // 3. Persistir en la tabla solicitudes_fondos
+      const payload = {
+        monto_estimado: montoEstimado,
+        monto_ejecutado: montoEjecutado,
+        monto_pendiente: montoPendiente,
+        diferencia_final: montoEstimado - montoEjecutado,
+        status: montoPendiente === 0 ? 'FINALIZADA' : 'ACTIVA'
+      };
+
+      await supabase.from('solicitudes_fondos').update(payload).eq('id', solicitudId);
+
+    } catch (err) {
+      console.error("Error sincronizando totales de solicitud:", err.message);
+    }
+  };
+
   const anularRequisicion = async (id) => {
     if (!window.confirm('¿Estás seguro de ANULAR esta requisición? Los renglones asociados en Fondos quedarán disponibles nuevamente.')) return;
     setLoading(true);
@@ -364,6 +476,9 @@ const Compras = () => {
         }
         const act = { ...f, [campo]: v };
 
+        // El total de esta fila en el modal es lo que se está comprando ahora
+        act.total = act.compra_actual_cant * (act.compra_actual_pu || 0);
+
         // Alerta de precio si existe referencia
         const ref = preciosReferencia[f.descripcion.trim().toUpperCase()];
         if (campo === 'compra_actual_pu' && v > 0 && ref) {
@@ -372,12 +487,183 @@ const Compras = () => {
           act.precio_ref_encontrado = ref;
         }
 
-        // El total de esta fila en el modal es lo que se está comprando ahora
-        act.total = act.compra_actual_cant * (act.compra_actual_pu || 0);
-        return act;
+        return { ...act, hasChanges: true };
       }
       return f;
     }));
+  };
+
+  const guardarUnicoRenglon = async (id) => {
+    if (loading) return;
+    const item = renglones.find(r => r.id === id);
+    if (!item || !item.hasChanges) return;
+
+    setLoading(true);
+    try {
+      // VALIDACIÓN DE DATOS OBLIGATORIOS (NÚMERO, CANTIDAD Y PROVEEDOR)
+      if (!item.doc_numero_actual || !item.doc_numero_actual.trim()) {
+        alert("⚠️ Error: El número de " + (item.doc_tipo_actual || 'FAC/NC') + " es obligatorio para procesar la compra.");
+        setLoading(false);
+        return;
+      }
+      if (Number(item.compra_actual_cant || 0) <= 0) {
+        alert("⚠️ Error: Debe ingresar una CANTIDAD REAL mayor a 0 para procesar la compra.");
+        setLoading(false);
+        return;
+      }
+      if (!item.proveedor_seleccionado_id) {
+        alert("⚠️ Error: Debe seleccionar un PROVEEDOR para procesar la compra.");
+        setLoading(false);
+        return;
+      }
+
+      // 1. Preparar la nueva transacción si hay cantidad
+      const nuevaTransaccion = item.compra_actual_cant > 0 ? {
+        fecha: new Date().toISOString(),
+        cant: item.compra_actual_cant,
+        pu: item.compra_actual_pu,
+        metodo_pago: item.metodo_pago_actual || '$ / BS',
+        proveedor_id: item.proveedor_seleccionado_id || null,
+        proveedor_nombre: proveedores.find(p => p.id === item.proveedor_seleccionado_id)?.razon_social || 'Desconocido',
+        usuario_id: currentUser?.id,
+        usuario_nombre: `${currentUser?.nombre} ${currentUser?.apellido}`,
+        doc_tipo: item.doc_tipo_actual,
+        doc_numero: item.doc_numero_actual
+      } : null;
+
+      const nuevaCantComprada = (item.cantidad_comprada || 0) + (item.compra_actual_cant || 0);
+      const nuevaCantPendiente = Math.max(0, item.cantidad_pedida - nuevaCantComprada);
+
+      // LÓGICA DE STATUS CON CRÉDITO (NC)
+      let nuevoStatus = item.status;
+      const esCredito = item.doc_tipo_actual === 'NC';
+      
+      if (esCredito) {
+        nuevoStatus = 'POR PAGAR (NC)';
+      } else {
+        const tieneCreditosPrevios = (item.historial_compras || []).some(h => h.doc_tipo === 'NC' || h.metodo_pago?.includes('CRÉDITO'));
+        if (nuevaCantPendiente === 0) {
+          nuevoStatus = tieneCreditosPrevios ? 'POR PAGAR (NC)' : 'Completado';
+        } else if (nuevaCantComprada > 0) {
+          nuevoStatus = 'Parcial';
+        }
+      }
+
+      if (nuevaTransaccion && esCredito) {
+        nuevaTransaccion.metodo_pago = 'CRÉDITO (NC)';
+      }
+
+      const renglonProcesado = {
+        ...item,
+        cantidad_comprada: nuevaCantComprada,
+        cantidad_pendiente: nuevaCantPendiente,
+        historial_compras: nuevaTransaccion ? [...(item.historial_compras || []), nuevaTransaccion] : (item.historial_compras || []),
+        status: nuevoStatus,
+        pu: item.compra_actual_pu || item.pu,
+        compra_actual_cant: 0,
+        doc_tipo: item.doc_tipo_actual,
+        doc_numero: item.doc_numero_actual,
+        doc_numero_actual: '', // LIMPIAR DESPUÉS DE GUARDAR
+        proveedor_seleccionado_id: '', // LIMPIAR DESPUÉS DE GUARDAR
+        hasChanges: false
+      };
+
+      // 2. Actualizar en el estado local todos los renglones
+      const nuevosRenglones = renglones.map(r => r.id === id ? renglonProcesado : r);
+
+      // 3. Recalcular Totales de la Requisición (para la DB)
+      const totalDinamicoReal = nuevosRenglones.reduce((acc, r) => {
+        const ejecutadoItem = (r.historial_compras || []).reduce((sum, t) => sum + ((Number(t.cant) || 0) * (Number(t.pu) || 0)), 0);
+        const estimadoPendiente = (Number(r.cantidad_pendiente) || 0) * Number(r.pu_estimado || 0);
+        return acc + ejecutadoItem + estimadoPendiente;
+      }, 0);
+
+      const { error } = await supabase
+        .from('requisiciones')
+        .update({
+          items: nuevosRenglones,
+          total_bs: totalDinamicoReal * 1.16
+        })
+        .eq('id', editandoId);
+
+      if (error) throw error;
+
+      setRenglones(nuevosRenglones);
+      await actualizarTotalesSolicitud(editandoId);
+      alert("Ítem guardado con éxito.");
+    } catch (err) {
+      alert("Error: " + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const renombrarAdjunto = async (idx, nuevoNombre) => {
+    const nuevasUrls = [...facturasUrls];
+    const item = nuevasUrls[idx];
+
+    // Si es un string (viejo formato), convertir a objeto
+    if (typeof item === 'string') {
+      nuevasUrls[idx] = { url: item, etiqueta: nuevoNombre };
+    } else {
+      nuevasUrls[idx] = { ...item, etiqueta: nuevoNombre };
+    }
+
+    setFacturasUrls(nuevasUrls);
+    try {
+      await supabase.from('requisiciones').update({ facturas_url: nuevasUrls }).eq('id', editandoId);
+    } catch (err) { console.error(err); }
+  };
+
+  const eliminarSoporteReal = async (idx, url) => {
+    if (!window.confirm("¿Está seguro de eliminar permanentemente este soporte? Se borrará tanto del registro como del servidor.")) return;
+
+    try {
+      setUploading(true);
+      // 1. Detección dinámica y robusta del bucket desde la URL
+      let bucketName = '';
+      if (url.includes('comprobantes')) bucketName = 'comprobantes';
+      else if (url.includes('facturas')) bucketName = 'facturas';
+
+      // 2. Extraer el path del archivo
+      let filePath = '';
+      if (bucketName) {
+        const searchStr = bucketName + '/';
+        const bIndex = url.indexOf(searchStr);
+        if (bIndex !== -1) {
+          filePath = url.substring(bIndex + searchStr.length).split('?')[0];
+        } else {
+          filePath = url.split('?')[0];
+        }
+      }
+
+      // 3. Eliminar del Storage y actualizar DB
+      if (bucketName && filePath) {
+        const { error: storageError } = await supabase.storage
+          .from(bucketName)
+          .remove([filePath]);
+        
+        if (storageError) console.warn("Aviso: El archivo físico no se pudo borrar (puede que no exista):", storageError.message);
+      }
+      
+      if (storageError) console.warn("Error eliminando del storage:", storageError.message);
+
+      // 3. Actualizar la DB
+      const nuevasUrls = facturasUrls.filter((_, i) => i !== idx);
+      const { error: dbError } = await supabase
+        .from('requisiciones')
+        .update({ facturas_url: nuevasUrls })
+        .eq('id', editandoId);
+      
+      if (dbError) throw dbError;
+
+      setFacturasUrls(nuevasUrls);
+      alert("Soporte eliminado físicamente.");
+    } catch (err) {
+      alert("Error al eliminar soporte: " + err.message);
+    } finally {
+      setUploading(false);
+    }
   };
 
   const subirFactura = async (event) => {
@@ -407,7 +693,7 @@ const Compras = () => {
       // RECARGAR DATA ACTUAL PARA EVITAR SOBREESCRIBIR
       const { data: currentReq } = await supabase.from('requisiciones').select('facturas_url').eq('id', editandoId).single();
       const urlsActuales = currentReq?.facturas_url || [];
-      const nuevasUrls = [...urlsActuales, ...nuevasDescargas];
+      const nuevasUrls = [...urlsActuales, ...nuevasDescargas.map(url => ({ url, etiqueta: 'Archivo sin etiqueta' }))];
 
       setFacturasUrls(nuevasUrls);
 
@@ -501,13 +787,14 @@ const Compras = () => {
       setLoading(false);
     }
   };
-  const guardarCambiosProcesamiento = async () => {
+  const guardarCambiosProcesamiento = async (esBorrador = false) => {
     if (loading) return;
     setLoading(true);
     try {
       const renglonesProcesados = renglones.map(r => {
-        if (r.compra_actual_cant > 0) {
-          const nuevaTransaccion = {
+        // Combinar datos temporales si hay compra actual o si estamos guardando Doc/N° Doc
+        if (r.compra_actual_cant > 0 || esBorrador) {
+          const nuevaTransaccion = r.compra_actual_cant > 0 ? {
             fecha: new Date().toISOString(),
             cant: r.compra_actual_cant,
             pu: r.compra_actual_pu,
@@ -515,10 +802,12 @@ const Compras = () => {
             proveedor_id: r.proveedor_seleccionado_id || null,
             proveedor_nombre: proveedores.find(p => p.id === r.proveedor_seleccionado_id)?.razon_social || 'Desconocido',
             usuario_id: currentUser?.id,
-            usuario_nombre: `${currentUser?.nombre} ${currentUser?.apellido}`
-          };
+            usuario_nombre: `${currentUser?.nombre} ${currentUser?.apellido}`,
+            doc_tipo: r.doc_tipo_actual,
+            doc_numero: r.doc_numero_actual
+          } : null;
 
-          const nuevaCantComprada = (r.cantidad_comprada || 0) + r.compra_actual_cant;
+          const nuevaCantComprada = (r.cantidad_comprada || 0) + (r.compra_actual_cant || 0);
           const nuevaCantPendiente = Math.max(0, r.cantidad_pedida - nuevaCantComprada);
 
           let nuevoStatus = r.status;
@@ -529,11 +818,13 @@ const Compras = () => {
             ...r,
             cantidad_comprada: nuevaCantComprada,
             cantidad_pendiente: nuevaCantPendiente,
-            historial_compras: [...(r.historial_compras || []), nuevaTransaccion],
+            historial_compras: nuevaTransaccion ? [...(r.historial_compras || []), nuevaTransaccion] : (r.historial_compras || []),
             status: nuevoStatus,
-            pu_estimado: Number(r.pu_estimado || r.pu || 0), // Guardar el estimado original
-            pu: r.compra_actual_pu, // El P.U. principal queda como el último precio real
-            compra_actual_cant: 0 // Resetear para la próxima vez
+            pu_estimado: Number(r.pu_estimado || r.pu || 0),
+            pu: r.compra_actual_pu || r.pu,
+            compra_actual_cant: 0,
+            doc_tipo: r.doc_tipo_actual,
+            doc_numero: r.doc_numero_actual
           };
         }
         return r;
@@ -542,19 +833,18 @@ const Compras = () => {
       const algunoComprado = renglonesProcesados.some(r => (r.cantidad_comprada || 0) > 0);
       const todasCompletas = renglonesProcesados.every(r => r.cantidad_pendiente === 0);
 
-      let nuevoStatusCompra = 'En espera';
-      if (todasCompletas) nuevoStatusCompra = 'Completado';
-      else if (algunoComprado) nuevoStatusCompra = 'Parcial';
+      let nuevoStatusCompra = requisicionActiva.status_compra || 'En espera';
+      if (!esBorrador) {
+        if (todasCompletas) nuevoStatusCompra = 'Completado';
+        else if (algunoComprado) nuevoStatusCompra = 'Parcial';
+      }
 
-      // Total Dinámico de la Requisición (Comprado Real + Pendiente Estimado)
       const totalDinamicoReal = renglonesProcesados.reduce((acc, r) => {
         const ejecutadoItem = (r.historial_compras || []).reduce((sum, t) => {
           if (t.tipo === 'JUSTIFICACION') return sum;
           return sum + ((Number(t.cant) || 0) * (Number(t.pu) || 0));
         }, 0);
-
         const estimadoPendiente = (Number(r.cantidad_pendiente ?? r.cant) || 0) * Number(r.pu_estimado || r.pu || 0);
-
         return acc + ejecutadoItem + estimadoPendiente;
       }, 0);
 
@@ -571,9 +861,16 @@ const Compras = () => {
 
       if (error) throw error;
 
-      alert(todasCompletas ? "Requisición Finalizada / Comprada al 100%." : "Compra parcial registrada con éxito.");
-      await cargarRequisicionesAprobadas();
-      setShowModal(false);
+      await actualizarTotalesSolicitud(editandoId);
+
+      if (esBorrador) {
+        alert("Borrador guardado correctamente.");
+        setRequisicionActiva(prev => ({ ...prev, items: renglonesProcesados }));
+      } else {
+        alert(todasCompletas ? "Requisición Finalizada / Comprada al 100%." : "Compra parcial registrada con éxito.");
+        await cargarRequisicionesAprobadas();
+        setShowModal(false);
+      }
     } catch (err) {
       alert("Error guardando cambios: " + err.message);
     } finally {
@@ -581,23 +878,36 @@ const Compras = () => {
     }
   };
 
-  const { subTotalCalculado, totalCalculado } = useMemo(() => {
-    // El total del modal debe mostrar el acumulado histórico + cantidad pendiente estimada + la compra actual temporal
-    const totalDinamicoModal = (renglones || []).reduce((acc, r) => {
+  const { subTotalCalculado, totalCalculado, montoPagadoF, montoPendienteNE } = useMemo(() => {
+    const totals = (renglones || []).reduce((acc, r) => {
       const yaComprado = (r.historial_compras || []).reduce((sum, t) => {
         if (t.tipo === 'JUSTIFICACION') return sum;
-        return sum + (Number(t.cant) || 0) * (Number(t.pu) || 0);
+        const val = (Number(t.cant) || 0) * (Number(t.pu) || 0);
+        if (t.doc_tipo === 'NC') acc.totalNE += val;
+        else acc.totalF += val; // FAC o por defecto
+        return sum + val;
       }, 0);
+
       const comprandoAhora = (Number(r.compra_actual_cant) || 0) * (Number(r.compra_actual_pu) || 0);
+      if ((r.compra_actual_cant || 0) > 0) {
+        if (r.doc_tipo_actual === 'NC') acc.totalNE += comprandoAhora;
+        else acc.totalF += comprandoAhora;
+      }
 
       const cantPendientePre = Number(r.cantidad_pendiente ?? r.cant) || 0;
       const cantPendienteRemanente = Math.max(0, cantPendientePre - (Number(r.compra_actual_cant) || 0));
       const estimadoRemanente = cantPendienteRemanente * Number(r.pu_estimado || r.pu || 0);
 
-      return acc + yaComprado + comprandoAhora + estimadoRemanente;
-    }, 0);
+      acc.subTotal += yaComprado + comprandoAhora + estimadoRemanente;
+      return acc;
+    }, { subTotal: 0, totalF: 0, totalNE: 0 });
 
-    return { subTotalCalculado: totalDinamicoModal, totalCalculado: totalDinamicoModal * 1.16 };
+    return {
+      subTotalCalculado: totals.subTotal,
+      totalCalculado: totals.subTotal * 1.16,
+      montoPagadoF: totals.totalF,
+      montoPendienteNE: totals.totalNE
+    };
   }, [renglones]);
 
   const getInitials = (nombre, apellido) => {
@@ -618,31 +928,30 @@ const Compras = () => {
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
     >
-      <div className="stats-grid" style={{ marginBottom: '25px', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px' }}>
-        {[
-          { label: 'Compras en Espera', val: historial.filter(r => (r.status_compra || 'En espera') === 'En espera').length, status: 'En espera', color: '#64748b', bg: '#f1f5f9' },
-          { label: 'Compras Parciales', val: historial.filter(r => r.status_compra === 'Parcial').length, status: 'Parcial', color: '#f59e0b', bg: '#fffbeb' },
-          { label: 'Compras Completadas', val: historial.filter(r => r.status_compra === 'Completado').length, status: 'Completado', color: '#16a34a', bg: '#f0fdf4' }
-        ].map((s, i) => (
-          <motion.div
-            key={i}
-            whileHover={{ scale: 1.02, translateY: -2 }}
-            whileTap={{ scale: 0.98 }}
-            onClick={() => setFiltroStatusCompra(s.status)}
-            style={{
-              backgroundColor: s.bg,
-              padding: '20px',
-              borderRadius: '20px',
-              border: `2px solid ${filtroStatusCompra === s.status ? s.color : 'transparent'}`,
-              cursor: 'pointer',
-              boxShadow: filtroStatusCompra === s.status ? `0 10px 15px -3px ${s.color}20` : 'none',
-              transition: 'all 0.2s'
-            }}
-          >
-            <div style={{ fontSize: '0.7rem', fontWeight: '800', color: s.color, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{s.label}</div>
-            <div style={{ fontSize: '2rem', fontWeight: '900', color: '#1e293b', marginTop: '5px' }}>{s.val}</div>
-          </motion.div>
-        ))}
+      <div className="rm-stats-grid">
+          <div className="rm-stat-card secondary" onClick={() => setFiltroStatusCompra('En espera')} style={{ cursor: 'pointer' }}>
+            <div className="rm-stat-info">
+              <label>Requisiciones en Espera</label>
+              <h3>{historial.filter(r => (r.status_compra || 'En espera') === 'En espera').length} No leídas</h3>
+            </div>
+            <div className="rm-stat-icon"><Clock size={24} /></div>
+          </div>
+
+          <div className="rm-stat-card highlight" onClick={() => setFiltroStatusCompra('Parcial')} style={{ cursor: 'pointer' }}>
+            <div className="rm-stat-info">
+              <label>Compras en Proceso</label>
+              <h3>{historial.filter(r => r.status_compra === 'Parcial').length} Parciales</h3>
+            </div>
+            <div className="rm-stat-icon"><AlertCircle size={24} /></div>
+          </div>
+
+          <div className="rm-stat-card primary" onClick={() => setFiltroStatusCompra('Completado')} style={{ cursor: 'pointer' }}>
+            <div className="rm-stat-info">
+              <label>Compras Finalizadas</label>
+              <h3>{historial.filter(r => r.status_compra === 'Completado').length} Completas</h3>
+            </div>
+            <div className="rm-stat-icon"><CheckCircle2 size={24} /></div>
+          </div>
       </div>
 
       <div className="table-container" style={{ marginBottom: '10px', padding: '15px' }}>
@@ -686,7 +995,7 @@ const Compras = () => {
               <th>GERENCIA</th>
               <th style={{ textAlign: 'center', width: '120px' }}>PRIORIDAD</th>
               <th>TOTAL $</th>
-              <th style={{ textAlign: 'center', width: '140px' }}>STATUS DE COMPRA</th>
+              <th style={{ textAlign: 'center', width: '140px' }}>ESTATUS DE COMPRA</th>
             </tr>
           </thead>
           <tbody>
@@ -715,7 +1024,7 @@ const Compras = () => {
                     )}
                   </div>
                 </td>
-             
+
                 <td style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#64748b' }}>
                   {req.detalles?.[0]?.categoria || 'N/A'}
                 </td>
@@ -733,9 +1042,9 @@ const Compras = () => {
                       ⚠️ ALTA
                     </span>
                   ) : (
-                    <span style={{ 
-                      color: '#0ea5e9', 
-                      fontSize: '0.7rem', 
+                    <span style={{
+                      color: '#0ea5e9',
+                      fontSize: '0.7rem',
                       fontWeight: '900',
                       textTransform: 'uppercase'
                     }}>
@@ -747,7 +1056,7 @@ const Compras = () => {
                 <td style={{ textAlign: 'center' }}>
                   <span style={{
                     color: req.status_compra === 'Completado' ? '#16a34a' : '#ca8a04',
-                    fontSize: '0.7rem', 
+                    fontSize: '0.7rem',
                     fontWeight: '900',
                     textTransform: 'uppercase'
                   }}>
@@ -908,116 +1217,185 @@ const Compras = () => {
             <table className="tc-table" style={{ fontSize: '0.85rem' }}>
               <thead>
                 <tr style={{ backgroundColor: '#f8fafc' }}>
-                  <th>RENG.</th>
-                  <th>CATEGORÍA</th>
-                  <th>DESCRIPCIÓN</th>
-                  <th style={{ textAlign: 'center' }}>PEDIDA</th>
-                  <th style={{ textAlign: 'center' }}>COMPRADA</th>
-                  <th style={{ textAlign: 'center' }}>PENDIENTE</th>
-                  <th style={{ textAlign: 'center', width: '100px' }}>MONEDA</th>
-                  <th style={{ textAlign: 'center', width: '150px' }}>PROVEEDOR</th>
-                  <th style={{ textAlign: 'right', width: '110px' }}>A COMPRAR</th>
-                  <th style={{ textAlign: 'right', width: '120px' }}>P.U. REAL</th>
-                  <th style={{ textAlign: 'right' }}>TOTAL $</th>
-                  <th>ACCIONES</th>
+                  <th style={{ width: '40px' }}>N°</th>
+                  <th style={{ width: '120px' }}>PRODUCTO</th>
+                  <th style={{ textAlign: 'center', width: '60px' }}>PED.</th>
+                  <th style={{ textAlign: 'center', width: '60px' }}>COMP.</th>
+                  <th style={{ textAlign: 'center', width: '60px' }}>PEND.</th>
+                  <th style={{ textAlign: 'center', width: '320px' }}>DETALLE PAGO / PROVEEDOR</th>
+                  <th style={{ textAlign: 'right', width: '100px' }}>CANT. REAL</th>
+                  <th style={{ textAlign: 'right', width: '110px' }}>P.U. REAL</th>
+                  <th style={{ textAlign: 'right', width: '100px' }}>TOTAL $</th>
+                  <th style={{ textAlign: 'center', width: '130px' }}>ACCIONES</th>
                 </tr>
               </thead>
               <tbody>
                 {renglones.map((f, i) => (
                   <React.Fragment key={f.id}>
-                    <tr>
-                      <td>{i + 1}</td>
-                      <td style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#64748b' }}>{f.categoria || 'N/A'}</td>
-                      <td style={{ fontSize: '0.75rem' }}>{f.descripcion}</td>
-                      <td style={{ textAlign: 'center', fontWeight: '600' }}>{f.cantidad_pedida}</td>
-                      <td style={{ textAlign: 'center', color: '#16a34a', fontWeight: 'bold' }}>{f.cantidad_comprada}</td>
-                      <td style={{ textAlign: 'center', color: f.cantidad_pendiente > 0 ? '#ef4444' : '#94a3b8', fontWeight: 'bold' }}>
-                        {f.cantidad_pendiente}
-                      </td>
+                    <tr style={{ 
+                      backgroundColor: (Number(f.cantidad_comprada || 0) + Number(f.compra_actual_cant || 0)) >= Number(f.cantidad_pedida) ? '#f0fdf4' : 'transparent',
+                      borderLeft: (Number(f.cantidad_comprada || 0) + Number(f.compra_actual_cant || 0)) >= Number(f.cantidad_pedida) ? '4px solid #22c55e' : 'none',
+                      transition: 'all 0.3s ease'
+                    }}>
+                      <td style={{ fontWeight: 'bold' }}>{i + 1}</td>
                       <td>
-                        <select
-                          className="input-tc"
-                          style={{ fontSize: '0.7rem', padding: '4px' }}
-                          value={f.metodo_pago_actual || '$ / BS'}
-                          onChange={(e) => actualizarFila(f.id, 'metodo_pago_actual', e.target.value)}
-                        >
-                          <option value="$ / BS">$ / BS</option>
-                          <option value="$ / $">$ / $</option>
-                        </select>
+                        <div style={{ fontSize: '0.65rem', fontWeight: '800', color: '#94a3b8', textTransform: 'uppercase' }}>{f.categoria || 'N/A'}</div>
+                        <div style={{ fontSize: '0.75rem', color: '#1e293b', fontWeight: '500' }}>{f.descripcion}</div>
                       </td>
+                      <td style={{ textAlign: 'center', fontWeight: '650', color: '#64748b' }}>{f.cantidad_pedida}</td>
+                      <td style={{ textAlign: 'center', color: '#16a34a', fontWeight: '800' }}>{f.cantidad_comprada}</td>
+                      <td style={{ 
+                        textAlign: 'center', 
+                        fontWeight: '800', 
+                        color: f.cantidad_pendiente > 0 ? '#f97316' : '#94a3b8' 
+                      }}>{f.cantidad_pendiente}</td>
+                      
+                      {/* CELDA COMPACTA PAGO / PROVEEDOR */}
                       <td>
-                        <select
-                          className="input-tc"
-                          style={{ fontSize: '0.7rem', padding: '4px', border: f.compra_actual_cant > 0 && !f.proveedor_seleccionado_id ? '2px solid #ef4444' : '' }}
-                          value={f.proveedor_seleccionado_id || ''}
-                          onChange={(e) => actualizarFila(f.id, 'proveedor_seleccionado_id', Number(e.target.value))}
-                          disabled={f.cantidad_pendiente === 0}
-                        >
-                          <option value="">Seleccione...</option>
-                          {proveedores.map(p => (
-                            <option key={p.id} value={p.id}>{p.razon_social}</option>
-                          ))}
-                        </select>
+                        <div style={{ display: 'grid', gridTemplateColumns: '80px 1fr', gap: '8px', alignItems: 'center' }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                            <span style={{ fontSize: '9px', fontWeight: '900', color: '#94a3b8' }}>DOC / #</span>
+                            <div style={{ display: 'flex', gap: '2px' }}>
+                              <select 
+                                className="input-tc" 
+                                style={{ fontSize: '10px', padding: '2px', width: '45px' }}
+                                value={f.doc_tipo_actual || 'FAC'}
+                                onChange={(e) => actualizarFila(f.id, 'doc_tipo_actual', e.target.value)}
+                              >
+                                <option value="FAC">FAC</option>
+                                <option value="NC">NC</option>
+                              </select>
+                              <input 
+                                className="input-tc" 
+                                style={{ fontSize: '10px', padding: '2px', width: '45px' }}
+                                value={f.doc_numero_actual || ''}
+                                onChange={(e) => actualizarFila(f.id, 'doc_numero_actual', e.target.value)}
+                                placeholder="000"
+                              />
+                            </div>
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <span style={{ fontSize: '9px', fontWeight: '900', color: '#94a3b8' }}>PROVEEDOR / MONEDA</span>
+                              <select 
+                                className="input-tc" 
+                                style={{ width: '55px', fontSize: '9px', padding: '1px' }}
+                                value={f.metodo_pago_actual || '$ / BS'}
+                                onChange={(e) => actualizarFila(f.id, 'metodo_pago_actual', e.target.value)}
+                              >
+                                <option value="$ / BS">$ / BS</option>
+                                <option value="$ / $">$ / $</option>
+                              </select>
+                            </div>
+                            <select 
+                              className="input-tc" 
+                              style={{ width: '100%', fontSize: '11px', padding: '3px', fontWeight: 'bold' }}
+                              value={f.proveedor_seleccionado_id || ''}
+                              onChange={(e) => actualizarFila(f.id, 'proveedor_seleccionado_id', Number(e.target.value))}
+                              disabled={f.cantidad_pendiente === 0}
+                            >
+                              <option value="">Seleccione...</option>
+                              {proveedores.map(p => <option key={p.id} value={p.id}>{p.razon_social}</option>)}
+                            </select>
+                          </div>
+                        </div>
                       </td>
-                      <td>
-                        <input
-                          className="input-tc"
-                          type="number"
-                          value={f.compra_actual_cant}
-                          disabled={f.cantidad_pendiente === 0}
-                          style={{ textAlign: 'right', fontWeight: 'bold', border: f.compra_actual_cant > 0 ? '2px solid #0ea5e9' : '' }}
-                          onChange={(e) => actualizarFila(f.id, 'compra_actual_cant', e.target.value)}
-                        />
-                      </td>
-                      <td>
-                        <div style={{ position: 'relative' }}>
+
+                      <td style={{ verticalAlign: 'middle' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                          <span style={{ fontSize: '9px', fontWeight: '900', color: '#0ea5e9', textAlign: 'right' }}>COMPRAR</span>
                           <input
                             className="input-tc"
                             type="number"
-                            value={f.compra_actual_pu}
+                            value={f.compra_actual_cant}
                             disabled={f.cantidad_pendiente === 0}
-                            style={{
-                              textAlign: 'right',
-                              fontWeight: 'bold',
-                              backgroundColor: (f.variacion_precio >= 15) ? '#fffbeb' : '',
-                              borderColor: (f.variacion_precio >= 15) ? '#f59e0b' : ''
+                            style={{ 
+                              textAlign: 'right', 
+                              fontWeight: '900', 
+                              fontSize: '13px',
+                              border: '2px solid #0ea5e9',
+                              backgroundColor: '#f0f9ff',
+                              boxShadow: '0 2px 4px rgba(14, 165, 233, 0.1)'
                             }}
-                            onChange={(e) => actualizarFila(f.id, 'compra_actual_pu', e.target.value)}
+                            onChange={(e) => actualizarFila(f.id, 'compra_actual_cant', e.target.value)}
                           />
-                          {f.variacion_precio >= 15 && (
-                            <div style={{
-                              position: 'absolute', top: '100%', right: 0,
-                              fontSize: '0.6rem', color: '#b45309', fontWeight: 'bold',
-                              backgroundColor: '#fffbeb', padding: '2px 5px', borderRadius: '4px',
-                              zIndex: 10, border: '1px solid #f59e0b', whiteSpace: 'nowrap'
-                            }}>
-                              ⚠️ Sube un {f.variacion_precio.toFixed(1)}% (Ref: ${f.precio_ref_encontrado?.toLocaleString()})
-                            </div>
-                          )}
                         </div>
                       </td>
-                      <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{f.total?.toLocaleString('de-DE')}</td>
-                      <td>
-                        <div style={{ display: 'flex', gap: '8px' }}>
-                          <button
-                            onClick={() => {
-                              setItemParaJustificar(f);
-                              setShowJustificacionModal(true);
-                            }}
-                            className="btn-tc btn-tc-secondary"
-                            style={{ padding: '6px', border: 'none', background: 'none' }}
-                            title="Justificar Retraso"
-                          >
-                            💬
-                          </button>
-                          <button
-                            onClick={() => setExpandirHistorial(prev => ({ ...prev, [f.id]: !prev[f.id] }))}
-                            style={{ border: 'none', background: 'none', cursor: 'pointer', opacity: (f.historial_compras?.length > 0) ? 1 : 0.3 }}
-                            title="Ver Trazabilidad"
-                            disabled={!f.historial_compras?.length}
-                          >
-                            {expandirHistorial[f.id] ? '🔼' : '🕒'}
-                          </button>
+                      
+                      <td style={{ verticalAlign: 'middle' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                          <span style={{ fontSize: '9px', fontWeight: '900', color: '#6366f1', textAlign: 'right' }}>P.U. REAL</span>
+                          <div style={{ position: 'relative' }}>
+                            <input
+                              className="input-tc"
+                              type="number"
+                              value={f.compra_actual_pu}
+                              disabled={f.cantidad_pendiente === 0}
+                              style={{ 
+                                textAlign: 'right', 
+                                fontWeight: '900', 
+                                fontSize: '13px',
+                                border: '2px solid #6366f1',
+                                backgroundColor: '#f5f3ff',
+                                boxShadow: '0 2px 4px rgba(99, 102, 241, 0.1)'
+                              }}
+                              onChange={(e) => actualizarFila(f.id, 'compra_actual_pu', e.target.value)}
+                            />
+                            {f.variacion_precio >= 15 && (
+                              <div style={{ position: 'absolute', top: '-15px', right: 0, fontSize: '8px', color: '#ef4444', fontWeight: '900' }}>
+                                ▲ {f.variacion_precio.toFixed(0)}%
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+
+                      <td style={{ textAlign: 'right', fontWeight: '900', color: '#0f172a', fontSize: '1rem' }}>
+                         $ {f.total?.toLocaleString('de-DE')}
+                         { (Number(f.cantidad_comprada || 0) + Number(f.compra_actual_cant || 0)) >= Number(f.cantidad_pedida) && 
+                           <div style={{ fontSize: '9px', color: '#16a34a', fontWeight: '900' }}>COMPLETO ✓</div>
+                         }
+                      </td>
+
+                      <td style={{ textAlign: 'center' }}>
+                        <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+                           {f.hasChanges && !loading && (
+                             <button 
+                               onClick={() => guardarUnicoRenglon(f.id)}
+                               className="btn-tc btn-tc-primary"
+                               style={{ padding: '6px 10px', fontSize: '0.65rem', fontWeight: 'bold', background: '#22c55e', border: 'none' }}
+                               title="Guardar este renglón"
+                             >
+                               💾 GUARDAR
+                             </button>
+                           )}
+                           <div style={{ display: 'flex', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '2px', backgroundColor: '#f8fafc' }}>
+                              <button
+                                onClick={() => {
+                                  setItemParaJustificar(f);
+                                  setShowJustificacionModal(true);
+                                }}
+                                style={{ border: 'none', background: 'none', cursor: 'pointer', padding: '4px' }}
+                                title="Agregar Comentario / Justificación"
+                              >
+                                💬
+                              </button>
+                              <button
+                                onClick={() => setExpandirHistorial(prev => ({ ...prev, [f.id]: !prev[f.id] }))}
+                                style={{ border: 'none', background: 'none', cursor: 'pointer', padding: '4px', opacity: (f.historial_compras?.length > 0) ? 1 : 0.3 }}
+                                title="Ver Historial"
+                                disabled={!f.historial_compras?.length}
+                              >
+                                {expandirHistorial[f.id] ? '🔼' : '🕒'}
+                              </button>
+                              <button
+                                onClick={() => { if(window.confirm('¿Anular este renglón?')) actualizarFila(f.id, 'status', 'ANULADO') }}
+                                style={{ border: 'none', background: 'none', cursor: 'pointer', padding: '4px' }}
+                                title="Anular Renglón"
+                              >
+                                🗑️
+                              </button>
+                           </div>
                         </div>
                       </td>
                     </tr>
@@ -1048,8 +1426,8 @@ const Compras = () => {
                                     backgroundColor: h.tipo === 'JUSTIFICACION' ? '#fffbeb' : 'transparent'
                                   }}>
                                     <td style={{ padding: '8px' }}>{new Date(h.fecha).toLocaleDateString()}</td>
-                                    <td style={{ padding: '8px', fontWeight: 'bold', color: h.tipo === 'JUSTIFICACION' ? '#d97706' : '#1e293b' }}>
-                                      {h.tipo === 'JUSTIFICACION' ? '⚠️ JUSTIFICACIÓN' : '✅ COMPRADO'}
+                                    <td style={{ padding: '8px', fontWeight: 'bold', color: h.tipo === 'JUSTIFICACION' ? '#d97706' : (h.doc_tipo === 'NC' ? '#f59e0b' : '#1e293b') }}>
+                                      {h.tipo === 'JUSTIFICACION' ? '⚠️ JUSTIFICACIÓN' : (h.doc_tipo === 'NC' ? '💳 A CRÉDITO' : '✅ COMPRADO')}
                                     </td>
                                     <td style={{ padding: '8px', fontSize: '0.65rem', fontWeight: 'bold', color: '#64748b' }}>
                                       {h.tipo !== 'JUSTIFICACION' ? (h.proveedor_nombre || 'No asignado') : '-'}
@@ -1058,9 +1436,16 @@ const Compras = () => {
                                       {h.tipo === 'JUSTIFICACION' ? (
                                         <div style={{ fontStyle: 'italic', color: '#92400e' }}>Motivo: {h.motivo}</div>
                                       ) : (
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                                          <span style={{ fontSize: '0.65rem', backgroundColor: '#e2e8f0', padding: '2px 5px', borderRadius: '4px' }}>{h.metodo_pago}</span>
-                                          PROCESADO
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                                            <span style={{ fontSize: '0.65rem', backgroundColor: '#e2e8f0', padding: '2px 5px', borderRadius: '4px', fontWeight: 'bold' }}>{h.metodo_pago}</span>
+                                            <span style={{ fontSize: '0.7rem', fontWeight: '800', color: '#475569' }}>{h.doc_tipo}: {h.doc_numero}</span>
+                                          </div>
+                                          {h.fecha_pago && (
+                                            <div style={{ fontSize: '10px', color: '#16a34a', fontWeight: '700' }}>
+                                              📅 PAGADO EL: {new Date(h.fecha_pago).toLocaleDateString()}
+                                            </div>
+                                          )}
                                         </div>
                                       )}
                                     </td>
@@ -1076,13 +1461,24 @@ const Compras = () => {
                                     <td style={{ padding: '8px', textAlign: 'right', color: '#64748b' }}>{h.usuario_nombre}</td>
                                     <td style={{ padding: '8px', textAlign: 'center' }}>
                                       {(currentUser?.departamento?.includes('Compras') || currentUser?.esAdminReal) && (
-                                        <button
-                                          onClick={() => eliminarEntradaHistorial(f.id, idx)}
-                                          style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#ef4444' }}
-                                          title="Eliminar Registro"
-                                        >
-                                          🗑️
-                                        </button>
+                                        <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+                                          {(h.doc_tipo === 'NC' || h.metodo_pago?.includes('CRÉDITO')) && h.metodo_pago !== 'PAGADO (NC)' && (
+                                            <button
+                                              onClick={() => liquidarNC(f.id, idx)}
+                                              style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#0ea5e9' }}
+                                              title="Confirmar Pago NC"
+                                            >
+                                              💸
+                                            </button>
+                                          )}
+                                          <button
+                                            onClick={() => eliminarEntradaHistorial(f.id, idx)}
+                                            style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#ef4444' }}
+                                            title="Eliminar Registro"
+                                          >
+                                            🗑️
+                                          </button>
+                                        </div>
                                       )}
                                     </td>
                                   </tr>
@@ -1102,10 +1498,15 @@ const Compras = () => {
               <div style={{ backgroundColor: '#f8fafc', padding: '20px', borderRadius: '15px', border: '1px solid #e2e8f0' }}>
                 <h4 style={{ margin: '0 0 15px 0', fontSize: '0.9rem', color: '#1e293b' }}>🧾 Soporte de Documentos</h4>
                 <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap', marginBottom: '20px' }}>
-                  {facturasUrls.map((url, idx) => {
+                  {facturasUrls.filter(item => {
+                    const url = typeof item === 'string' ? item : item?.url;
+                    return url && url.length > 5; // Evitara strings vacíos o corruptos
+                  }).map((item, idx) => {
+                    const url = typeof item === 'string' ? item : item.url;
+                    const etiqueta = typeof item === 'string' ? 'Archivo' : item.etiqueta;
                     const isImg = /\.(jpg|jpeg|png|webp|avif|gif)$/i.test(url.split('?')[0]);
                     return (
-                      <div key={idx} style={{ position: 'relative', group: 'true' }}>
+                      <div key={idx} style={{ position: 'relative', display: 'flex', flexDirection: 'column', gap: '5px' }}>
                         <a href={url} target="_blank" rel="noreferrer" style={{
                           display: 'block',
                           width: '80px', height: '80px',
@@ -1126,10 +1527,16 @@ const Compras = () => {
                               backgroundColor: '#f8fafc', color: '#ef4444'
                             }}>
                               <FileText size={32} />
-                              <span style={{ fontSize: '0.5rem', fontWeight: 'bold', marginTop: '4px', color: '#64748b' }}>PDF</span>
                             </div>
                           )}
                         </a>
+                        <button 
+                          onClick={() => eliminarSoporteReal(idx, url)}
+                          style={{ position: 'absolute', top: '-8px', right: '-8px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '50%', width: '22px', height: '22px', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 4px rgba(0,0,0,0.2)', fontWeight: 'bold', zIndex: 10 }}
+                          title="Eliminar Soporte Definitivamente"
+                        >
+                          X
+                        </button>
                       </div>
                     );
                   })}
@@ -1142,9 +1549,20 @@ const Compras = () => {
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+                <div className="financial-summary-grid">
+                  <div className="financial-item">
+                    <span className="financial-label">Facturado (Pagado/FAC)</span>
+                    <span className="financial-val" style={{ color: '#16a34a' }}>$ {montoPagadoF.toLocaleString('de-DE')}</span>
+                  </div>
+                  <div className="financial-item">
+                    <span className="financial-label">Nota de Crédito (CRÉDITO)</span>
+                    <span className="financial-val" style={{ color: '#f59e0b' }}>$ {montoPendienteNE.toLocaleString('de-DE')}</span>
+                  </div>
+                </div>
+
                 <div className="totals-container" style={{ width: '100%' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                    <span className="stat-label" style={{ fontSize: '1rem' }}>SUB-TOTAL:</span>
+                    <span className="stat-label" style={{ fontSize: '1rem' }}>SUB-TOTAL ($ / BS):</span>
                     <span style={{ fontWeight: 'bold', fontSize: '1.4rem' }}>$ {subTotalCalculado.toLocaleString('de-DE')}</span>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '2px solid #e2e8f0', paddingTop: '10px' }}>
@@ -1153,9 +1571,11 @@ const Compras = () => {
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: '12px', marginTop: '25px' }}>
-
                   <button className="btn-tc btn-tc-secondary" onClick={() => setShowModal(false)} style={{ padding: '12px 25px' }}>Cancelar</button>
-                  <button className="btn-tc btn-tc-primary" onClick={guardarCambiosProcesamiento} disabled={loading} style={{ padding: '12px 30px' }}>
+                  <button className="btn-tc btn-tc-dark" onClick={() => guardarCambiosProcesamiento(true)} disabled={loading} style={{ padding: '12px 25px' }}>
+                    {loading ? <Loader2 className="animate-spin" size={16} /> : 'Guardar Borrador'}
+                  </button>
+                  <button className="btn-tc btn-tc-primary" onClick={() => guardarCambiosProcesamiento(false)} disabled={loading} style={{ padding: '12px 30px' }}>
                     {loading ? <Loader2 className="animate-spin" size={16} /> : 'Actualizar'}
                   </button>
                 </div>

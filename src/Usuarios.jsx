@@ -1,5 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
+import { createClient } from '@supabase/supabase-js';
+import { 
+  Eye, EyeOff, UserPlus, Save, X, Shield, Trash2, UserCircle, 
+  Settings, ShieldCheck, Layout, Activity 
+} from 'lucide-react';
+import toast from 'react-hot-toast';
 
 const Usuarios = () => {
   const [usuarios, setUsuarios] = useState([]);
@@ -10,99 +16,99 @@ const Usuarios = () => {
   const [filtroCargo, setFiltroCargo] = useState('Todos');
   const [showModal, setShowModal] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
-  const [uploading, setUploading] = useState(false);
+  const [verPassword, setVerPassword] = useState(false);
+  const [gerencias, setGerencias] = useState([]);
+  const [centrosCosto, setCentrosCosto] = useState([]);
+  const [cargos, setCargos] = useState([]);
+  const [tabActiva, setTabActiva] = useState('general');
+
+  // Cliente de administración para gestionar usuarios sin cerrar sesión ni sobrescribir claves
+  const adminClient = createClient(
+    import.meta.env.VITE_SUPABASE_URL,
+    import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY,
+    { auth: { autoRefreshToken: false, persistSession: false } }
+  );
+
   const [formData, setFormData] = useState({ 
     id: null, nombre: '', apellido: '', correo: '', 
-    rol: '', departamento: '', firma_url: '',
-    foto_url: '', // Nueva columna
-    contrato: '', // Nuevo campo solicitado
-    activo: true, // Nuevo estado para baja lógica
+    rol: '', departamento: '', gerencia_id: '', 
+    foto_url: '', contrato: '', activo: true,
     password: '', 
-    current_password_display: '' 
+    permisos_modulos: ["requisiciones", "fondos", "tickets", "usuarios"],
+    capacidades: {}
   });
 
+  const MODULOS_DISPONIBLES = [
+    { id: 'requisiciones', label: 'Requisiciones' },
+    { id: 'fondos', label: 'Solicitud de Fondos' },
+    { id: 'tickets', label: 'Ticket de Pago' },
+    { id: 'compras', label: 'Compras' },
+    { id: 'reportes', label: 'Reporte de Compras' },
+    { id: 'proveedores', label: 'Proveedores' },
+    { id: 'usuarios', label: 'Gestión de Usuarios' },
+    { id: 'administracion', label: 'Administración' }
+  ];
+
   const ADMIN_EMAIL = 'jcontreras.totalclean@gmail.com';
-  const CARGOS = ["Gerente General", "Gerente", "Coordinador", "Analista"];
-  const DEPARTAMENTOS = [
-    "Mantenimiento", "Estimación y Control Interno", "Operaciones", "Seguridad",
-    "Recursos Humanos", "Almacén", "Administración Maracaibo",
-    "Administración El Tigre", "Contabilidad", "Servicios Generales",
-    "Compras"
+
+
+  const CAPACIDADES_DISPONIBLES = [
+    { id: 'ver_global', label: 'Ver Historial Global', desc: 'Acceso a todas las sedes' },
+    { id: 'ver_departamento', label: 'Ver Historial de Depto.', desc: 'Acceso a su propio departamento' },
+    { id: 'puede_aprobar_area', label: 'Aprobación Nivel 1', desc: 'Gerente de Área' },
+    { id: 'puede_aprobar_final', label: 'Aprobación Nivel 2', desc: 'Gerencia General' },
+    { id: 'gestionar_usuarios', label: 'Gestión de Usuarios', desc: 'Crear/Editar personal' },
+    { id: 'acceso_compras', label: 'Módulo de Compras', desc: 'Procesamiento de órdenes' },
+    { id: 'gestionar_atributos', label: 'Configuración de Atributos', desc: 'Listas maestras' }
   ];
 
-  const CENTROS_COSTO = [
-    "MTTO MAYOR-BOSCAN", "MTTO MAYOR-BAJO GRANDE", "EXCELENCIA OPERACIONAL",
-    "CAMIONES DE VACÍO-BOSCAN", "CAMIONES DE VACÍO-BAJO G.", "PROYECTOS MENORES",
-    "SUCURSAL EL TIGRE", "OFICINA PRINCIPAL MCBO", "INVERSIONES Y OTROS"
-  ];
-
-  useEffect(() => {
-    let resultado = usuarios.filter(u => {
-      const nombreCompleto = `${u.nombre} ${u.apellido}`.toLowerCase();
-      const coincideNombre = nombreCompleto.includes(busqueda.toLowerCase());
-      const coincideDpto = filtroDpto === 'Todos' || u.departamento === filtroDpto;
-      const coincideCargo = filtroCargo === 'Todos' || u.rol === filtroCargo;
-      return coincideNombre && coincideDpto && coincideCargo;
-    });
-    setUsuariosFiltrados(resultado);
-  }, [busqueda, filtroDpto, filtroCargo, usuarios]);
-
-  const subirFirma = async (event) => {
+  const obtenerMaestros = async () => {
     try {
-      setUploading(true);
-      const file = event.target.files[0];
-      if (!file) return;
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${formData.correo.split('@')[0]}_firma_${Math.random()}.${fileExt}`;
-      let { error: uploadError } = await supabase.storage.from('firmas').upload(fileName, file, { upsert: true });
-      if (uploadError) throw uploadError;
-      const { data } = supabase.storage.from('firmas').getPublicUrl(fileName);
-      setFormData({ ...formData, firma_url: data.publicUrl });
-      alert("Firma cargada con éxito.");
-    } catch (error) {
-      alert('Error: ' + error.message);
-    } finally {
-      setUploading(false);
-    }
-  };
+      const { data: g } = await adminClient.from('cat_gerencias').select('*').order('nombre');
+      if (g) setGerencias(g);
 
-  const subirFoto = async (event) => {
-    try {
-      setUploading(true);
-      const file = event.target.files[0];
-      if (!file) return;
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${formData.correo.split('@')[0]}_foto_${Math.random()}.${fileExt}`;
-      let { error: uploadError } = await supabase.storage.from('avatars').upload(fileName, file, { upsert: true });
-      if (uploadError) throw uploadError;
-      const { data } = supabase.storage.from('avatars').getPublicUrl(fileName);
-      setFormData({ ...formData, foto_url: data.publicUrl });
-      alert("Foto de perfil cargada con éxito.");
-    } catch (error) {
-      alert('Error: ' + error.message);
-    } finally {
-      setUploading(false);
+      const { data: cc } = await supabase.from('maestros_centros_costo').select('*').eq('activo', true).order('nombre');
+      if (cc) setCentrosCosto(cc);
+
+      const { data: cr } = await supabase.from('cat_cargos').select('*').eq('activo', true).order('nivel');
+      if (cr) setCargos(cr);
+    } catch (e) {
+      console.error("Error cargando maestros:", e);
     }
   };
 
   const obtenerUsuarios = async () => {
     setLoading(true);
-    const { data: { session } } = await supabase.auth.getSession();
-    const userEmail = session?.user?.email;
-    const { data, error } = await supabase.from('perfiles').select('*').order('apellido', { ascending: true });
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const userEmail = session?.user?.email;
+      const { data, error } = await supabase.from('perfiles').select('*').order('apellido', { ascending: true });
 
-    if (!error) {
-      const miPerfil = data.find(u => u.correo === userEmail);
-      const esAdminReal = userEmail === ADMIN_EMAIL;
-      setCurrentUser({ ...miPerfil, esAdminReal });
-      const lista = (esAdminReal || miPerfil?.rol === 'Gerente General') ? data : data.filter(u => u.departamento === miPerfil?.departamento);
-      setUsuarios(lista);
+      if (!error) {
+        const miPerfil = data.find(u => u.correo === userEmail);
+        const esAdminReal = userEmail === ADMIN_EMAIL;
+        setCurrentUser({ ...miPerfil, esAdminReal });
+        const lista = (esAdminReal || miPerfil?.rol === 'Gerente General') ? data : data.filter(u => u.departamento === miPerfil?.departamento);
+        
+        // Mapeo dinámico para rellenar gerencia_id basado en el nombre del departamento si está vacío
+        const listaConIDs = lista.map(u => {
+          if (u.gerencia_id) return u;
+          const matchingG = gerencias.find(g => g.nombre === u.departamento);
+          return { ...u, gerencia_id: matchingG?.id || '' };
+        });
+
+        setUsuarios(listaConIDs);
+      }
+    } catch (e) {
+      console.error("Error cargando usuarios:", e);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
-  useEffect(() => { 
+  useEffect(() => {
     obtenerUsuarios(); 
+    obtenerMaestros();
     const style = document.createElement('style');
     style.innerHTML = `
       @keyframes slideUp { from { opacity: 0; transform: translateY(15px); } to { opacity: 1; transform: translateY(0); } }
@@ -112,7 +118,6 @@ const Usuarios = () => {
       .input-style:focus { border-color: #0ea5e9; box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.1); }
       .btn-primary { background: #0ea5e9; color: white; border: none; padding: 10px 20px; border-radius: 12px; font-weight: 600; cursor: pointer; transition: 0.2s; }
       .btn-primary:hover { background: #0284c7; transform: translateY(-1px); }
-      
       .stat-card-new { 
         background: white; padding: 20px; border-radius: 16px; 
         box-shadow: 0 2px 10px rgba(0,0,0,0.03); flex: 1; min-width: 200px; 
@@ -121,130 +126,166 @@ const Usuarios = () => {
       .stat-card-new::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 5px; }
       .stat-total::before { background-color: #0ea5e9; }
       .stat-gerente::before { background-color: #f59e0b; }
-      .stat-coord::before { background-color: #10b981; }
     `;
     document.head.appendChild(style);
   }, []);
 
+  // Efecto para heredar permisos cuando cambia el cargo
+  useEffect(() => {
+    if (!formData.id && formData.rol) { // Solo si es nuevo usuario
+      const r = cargos.find(c => c.nombre === formData.rol);
+      if (r && r.permisos_default) {
+        let sugeridos = ['requisiciones', 'fondos', 'tickets']; // Básicos
+        if (r.permisos_default.gestionar_usuarios) sugeridos.push('usuarios');
+        if (r.permisos_default.acceso_compras) sugeridos.push('compras', 'reportes', 'proveedores');
+        if (r.permisos_default.gestionar_atributos) sugeridos.push('administracion');
+        
+        setFormData(prev => ({
+          ...prev, 
+          permisos_modulos: [...new Set(sugeridos)],
+          capacidades: r.permisos_default || {}
+        }));
+      }
+    }
+  }, [formData.rol, cargos]);
+
+  useEffect(() => {
+    let resultado = usuarios.filter(u => {
+      const nombreCompleto = `${u.nombre} ${u.apellido}`.toLowerCase();
+      const coincideNombre = nombreCompleto.includes(busqueda.toLowerCase());
+      const coincideDepto = filtroDpto === 'Todos' || u.departamento === filtroDpto;
+      const coincideCargo = filtroCargo === 'Todos' || u.rol === filtroCargo;
+      return coincideNombre && coincideDepto && coincideCargo;
+    });
+    setUsuariosFiltrados(resultado);
+  }, [busqueda, filtroDpto, filtroCargo, usuarios]);
+
   const guardarUsuario = async () => {
-    if (!currentUser?.esAdminReal) return;
-    if(!formData.rol || !formData.departamento) return alert("Asigne Cargo y Departamento.");
+    if (!currentUser?.esAdminReal && currentUser?.rol !== 'Gerente General') return;
+    if(!formData.rol || !formData.gerencia_id) return toast.error("Asigne Cargo y Gerencia.");
+    
     setLoading(true);
     try {
-      const { password, current_password_display, ...datosPerfil } = formData;
+      const { password, ...datosRestantes } = formData;
+      const gerenciaObj = gerencias.find(g => g.id === formData.gerencia_id);
+      
+      const payload = {
+        ...datosRestantes,
+        departamento: gerenciaObj?.nombre || formData.departamento,
+        activo: formData.activo !== false,
+        gerencia_id: formData.gerencia_id
+      };
+
       if (formData.id) {
         if (password && password.length >= 6) {
-           await supabase.auth.updateUser({ password: password });
+           const { error: authError } = await adminClient.auth.admin.updateUserById(formData.id, { password: password });
+           if (authError) throw new Error("Error en Auth: " + authError.message);
+           toast.success("Contraseña actualizada");
         }
-        const { error } = await supabase.from('perfiles').update({ ...datosPerfil, activo: formData.activo }).eq('id', formData.id);
-        if (error) throw error;
+        const { error } = await supabase.from('perfiles').update(payload).eq('id', formData.id);
+        if (error) {
+            if (error.code === '42703') { // Columna no existe en DB
+                const { gerencia_id, ...payloadSafe } = payload;
+                const { error: retryError } = await supabase.from('perfiles').update(payloadSafe).eq('id', formData.id);
+                if (retryError) throw retryError;
+            } else throw error;
+        }
+        toast.success("Perfil actualizado con éxito");
       } else {
-        const { data: authData, error: authError } = await supabase.auth.signUp({ 
+        const { data: authData, error: authError } = await adminClient.auth.admin.createUser({ 
           email: formData.correo, 
-          password: password || '123456' 
+          password: password || '123456',
+          email_confirm: true 
         });
         if (authError) throw authError;
-        await supabase.from('perfiles').insert([{ ...datosPerfil, id: authData.user.id, activo: true }]);
+
+        const { error: profileError } = await supabase.from('perfiles').insert([{ 
+          ...payload, id: authData.user.id 
+        }]);
+        if (profileError) {
+             if (profileError.code === '42703') {
+                const { gerencia_id, ...payloadSafe } = payload;
+                const { error: retryError } = await supabase.from('perfiles').insert([{ ...payloadSafe, id: authData.user.id }]);
+                if (retryError) throw retryError;
+             } else throw profileError;
+        }
+        toast.success("Usuario creado exitosamente");
       }
-      alert("Guardado exitosamente.");
+
       obtenerUsuarios();
       setShowModal(false);
-    } catch (err) { alert(err.message); } finally { setLoading(false); }
+      setFormData({ 
+        id: null, nombre: '', apellido: '', correo: '', rol: '', departamento: '', gerencia_id: '',
+        foto_url: '', contrato: '', activo: true, password: '', 
+        permisos_modulos: ["requisiciones", "fondos", "tickets", "usuarios"],
+        capacidades: {}
+      });
+      setVerPassword(false);
+      setTabActiva('general');
+    } catch (err) { toast.error(err.message); } finally { setLoading(false); }
+  };
+
+  const eliminarUsuarioTotal = async (id, correo) => {
+    if (!currentUser?.esAdminReal) return;
+    if (!window.confirm(`¿PELIGRO! Esta acción eliminará PERMANENTEMENTE a ${correo} de todo el sistema. Esta acción no se puede deshacer. ¿Deseas continuar?`)) return;
+
+    setLoading(true);
+    try {
+      const { error: authError } = await adminClient.auth.admin.deleteUser(id);
+      if (authError) throw new Error("Error eliminando acceso: " + authError.message);
+      const { error } = await supabase.from('perfiles').delete().eq('id', id);
+      if (error) throw error;
+      toast.success("Usuario eliminado definitivamente");
+      obtenerUsuarios();
+    } catch (e) { toast.error(e.message); } finally { setLoading(false); }
   };
 
   const estilos = {
-    contenedor: { padding: '30px', backgroundColor: '#f8fafc', minHeight: '100vh', fontFamily: "'Plus Jakarta Sans', sans-serif" },
-    tarjeta: { backgroundColor: 'white', padding: '30px', borderRadius: '24px', boxShadow: '0 10px 25px -5px rgba(0,0,0,0.05)' },
-    th: { textAlign: 'left', padding: '16px', color: '#94a3b8', fontSize: '0.7rem', fontWeight: 'bold', textTransform: 'uppercase', borderBottom: '1px solid #f1f5f9' },
+    contenedor: { padding: '30px', backgroundColor: '#f8fafc', minHeight: '100vh', fontFamily: "'Outfit', sans-serif" },
+    tarjeta: { backgroundColor: 'white', padding: '30px', borderRadius: '30px', boxShadow: '0 10px 40px rgba(0,0,0,0.04)', border: '1px solid #f1f5f9' },
+    modalOverlay: { position: 'fixed', inset: 0, backgroundColor: 'rgba(15, 23, 42, 0.6)', backdropFilter: 'blur(8px)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 2000 },
+    modalContent: { backgroundColor: 'white', width: '900px', maxWidth: '95vw', borderRadius: '32px', overflow: 'hidden', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)', animation: 'slideUp 0.3s ease-out' },
+    panelLeft: { padding: '40px', borderRight: '1px solid #f1f5f9' },
+    panelRight: { padding: '40px', backgroundColor: '#f8fafc' },
+    th: { textAlign: 'left', padding: '16px', color: '#64748b', fontSize: '0.7rem', fontWeight: 'bold', textTransform: 'uppercase', borderBottom: '1px solid #f1f5f9' },
     td: { padding: '16px', borderBottom: '1px solid #f1f5f9', fontSize: '0.85rem', color: '#1e293b' },
-    badge: (rol) => {
-      let colors = { bg: '#f1f5f9', text: '#475569' };
-      if (rol === 'Gerente General') colors = { bg: '#fff7ed', text: '#c2410c' };
-      if (rol === 'Gerente') colors = { bg: '#f0fdf4', text: '#15803d' };
-      if (rol === 'Coordinador') colors = { bg: '#f0f9ff', text: '#0369a1' };
-      if (rol === 'Analista') colors = { bg: '#f5f3ff', text: '#7c3aed' };
-      return { padding: '5px 12px', borderRadius: '10px', fontSize: '0.75rem', fontWeight: '600', backgroundColor: colors.bg, color: colors.text };
-    },
-    statusBadge: (activo) => ({
-      padding: '4px 10px', borderRadius: '8px', fontSize: '0.7rem', fontWeight: 'bold',
-      backgroundColor: activo ? '#f0fdf4' : '#fef2f2',
-      color: activo ? '#15803d' : '#ef4444',
-      border: `1px solid ${activo ? '#bcf7d9' : '#fecaca'}`
-    })
+    badge: (rol) => ({ padding: '5px 12px', borderRadius: '10px', fontSize: '0.75rem', fontWeight: '600', backgroundColor: rol?.includes('Gerente') ? '#eff6ff' : '#f1f5f9', color: rol?.includes('Gerente') ? '#3b82f6' : '#64748b' }),
+    tab: (active) => ({ flex: 1, padding: '15px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', cursor: 'pointer', borderBottom: active ? '3px solid #3b82f6' : '3px solid transparent', backgroundColor: active ? '#f8fafc' : 'white', transition: '0.3s', color: active ? '#3b82f6' : '#94a3b8', fontWeight: active ? 'bold' : 'normal' }),
   };
 
   return (
     <div className="animate-main" style={estilos.contenedor}>
-      
-      <div style={{ display: 'flex', gap: '20px', marginBottom: '25px', flexWrap: 'wrap', justifyContent: 'space-between' }}>
+      <div style={{ display: 'flex', gap: '20px', marginBottom: '25px', flexWrap: 'wrap' }}>
         <div className="stat-card-new stat-total">
-          <div style={{ fontSize: '0.7rem', color: '#94a3b8', fontWeight: '800', textTransform: 'uppercase', marginBottom: '5px' }}>Personal Total</div>
+          <div style={{ fontSize: '0.7rem', color: '#94a3b8', fontWeight: '800', textTransform: 'uppercase' }}>Personal Total</div>
           <div style={{ fontSize: '1.8rem', fontWeight: '800', color: '#1e293b' }}>{usuariosFiltrados.length}</div>
         </div>
         <div className="stat-card-new stat-gerente">
-          <div style={{ fontSize: '0.7rem', color: '#f59e0b', fontWeight: '800', textTransform: 'uppercase', marginBottom: '5px' }}>Gerencia</div>
-          <div style={{ fontSize: '1.8rem', fontWeight: '800', color: '#1e293b' }}>
-            {usuariosFiltrados.filter(u => u.rol?.includes('Gerente')).length}
-          </div>
-        </div>
-        <div className="stat-card-new stat-coord">
-          <div style={{ fontSize: '0.7rem', color: '#10b981', fontWeight: '800', textTransform: 'uppercase', marginBottom: '5px' }}>Coordinación</div>
-          <div style={{ fontSize: '1.8rem', fontWeight: '800', color: '#1e293b' }}>
-            {usuariosFiltrados.filter(u => u.rol === 'Coordinador').length}
-          </div>
+          <div style={{ fontSize: '0.7rem', color: '#f59e0b', fontWeight: '800', textTransform: 'uppercase' }}>Departamentos</div>
+          <div style={{ fontSize: '1.8rem', fontWeight: '800', color: '#1e293b' }}>{usuariosFiltrados.filter(u => u.rol?.includes('Gerente')).length}</div>
         </div>
       </div>
 
       <div style={estilos.tarjeta}>
-        <div style={{ marginBottom: '30px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-            <h2 style={{ fontSize: '1.4rem', color: '#0f172a', margin: 0 }}>Gestión de Usuarios</h2>
-            {currentUser?.esAdminReal && (
-              <button className="btn-primary" onClick={() => { setFormData({id:null, nombre:'', apellido:'', correo:'', rol:'', departamento:'', contrato:'', activo: true, firma_url:'', password: '', current_password_display: ''}); setShowModal(true); }}>
-                + Nuevo Integrante
-              </button>
-            )}
-          </div>
-          
-          <div style={{
-            display: 'flex',
-            gap: '15px',
-            backgroundColor: '#f8fafc',
-            padding: '12px',
-            borderRadius: '12px',
-            border: '1px solid #e2e8f0'
-          }}>
-            <div style={{ flex: 1, position: 'relative' }}>
-              <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }}>🔍</span>
-              <input
-                className="input-style"
-                style={{ width: '100%', paddingLeft: '35px', margin: 0, backgroundColor: 'white', boxSizing: 'border-box' }}
-                placeholder="Buscar por nombre..."
-                value={busqueda}
-                onChange={(e) => setBusqueda(e.target.value)}
-              />
-            </div>
-            
-            <select
-              className="input-style"
-              style={{ flex: 1, margin: 0, backgroundColor: 'white' }}
-              value={filtroDpto}
-              onChange={(e) => setFiltroDpto(e.target.value)}
-            >
-              <option value="Todos">Todos los Departamentos</option>
-              {DEPARTAMENTOS.map(d => <option key={d} value={d}>{d}</option>)}
-            </select>
-            
-            <select
-              className="input-style"
-              style={{ flex: 1, margin: 0, backgroundColor: 'white' }}
-              value={filtroCargo}
-              onChange={(e) => setFiltroCargo(e.target.value)}
-            >
-              <option value="Todos">Todos los Cargos</option>
-              {CARGOS.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
-          </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '25px' }}>
+          <h2 style={{ fontSize: '1.4rem', color: '#0f172a', margin: 0 }}>Gestión de Usuarios</h2>
+          {(currentUser?.esAdminReal || currentUser?.rol === 'Gerente General') && (
+            <button className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '8px' }} onClick={() => { setFormData({id:null, nombre:'', apellido:'', correo:'', rol:'', departamento:'', gerencia_id:'', contrato:'', activo: true, foto_url:'', password: '', permisos_modulos: ["requisiciones", "fondos", "tickets", "usuarios"], capacidades: {}}); setShowModal(true); }}>
+              <UserPlus size={18} /> Nuevo Integrante
+            </button>
+          )}
+        </div>
+
+        <div style={{ display: 'flex', gap: '15px', backgroundColor: '#f8fafc', padding: '12px', borderRadius: '12px', marginBottom: '25px' }}>
+          <input className="input-style" style={{ flex: 2 }} placeholder="Buscar por nombre..." value={busqueda} onChange={e => setBusqueda(e.target.value)} />
+          <select className="input-style" style={{ flex: 1 }} value={filtroDpto} onChange={e => setFiltroDpto(e.target.value)}>
+            <option value="Todos">Todos los Departamentos</option>
+            {gerencias.map(g => <option key={g.id} value={g.nombre}>{g.nombre}</option>)}
+          </select>
+          <select className="input-style" style={{ flex: 1 }} value={filtroCargo} onChange={e => setFiltroCargo(e.target.value)}>
+            <option value="Todos">Todos los Cargos</option>
+            {cargos.map(c => <option key={c.id} value={c.nombre}>{c.nombre}</option>)}
+          </select>
         </div>
 
         <div style={{ overflowX: 'auto' }}>
@@ -254,8 +295,8 @@ const Usuarios = () => {
                 <th style={estilos.th}>Colaborador</th>
                 <th style={estilos.th}>Cargo</th>
                 <th style={estilos.th}>Departamento</th>
-                <th style={estilos.th}>Contrato</th>
-                <th style={estilos.th}>Estado</th>
+                <th style={estilos.th}>Atribuciones</th>
+                <th style={estilos.th}>C. Costo</th>
                 <th style={estilos.th}>Acciones</th>
               </tr>
             </thead>
@@ -263,51 +304,52 @@ const Usuarios = () => {
               {usuariosFiltrados.map(u => (
                 <tr key={u.id} className="row-hover">
                   <td style={estilos.td}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-                      <div style={{ 
-                        width: '40px', height: '40px', borderRadius: '50%', backgroundColor: '#f1f5f9', 
-                        overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        boxShadow: '0 2px 4px rgba(0,0,0,0.05)', border: '1px solid #e2e8f0'
-                      }}>
-                        {u.foto_url ? (
-                          <img src={u.foto_url} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                        ) : (
-                          <span style={{ fontSize: '1rem', fontWeight: 'bold', color: '#94a3b8' }}>{u.nombre?.[0]}{u.apellido?.[0]}</span>
-                        )}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <div style={{ width: '40px', height: '40px', borderRadius: '50%', backgroundColor: '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+                        {u.foto_url ? <img src={u.foto_url} style={{ width: '100%' }} /> : <UserCircle color="#cbd5e1" />}
                       </div>
                       <div>
                         <div style={{ fontWeight: 'bold' }}>{u.nombre} {u.apellido}</div>
-                        <div style={{ fontSize: '0.75rem', color: '#64748b' }}>{u.correo}</div>
+                        <div style={{ fontSize: '0.7rem', color: '#64748b' }}>{u.correo}</div>
                       </div>
                     </div>
                   </td>
-                  <td style={estilos.td}><span style={estilos.badge(u.rol)}>{u.rol || 'Sin Cargo'}</span></td>
-                  <td style={estilos.td}><span style={{ color: '#64748b' }}>{u.departamento || 'Sin asignar'}</span></td>
-                  <td style={estilos.td}><span style={{ color: '#0ea5e9', fontWeight: 'bold' }}>{u.contrato || 'N/A'}</span></td>
+                  <td style={estilos.td}><span style={estilos.badge(u.rol)}>{u.rol}</span></td>
+                  <td style={estilos.td}>{u.departamento || 'Sin asignar'}</td>
                   <td style={estilos.td}>
-                    <span style={estilos.statusBadge(u.activo !== false)}>
-                      {u.activo !== false ? 'ACTIVO' : 'INACTIVO'}
-                    </span>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', maxWidth: '300px' }}>
+                      {/* Capacidades Especiales */}
+                      {CAPACIDADES_DISPONIBLES.filter(p => u.capacidades?.[p.id]).map(p => (
+                        <span key={p.id} style={{ fontSize: '0.6rem', backgroundColor: '#f0fdf4', color: '#16a34a', padding: '2px 8px', borderRadius: '6px', fontWeight: 'bold', border: '1px solid #dcfce7' }}>
+                          {p.label}
+                        </span>
+                      ))}
+                      {/* Resumen de Módulos (si son muchos, mostramos contador) */}
+                      {u.permisos_modulos?.length > 0 && (
+                        <span style={{ fontSize: '0.6rem', backgroundColor: '#eff6ff', color: '#3b82f6', padding: '2px 8px', borderRadius: '6px', fontWeight: 'bold', border: '1px solid #dbeafe' }}>
+                          {u.permisos_modulos.length} Módulos
+                        </span>
+                      )}
+                      {!u.permisos_modulos?.length && !Object.values(u.capacidades || {}).some(v => v) && (
+                        <span style={{ fontSize: '0.65rem', color: '#94a3b8', fontStyle: 'italic' }}>Sin atribuciones</span>
+                      )}
+                    </div>
                   </td>
+                  <td style={estilos.td}><span style={{ color: '#0ea5e9', fontWeight: 'bold' }}>{u.contrato}</span></td>
                   <td style={estilos.td}>
-                    {currentUser?.esAdminReal ? (
-                      <div style={{ display: 'flex', gap: '10px' }}>
-                        <button onClick={() => { setFormData({...u, password: '', current_password_display: u.password || '---', activo: u.activo !== false}); setShowModal(true); }} style={{ color: '#0ea5e9', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.8rem' }}>Editar</button>
-                        <button 
-                          onClick={async () => {
-                            const nuevoEstado = u.activo === false;
-                            const { error } = await supabase.from('perfiles').update({ activo: nuevoEstado }).eq('id', u.id);
-                            if (!error) {
-                              alert(`Usuario ${nuevoEstado ? 'activado' : 'desactivado'}.`);
-                              obtenerUsuarios();
-                            }
-                          }} 
-                          style={{ color: u.activo !== false ? '#ef4444' : '#22c55e', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.8rem' }}
-                        >
-                          {u.activo !== false ? 'Desactivar' : 'Activar'}
-                        </button>
-                      </div>
-                    ) : <span style={{color:'#cbd5e1', fontSize:'0.75rem'}}>Solo lectura</span>}
+                    <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                      <button onClick={() => { 
+                        setFormData({ 
+                          ...u, 
+                          password: '',
+                          capacidades: u.capacidades || {}
+                        });
+                        setVerPassword(false);
+                        setTabActiva('general');
+                        setShowModal(true); 
+                      }} style={{ color: '#0ea5e9', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>Editar</button>
+                      <Trash2 size={16} color="#ef4444" style={{ cursor: 'pointer' }} onClick={() => eliminarUsuarioTotal(u.id, u.correo)} />
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -317,112 +359,169 @@ const Usuarios = () => {
       </div>
 
       {showModal && (
-        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15, 23, 42, 0.4)', backdropFilter: 'blur(4px)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 2000 }}>
-          <div style={{ backgroundColor: 'white', padding: '35px', borderRadius: '28px', width: '500px', maxHeight: '90vh', overflowY: 'auto' }}>
-            <h3 style={{ marginTop: 0, marginBottom: '25px', color: '#0f172a' }}>{formData.id ? 'Editar Perfil' : 'Nuevo Registro'}</h3>
-            
-            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '25px' }}>
-              <div style={{ position: 'relative' }}>
-                <div style={{ 
-                  width: '90px', height: '90px', borderRadius: '18px', backgroundColor: '#f8fafc', 
-                  border: '2px dashed #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  overflow: 'hidden' 
-                }}>
-                  {formData.foto_url ? (
-                    <img src={formData.foto_url} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                  ) : (
-                    <span style={{ fontSize: '2rem', color: '#cbd5e1' }}>👤</span>
-                  )}
+        <div style={estilos.modalOverlay}>
+          <div style={estilos.modalContent}>
+            {/* Header del Modal */}
+            <div style={{ padding: '25px 40px', borderBottom: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+                <div style={{ width: '45px', height: '45px', borderRadius: '14px', backgroundColor: '#3b82f615', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#3b82f6' }}>
+                  <UserPlus size={24} />
                 </div>
-                <input type="file" id="p-foto" accept="image/*" onChange={subirFoto} style={{ display: 'none' }} />
-                <label 
-                  htmlFor="p-foto" 
-                  style={{ 
-                    position: 'absolute', bottom: '-8px', right: '-8px', backgroundColor: '#0ea5e9', 
-                    width: '32px', height: '32px', borderRadius: '10px', display: 'flex', 
-                    alignItems: 'center', justifyContent: 'center', color: 'white', cursor: 'pointer',
-                    boxShadow: '0 4px 6px rgba(0,0,0,0.1)', border: '2px solid white'
-                  }}
-                >
-                  📷
-                </label>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '1.2rem', color: '#1e293b' }}>{formData.id ? 'Editar Integrante' : 'Nuevo Integrante'}</h3>
+                  <p style={{ margin: 0, fontSize: '0.75rem', color: '#94a3b8' }}>Asegúrate de asignar los permisos y cargos correctamente.</p>
+                </div>
+              </div>
+              <button onClick={() => setShowModal(false)} style={{ border: 'none', background: '#f1f5f9', width: '32px', height: '32px', borderRadius: '8px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748b' }}>
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Tabs de Navegación */}
+            <div style={{ display: 'flex', borderBottom: '1px solid #f1f5f9' }}>
+              <div style={estilos.tab(tabActiva === 'general')} onClick={() => setTabActiva('general')}>
+                <Layout size={18} /> General
+              </div>
+              <div style={estilos.tab(tabActiva === 'modulos')} onClick={() => setTabActiva('modulos')}>
+                <Activity size={18} /> Módulos
+              </div>
+              <div style={estilos.tab(tabActiva === 'privilegios')} onClick={() => setTabActiva('privilegios')}>
+                <ShieldCheck size={18} /> Privilegios
               </div>
             </div>
 
-            {/* Información Personal */}
-            <div style={{ marginBottom: '20px' }}>
-              <label style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#64748b', display: 'block', marginBottom: '10px', textTransform: 'uppercase' }}>Información Personal</label>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginBottom: '15px' }}>
-                <input className="input-style" placeholder="Nombre" value={formData.nombre} onChange={e => setFormData({...formData, nombre: e.target.value})} />
-                <input className="input-style" placeholder="Apellido" value={formData.apellido} onChange={e => setFormData({...formData, apellido: e.target.value})} />
-              </div>
-              <input className="input-style" style={{ width: '94%' }} placeholder="Correo institucional" value={formData.correo} onChange={e => setFormData({...formData, correo: e.target.value})} />
-            </div>
-
-            {/* Asignación */}
-            <div style={{ marginBottom: '20px' }}>
-              <label style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#64748b', display: 'block', marginBottom: '10px', textTransform: 'uppercase' }}>Asignación de Cargo</label>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginBottom: '15px' }}>
-                <select className="input-style" value={formData.rol} onChange={e => setFormData({...formData, rol: e.target.value})}>
-                  <option value="">Cargo...</option>
-                  {CARGOS.map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
-                <select className="input-style" value={formData.departamento} onChange={e => setFormData({...formData, departamento: e.target.value})}>
-                  <option value="">Depto...</option>
-                  {DEPARTAMENTOS.map(d => <option key={d} value={d}>{d}</option>)}
-                </select>
-              </div>
-              <select className="input-style" style={{ width: '100%' }} value={formData.contrato} onChange={e => setFormData({...formData, contrato: e.target.value})}>
-                <option value="">Contrato (Centro de Costo)...</option>
-                {CENTROS_COSTO.map(cc => <option key={cc} value={cc}>{cc}</option>)}
-              </select>
-            </div>
-
-            {/* Seguridad */}
-            <div style={{ backgroundColor: '#f8fafc', padding: '15px', borderRadius: '16px', marginBottom: '20px' }}>
-              <label style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#64748b', display: 'block', marginBottom: '10px' }}>SEGURIDAD (CONTRASEÑA)</label>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
-                <input className="input-style" style={{ background: '#f1f5f9' }} readOnly value={formData.current_password_display} />
-                <input className="input-style" style={{ borderColor: '#0ea5e9' }} placeholder="Nueva clave" value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} />
-              </div>
-            </div>
-
-            {/* Firma Digital Dinámica */}
-            {(formData.rol?.includes('Gerente') || formData.rol === 'Gerente General') && (
-              <div style={{ marginBottom: '20px' }}>
-                <label style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#64748b', display: 'block', marginBottom: '10px' }}>FIRMA DIGITAL</label>
-                <div style={{ border: '2px dashed #e2e8f0', padding: '20px', borderRadius: '16px', textAlign: 'center', backgroundColor: '#f8fafc' }}>
-                  {formData.firma_url ? (
-                    <div style={{ marginBottom: '15px' }}>
-                      <img src={formData.firma_url} alt="Firma" style={{ maxHeight: '60px', filter: 'drop-shadow(0px 2px 4px rgba(0,0,0,0.1))' }} />
+            <div style={{ padding: '40px', maxHeight: '60vh', overflowY: 'auto' }}>
+              {tabActiva === 'general' && (
+                <div className="tab-content" style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '30px' }}>
+                  <div>
+                    <label style={{ fontSize: '0.65rem', fontWeight: '800', color: '#64748b', display: 'block', marginBottom: '10px' }}>INFORMACIÓN PERSONAL</label>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
+                      <input className="input-style" placeholder="Nombre" value={formData.nombre} onChange={e => setFormData({...formData, nombre: e.target.value})} />
+                      <input className="input-style" placeholder="Apellido" value={formData.apellido} onChange={e => setFormData({...formData, apellido: e.target.value})} />
                     </div>
-                  ) : (
-                    <div style={{ color: '#94a3b8', fontSize: '0.8rem', marginBottom: '10px' }}>Sin firma cargada</div>
-                  )}
-                  
-                  <input type="file" id="f-up" accept="image/png" onChange={subirFirma} style={{ display: 'none' }} />
-                  <label 
-                    htmlFor="f-up" 
-                    style={{ 
-                      color: formData.firma_url ? '#f59e0b' : '#0ea5e9', 
-                      cursor: 'pointer', 
-                      fontSize: '0.85rem', 
-                      fontWeight: '800',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '8px'
-                    }}
-                  >
-                    {uploading ? '⌛ Subiendo...' : (formData.firma_url ? '📁 Cambiar Firma (PNG)' : '📁 Cargar Firma Digital')}
-                  </label>
-                </div>
-              </div>
-            )}
+                    <input className="input-style" style={{ width: '100%', marginBottom: '25px' }} placeholder="Correo Electrónico" value={formData.correo} onChange={e => setFormData({...formData, correo: e.target.value})} />
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '10px' }}>
-              <button onClick={() => setShowModal(false)} style={{ background: 'none', border: 'none', color: '#64748b', fontWeight: '600', cursor: 'pointer' }}>Cancelar</button>
-              <button onClick={guardarUsuario} disabled={loading} className="btn-primary">
-                {loading ? 'Procesando...' : (formData.id ? 'Actualizar' : 'Guardar Cambios')}
+                    <label style={{ fontSize: '0.65rem', fontWeight: '800', color: '#64748b', display: 'block', marginBottom: '10px' }}>ESTRUCTURA Y CARGO</label>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
+                      <select className="input-style" style={{ width: '100%' }} value={formData.rol} onChange={e => setFormData({...formData, rol: e.target.value})}>
+                        <option value="">Seleccione Cargo...</option>
+                        {cargos.map(c => <option key={c.id} value={c.nombre}>{c.nombre}</option>)}
+                      </select>
+                      <select className="input-style" value={formData.gerencia_id} onChange={e => setFormData({...formData, gerencia_id: e.target.value})}>
+                        <option value="">Departamento...</option>
+                        {gerencias.map(g => <option key={g.id} value={g.id}>{g.nombre}</option>)}
+                      </select>
+                    </div>
+
+                    <div style={{ marginTop: '20px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
+                        <label style={{ fontSize: '0.65rem', fontWeight: '800', color: '#64748b' }}>ACCESO AL SISTEMA</label>
+                        <span style={{ fontSize: '0.65rem', color: '#3b82f6', fontWeight: 'bold' }}>Seguridad</span>
+                      </div>
+                      <div style={{ position: 'relative' }}>
+                        <input type={verPassword ? "text" : "password"} className="input-style" style={{ width: '100%', boxSizing: 'border-box', border: '1.5px solid #3b82f6' }} placeholder={formData.id ? "Nueva contraseña" : "Contraseña inicial"} value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} />
+                        <div style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', cursor: 'pointer', color: '#94a3b8' }} onClick={() => setVerPassword(!verPassword)}>
+                          {verPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: '0.65rem', fontWeight: '800', color: '#64748b', display: 'block', marginBottom: '10px' }}>ASIGNACIÓN DE COSTOS</label>
+                    <select className="input-style" style={{ width: '100%' }} value={formData.contrato} onChange={e => setFormData({...formData, contrato: e.target.value})}>
+                      <option value="">Centro de Costo...</option>
+                      {centrosCosto.map(cc => <option key={cc.id} value={cc.nombre}>{cc.nombre}</option>)}
+                    </select>
+
+                    <div style={{ marginTop: '25px', padding: '20px', borderRadius: '15px', backgroundColor: '#f8fafc', border: '1.5px dashed #e2e8f0', textAlign: 'center' }}>
+                      <UserCircle size={40} color="#94a3b8" />
+                      <p style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '10px' }}>La foto de perfil se puede actualizar una vez registrado el usuario.</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {tabActiva === 'modulos' && (
+                <div className="tab-content">
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '15px' }}>
+                    {MODULOS_DISPONIBLES.map(m => (
+                      <label key={m.id} style={{ display: 'flex', alignItems: 'center', gap: '15px', padding: '15px 20px', backgroundColor: formData.permisos_modulos?.includes(m.id) ? '#eff6ff' : 'white', borderRadius: '16px', border: '1.5px solid', borderColor: formData.permisos_modulos?.includes(m.id) ? '#3b82f6' : '#e2e8f0', cursor: 'pointer', transition: '0.3s' }}>
+                        <div className={`custom-checkbox ${formData.permisos_modulos?.includes(m.id) ? 'checked' : ''}`} style={{ width: '20px', height: '20px' }}>
+                          <input type="checkbox" style={{ display: 'none' }} checked={formData.permisos_modulos?.includes(m.id)} onChange={(e) => {
+                            const list = formData.permisos_modulos || [];
+                            const updated = e.target.checked ? [...list, m.id] : list.filter(id => id !== m.id);
+                            setFormData({...formData, permisos_modulos: updated});
+                          }} />
+                          {formData.permisos_modulos?.includes(m.id) && <Shield size={12} color="white" />}
+                        </div>
+                        <span style={{ fontSize: '0.9rem', fontWeight: '700', color: '#1e293b' }}>{m.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {tabActiva === 'privilegios' && (
+                <div className="tab-content">
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '12px' }}>
+                    {CAPACIDADES_DISPONIBLES.map(p => (
+                      <div 
+                        key={p.id} 
+                        onClick={() => setFormData({
+                          ...formData, 
+                          capacidades: {
+                            ...formData.capacidades,
+                            [p.id]: !formData.capacidades?.[p.id]
+                          }
+                        })}
+                        style={{ 
+                          padding: '15px', 
+                          borderRadius: '16px', 
+                          border: '1.5px solid', 
+                          cursor: 'pointer',
+                          backgroundColor: formData.capacidades?.[p.id] ? '#f0fdf4' : 'white',
+                          borderColor: formData.capacidades?.[p.id] ? '#22c55e' : '#e2e8f0'
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                          <div className={`custom-checkbox ${formData.capacidades?.[p.id] ? 'checked' : ''}`} style={{ width: '18px', height: '18px', backgroundColor: formData.capacidades?.[p.id] ? '#22c55e' : '#e2e8f0' }}>
+                            {formData.capacidades?.[p.id] && <ShieldCheck size={12} color="white" />}
+                          </div>
+                          <div>
+                            <span style={{ fontSize: '0.85rem', fontWeight: '700', color: '#1e293b' }}>{p.label}</span>
+                            <p style={{ fontSize: '0.65rem', color: '#64748b', marginTop: '2px', margin: 0 }}>{p.desc}</p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ marginTop: '20px', padding: '15px', backgroundColor: '#fffbeb', borderRadius: '12px', border: '1px solid #fef3c7', color: '#92400e', fontSize: '0.75rem' }}>
+                    ⚠️ Los privilegios marcados en verde son los que el usuario tiene activos. Por defecto se cargan desde su cargo, pero puedes personalizarlos individualmente aquí.
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div style={{ padding: '25px 40px', background: '#f8fafc', borderTop: '1px solid #f1f5f9', display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+              <button onClick={() => setShowModal(false)} style={{ padding: '10px 20px', borderRadius: '10px', border: '1px solid #e2e8f0', background: 'white', color: '#64748b', fontWeight: 'bold', cursor: 'pointer' }}>Cerrar</button>
+              <button 
+                onClick={guardarUsuario} 
+                className="btn-primary" 
+                style={{ 
+                  padding: '10px 30px', 
+                  borderRadius: '12px', 
+                  backgroundColor: '#3b82f6', 
+                  color: 'white', 
+                  border: 'none', 
+                  fontWeight: 'bold', 
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '10px'
+                }}
+              >
+                <Save size={18} /> {formData.id ? 'Guardar Cambios' : 'Registrar'}
               </button>
             </div>
           </div>

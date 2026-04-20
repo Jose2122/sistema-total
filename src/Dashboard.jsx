@@ -8,8 +8,10 @@ import SolicitudFondos from './SolicitudFondos';
 import ModuloTicketsPago from './ModuloTicketsPago';
 import Compras from './Compras';
 import Reportes from './Reportes';
+import ReportesMaestro from './ReportesMaestro';
 import Proveedores from './Proveedores';
 import Administracion from './Administracion';
+import Atributos from './Atributos';
 
 function Dashboard() {
   const navigate = useNavigate();
@@ -254,60 +256,49 @@ function Dashboard() {
       fondos: { titulo: "Solicitud de Fondos", icon: "fa-wallet", color: "#22c55e" },
       tickets: { titulo: "Ticket de Pago", icon: "fa-ticket", color: "#f59e0b" },
       reportes: { titulo: "Centro de Reportes", icon: "fa-file-contract", color: "#0ea5e9" },
+      reportesmaestro: { titulo: "Centro de Reportes Maestro", icon: "fa-chart-line", color: "#6366f1" },
       reportestickets: { titulo: "Reporte de Tickets", icon: "fa-file-contract", color: "#f59e0b" },
       usuarios: { titulo: "Gestión de Usuarios", icon: "fa-users-gear", color: "#64748b" },
       administracion: { titulo: "Administración Central", icon: "fa-gears", color: "#8b5cf6" }
     };
 
     if (seccionActiva === 'requisiciones') return <Requisiciones />;
-    if (seccionActiva === 'usuarios') return <Usuarios />;
+    if (seccionActiva === 'usuarios') return <Usuarios currentUser={usuario} />;
     if (seccionActiva === 'fondos') return <SolicitudFondos />;
     if (seccionActiva === 'tickets') return <ModuloTicketsPago />;
     if (seccionActiva === 'compras') return <Compras />;
     if (seccionActiva === 'reportes') return <Reportes />;
+    if (seccionActiva === 'reportesmaestro') return <ReportesMaestro />;
     if (seccionActiva === 'proveedores') return <Proveedores />;
     if (seccionActiva === 'administracion') return <Administracion />;
-
-
-    const current = config[seccionActiva] || config.dashboard;
+    if (seccionActiva === 'atributos') return <Atributos />;
 
     return (
       <div className="animate-fade">
-        {seccionActiva === 'dashboard' && (
-          <div style={estilos.gridStats}>
-            <div style={estilos.miniCard('#0ea5e9')} className="stat-card">
-              <div><div style={{ fontSize: '0.75rem', color: '#64748b' }}>Requisiciones</div><div style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>0</div></div>
-              <div style={estilos.iconCircle('#e0f2fe')}><i className="fa-solid fa-file-invoice" style={{ color: '#0ea5e9' }}></i></div>
-            </div>
-            <div style={estilos.miniCard('#f59e0b')} className="stat-card">
-              <div><div style={{ fontSize: '0.75rem', color: '#64748b' }}>Stock Crítico</div><div style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>0</div></div>
-              <div style={estilos.iconCircle('#fef3c7')}><i className="fa-solid fa-triangle-exclamation" style={{ color: '#f59e0b' }}></i></div>
-            </div>
-            <div style={estilos.miniCard('#10b981')} className="stat-card">
-              <div><div style={{ fontSize: '0.75rem', color: '#64748b' }}>Disponibilidad</div><div style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>0</div></div>
-              <div style={estilos.iconCircle('#d1fae5')}><i className="fa-solid fa-check-double" style={{ color: '#10b981' }}></i></div>
-            </div>
-          </div>
-        )}
-
         <div style={estilos.card}>
-          <div style={{ display: 'flex', gap: '20px', alignItems: 'center', marginBottom: '25px' }}>
-            <div style={{ ...estilos.iconCircle(current.color), width: '55px', height: '55px', fontSize: '1.3rem' }}>
-              <i className={`fa-solid ${current.icon}`}></i>
-            </div>
-            <div>
-              <h3 style={{ margin: 0, color: '#1e293b' }}>{current.titulo}</h3>
-              <p style={{ margin: 0, color: '#64748b', fontSize: '0.85rem' }}>Sistema de Gestión SIS-REQUISICIONES</p>
-            </div>
-          </div>
           <div style={{ padding: '60px 20px', textAlign: 'center', border: '2px dashed #f1f5f9', borderRadius: '20px' }}>
-            <i className={`fa-solid ${current.icon}`} style={{ fontSize: '3.5rem', color: current.color, opacity: 0.15, marginBottom: '15px' }}></i>
-            <p style={{ color: '#000000ff' }}>Este Modulo Estará Activo Próximamente.  <br /><br /> {current.titulo}  en desarrollo.</p>
+            <p style={{ color: '#000000ff' }}>Bienvenido al Panel de Gestión SIS-REQUISICIONES. <br /><br /> Use el menú lateral para navegar.</p>
           </div>
         </div>
       </div>
     );
   };
+
+  // Protección de seguridad: si la sección activa no está permitida, reset a la primera permitida
+  useEffect(() => {
+    if (!usuario?.id) return;
+    const esAdmin = usuario?.correo === 'jcontreras.totalclean@gmail.com' || usuario?.correo === 'cvega.totalclean@gmail.com' || usuario?.esAdminReal;
+    if (esAdmin) return;
+
+    const modulosPermitidos = usuario?.permisos_modulos || [];
+    if (seccionActiva !== 'dashboard' && !modulosPermitidos.includes(seccionActiva)) {
+      if (modulosPermitidos.length > 0) {
+        setSeccionActiva(modulosPermitidos[0]);
+      } else {
+        setSeccionActiva('requisiciones'); // Fallback mínimo
+      }
+    }
+  }, [seccionActiva, usuario?.permisos_modulos]);
 
   if (cargando) return <div style={{ padding: '20px' }}>Iniciando SmartTC...</div>;
 
@@ -377,17 +368,26 @@ function Dashboard() {
         */}
 
         <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
-          {sidebarAbierto && (
+          {(usuario?.correo === 'jcontreras.totalclean@gmail.com' || 
+            usuario?.correo === 'cvega.totalclean@gmail.com' ||
+            usuario?.esAdminReal ||
+            usuario?.permisos_modulos?.some(p => ['compras', 'reportes', 'proveedores'].includes(p))) && sidebarAbierto && (
             <div style={{ fontSize: '0.65rem', fontWeight: 'bold', color: '#6d6f72ff', marginBottom: '10px', letterSpacing: '1px', textAlign: 'left', paddingLeft: '15px' }}>
               <i className="fa-solid fa-layer-group" style={{ marginRight: '6px' }}></i> COMPRAS
             </div>
           )}
           {[
             { id: 'compras', icon: 'fa-cart-plus', label: 'Compras' },
+            { id: 'reportesmaestro', icon: 'fa-chart-line', label: 'Reportes Maestro' },
             { id: 'reportes', icon: 'fa-file-contract', label: 'Reporte de Compras' },
             { id: 'proveedores', icon: 'fa-address-book', label: 'Proveedores' },
 
-          ].map(item => (
+          ].filter(item => 
+            usuario?.correo === 'jcontreras.totalclean@gmail.com' || 
+            usuario?.correo === 'cvega.totalclean@gmail.com' ||
+            usuario?.esAdminReal ||
+            usuario?.permisos_modulos?.includes(item.id)
+          ).map(item => (
             <div key={item.id} className="menu-item" style={{
               padding: '12px 10px', borderRadius: '10px', marginBottom: '8px', cursor: 'pointer', display: 'flex', 
               flexDirection: 'column', alignItems: 'center', gap: '4px',
@@ -420,9 +420,13 @@ function Dashboard() {
             { id: 'requisiciones', icon: 'fa-file-signature', label: 'Requisiciones' },
             { id: 'fondos', icon: 'fa-hand-holding-dollar', label: 'Solicitud de Fondos' },
             { id: 'tickets', icon: 'fa-ticket', label: 'Ticket de Pago' },
-            // { id: 'reportestickets', icon: 'fa-file-contract', label: 'Reporte de Tickets' },
 
-          ].map(item => (
+          ].filter(item => 
+            usuario?.correo === 'jcontreras.totalclean@gmail.com' || 
+            usuario?.correo === 'cvega.totalclean@gmail.com' ||
+            usuario?.esAdminReal ||
+            usuario?.permisos_modulos?.includes(item.id)
+          ).map(item => (
             <div key={item.id} className="menu-item" style={{
               padding: '12px 10px', borderRadius: '10px', marginBottom: '8px', cursor: 'pointer', display: 'flex', 
               flexDirection: 'column', alignItems: 'center', gap: '4px',
@@ -462,18 +466,38 @@ function Dashboard() {
               <i className="fa-solid fa-gears" style={{ marginRight: '6px' }}></i> CONFIGURACIÓN
             </div>
           )}
-          <div className="menu-item" style={{
-            padding: '12px 10px', borderRadius: '10px', marginBottom: '8px', cursor: 'pointer', display: 'flex',
-            flexDirection: 'column', alignItems: 'center', gap: '4px',
-            justifyContent: 'center',
-            backgroundColor: seccionActiva === 'usuarios' ? '#1e293b' : 'transparent',
-            color: seccionActiva === 'usuarios' ? '#38bdf8' : '#cbd5e1',
-            width: '90%',
-            transition: 'all 0.2s ease'
-          }} onClick={() => setSeccionActiva('usuarios')} title="Usuarios">
-            <i className="fa-solid fa-users" style={{ fontSize: '1.1rem' }}></i>
-            {sidebarAbierto && <span style={{ fontSize: '0.65rem', fontWeight: '700', marginTop: '6px', textAlign: 'center' }}>Usuarios</span>}
-          </div>
+          {(usuario?.correo === 'jcontreras.totalclean@gmail.com' || 
+            usuario?.correo === 'cvega.totalclean@gmail.com' ||
+            usuario?.esAdminReal ||
+            usuario?.permisos_modulos?.includes('usuarios')) && (
+            <div className="menu-item" style={{
+              padding: '12px 10px', borderRadius: '10px', marginBottom: '8px', cursor: 'pointer', display: 'flex',
+              flexDirection: 'column', alignItems: 'center', gap: '4px',
+              justifyContent: 'center',
+              backgroundColor: seccionActiva === 'usuarios' ? '#1e293b' : 'transparent',
+              color: seccionActiva === 'usuarios' ? '#38bdf8' : '#cbd5e1',
+              width: '90%',
+              transition: 'all 0.2s ease'
+            }} onClick={() => setSeccionActiva('usuarios')} title="Usuarios">
+              <i className="fa-solid fa-users" style={{ fontSize: '1.1rem' }}></i>
+              {sidebarAbierto && <span style={{ fontSize: '0.65rem', fontWeight: '700', marginTop: '6px', textAlign: 'center' }}>Usuarios</span>}
+            </div>
+          )}
+          {(usuario?.correo === 'jcontreras.totalclean@gmail.com' || 
+            usuario?.correo === 'cvega.totalclean@gmail.com') && (
+            <div className="menu-item" style={{
+              padding: '12px 10px', borderRadius: '10px', marginBottom: '8px', cursor: 'pointer', display: 'flex',
+              flexDirection: 'column', alignItems: 'center', gap: '4px',
+              justifyContent: 'center',
+              backgroundColor: seccionActiva === 'atributos' ? '#1e293b' : 'transparent',
+              color: seccionActiva === 'atributos' ? '#38bdf8' : '#cbd5e1',
+              width: '90%',
+              transition: 'all 0.2s ease'
+            }} onClick={() => setSeccionActiva('atributos')} title="Atributos">
+              <i className="fa-solid fa-database" style={{ fontSize: '1.1rem' }}></i>
+              {sidebarAbierto && <span style={{ fontSize: '0.65rem', fontWeight: '700', marginTop: '6px', textAlign: 'center' }}>Atributos</span>}
+            </div>
+          )}
           {/*
           <div className="menu-item" style={{
             padding: '12px 10px', borderRadius: '10px', marginBottom: '8px', cursor: 'pointer', display: 'flex',
@@ -495,10 +519,7 @@ function Dashboard() {
       </div>
 
       <div style={estilos.principal}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px', position: 'relative' }}>
-          <div>
-            <div style={{ fontSize: '0.85rem', color: '#64748b' }}>Total Clean C.A. / {seccionActiva.toUpperCase()}</div>
-          </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', marginBottom: '30px', position: 'relative' }}>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
             <div style={{ backgroundColor: 'white', padding: '10px 20px', borderRadius: '15px', display: 'flex', alignItems: 'center', gap: '10px', boxShadow: '0 2px 8px rgba(0,0,0,0.04)', fontWeight: '700', color: '#1e3a8a' }}>
