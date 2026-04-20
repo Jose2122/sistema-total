@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
-import { createClient } from '@supabase/supabase-js';
 import { 
   Eye, EyeOff, UserPlus, Save, X, Shield, Trash2, UserCircle, 
   Settings, ShieldCheck, Layout, Activity 
@@ -21,13 +20,6 @@ const Usuarios = () => {
   const [centrosCosto, setCentrosCosto] = useState([]);
   const [cargos, setCargos] = useState([]);
   const [tabActiva, setTabActiva] = useState('general');
-
-  // Cliente de administración para gestionar usuarios sin cerrar sesión ni sobrescribir claves
-  const adminClient = createClient(
-    import.meta.env.VITE_SUPABASE_URL,
-    import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY,
-    { auth: { autoRefreshToken: false, persistSession: false } }
-  );
 
   const [formData, setFormData] = useState({ 
     id: null, nombre: '', apellido: '', correo: '', 
@@ -64,7 +56,7 @@ const Usuarios = () => {
 
   const obtenerMaestros = async () => {
     try {
-      const { data: g } = await adminClient.from('cat_gerencias').select('*').order('nombre');
+      const { data: g } = await supabase.from('cat_gerencias').select('*').order('nombre');
       if (g) setGerencias(g);
 
       const { data: cc } = await supabase.from('maestros_centros_costo').select('*').eq('activo', true).order('nombre');
@@ -177,14 +169,19 @@ const Usuarios = () => {
       };
 
       if (formData.id) {
+        // ACTUALIZAR CONTRASEÑA (SI SE PROPORCIONA)
         if (password && password.length >= 6) {
-           const { error: authError } = await adminClient.auth.admin.updateUserById(formData.id, { password: password });
-           if (authError) throw new Error("Error en Auth: " + authError.message);
+           const { data: fnData, error: fnError } = await supabase.functions.invoke('admin-user-manager', {
+             body: { action: 'update_password', data: { id: formData.id, password } }
+           });
+           if (fnError || fnData?.error) throw new Error(fnError?.message || fnData?.error || "Error actualizando clave");
            toast.success("Contraseña actualizada");
         }
+
+        // ACTUALIZAR PERFIL
         const { error } = await supabase.from('perfiles').update(payload).eq('id', formData.id);
         if (error) {
-            if (error.code === '42703') { // Columna no existe en DB
+            if (error.code === '42703') {
                 const { gerencia_id, ...payloadSafe } = payload;
                 const { error: retryError } = await supabase.from('perfiles').update(payloadSafe).eq('id', formData.id);
                 if (retryError) throw retryError;
@@ -192,20 +189,28 @@ const Usuarios = () => {
         }
         toast.success("Perfil actualizado con éxito");
       } else {
-        const { data: authData, error: authError } = await adminClient.auth.admin.createUser({ 
-          email: formData.correo, 
-          password: password || '123456',
-          email_confirm: true 
+        // CREAR USUARIO EN AUTH VÍA EDGE FUNCTION
+        const { data: fnData, error: fnError } = await supabase.functions.invoke('admin-user-manager', {
+          body: { 
+            action: 'create_user', 
+            data: { 
+              email: formData.correo, 
+              password: password || '123456'
+            } 
+          }
         });
-        if (authError) throw authError;
+        
+        if (fnError || fnData?.error) throw new Error(fnError?.message || fnData?.error || "Error creando acceso");
 
+        // INSERTAR PERFIL
         const { error: profileError } = await supabase.from('perfiles').insert([{ 
-          ...payload, id: authData.user.id 
+          ...payload, id: fnData.user.id 
         }]);
+
         if (profileError) {
              if (profileError.code === '42703') {
                 const { gerencia_id, ...payloadSafe } = payload;
-                const { error: retryError } = await supabase.from('perfiles').insert([{ ...payloadSafe, id: authData.user.id }]);
+                const { error: retryError } = await supabase.from('perfiles').insert([{ ...payloadSafe, id: fnData.user.id }]);
                 if (retryError) throw retryError;
              } else throw profileError;
         }
@@ -231,8 +236,11 @@ const Usuarios = () => {
 
     setLoading(true);
     try {
-      const { error: authError } = await adminClient.auth.admin.deleteUser(id);
-      if (authError) throw new Error("Error eliminando acceso: " + authError.message);
+      const { data: fnData, error: fnError } = await supabase.functions.invoke('admin-user-manager', {
+        body: { action: 'delete_user', data: { id } }
+      });
+      if (fnError || fnData?.error) throw new Error(fnError?.message || fnData?.error || "Error eliminando acceso");
+
       const { error } = await supabase.from('perfiles').delete().eq('id', id);
       if (error) throw error;
       toast.success("Usuario eliminado definitivamente");
