@@ -13,7 +13,7 @@ import Administracion from './Administracion';
 
 function Dashboard() {
   const navigate = useNavigate();
-  const [seccionActiva, setSeccionActiva] = useState('dashboard');
+  const [seccionActiva, setSeccionActiva] = useState('requisiciones');
   const [sidebarAbierto, setSidebarAbierto] = useState(true); // NUEVO ESTADO
   const [usuario, setUsuario] = useState({ nombre: '', apellido: '', rol: '', departamento: '' });
   const [cargando, setCargando] = useState(true);
@@ -109,46 +109,107 @@ function Dashboard() {
     const channel = supabase
       .channel('dashboard_realtime')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'requisiciones' }, async (payload) => {
-        if (usuario.rol === 'Gerente') {
-          if (usuario.departamento === payload.new.gerencia) {
-            const msg = `Tienes una nueva requisición: ${payload.new.correlativo_req || payload.new.id}`;
-            toast(msg, { icon: '🔔' });
-            setNotificacionesLog(prev => [{ id: Date.now(), msg, hora: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), nuevo: true }, ...prev]);
+        const rolUsuario = usuario?.rol?.trim().toLowerCase() || '';
+        const deptoUsuario = usuario?.departamento?.trim().toLowerCase() || '';
+        const deptoReq = payload.new.gerencia?.trim().toLowerCase() || '';
+        
+        let rolCreador = '';
+        if (payload.new.usuario_id) {
+          const { data: perfilCreador } = await supabase.from('perfiles').select('rol').eq('id', payload.new.usuario_id).single();
+          if (perfilCreador) rolCreador = perfilCreador.rol.trim().toLowerCase();
+        }
+
+        const getRank = (rol) => {
+          if (rol.includes('analista')) return 1;
+          if (rol.includes('coordinador')) return 2;
+          if (rol.includes('gerente general') || rol.includes('admin')) return 4;
+          if (rol.includes('gerente')) return 3;
+          return 0;
+        };
+
+        const userRank = getRank(rolUsuario);
+        const creatorRank = getRank(rolCreador);
+
+        const esGestionArea = deptoUsuario === deptoReq && userRank > creatorRank;
+        const esGerenteGeneralSuperior = (rolUsuario === 'gerente general' || usuario?.esAdminReal) && creatorRank >= 3;
+
+        if (esGestionArea || esGerenteGeneralSuperior) {
+          const msg = `Tienes una nueva requisición pendiente de revisar: ${payload.new.correlativo_req || payload.new.id}`;
+          toast(msg, { icon: '🔔', duration: 8000 });
+          
+          setNotificacionesLog(prev => {
+            if (prev.length > 0 && prev[0].msg === msg) return prev;
+            return [{ id: Date.now(), msg, hora: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), nuevo: true }, ...prev];
+          });
+          
+          try {
             await supabase.from('notificaciones').insert([{ mensaje: msg, tipo: 'Requisición', usuario_id: usuario.id, leido: false }]);
+          } catch (e) {
+            console.error("Error guardando notif", e);
           }
         }
       })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'requisiciones' }, async (payload) => {
-        const oldRow = payload.old;
-        const newRow = payload.new;
+        const oldRow = payload.old || {};
+        const newRow = payload.new || {};
+        const rolUsuario = usuario?.rol?.trim().toLowerCase() || '';
+        const deptoUsuario = usuario?.departamento?.trim().toLowerCase() || '';
 
+        // Notificación para Gerente General/Admin cuando se aprueba por área
         if (newRow.estado_aprobacion === 'enviada_general' && oldRow.estado_aprobacion !== 'enviada_general') {
-          if (usuario.rol === 'Gerente General' || usuario.esAdminReal) {
-            const msg = `Nueva requisición pendiente de aprobación final: ${newRow.correlativo_req || newRow.id}`;
-            toast(msg, { icon: '🔔' });
+          if (rolUsuario === 'gerente general' || usuario?.esAdminReal) {
+            const msg = `Nueva requisición pendiente final: ${newRow.correlativo_req || newRow.id}`;
+            toast(msg, { icon: '🔔', duration: 8000 });
             setNotificacionesLog(prev => [{ id: Date.now(), msg, hora: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), nuevo: true }, ...prev]);
             await supabase.from('notificaciones').insert([{ mensaje: msg, tipo: 'Requisición', usuario_id: usuario.id, leido: false }]);
           }
         }
 
-        // Detección de nueva observación para Compras
-        const leidoCambio = newRow.leido_compras_at === null && oldRow.leido_compras_at !== null;
-        const observacionCambio = newRow.observaciones !== oldRow.observaciones && newRow.observaciones;
+        // LÓGICA DE COMPRAS/ADMIN/SUPERIOR: Detección de nueva observación
+        const observacionCambio = Boolean(newRow.observaciones && newRow.observaciones !== oldRow.observaciones);
+        const resetLeido = Boolean(newRow.leido_compras_at === null && oldRow.leido_compras_at !== null);
 
-        if (leidoCambio || observacionCambio) {
-          if (usuario.departamento === 'Compras' || usuario.esAdminReal) {
-            const msg = `Se ha hecho una nueva observación en la requisición ${newRow.correlativo_req || newRow.id} – SEM ${semActual}- ${currYear}`;
-            toast(msg, { icon: '💬' });
-            // Evitar duplicados inmediatos en UI
+        if (observacionCambio || resetLeido) {
+          let rolCreador = '';
+          if (newRow.usuario_id) {
+            const { data: perfilCreador } = await supabase.from('perfiles').select('rol').eq('id', newRow.usuario_id).single();
+            if (perfilCreador) rolCreador = perfilCreador.rol.trim().toLowerCase();
+          }
+
+          const getRank = (rol) => {
+            if (rol.includes('analista')) return 1;
+            if (rol.includes('coordinador')) return 2;
+            if (rol.includes('gerente general') || rol.includes('admin')) return 4;
+            if (rol.includes('gerente')) return 3;
+            return 0;
+          };
+
+          const userRank = getRank(rolUsuario);
+          const creatorRank = getRank(rolCreador);
+          const deptoReq = newRow.gerencia?.trim().toLowerCase() || '';
+
+          const esCompras = deptoUsuario === 'compras' || rolUsuario.includes('compras') || usuario?.esAdminReal;
+          const esSuperiorArea = deptoUsuario === deptoReq && userRank > creatorRank;
+          const esCreador = usuario.id === newRow.usuario_id;
+          
+          if (esCompras || esSuperiorArea || esCreador) {
+            const msg = `Nueva observación en requisición ${newRow.correlativo_req || newRow.id}`;
+            toast(msg, { icon: '💬', duration: 8000 });
+            
             setNotificacionesLog(prev => {
-                if(prev.length > 0 && prev[0].msg === msg) return prev;
-                return [{ id: Date.now(), msg, hora: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), nuevo: true }, ...prev];
+              if (prev.length > 0 && prev[0].msg === msg) return prev;
+              return [{ id: Date.now(), msg, hora: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), nuevo: true }, ...prev];
             });
+            
             await supabase.from('notificaciones').insert([{ mensaje: msg, tipo: 'Mensajería', usuario_id: usuario.id, leido: false }]);
           }
         }
       })
-      .subscribe();
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('Realtime activado correctamente.');
+        }
+      });
 
     return () => {
       supabase.removeChannel(channel);
@@ -163,16 +224,17 @@ function Dashboard() {
   const estilos = {
     contenedor: { display: 'flex', width: '100vw', height: '100vh', backgroundColor: '#f1f5f9', fontFamily: '"Inter", sans-serif' },
     sidebar: {
-      width: sidebarAbierto ? '200px' : '68px',
-      backgroundColor: '#04070eff',
-      color: '#94a3b8',
+      width: sidebarAbierto ? '130px' : '75px',
+      backgroundColor: '#030712', // Oscuro Charcoal casi Negro
+      color: '#cbd5e1',
       display: 'flex',
       flexDirection: 'column',
-      padding: sidebarAbierto ? '12px' : '10px',
+      padding: '20px 0',
       flexShrink: 0,
-      transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+      transition: 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)',
       position: 'relative',
-      borderRight: '1px solid #1e293b'
+      boxShadow: '4px 0 10px rgba(0,0,0,0.2)',
+      overflow: 'visible'
     },
     principal: { flex: 1, padding: '10px', overflowY: 'auto', height: '100vh', boxSizing: 'border-box', transition: 'all 0.3s' },
     card: { backgroundColor: 'white', padding: '30px', borderRadius: '24px', boxShadow: '0 4px 15px rgba(0,0,0,0.03)', border: '1px solid #e2e8f0' },
@@ -253,27 +315,25 @@ function Dashboard() {
     <div style={estilos.contenedor}>
       <div style={estilos.sidebar}>
 
-        {/* BOTÓN TOGGLE SUTIL */}
+        {/* BOTÓN TOGGLE SUTIL (ESTILO <<) */}
         <div
           onClick={() => setSidebarAbierto(!sidebarAbierto)}
           style={{
-            position: 'absolute', right: '-12px', top: '30px', backgroundColor: '#0ea5e9', color: 'white',
+            position: 'absolute', right: '-12px', top: '15px', backgroundColor: '#030712', color: 'white',
             width: '24px', height: '24px', borderRadius: '50%', display: 'flex', alignItems: 'center',
-            justifyContent: 'center', cursor: 'pointer', boxShadow: '0 4px 6px rgba(0,0,0,0.1)', zIndex: 100,
-            transform: sidebarAbierto ? 'rotate(0deg)' : 'rotate(180deg)', transition: 'transform 0.3s'
+            justifyContent: 'center', cursor: 'pointer', boxShadow: '0 4px 10px rgba(0,0,0,0.3)', zIndex: 100,
+            transform: sidebarAbierto ? 'rotate(0deg)' : 'rotate(180deg)', transition: 'transform 0.3s',
+            border: '2px solid #1e3a8a'
           }}
         >
-          <i className="fa-solid fa-chevron-left" style={{ fontSize: '0.7rem' }}></i>
+          <i className="fa-solid fa-angles-left" style={{ fontSize: '0.7rem' }}></i>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '30px', justifyContent: sidebarAbierto ? 'flex-start' : 'center' }}>
-          <div style={{ backgroundColor: '#0ea5e9', padding: '8px', borderRadius: '10px', color: 'white', flexShrink: 0 }}>
-            <i className="fa-solid fa-shield-halved"></i>
-          </div>
-          {sidebarAbierto && <div style={{ color: 'white', fontWeight: 'bold', fontSize: '1.1rem', whiteSpace: 'nowrap' }}>SITC</div>}
-        </div>
+        {/* LOGO REMOVIDO POR SOLICITUD */}
+        <div style={{ marginBottom: '20px' }}></div>
 
 
+        {/* 
         {sidebarAbierto && (
           <div style={{ fontSize: '0.65rem', fontWeight: 'bold', color: '#6d6f72ff', marginBottom: '10px', letterSpacing: '1px', textAlign: 'left', paddingLeft: '15px' }}>
             <i className="fa-solid fa-layer-group" style={{ marginRight: '6px' }}></i> DASHBOARD
@@ -283,15 +343,38 @@ function Dashboard() {
           { id: 'dashboard', icon: 'fa-house-chimney-window', label: 'Dashboard' },
         ].map(item => (
           <div key={item.id} className="menu-item" style={{
-            padding: '12px 15px', borderRadius: '10px', marginBottom: '4px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '1px',
-            justifyContent: sidebarAbierto ? 'flex-start' : 'center',
+            padding: '12px 10px', borderRadius: '10px', marginBottom: '8px', cursor: 'pointer', display: 'flex', 
+            flexDirection: 'column', alignItems: 'center', gap: '4px',
+            justifyContent: 'center',
             backgroundColor: seccionActiva === item.id ? '#1e293b' : 'transparent',
-            color: seccionActiva === item.id ? '#0ea5e9' : '#94a3b8'
-          }} onClick={() => setSeccionActiva(item.id)} title={!sidebarAbierto ? item.label : ''}>
-            <i className={`fa-solid ${item.icon}`} style={{ width: '18px', flexShrink: 0 }}></i>
-            {sidebarAbierto && <span style={{ whiteSpace: 'nowrap' }}>{item.label}</span>}
+            color: seccionActiva === item.id ? '#38bdf8' : '#cbd5e1',
+            width: '90%',
+            transition: 'all 0.2s ease'
+          }} onClick={() => setSeccionActiva(item.id)} title={item.label}>
+            <div style={{ position: 'relative' }}>
+              <i className={`fa-solid ${item.icon}`} style={{ fontSize: '1.1rem' }}></i>
+              {(item.id === 'requisiciones' || item.id === 'dashboard') && notificacionesLog.length > 0 && (
+                <div style={{ 
+                  position: 'absolute', top: '-8px', right: '-10px', background: '#ef4444', color: 'white', 
+                  fontSize: '0.65rem', minWidth: '18px', height: '18px', borderRadius: '50%', 
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', 
+                  border: '2px solid #1E3A8A' 
+                }}>
+                  {notificacionesLog.filter(n => n.nuevo).length || notificacionesLog.length}
+                </div>
+              )}
+            </div>
+            {sidebarAbierto && (
+              <span style={{ 
+                fontSize: '0.65rem', fontWeight: '700', marginTop: '6px', textAlign: 'center',
+                lineHeight: '1', width: '100%', whiteSpace: 'normal', display: 'block'
+              }}>
+                {item.label}
+              </span>
+            )}
           </div>
         ))}
+        */}
 
         <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
           {sidebarAbierto && (
@@ -306,13 +389,23 @@ function Dashboard() {
 
           ].map(item => (
             <div key={item.id} className="menu-item" style={{
-              padding: '12px 15px', borderRadius: '10px', marginBottom: '4px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '1px',
-              justifyContent: sidebarAbierto ? 'flex-start' : 'center',
+              padding: '12px 10px', borderRadius: '10px', marginBottom: '8px', cursor: 'pointer', display: 'flex', 
+              flexDirection: 'column', alignItems: 'center', gap: '4px',
+              justifyContent: 'center',
               backgroundColor: seccionActiva === item.id ? '#1e293b' : 'transparent',
-              color: seccionActiva === item.id ? '#0ea5e9' : '#94a3b8'
-            }} onClick={() => setSeccionActiva(item.id)} title={!sidebarAbierto ? item.label : ''}>
-              <i className={`fa-solid ${item.icon}`} style={{ width: '18px', flexShrink: 0 }}></i>
-              {sidebarAbierto && <span style={{ whiteSpace: 'nowrap' }}>{item.label}</span>}
+              color: seccionActiva === item.id ? '#38bdf8' : '#cbd5e1',
+              width: '90%',
+              transition: 'all 0.2s ease'
+            }} onClick={() => setSeccionActiva(item.id)} title={item.label}>
+              <i className={`fa-solid ${item.icon}`} style={{ fontSize: '1.1rem' }}></i>
+              {sidebarAbierto && (
+                <span style={{ 
+                  fontSize: '0.65rem', fontWeight: '700', marginTop: '6px', textAlign: 'center',
+                  lineHeight: '1', width: '100%', whiteSpace: 'normal', display: 'block'
+                }}>
+                  {item.label}
+                </span>
+              )}
             </div>
           ))}
 
@@ -327,17 +420,39 @@ function Dashboard() {
             { id: 'requisiciones', icon: 'fa-file-signature', label: 'Requisiciones' },
             { id: 'fondos', icon: 'fa-hand-holding-dollar', label: 'Solicitud de Fondos' },
             { id: 'tickets', icon: 'fa-ticket', label: 'Ticket de Pago' },
-            { id: 'reportestickets', icon: 'fa-file-contract', label: 'Reporte de Tickets' },
+            // { id: 'reportestickets', icon: 'fa-file-contract', label: 'Reporte de Tickets' },
 
           ].map(item => (
             <div key={item.id} className="menu-item" style={{
-              padding: '12px 15px', borderRadius: '10px', marginBottom: '4px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '1px',
-              justifyContent: sidebarAbierto ? 'flex-start' : 'center',
+              padding: '12px 10px', borderRadius: '10px', marginBottom: '8px', cursor: 'pointer', display: 'flex', 
+              flexDirection: 'column', alignItems: 'center', gap: '4px',
+              justifyContent: 'center',
               backgroundColor: seccionActiva === item.id ? '#1e293b' : 'transparent',
-              color: seccionActiva === item.id ? '#0ea5e9' : '#94a3b8'
-            }} onClick={() => setSeccionActiva(item.id)} title={!sidebarAbierto ? item.label : ''}>
-              <i className={`fa-solid ${item.icon}`} style={{ width: '18px', flexShrink: 0 }}></i>
-              {sidebarAbierto && <span style={{ whiteSpace: 'nowrap' }}>{item.label}</span>}
+              color: seccionActiva === item.id ? '#38bdf8' : '#cbd5e1',
+              width: '90%',
+              transition: 'all 0.2s ease'
+            }} onClick={() => setSeccionActiva(item.id)} title={item.label}>
+              <div style={{ position: 'relative' }}>
+                <i className={`fa-solid ${item.icon}`} style={{ fontSize: '1.1rem' }}></i>
+                {(item.id === 'requisiciones' || item.id === 'fondos' || item.id === 'tickets') && notificacionesLog.some(n => n.nuevo) && (
+                  <div style={{ 
+                    position: 'absolute', top: '-8px', right: '-10px', background: '#ef4444', color: 'white', 
+                    fontSize: '0.65rem', minWidth: '18px', height: '18px', borderRadius: '50%', 
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', 
+                    border: '2px solid #030712' 
+                  }}>
+                    {notificacionesLog.filter(n => n.nuevo).length}
+                  </div>
+                )}
+              </div>
+              {sidebarAbierto && (
+                <span style={{ 
+                  fontSize: '0.65rem', fontWeight: '700', marginTop: '6px', textAlign: 'center',
+                  lineHeight: '1', width: '100%', whiteSpace: 'normal', display: 'block'
+                }}>
+                  {item.label}
+                </span>
+              )}
             </div>
           ))}
 
@@ -348,36 +463,35 @@ function Dashboard() {
             </div>
           )}
           <div className="menu-item" style={{
-            padding: '12px 15px', borderRadius: '10px', marginBottom: '4px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px',
-            justifyContent: sidebarAbierto ? 'flex-start' : 'center',
+            padding: '12px 10px', borderRadius: '10px', marginBottom: '8px', cursor: 'pointer', display: 'flex',
+            flexDirection: 'column', alignItems: 'center', gap: '4px',
+            justifyContent: 'center',
             backgroundColor: seccionActiva === 'usuarios' ? '#1e293b' : 'transparent',
-            color: seccionActiva === 'usuarios' ? '#0ea5e9' : '#94a3b8'
-          }} onClick={() => setSeccionActiva('usuarios')} title={!sidebarAbierto ? 'Usuarios' : ''}>
-            <i className="fa-solid fa-users" style={{ width: '18px', flexShrink: 0 }}></i>
-            {sidebarAbierto && <span style={{ whiteSpace: 'nowrap' }}>Usuarios</span>}
+            color: seccionActiva === 'usuarios' ? '#38bdf8' : '#cbd5e1',
+            width: '90%',
+            transition: 'all 0.2s ease'
+          }} onClick={() => setSeccionActiva('usuarios')} title="Usuarios">
+            <i className="fa-solid fa-users" style={{ fontSize: '1.1rem' }}></i>
+            {sidebarAbierto && <span style={{ fontSize: '0.65rem', fontWeight: '700', marginTop: '6px', textAlign: 'center' }}>Usuarios</span>}
           </div>
+          {/*
           <div className="menu-item" style={{
-            padding: '12px 15px', borderRadius: '10px', marginBottom: '4px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px',
-            justifyContent: sidebarAbierto ? 'flex-start' : 'center',
+            padding: '12px 10px', borderRadius: '10px', marginBottom: '8px', cursor: 'pointer', display: 'flex',
+            flexDirection: 'column', alignItems: 'center', gap: '4px',
+            justifyContent: 'center',
             backgroundColor: seccionActiva === 'administracion' ? '#1e293b' : 'transparent',
-            color: seccionActiva === 'administracion' ? '#0ea5e9' : '#94a3b8'
-          }} onClick={() => setSeccionActiva('administracion')} title={!sidebarAbierto ? 'Administración' : ''}>
-            <i className="fa-solid fa-gears" style={{ width: '18px', flexShrink: 0 }}></i>
-            {sidebarAbierto && <span style={{ whiteSpace: 'nowrap' }}>Administración</span>}
+            color: seccionActiva === 'administracion' ? '#38bdf8' : '#cbd5e1',
+            width: '90%',
+            transition: 'all 0.2s ease'
+          }} onClick={() => setSeccionActiva('administracion')} title="Administración">
+            <i className="fa-solid fa-gears" style={{ fontSize: '1.1rem' }}></i>
+            {sidebarAbierto && <span style={{ fontSize: '0.65rem', fontWeight: '700', marginTop: '6px', textAlign: 'center' }}>Admon</span>}
           </div>
+          */}
         </div>
 
-        <div style={{ marginTop: 'auto', borderTop: '1px solid #1e293b', paddingTop: '20px', display: 'flex', alignItems: 'center', gap: '12px', justifyContent: sidebarAbierto ? 'flex-start' : 'center' }}>
-          <div style={{ width: '38px', height: '38px', borderRadius: '10px', backgroundColor: '#0ea5e9', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', flexShrink: 0 }}>
-            {usuario.nombre ? usuario.nombre[0].toUpperCase() : 'U'}
-          </div>
-          {sidebarAbierto && (
-            <div style={{ flex: 1, overflow: 'hidden' }}>
-              <div style={{ color: 'white', fontSize: '0.85rem', fontWeight: 'bold', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{usuario.nombre} {usuario.apellido}</div>
-              <div style={{ fontSize: '0.7rem', color: '#64748b' }}>{usuario.rol || 'Sin Rol'}</div>
-            </div>
-          )}
-        </div>
+        {/* METADATA USUARIO REMOVIDO POR SOLICITUD */}
+        <div style={{ marginBottom: '20px' }}></div>
       </div>
 
       <div style={estilos.principal}>
@@ -387,10 +501,12 @@ function Dashboard() {
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-            <div style={{ backgroundColor: 'white', padding: '10px 20px', borderRadius: '15px', display: 'flex', alignItems: 'center', gap: '10px', boxShadow: '0 2px 8px rgba(0,0,0,0.04)', fontWeight: '600', color: '#475569' }}>
-              <i className="fa-solid fa-user" style={{ color: '#0ea5e9' }}></i> {usuario.nombre} {usuario.apellido}
+            <div style={{ backgroundColor: 'white', padding: '10px 20px', borderRadius: '15px', display: 'flex', alignItems: 'center', gap: '10px', boxShadow: '0 2px 8px rgba(0,0,0,0.04)', fontWeight: '700', color: '#1e3a8a' }}>
+              <i className="fa-solid fa-id-card" style={{ color: '#0ea5e9' }}></i> {usuario.rol?.toUpperCase()}
               <div style={{ borderLeft: '1px solid #e2e8f0', height: '20px', marginLeft: '5px', marginRight: '5px' }}></div>
-              <button onClick={cerrarSesion} className="btn-exit-small"><i className="fa-solid fa-power-off"></i> SALIR</button>
+              <i className="fa-solid fa-user" style={{ color: '#64748b' }}></i> {usuario.nombre}
+              <div style={{ borderLeft: '1px solid #e2e8f0', height: '20px', marginLeft: '5px', marginRight: '5px' }}></div>
+              <button onClick={cerrarSesion} className="btn-exit-small" style={{ fontSize: '0.7rem', fontWeight: 'bold' }}><i className="fa-solid fa-power-off"></i> SALIR</button>
             </div>
 
             <div

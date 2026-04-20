@@ -84,8 +84,7 @@ const Reportes = () => {
       if (resTickets.error) throw resTickets.error;
 
       const combined = [
-        ...(resReq.data || []).map(r => ({ ...r, _tipoDoc: 'requisicion' })),
-        ...(resTickets.data || []).map(t => ({ ...t, _tipoDoc: 'ticket' }))
+        ...(resReq.data || []).map(r => ({ ...r, _tipoDoc: 'requisicion' }))
       ];
 
       setDataRaw(combined);
@@ -243,7 +242,7 @@ const Reportes = () => {
     worksheet.getRow(1).height = 40;
 
     // Encabezados
-    const headers = ['FECHA SOLICITUD', 'FECHA PAGO', 'TIPO', 'ID CONTROL', 'EQUIPO / DESCRIPCIÓN', 'CENTRO DE COSTO', 'GERENCIA', 'CANT. PEDIDA', 'CANT. COMPRADA', 'P.U. REAL ($)', 'TOTAL ESTIMADO ($)', 'TOTAL EJECUTADO ($)', 'TOTAL DINAMICO ($)'];
+    const headers = ['FECHA SOLICITUD', 'FECHA PAGO', 'TIPO', 'ID CONTROL', 'EQUIPO / DESCRIPCIÓN', 'CENTRO DE COSTO', 'GERENCIA', 'CANT. PEDIDA', 'CANT. COMPRADA', 'P.U. REAL ($)', 'TOTAL ESTIMADO ($)', 'TOTAL EJECUTADO ($)'];
     worksheet.addRow(headers);
     const headerRow = worksheet.getRow(2);
     headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
@@ -264,8 +263,7 @@ const Reportes = () => {
         r.cantComprada,
         r.puReal,
         r.totalEstimado,
-        r.totalEjecutado,
-        r.total
+        r.totalEjecutado
       ]);
 
       // Aplicar formato de fecha a las celdas específicas
@@ -284,11 +282,9 @@ const Reportes = () => {
     const colJ = worksheet.getColumn(10); // P.U. REAL
     const colK = worksheet.getColumn(11); // TOTAL ESTIMADO
     const colL = worksheet.getColumn(12); // TOTAL EJECUTADO
-    const colM = worksheet.getColumn(13); // TOTAL DINAMICO
     colJ.numFmt = '"$"#,##0.00;[Red]"$"#,##0.00';
     colK.numFmt = '"$"#,##0.00;[Red]"$"#,##0.00';
     colL.numFmt = '"$"#,##0.00;[Red]"$"#,##0.00';
-    colM.numFmt = '"$"#,##0.00;[Red]"$"#,##0.00';
 
     // Ajuste de columnas
     worksheet.columns.forEach(col => { col.width = 18; });

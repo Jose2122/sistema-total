@@ -158,58 +158,67 @@ const Proveedores = () => {
             <p style={{ color: '#64748b', fontWeight: '600' }}>Cargando proveedores...</p>
           </div>
         ) : (
-          <div className="prov-grid">
-            {proveedoresFiltrados.map(p => (
-              <div key={p.id} className="prov-card">
-                <div className="prov-card-header">
-                  <div className="flex-1">
-                    <h3 className="prov-card-name">{p.razon_social}</h3>
-                    <p className="prov-card-rif">{p.rif}</p>
-                  </div>
-                  <div className={`prov-badge ${p.status ? 'badge-active' : 'badge-inactive'}`}>
-                    {p.status ? 'Activo' : 'Inactivo'}
-                  </div>
-                </div>
-
-                <div className="prov-info-list">
-                  <div className="prov-info-item">
-                    <div className="prov-icon-box icon-mail">
-                      <Mail size={16} />
-                    </div>
-                    <span>{p.correo || 'No registrado'}</span>
-                  </div>
-                  <div className="prov-info-item">
-                    <div className="prov-icon-box icon-phone">
-                      <Phone size={16} />
-                    </div>
-                    <span>{p.telefono || 'No registrado'}</span>
-                  </div>
-                  <div className="prov-info-item">
-                    <div className="prov-icon-box icon-map">
-                      <MapPin size={16} />
-                    </div>
-                    <span style={{ fontSize: '0.75rem', fontStyle: 'italic' }}>
-                      {p.direccion || 'Sin dirección fiscal'}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="prov-card-actions">
-                  <button 
-                    onClick={() => handleEdit(p)}
-                    className="prov-btn-action btn-edit"
-                  >
-                    <Edit size={14} /> Editar
-                  </button>
-                  <button 
-                    onClick={() => eliminarProveedor(p.id)}
-                    className="prov-btn-action btn-delete"
-                  >
-                    <Trash2 size={14} /> Eliminar
-                  </button>
-                </div>
-              </div>
-            ))}
+          <div className="table-container" style={{ borderRadius: '20px', overflow: 'hidden', boxShadow: '0 4px 6px rgba(0,0,0,0.02)', border: '1px solid #e2e8f0', backgroundColor: 'white' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', backgroundColor: 'white' }}>
+              <thead>
+                <tr style={{ backgroundColor: '#f8fafc', color: '#64748b', fontSize: '0.75rem', textAlign: 'left', borderBottom: '2px solid #e2e8f0' }}>
+                  <th style={{ padding: '15px', width: '150px' }}>RIF</th>
+                  <th>RAZÓN SOCIAL</th>
+                  <th>CONTACTO</th>
+                  <th>DIRECCIÓN</th>
+                  <th style={{ textAlign: 'center', width: '120px' }}>ESTADO</th>
+                  <th style={{ textAlign: 'center', width: '120px' }}>ACCIONES</th>
+                </tr>
+              </thead>
+              <tbody>
+                {proveedoresFiltrados.map((p, index) => (
+                  <tr key={p.id} style={{ borderBottom: '1px solid #f1f5f9', backgroundColor: index % 2 === 0 ? '#ffffff' : '#f8fafc', fontSize: '0.85rem' }}>
+                    <td style={{ padding: '15px', fontWeight: 'bold', color: 'var(--prov-blue)', fontFamily: 'monospace', fontSize: '0.9rem' }}>{p.rif}</td>
+                    <td style={{ fontWeight: '800', color: '#1e293b' }}>{p.razon_social}</td>
+                    <td>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        {p.correo && <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#475569' }}><Mail size={12} style={{ color: '#3b82f6' }} /> {p.correo}</div>}
+                        {p.telefono && <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#475569' }}><Phone size={12} style={{ color: '#f97316' }} /> {p.telefono}</div>}
+                        {(!p.correo && !p.telefono) && <span style={{ color: '#94a3b8', fontStyle: 'italic', fontSize: '0.75rem' }}>Sin contacto</span>}
+                      </div>
+                    </td>
+                    <td style={{ color: '#64748b', fontSize: '0.75rem', maxWidth: '300px' }}>
+                      {p.direccion ? (
+                        <div style={{ display: 'flex', gap: '6px', alignItems: 'flex-start' }}>
+                          <MapPin size={12} style={{ color: '#94a3b8', marginTop: '2px', flexShrink: 0 }} /> 
+                          <span>{p.direccion}</span>
+                        </div>
+                      ) : (
+                        <span style={{ fontStyle: 'italic', color: '#94a3b8' }}>No registrada</span>
+                      )}
+                    </td>
+                    <td style={{ textAlign: 'center' }}>
+                      <span style={{ 
+                        color: p.status ? '#16a34a' : '#ef4444',
+                        fontSize: '0.7rem',
+                        fontWeight: '900',
+                        textTransform: 'uppercase'
+                      }}>
+                        {p.status ? 'ACTIVO' : 'INACTIVO'}
+                      </span>
+                    </td>
+                    <td style={{ textAlign: 'center' }}>
+                      <div style={{ display: 'flex', gap: '15px', justifyContent: 'center' }}>
+                        <button onClick={() => handleEdit(p)} style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', padding: '5px' }} title="Editar">
+                          <Edit size={16} />
+                        </button>
+                        <button onClick={() => eliminarProveedor(p.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '5px' }} title="Eliminar">
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {proveedoresFiltrados.length === 0 && (
+              <div style={{ textAlign: 'center', padding: '40px', color: '#94a3b8' }}>No se encontraron proveedores activos con ese criterio.</div>
+            )}
           </div>
         )}
 

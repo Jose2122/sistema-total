@@ -139,7 +139,8 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
           if (!isNaN(num)) max = num;
         }
       }
-      setIdControlAutomatico(`TP-${sigla}-${aa}-${String(max + 1).padStart(4, '0')}`);
+      let correlativo = String(max + 1).padStart(3, '0');
+      setIdControlAutomatico(`TP-${sigla}-${aa}-${correlativo}`);
     };
     generarID();
   }, [form.departamento, form.solicitud_ref, currentUser, isEditing]);
@@ -154,18 +155,25 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
 
   useEffect(() => {
     if (datosPredefinidos && showModal) {
-      setForm(prev => ({
-        ...prev,
-        fecha: datosPredefinidos.fecha || prev.fecha,
-        departamento: datosPredefinidos.gerencia || prev.departamento,
-        solicitud_ref: datosPredefinidos.solicitud_ref || '',
-        partidas: datosPredefinidos.partidasSeleccionadas ? datosPredefinidos.partidasSeleccionadas.map(p => ({
-          ...p,
-          pago_realizado: false,
-          pu: p.puUsd || p.puBs || 0,
-          total: (p.puUsd || p.puBs || 0) * (p.cant || 1)
-        })) : prev.partidas
-      }));
+      try {
+        setForm(prev => ({
+          ...prev,
+          fecha: datosPredefinidos.fecha || prev.fecha,
+          departamento: datosPredefinidos.gerencia || prev.departamento,
+          solicitud_ref: datosPredefinidos.solicitud_ref || '',
+          partidas: (datosPredefinidos.partidasSeleccionadas && Array.isArray(datosPredefinidos.partidasSeleccionadas)) 
+            ? datosPredefinidos.partidasSeleccionadas.map(p => ({
+                ...p,
+                id: p.id || Date.now() + Math.random(),
+                pago_realizado: false,
+                pu: p.puUsd || p.puBs || 0,
+                total: (parseFloat(p.puUsd || p.puBs || 0)) * (parseFloat(p.cant || 1))
+              })) 
+            : prev.partidas
+        }));
+      } catch (err) {
+        console.error("[TicketExpress] Error al mapear datos predefinidos:", err);
+      }
     }
   }, [datosPredefinidos, showModal]);
 
@@ -584,12 +592,12 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
         <table className="te-table">
           <thead className="te-thead">
             <tr>
-              <th className="te-th">ID</th>
+              <th className="te-th" style={{ width: '150px' }}>ID</th>
               <th className="te-th">FECHA</th>
               <th className="te-th">GERENTE</th>
               <th className="te-th">DEPARTAMENTO</th>
               <th className="te-th">TOTAL ($)</th>
-              <th className="te-th">STATUS</th>
+              <th className="te-th" style={{ textAlign: 'center', width: '140px' }}>STATUS</th>
               <th className="te-th" style={{ textAlign: 'center' }}>SOPORTE</th>
               <th className="te-th" style={{ textAlign: 'center' }}>ACCIONES</th>
             </tr>
@@ -600,12 +608,27 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
             ) : historialFiltrado?.map(t => (
               <tr key={t.id}>
                 <td className="te-td" style={{ fontWeight: '700', color: '#d97706' }}>{t.codigo_control || `TX-${String(t.id).padStart(4, '0')}`}</td>
-                <td className="te-td">{t.fecha_emision ? format(new Date(t.fecha_emision + 'T12:00:00'), 'dd/MM/yyyy') : 'N/A'}</td>
+                <td className="te-td">
+                  {(() => {
+                    if (!t.fecha_emision) return 'N/A';
+                    try {
+                      const d = new Date(t.fecha_emision + 'T12:00:00');
+                      return format(d, 'dd/MM/yyyy');
+                    } catch (e) {
+                      return t.fecha_emision || 'Error';
+                    }
+                  })()}
+                </td>
                 <td className="te-td">{t.gerente_nombre}</td>
                 <td className="te-td">{t.departamento}</td>
                 <td className="te-td" style={{ fontWeight: 'bold' }}>$ {t.total_usd?.toLocaleString('de-DE')}</td>
-                <td className="te-td">
-                  <span className={`te-badge ${t.status === 'PAGADO' ? 'te-badge-success' : 'te-badge-warn'}`}>{t.status}</span>
+                <td className="te-td" style={{ textAlign: 'center' }}>
+                  <span style={{ 
+                    color: t.status === 'PAGADO' ? '#16a34a' : '#ca8a04',
+                    fontSize: '0.7rem',
+                    fontWeight: '900',
+                    textTransform: 'uppercase'
+                  }}>{t.status}</span>
                 </td>
                 <td className="te-td" style={{ textAlign: 'center' }}>
                   <div style={{ display: 'flex', gap: '5px', justifyContent: 'center' }}>

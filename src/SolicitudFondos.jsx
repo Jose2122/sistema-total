@@ -130,8 +130,8 @@ const StockSmartTotalClean = () => {
     const matchGerencia = filtroGerencia === "Todos" || h.id.startsWith(filtroGerencia);
 
     // Filtro por semana (usar el número de semana calculado de la fecha o del ID)
-    const matchSemana = !filtroSemana || 
-      h.id.includes(`SEM ${filtroSemana}`) || 
+    const matchSemana = !filtroSemana ||
+      h.id.includes(`SEM ${filtroSemana}`) ||
       h.id.includes(`SEMANA ${filtroSemana}`) ||
       getWeek(new Date(h.fecha_operativa + 'T12:00:00'), { weekStartsOn: 1 }) === parseInt(filtroSemana);
 
@@ -666,8 +666,8 @@ const StockSmartTotalClean = () => {
               </thead>
               <tbody>
                 ${partidas.map(p => {
-                  const totalRenglon = (p.pu_bs || 0) * (p.cantidad || 1) + (p.pu_usd || 0) * (p.cantidad || 1);
-                  return `
+        const totalRenglon = (p.pu_bs || 0) * (p.cantidad || 1) + (p.pu_usd || 0) * (p.cantidad || 1);
+        return `
                     <tr>
                       <td>${p.centro_costo}</td>
                       <td>${p.clasificacion}</td>
@@ -679,7 +679,7 @@ const StockSmartTotalClean = () => {
                       <td class="text-right">${totalRenglon.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
                     </tr>
                   `;
-                }).join('')}
+      }).join('')}
               </tbody>
             </table>
 
@@ -906,7 +906,7 @@ const StockSmartTotalClean = () => {
         <div style={{ flex: 1.2, backgroundColor: 'white', padding: '25px', borderRadius: '15px', borderLeft: '8px solid #b45309', boxShadow: '0 4px 6px rgba(0,0,0,0.05)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <div style={{ color: '#92400e', fontSize: '12px', fontWeight: '900', textTransform: 'uppercase', letterSpacing: '1px' }}>Total Pagado en Bs ($)</div>
-            <div style={{ fontSize: '1.4rem', fontWeight: '800', color: '#1e293b', marginTop: '5px' }}>$ {totalesVisibles.bs.toLocaleString('de-DE')}</div>
+            <div style={{ fontSize: '1.4rem', fontWeight: '800', color: '#1e293b', marginTop: '5px' }}>$ {totalesVisibles.bs.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
           </div>
           <div style={{ opacity: 0.2 }}><Printer size={40} /></div>
         </div>
@@ -914,7 +914,7 @@ const StockSmartTotalClean = () => {
         <div style={{ flex: 1.2, backgroundColor: 'white', padding: '25px', borderRadius: '15px', borderLeft: '8px solid #15803d', boxShadow: '0 4px 6px rgba(0,0,0,0.05)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <div style={{ color: '#166534', fontSize: '12px', fontWeight: '900', textTransform: 'uppercase', letterSpacing: '1px' }}>Total Pagado en USD ($)</div>
-            <div style={{ fontSize: '1.4rem', fontWeight: '800', color: '#1e293b', marginTop: '5px' }}>$ {totalesVisibles.usd.toLocaleString('de-DE')}</div>
+            <div style={{ fontSize: '1.4rem', fontWeight: '800', color: '#1e293b', marginTop: '5px' }}>$ {totalesVisibles.usd.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
           </div>
           <div style={{ opacity: 0.2 }}><Printer size={40} /></div>
         </div>
@@ -922,7 +922,7 @@ const StockSmartTotalClean = () => {
         <div style={{ flex: 1.5, backgroundColor: '#0f172a', padding: '25px', borderRadius: '15px', borderLeft: '8px solid #0ea5e9', boxShadow: '0 10px 15px rgba(0,0,0,0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <div style={{ color: '#38bdf8', fontSize: '12px', fontWeight: '900', textTransform: 'uppercase', letterSpacing: '1px' }}>Total General Proyectado ($)</div>
-            <div style={{ fontSize: '2.2rem', fontWeight: '900', color: 'white', marginTop: '5px' }}>$ {totalesVisibles.general.toLocaleString('de-DE')}</div>
+            <div style={{ fontSize: '2.2rem', fontWeight: '900', color: 'white', marginTop: '5px' }}>$ {totalesVisibles.general.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
           </div>
           <div style={{ color: 'white', opacity: 0.3 }}><FileText size={48} /></div>
         </div>
@@ -940,6 +940,161 @@ const StockSmartTotalClean = () => {
               style={{ padding: '12px 20px', backgroundColor: '#166534', color: 'white', border: 'none', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
             >
               <FileSpreadsheet size={18} /> Exportar Excel
+            </button>
+            <button
+              onClick={async () => {
+                try {
+                  setLoading(true);
+                  const solicitudesIds = historialFiltrado.map(h => h.id_db);
+                  if (solicitudesIds.length === 0) return alert("No hay solicitudes para reportar.");
+
+                  const { data: todasPartidas, error } = await supabase
+                    .from('partidas_fondos')
+                    .select('*')
+                    .in('solicitud_id', solicitudesIds)
+                    .order('n_renglon', { ascending: true });
+
+                  if (error) throw error;
+
+                  const printWindow = window.open('', '_blank');
+                  const emitDate = new Date();
+                  const formatDate = emitDate.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' });
+                  const formatTime = emitDate.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', hour12: true });
+
+                  let html = `
+                     <html>
+                       <head>
+                         <title>Reporte Global de Solicitudes</title>
+                         <style>
+                           @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+                           body { font-family: 'Inter', sans-serif; padding: 20px; color: #000; background: white; font-size: 11px; }
+                           .page-break { page-break-after: always; margin-bottom: 50px; border-bottom: 2px dashed #eee; padding-bottom: 50px; }
+                           .header-table { width: 100%; margin-bottom: 10px; }
+                           .company-name { font-weight: bold; font-size: 13px; }
+                           .report-meta { text-align: right; font-size: 10px; }
+                           .report-title-container { text-align: center; margin: 15px 0; }
+                           .report-title { font-size: 14px; font-weight: bold; text-decoration: underline; }
+                           .info-section { margin-bottom: 15px; display: flex; justify-content: space-between; border: 1px solid #eee; padding: 10px; border-radius: 5px; }
+                           table.data-table { width: 100%; border-collapse: collapse; margin-top: 5px; }
+                           table.data-table th { background-color: #f3f4f6 !important; -webkit-print-color-adjust: exact; padding: 6px 4px; border-top: 1px solid #000; border-bottom: 1px solid #000; text-align: left; }
+                           table.data-table td { padding: 5px 4px; border-bottom: 1px solid #eee; }
+                           .text-right { text-align: right !important; }
+                           .text-center { text-align: center !important; }
+                           .totals-section { width: 100%; margin-top: 15px; display: flex; justify-content: flex-end; }
+                           .totals-box { width: 250px; border: 1px solid #000; padding: 8px; }
+                           .totals-row { display: flex; justify-content: space-between; margin-bottom: 3px; }
+                           .totals-row.bold { font-weight: bold; border-top: 1px solid #000; padding-top: 3px; }
+                           @media print { .page-break { border-bottom: none; padding-bottom: 0; } }
+                         </style>
+                       </head>
+                       <body>
+                   `;
+
+                  historialFiltrado.forEach((sol, index) => {
+                    const partidas = todasPartidas.filter(p => p.solicitud_id === sol.id_db);
+                    html += `
+                       <div class="${index < historialFiltrado.length - 1 ? 'page-break' : ''}">
+                         <table class="header-table">
+                           <tr>
+                             <td>
+                               <div class="company-name">TOTAL CLEAN C.A.</div>
+                               <div style="font-size: 9px;">J-3036586587-0</div>
+                             </td>
+                             <td class="report-meta">
+                               <div>Fecha : ${formatDate} ${formatTime}</div>
+                               <div>Solicitud ${index + 1} de ${historialFiltrado.length}</div>
+                             </td>
+                           </tr>
+                         </table>
+
+                         <div class="report-title-container">
+                             <div class="report-title">SOLICITUD DE FONDOS: ${sol.codigo_control}</div>
+                         </div>
+
+                         <div class="info-section">
+                             <div>
+                               <b>Gerencia:</b> ${sol.gerencia_nombre}<br>
+                               <b>Responsable:</b> ${sol.responsable_nombre}
+                             </div>
+                             <div class="text-right">
+                               <b>Fecha Operativa:</b> ${new Date(sol.fecha_operativa + 'T12:00:00').toLocaleDateString('es-ES')}<br>
+                               <b>Sede:</b> ${sol.sede || 'N/A'}
+                             </div>
+                         </div>
+
+                         <table class="data-table">
+                           <thead>
+                             <tr>
+                               <th style="width: 10%">C.COSTO</th>
+                               <th style="width: 12%">CLASIF.</th>
+                               <th style="width: 38%">DESCRIPCIÓN</th>
+                               <th style="width: 8%" class="text-center">CANT.</th>
+                               <th style="width: 16%" class="text-right">PAGO Bs ($)</th>
+                               <th style="width: 16%" class="text-right">PAGO USD ($)</th>
+                             </tr>
+                           </thead>
+                           <tbody>
+                             ${partidas.map(p => {
+                      const montoBs = (p.pu_bs || 0) * (p.cantidad || 1);
+                      const montoUsd = (p.pu_usd || 0) * (p.cantidad || 1);
+                      return `
+                                 <tr>
+                                   <td style="font-size: 8px;">${p.centro_costo}</td>
+                                   <td style="font-size: 8px;">${p.clasificacion}</td>
+                                   <td style="font-size: 8.5px; line-height: 1.1;">
+                                     <b>${p.descripcion}</b><br>
+                                     <span style="color: #555; font-size: 7.5px;">Benef: ${p.beneficiario}</span>
+                                   </td>
+                                   <td class="text-center" style="font-size: 9px;">${p.cantidad}</td>
+                                   <td class="text-right" style="font-size: 9.5px; font-weight: 600;">
+                                     ${montoBs > 0 ? montoBs.toLocaleString('de-DE', { minimumFractionDigits: 2 }) : '-'}
+                                   </td>
+                                   <td class="text-right" style="font-size: 9.5px; font-weight: 600;">
+                                     ${montoUsd > 0 ? montoUsd.toLocaleString('de-DE', { minimumFractionDigits: 2 }) : '-'}
+                                   </td>
+                                 </tr>
+                               `;
+                    }).join('')}
+                           </tbody>
+                         </table>
+
+                         <div class="totals-section">
+                           <div class="totals-box">
+                             <div class="totals-row"><span>Pago Bs ($)</span> <span>$ ${sol.total_bs.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span></div>
+                             <div class="totals-row"><span>Pago USD ($)</span> <span>$ ${sol.total_usd.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span></div>
+                             <div class="totals-row bold"><span>TOTAL ($)</span> <span>$ ${(sol.total_bs + sol.total_usd).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span></div>
+                           </div>
+                         </div>
+
+                         <div style="margin-top: 30px; display: flex; justify-content: space-around; font-size: 10px;">
+                            <div style="text-align: center; border-top: 1px solid #000; width: 180px; padding-top: 5px;">
+                               <b>Preparado Por:</b><br>${sol.responsable_nombre}
+                            </div>
+                            <div style="text-align: center; border-top: 1px solid #000; width: 180px; padding-top: 5px;">
+                               <b>Aprobado Por:</b><br>Gerencia General
+                            </div>
+                         </div>
+                       </div>
+                     `;
+                  });
+
+                  html += `
+                       <script>setTimeout(() => { window.print(); }, 1000);</script>
+                     </body>
+                   </html>
+                   `;
+
+                  printWindow.document.write(html);
+                  printWindow.document.close();
+                } catch (err) {
+                  alert("Error: " + err.message);
+                } finally {
+                  setLoading(false);
+                }
+              }}
+              style={{ padding: '12px 20px', backgroundColor: '#0f172a', color: 'white', border: 'none', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
+            >
+              <Printer size={18} /> Reporte Global
             </button>
             <button onClick={() => {
               setIsEditing(false);
@@ -1005,25 +1160,23 @@ const StockSmartTotalClean = () => {
           </select>
         </div>
 
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
           <thead>
             <tr style={{ textAlign: 'left', borderBottom: '2px solid #f1f5f9', color: '#64748b', fontSize: '0.75rem' }}>
-              <th style={{ padding: '15px' }}>ID CONTROL</th>
-              <th>SEMANA</th>
-              <th>PERÍODO</th>
-              <th>RESPONSABLE</th>
-              <th>GERENCIA</th>
-              <th>PAGO BS/$</th>
-              <th>PAGO $/$</th>
-              <th>TOTAL ($)</th>
-              <th style={{ textAlign: 'center' }}>ACCIONES</th>
+              <th style={{ padding: '15px', width: '16%' }}>ID CONTROL</th>
+              <th style={{ width: '15%' }}>SEMANA / PERÍODO</th>
+              <th style={{ width: '25%' }}>RESPONSABLE / GERENCIA</th>
+              <th style={{ width: '14%', textAlign: 'right' }}>PAGO BS/$</th>
+              <th style={{ width: '12%', textAlign: 'right' }}>PAGO $/$</th>
+              <th style={{ width: '10%', textAlign: 'right' }}>TOTAL ($)</th>
+              <th style={{ width: '8%', textAlign: 'center' }}>ACCIONES</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr><td colSpan="6" style={{ textAlign: 'center', padding: '40px', color: '#64748b' }}>Cargando registros...</td></tr>
             ) : historialFiltrado.map((h, i) => (
-              <tr key={i} style={{ borderBottom: '1px solid #f8fafc', fontSize: '0.80rem' }}>
+              <tr key={i} style={{ borderBottom: '1px solid #f8fafc', fontSize: '0.80rem', backgroundColor: i % 2 === 0 ? '#ffffff' : '#f8fafc' }}>
                 <td style={{ padding: '12px' }}>
                   <button
                     type="button"
@@ -1048,16 +1201,31 @@ const StockSmartTotalClean = () => {
                   </button>
                 </td>
                 <td style={{ fontWeight: 'bold', color: '#64748b' }}>
-                  SEM {getWeek(new Date(h.fecha_operativa + 'T12:00:00'), { weekStartsOn: 1 })}
+                  <div>SEM {getWeek(new Date(h.fecha_operativa + 'T12:00:00'), { weekStartsOn: 1 })}</div>
+                  <div style={{ fontSize: '0.7rem', color: '#0ea5e9', marginTop: '3px' }}>{extractPeriodoFromId(h.id)}</div>
                 </td>
-                <td style={{ fontSize: '0.8rem', color: '#0ea5e9', fontWeight: 'bold' }}>
-                  {extractPeriodoFromId(h.id)}
+                <td>
+                  <div style={{ fontWeight: '500' }}>{h.responsable}</div>
+                  <div style={{ fontSize: '0.7rem', color: '#64748b' }}>{h.gerencia}</div>
                 </td>
-                <td>{h.responsable}</td>
-                <td>{h.gerencia}</td>
-                <td style={{ color: '#b45309', fontWeight: '600' }}>$ {parseFloat(h.total_bs || 0).toLocaleString('de-DE')}</td>
-                <td style={{ color: '#15803d', fontWeight: '600' }}>$ {parseFloat(h.total_usd || 0).toLocaleString('de-DE')}</td>
-                <td style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>$ {h.total.toLocaleString('de-DE')}</td>
+                <td style={{ color: '#b45309', fontWeight: '600' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', paddingRight: '10px' }}>
+                    <span>$</span>
+                    <span>{parseFloat(h.total_bs || 0).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  </div>
+                </td>
+                <td style={{ color: '#15803d', fontWeight: '600' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', paddingRight: '10px' }}>
+                    <span>$</span>
+                    <span>{parseFloat(h.total_usd || 0).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  </div>
+                </td>
+                <td style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span>$</span>
+                    <span>{h.total.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  </div>
+                </td>
                 <td style={{ textAlign: 'center' }}>
                   <div style={{ display: 'flex', gap: '15px', justifyContent: 'center', alignItems: 'center' }}>
                     <button
@@ -1079,7 +1247,7 @@ const StockSmartTotalClean = () => {
                       }}
                       style={{ color: '#0ea5e9', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.75rem' }}
                     >
-                      
+
                     </button>
                     {(currentUser?.rol === 'Gerente' || currentUser?.esAdminReal) && (
                       <button
@@ -1115,9 +1283,9 @@ const StockSmartTotalClean = () => {
                 </div>
               </div>
               <div style={{ display: 'flex', gap: '40px', textAlign: 'right' }}>
-                <div><label style={{ fontSize: '10px', fontWeight: 'bold', color: '#64748b' }}>$ PAGADEROS EN BS</label><div style={{ fontSize: '1.2rem', fontWeight: 'bold', color: '#b45309' }}>$ {sumas.bs.toLocaleString('de-DE')}</div></div>
-                <div><label style={{ fontSize: '10px', fontWeight: 'bold', color: '#64748b' }}>$ PAGADEROS EN $</label><div style={{ fontSize: '1.2rem', fontWeight: 'bold', color: '#15803d' }}>$ {sumas.usd.toLocaleString('de-DE')}</div></div>
-                <div style={{ borderLeft: '2px solid #e2e8f0', paddingLeft: '30px' }}><label style={{ fontSize: '10px', fontWeight: '900', color: '#64748b' }}>TOTAL GENERAL</label><div style={{ fontSize: '2rem', fontWeight: '950', color: '#0f172a' }}>$ {(sumas.bs + sumas.usd).toLocaleString('de-DE')}</div></div>
+                <div><label style={{ fontSize: '10px', fontWeight: 'bold', color: '#64748b' }}>$ PAGADEROS EN BS</label><div style={{ fontSize: '1.2rem', fontWeight: 'bold', color: '#b45309' }}>$ {sumas.bs.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div></div>
+                <div><label style={{ fontSize: '10px', fontWeight: 'bold', color: '#64748b' }}>$ PAGADEROS EN $</label><div style={{ fontSize: '1.2rem', fontWeight: 'bold', color: '#15803d' }}>$ {sumas.usd.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div></div>
+                <div style={{ borderLeft: '2px solid #e2e8f0', paddingLeft: '30px' }}><label style={{ fontSize: '10px', fontWeight: '900', color: '#64748b' }}>TOTAL GENERAL</label><div style={{ fontSize: '2rem', fontWeight: '950', color: '#0f172a' }}>$ {(sumas.bs + sumas.usd).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div></div>
               </div>
             </div>
 
@@ -1227,7 +1395,7 @@ const StockSmartTotalClean = () => {
                     <div style={{ width: '200px', padding: '6px' }}><input className="sf-table-input" value={p.ben} onChange={(e) => manejarCambioPartida(i, 'ben', e.target.value)} /></div>
                     <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puBs} onChange={(e) => manejarCambioPartida(i, 'puBs', e.target.value)} style={{ textAlign: 'right' }} disabled={p.puUsd > 0} /></div>
                     <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puUsd} onChange={(e) => manejarCambioPartida(i, 'puUsd', e.target.value)} style={{ textAlign: 'right' }} disabled={p.puBs > 0} /></div>
-                    <div style={{ width: '120px', padding: '6px', textAlign: 'right', fontWeight: 'bold' }}>{( (parseFloat(p.puBs) || parseFloat(p.puUsd) || 0) * (p.cant || 0)).toLocaleString('de-DE')}</div>
+                    <div style={{ width: '120px', padding: '6px', textAlign: 'right', fontWeight: 'bold' }}>{((parseFloat(p.puBs) || parseFloat(p.puUsd) || 0) * (p.cant || 0)).toLocaleString('de-DE')}</div>
                     <div style={{ width: '60px', textAlign: 'center' }}>
                       <input type="checkbox" checked={p.pago_realizado || false} onChange={(e) => manejarCambioPartida(i, 'pago_realizado', e.target.checked)} style={{ cursor: 'pointer', transform: 'scale(1.2)' }} />
                     </div>

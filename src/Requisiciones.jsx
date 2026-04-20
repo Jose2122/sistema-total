@@ -19,10 +19,14 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
   const [busqueda, setBusqueda] = useState('');
   const [filtroDepto, setFiltroDepto] = useState('Todos');
   const [filtroAprobacion, setFiltroAprobacion] = useState('Todos');
+  const [filtroCategoria, setFiltroCategoria] = useState('Todos');
   const [filtroCC, setFiltroCC] = useState('Todos');
   const [filtroStatusCompra, setFiltroStatusCompra] = useState('Todos');
   const [fechaDesde, setFechaDesde] = useState('');
   const [fechaHasta, setFechaHasta] = useState('');
+  const [showRechazoModal, setShowRechazoModal] = useState(false);
+  const [motivoRechazo, setMotivoRechazo] = useState('');
+  const [rechazoAction, setRechazoAction] = useState(null); // 'area' o 'general'
   const [expandirHistorial, setExpandirHistorial] = useState({}); // { itemID: boolean }
   const [editandoObs, setEditandoObs] = useState(false);
   const [obsTemporal, setObsTemporal] = useState('');
@@ -62,7 +66,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
           query = query.eq('gerencia', currentUser.departamento);
         } else {
           // Otros roles: solo lo propio (opcional, según seguridad)
-          query = query.eq('usuario_id', currentUser.id);
+          query = query.eq('solicitante', `${currentUser.nombre} ${currentUser.apellido}`);
         }
       } else if (currentUser.rol === 'Gerente General') {
         // Gerente General ve todo el historial (Consulta Extendida)
@@ -145,6 +149,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
 
       const matchDepto = filtroDepto === 'Todos' || req.gerencia === filtroDepto;
       const matchStatus = filtroAprobacion === 'Todos' || req.estado_aprobacion === filtroAprobacion;
+      const matchCategoria = filtroCategoria === 'Todos' || (req.detalles && req.detalles.some(d => d.categoria === filtroCategoria));
       const matchCC = filtroCC === 'Todos' || req.centroCosto.includes(filtroCC);
       const matchStatusCompra = filtroStatusCompra === 'Todos' || req.status.toUpperCase() === filtroStatusCompra.toUpperCase();
 
@@ -152,7 +157,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
       if (fechaDesde && req.fecha < fechaDesde) matchFecha = false;
       if (fechaHasta && req.fecha > fechaHasta) matchFecha = false;
 
-      return matchTexto && matchDepto && matchStatus && matchCC && matchStatusCompra && matchFecha;
+      return matchTexto && matchDepto && matchStatus && matchCategoria && matchCC && matchStatusCompra && matchFecha;
     }).sort((a, b) => {
       // Prioridad Alta primero
       if (a.prioridad === 'Alta' && b.prioridad !== 'Alta') return -1;
@@ -160,7 +165,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
       // Luego por fecha desc (ya viene ordenado de BD, pero por si acaso)
       return new Date(b.fecha) - new Date(a.fecha);
     });
-  }, [historial, busqueda, filtroDepto, filtroAprobacion, filtroCC, filtroStatusCompra, fechaDesde, fechaHasta]);
+  }, [historial, busqueda, filtroDepto, filtroAprobacion, filtroCategoria, filtroCC, filtroStatusCompra, fechaDesde, fechaHasta]);
 
   // --- ESTADOS DEL FORMULARIO ---
   const [prioridad, setPrioridad] = useState('Normal');
@@ -413,22 +418,44 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
     setShowModal(true);
   };
 
-  const manejarRechazarGerenteArea = async () => {
+  const manejarRechazarGerenteArea = () => {
     if (!editandoId || currentUser?.rol !== 'Gerente') return;
-    const motivo = window.prompt('Indique el motivo del rechazo:');
-    if (!motivo) return alert('El motivo de rechazo es obligatorio.');
+    setMotivoRechazo('');
+    setRechazoAction('area');
+    setShowRechazoModal(true);
+  };
 
+  const manejarRechazarGeneral = () => {
+    if (!editandoId || (!currentUser?.esAdminReal && currentUser?.rol !== 'Gerente General')) return;
+    setMotivoRechazo('');
+    setRechazoAction('general');
+    setShowRechazoModal(true);
+  };
+
+  const confirmRechazo = async () => {
+    if (!motivoRechazo.trim()) return alert('El motivo de rechazo es obligatorio.');
+    
     setLoading(true);
     try {
-      const { error } = await supabase.from('requisiciones').update({
+      let updatePayload = {
         estado_aprobacion: 'rechazada',
-        motivo_rechazo: motivo,
-        aprobacion_nombre: 'Rechazado por Área',
-        aprobado_gerente_area: false
-      }).eq('id', editandoId);
+        motivo_rechazo: motivoRechazo,
+      };
+
+      if (rechazoAction === 'area') {
+        updatePayload.aprobacion_nombre = 'Rechazado por Área';
+        updatePayload.aprobado_gerente_area = false;
+      } else {
+        updatePayload.aprobacion_nombre = 'Rechazado por General';
+        updatePayload.aprobado_gerente_general = false;
+      }
+
+      const { error } = await supabase.from('requisiciones').update(updatePayload).eq('id', editandoId);
       if (error) throw error;
+      
       alert('Requisición rechazada.');
       await cargarHistorialDesdeBD();
+      setShowRechazoModal(false);
       setShowModal(false);
       resetearFormulario();
     } catch (err) { alert(err.message); } finally { setLoading(false); }
@@ -471,7 +498,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
       const uploadPromises = files.map(async (file, index) => {
         const fileExt = file.name.split('.').pop();
         const fileName = `factura_${editandoId}_${Date.now()}_${index}.${fileExt}`;
-        const filePath = `private/${fileName}`;
+        const filePath = `${fileName}`; // Subir a la raíz para evitar bloqueos por carpetas public/private
 
         const { error: uploadError } = await supabase.storage
           .from('facturas')
@@ -547,27 +574,6 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
       }).eq('id', editandoId);
       if (error) throw error;
       alert("Aprobación final exitosa.");
-      await cargarHistorialDesdeBD();
-      setShowModal(false);
-      resetearFormulario();
-    } catch (err) { alert(err.message); } finally { setLoading(false); }
-  };
-
-  const manejarRechazarGeneral = async () => {
-    if (!editandoId || (!currentUser?.esAdminReal && currentUser?.rol !== 'Gerente General')) return;
-    const motivo = window.prompt("Indique el motivo del rechazo:");
-    if (!motivo) return alert('El motivo de rechazo es obligatorio.');
-
-    setLoading(true);
-    try {
-      const { error } = await supabase.from('requisiciones').update({
-        estado_aprobacion: 'rechazada',
-        motivo_rechazo: motivo,
-        aprobacion_nombre: 'Rechazado por General',
-        aprobado_gerente_general: false
-      }).eq('id', editandoId);
-      if (error) throw error;
-      alert("Requisición rechazada.");
       await cargarHistorialDesdeBD();
       setShowModal(false);
       resetearFormulario();
@@ -756,18 +762,41 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
       transition={{ duration: 0.5, ease: "easeOut" }}
     >
 
-      {/* --- DASHBOARD SUPERIOR --- */}
-      <div className="dashboard-container">
+      {/* --- DASHBOARD SUPERIOR (STATS CARDS INTERACTIVAS) --- */}
+      <div className="dashboard-container" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '15px', marginBottom: '25px' }}>
         {[
-          { label: 'TOTAL DE REQUISICIONES', val: historial.length, col: '#0ea5e9' },
-          { label: 'REQUISICIONES PENDIENTES', val: historial.filter(r => r.estado_aprobacion === 'pendiente_area' || r.estado_aprobacion === 'enviada_general').length, col: '#facc15' },
-          { label: 'REQUISICIONES APROBADAS', val: historial.filter(r => r.estado_aprobacion === 'aprobado_final').length, col: '#22c55e' }
-        ].map((x, i) => (
-          <div key={i} className="stat-card" style={{ borderLeft: `6px solid ${x.col}` }}>
-            <div className="stat-label">{x.label}</div>
-            <div className="stat-value">{loading ? '...' : x.val}</div>
+          { label: 'TOTAL REQUISICIONES', val: historial.length, col: '#64748b', filter: 'Todos' },
+          { label: 'GERENTE ÁREA', val: historial.filter(r => r.estado_aprobacion === 'pendiente_area').length, col: '#ef4444', filter: 'pendiente_area' },
+          { label: 'POR APROBAR', val: historial.filter(r => r.estado_aprobacion === 'enviada_general').length, col: '#facc15', filter: 'enviada_general' },
+          { label: 'APROBADA GLOBAL', val: historial.filter(r => r.estado_aprobacion === 'aprobado_final').length, col: '#22c55e', filter: 'aprobado_final' },
+          { label: 'RECHAZADA', val: historial.filter(r => r.estado_aprobacion === 'rechazada').length, col: '#ef4444', filter: 'rechazada' },
+          { label: 'ANULADA', val: historial.filter(r => r.estado_aprobacion === 'ANULADA').length, col: '#94a3b8', filter: 'ANULADA' }
+        ].filter(x => !(currentUser?.rol === 'Gerente General' && x.filter === 'pendiente_area')).map((x, i) => {
+          const colorUsar = currentUser?.rol === 'Gerente General' ? '#64748b' : x.col;
+          return (
+          <div 
+            key={i} 
+            className="stat-card" 
+            onClick={() => setFiltroAprobacion(x.filter)}
+            style={{ 
+              borderLeft: `6px solid ${colorUsar}`, 
+              cursor: 'pointer',
+              backgroundColor: filtroAprobacion === x.filter ? '#f8fafc' : 'white',
+              transform: filtroAprobacion === x.filter ? 'scale(1.02)' : 'scale(1)',
+              transition: 'all 0.2s ease',
+              boxShadow: filtroAprobacion === x.filter ? '0 4px 12px rgba(0,0,0,0.1)' : '0 2px 4px rgba(0,0,0,0.05)',
+              position: 'relative',
+              overflow: 'hidden'
+            }}
+          >
+            {filtroAprobacion === x.filter && (
+               <div style={{ position: 'absolute', top: 0, right: 0, width: '4px', height: '100%', backgroundColor: colorUsar }}></div>
+            )}
+            <div className="stat-label" style={{ fontSize: '0.65rem', fontWeight: '800', color: '#64748b' }}>{x.label}</div>
+            <div className="stat-value" style={{ fontSize: '1.5rem', fontWeight: '900', color: colorUsar }}>{loading ? '...' : x.val}</div>
           </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* --- SECCIÓN DE FILTROS (SIMILAR A GESTIÓN DE USUARIOS) --- */}
@@ -805,18 +834,17 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
             {listaGerencias.map(g => <option key={g} value={g}>{g}</option>)}
           </select>
 
-          <select
-            className="input-tc"
-            style={{ flex: 1, margin: 0, backgroundColor: 'white' }}
-            value={filtroAprobacion}
-            onChange={(e) => setFiltroAprobacion(e.target.value)}
-          >
-            <option value="Todos">Aprobación</option>
-            <option value="pendiente_area">Pendiente Área</option>
-            <option value="enviada_general">Enviada General</option>
-            <option value="aprobado_final">Aprobado Final</option>
-            <option value="rechazada">Rechazadas</option>
-          </select>
+            <select
+              className="input-tc"
+              style={{ flex: 1, margin: 0, backgroundColor: 'white' }}
+              value={filtroCategoria}
+              onChange={(e) => setFiltroCategoria(e.target.value)}
+            >
+              <option value="Todos">Todas las Categorías</option>
+              {[...new Set(historial.flatMap(h => (h.detalles || []).map(d => d.categoria)).filter(c => c))].sort().map(cat => (
+                <option key={cat} value={cat}>{cat}</option>
+              ))}
+            </select>
 
           <select
             className="input-tc"
@@ -854,17 +882,15 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
         <table className="tc-table">
           <thead>
             <tr>
-              <th>ID</th>
+              <th style={{ width: '150px' }}>ID</th>
+              <th style={{ textAlign: 'center', width: '160px' }}>STATUS DE APROBACIÓN</th>
               <th>FECHA</th>
+              <th>SOLICITANTE / GERENCIA</th>
               <th>CATEGORÍA</th>
-              <th>SOLICITANTE</th>
-              <th>GERENCIA</th>
               <th>CENTRO DE COSTO</th>
-              <th>STATUS DE APROBACIÓN</th>
-              <th>STATUS DE COMPRA</th>
-              <th>PRIORIDAD</th>
               <th>TOTAL (C/IVA)</th>
-              <th style={{ textAlign: 'center' }}>ACCIONES</th>
+              <th style={{ textAlign: 'center', width: '140px' }}>STATUS DE COMPRA</th>
+              {currentUser?.rol !== 'Gerente General' && <th style={{ textAlign: 'center' }}>ACCIONES</th>}
             </tr>
           </thead>
           <tbody>
@@ -875,6 +901,18 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
                   onClick={() => verRequisicion(req)}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    {/* Punto de color para prioridad */}
+                    <div 
+                      style={{ 
+                        width: '8px', 
+                        height: '8px', 
+                        borderRadius: '50%', 
+                        backgroundColor: req.prioridad === 'Alta' ? '#ef4444' : '#0ea5e9',
+                        flexShrink: 0
+                      }} 
+                      title={`Prioridad: ${req.prioridad}`}
+                    ></div>
+                    
                     {req.correlativo}
                     {req.observaciones && (
                       <MessageSquare
@@ -891,71 +929,70 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
                     )}
                   </div>
                 </td>
+                
+                <td style={{ textAlign: 'center' }}>
+                  <span style={{ 
+                    fontSize: '0.7rem', 
+                    fontWeight: '900', 
+                    textTransform: 'uppercase',
+                    color: req.estado_aprobacion === 'aprobado_final' ? '#16a34a' :
+                           req.estado_aprobacion === 'rechazada' ? '#ef4444' :
+                           req.estado_aprobacion === 'ANULADA' ? '#64748b' : '#0ea5e9',
+                    display: 'inline-block',
+                    width: '100%'
+                  }}>
+                    {req.estado_aprobacion === 'aprobado_final' ? 'APROBADA' :
+                      req.estado_aprobacion === 'pendiente_area' || req.estado_aprobacion === 'enviada_area' ? 'GERENTE DE ÁREA' :
+                        req.estado_aprobacion === 'enviada_general' ? 'GERENTE GENERAL' :
+                          req.estado_aprobacion?.replace('_', ' ') || 'PENDIENTE'}
+                  </span>
+                </td>
+
                 <td style={{ color: 'var(--slate-400)' }}>{req.fecha ? format(new Date(req.fecha + 'T12:00:00'), 'dd/MM/yyyy') : 'N/A'}</td>
+
+                <td>
+                  <div style={{ fontWeight: '500' }}>{req.solicitante}</div>
+                  <div style={{ fontSize: '0.7rem', color: '#64748b' }}>{req.gerencia}</div>
+                </td>
+
                 <td style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#64748b' }}>
                   {req.estado_aprobacion === 'ANULADA' ? '-' : (req.detalles?.[0]?.categoria || 'N/A')}
                 </td>
-                <td style={{ fontWeight: '500' }}>{req.solicitante}</td>
-                <td style={{ fontSize: '0.8rem', color: '#64748b' }}>{req.gerencia}</td>
+
                 <td>{req.centroCosto}</td>
-                <td>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                    <span className={`status-purchase-badge ${req.estado_aprobacion === 'aprobado_final' ? 'badge-final' :
-                        req.estado_aprobacion === 'enviada_general' ? 'badge-general' :
-                          req.estado_aprobacion === 'ANULADA' ? '' :
-                            req.estado_aprobacion === 'rechazada' ? '' : 'badge-area'
-                      }`} style={{ fontSize: '0.65rem', fontWeight: '800', textTransform: 'uppercase', padding: '4px 8px', borderRadius: '8px' }}>
-                      {req.estado_aprobacion === 'aprobado_final' ? 'APROBADA' :
-                        req.estado_aprobacion === 'pendiente_area' || req.estado_aprobacion === 'enviada_area' ? 'GERENTE DE ÁREA' :
-                          req.estado_aprobacion === 'enviada_general' ? 'GERENTE GENERAL' :
-                            req.estado_aprobacion?.replace('_', ' ') || 'PENDIENTE'}
-                    </span>
-                  </div>
+
+                <td style={{ fontWeight: 'bold' }}>
+                  {req.estado_aprobacion === 'ANULADA' ? '-' : `$ ${req.total?.toLocaleString('de-DE')}`}
                 </td>
-                <td>
+
+                <td style={{ textAlign: 'center' }}>
                   {req.estado_aprobacion === 'ANULADA' ? '-' : (
                     <span style={{
-                      backgroundColor:
-                        req.status?.toUpperCase() === 'COMPLETADO' ? '#dcfce7' :
-                          req.status?.toUpperCase() === 'PARCIAL' ? '#ffedd5' : '#fef9c3',
                       color:
-                        req.status?.toUpperCase() === 'COMPLETADO' ? '#166534' :
-                          req.status?.toUpperCase() === 'PARCIAL' ? '#9a3412' : '#854d0e',
-                      padding: '4px 10px', borderRadius: '12px', fontSize: '0.65rem', fontWeight: 'bold'
+                        req.status?.toUpperCase() === 'COMPLETADO' ? '#16a34a' :
+                          req.status?.toUpperCase() === 'PARCIAL' ? '#f59e0b' : '#ca8a04',
+                      fontSize: '0.7rem', 
+                      fontWeight: '900',
+                      textTransform: 'uppercase'
                     }}>
                       {req.status}
                     </span>
                   )}
                 </td>
-                <td>
-                  {req.estado_aprobacion === 'ANULADA' ? '-' : (
-                    <span style={{
-                      backgroundColor: req.prioridad === 'Alta' ? '#fee2e2' : '#e0f2fe',
-                      color: req.prioridad === 'Alta' ? '#ef4444' : '#0ea5e9',
-                      padding: '4px 10px',
-                      borderRadius: '12px',
-                      fontSize: '0.7rem',
-                      fontWeight: '900',
-                      border: `1px solid ${req.prioridad === 'Alta' ? '#fecaca' : '#bae6fd'}`
-                    }}>
-                      {req.prioridad === 'Alta' ? '⚠️ ALTA' : 'NORMAL'}
-                    </span>
-                  )}
-                </td>
-                <td style={{ fontWeight: 'bold' }}>
-                  {req.estado_aprobacion === 'ANULADA' ? '-' : `$ ${req.total?.toLocaleString('de-DE')}`}
-                </td>
-                <td style={{ textAlign: 'center' }}>
-                  <div style={{ display: 'flex', justifyContent: 'center', gap: '15px' }}>
-                    <button onClick={() => verRequisicion(req)} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '1.2rem' }} title="Ver Detalles"></button>
-                    {req.estado_aprobacion !== 'ANULADA' && (
-                      <button onClick={() => anularRequisicion(req.id)} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '1.2rem' }} title="Anular Requisición">🚫</button>
-                    )}
-                    {(currentUser?.esAdminReal || currentUser?.rol === 'Gerente') && (
-                      <button onClick={() => manejarEliminar(req.id)} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '1.2rem' }} title="Borrar Registro">🗑️</button>
-                    )}
-                  </div>
-                </td>
+
+                {currentUser?.rol !== 'Gerente General' && (
+                  <td style={{ textAlign: 'center' }}>
+                    <div style={{ display: 'flex', justifyContent: 'center', gap: '15px' }}>
+                      <button onClick={() => verRequisicion(req)} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '1.2rem' }} title="Ver Detalles"></button>
+                      {req.estado_aprobacion !== 'ANULADA' && currentUser?.rol !== 'Gerente General' && (
+                        <button onClick={() => anularRequisicion(req.id)} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '1.2rem' }} title="Anular Requisición">🚫</button>
+                      )}
+                      {(currentUser?.esAdminReal || currentUser?.rol === 'Gerente') && (
+                        <button onClick={() => manejarEliminar(req.id)} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '1.2rem' }} title="Borrar Registro">🗑️</button>
+                      )}
+                    </div>
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>
@@ -1143,7 +1180,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
                               {unidades.map(u => <option key={u} value={u}>{u}</option>)}
                             </select>
                           </td>
-                          <td><input className="input-tc" value={f.descripcion} onChange={(e) => actualizarFila(f.id, 'descripcion', e.target.value)} /></td>
+                          <td><textarea className="input-tc" value={f.descripcion} onChange={(e) => actualizarFila(f.id, 'descripcion', e.target.value)} style={{ resize: 'vertical', minHeight: '38px', paddingTop: '8px', width: '100%', boxSizing: 'border-box' }} rows="1" /></td>
                           <td><input className="input-tc" value={f.beneficiario} onChange={(e) => actualizarFila(f.id, 'beneficiario', e.target.value)} placeholder="Beneficiario" /></td>
                           <td><input className="input-tc" type="number" value={f.pu} style={{ textAlign: 'right' }} onChange={(e) => actualizarFila(f.id, 'pu', e.target.value)} /></td>
                           <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{f.total.toLocaleString('de-DE')}</td>
@@ -1175,6 +1212,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
                                     <tr style={{ backgroundColor: '#f1f5f9', color: '#64748b', fontSize: '0.65rem' }}>
                                       <th style={{ padding: '8px', textAlign: 'left' }}>FECHA</th>
                                       <th style={{ padding: '8px', textAlign: 'left' }}>EVENTO</th>
+                                      <th style={{ padding: '8px', textAlign: 'left' }}>PROVEEDOR</th>
                                       <th style={{ padding: '8px', textAlign: 'left' }}>DETALLE / MOTIVO</th>
                                       <th style={{ padding: '8px', textAlign: 'center' }}>CANT.</th>
                                       <th style={{ padding: '8px', textAlign: 'right' }}>P.U. REAL</th>
@@ -1191,6 +1229,9 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
                                         <td style={{ padding: '8px', color: '#64748b' }}>{new Date(h.fecha).toLocaleDateString()}</td>
                                         <td style={{ padding: '8px', fontWeight: 'bold', color: h.tipo === 'JUSTIFICACION' ? '#d97706' : '#16a34a' }}>
                                           {h.tipo === 'JUSTIFICACION' ? '⚠️ JUSTIFICACIÓN' : '✅ COMPRA'}
+                                        </td>
+                                        <td style={{ padding: '8px', fontSize: '0.65rem', fontWeight: 'bold', color: '#64748b' }}>
+                                          {h.tipo !== 'JUSTIFICACION' ? (h.proveedor_nombre || 'No asignado') : '-'}
                                         </td>
                                         <td style={{ padding: '8px' }}>
                                           {h.tipo === 'JUSTIFICACION' ? (
@@ -1373,6 +1414,62 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
           </div>
         </div>
       )}
+
+      {/* --- MODAL DE RECHAZO PERSONALIZADO --- */}
+      <AnimatePresence>
+        {showRechazoModal && (
+          <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 20000, padding: '20px' }}>
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              style={{ backgroundColor: 'white', borderRadius: '24px', padding: '30px', width: '100%', maxWidth: '500px', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)' }}
+            >
+              <h3 style={{ margin: '0 0 10px 0', fontSize: '1.25rem', color: '#1e293b', fontWeight: '800' }}>Indique el motivo del rechazo:</h3>
+              <p style={{ margin: '0 0 20px 0', fontSize: '0.85rem', color: '#64748b' }}>Esta información será visible para el solicitante de la requisición.</p>
+              
+              <textarea
+                autoFocus
+                value={motivoRechazo}
+                onChange={(e) => setMotivoRechazo(e.target.value)}
+                style={{
+                  width: '100%',
+                  minHeight: '150px',
+                  borderRadius: '16px',
+                  border: '2px solid #e2e8f0',
+                  padding: '15px',
+                  fontSize: '0.95rem',
+                  outline: 'none',
+                  transition: 'border-color 0.2s',
+                  fontFamily: 'inherit',
+                  resize: 'none'
+                }}
+                onFocus={(e) => e.target.style.borderColor = '#0ea5e9'}
+                onBlur={(e) => e.target.style.borderColor = '#e2e8f0'}
+                placeholder="Escriba aquí las razones del rechazo detalladamente..."
+              />
+
+              <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '25px' }}>
+                <button 
+                  className="btn-tc btn-tc-secondary" 
+                  onClick={() => setShowRechazoModal(false)}
+                  style={{ borderRadius: '12px', padding: '10px 20px' }}
+                >
+                  CANCELAR
+                </button>
+                <button 
+                  className="btn-tc btn-tc-dark" 
+                  onClick={confirmRechazo}
+                  disabled={loading}
+                  style={{ borderRadius: '12px', padding: '10px 25px', backgroundColor: '#0f172a' }}
+                >
+                  {loading ? <Loader2 className="animate-spin" size={16} /> : 'ACEPTAR'}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 };

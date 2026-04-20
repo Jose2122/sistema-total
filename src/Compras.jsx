@@ -389,7 +389,7 @@ const Compras = () => {
       const uploadPromises = files.map(async (file, index) => {
         const fileExt = file.name.split('.').pop();
         const fileName = `factura_${editandoId}_${Date.now()}_${index}.${fileExt}`;
-        const filePath = `private/${fileName}`;
+        const filePath = `${fileName}`; // Subir a la raíz para máxima compatibilidad publicUrl
 
         const { error: uploadError } = await supabase.storage
           .from('facturas')
@@ -679,14 +679,14 @@ const Compras = () => {
         <table className="tc-table">
           <thead>
             <tr>
-              <th>ID REQ</th>
+              <th style={{ width: '150px' }}>ID REQ</th>
               <th>CATEGORÍA</th>
               <th>SOLICITANTE</th>
               <th>C. COSTOS</th>
               <th>GERENCIA</th>
-              <th>PRIORIDAD</th>
+              <th style={{ textAlign: 'center', width: '120px' }}>PRIORIDAD</th>
               <th>TOTAL $</th>
-              <th>STATUS DE COMPRA</th>
+              <th style={{ textAlign: 'center', width: '140px' }}>STATUS DE COMPRA</th>
             </tr>
           </thead>
           <tbody>
@@ -722,13 +722,34 @@ const Compras = () => {
                 <td>{req.solicitante}</td>
                 <td>{req.centro_costo}</td>
                 <td>{req.gerencia}</td>
-                <td><span style={{ color: req.prioridad === 'Alta' ? '#ef4444' : '#0ea5e9', fontWeight: 'bold' }}>{req.prioridad}</span></td>
+                <td style={{ textAlign: 'center' }}>
+                  {req.prioridad === 'Alta' ? (
+                    <span style={{
+                      color: '#ef4444',
+                      fontSize: '0.7rem',
+                      fontWeight: '900',
+                      textTransform: 'uppercase'
+                    }}>
+                      ⚠️ ALTA
+                    </span>
+                  ) : (
+                    <span style={{ 
+                      color: '#0ea5e9', 
+                      fontSize: '0.7rem', 
+                      fontWeight: '900',
+                      textTransform: 'uppercase'
+                    }}>
+                      NORMAL
+                    </span>
+                  )}
+                </td>
                 <td style={{ fontWeight: 'bold' }}>$ {req.total?.toLocaleString('de-DE')}</td>
-                <td>
+                <td style={{ textAlign: 'center' }}>
                   <span style={{
-                    backgroundColor: req.status_compra === 'Completado' ? '#dcfce7' : '#fef9c3',
-                    color: req.status_compra === 'Completado' ? '#166534' : '#854d0e',
-                    padding: '4px 10px', borderRadius: '12px', fontSize: '0.65rem', fontWeight: 'bold'
+                    color: req.status_compra === 'Completado' ? '#16a34a' : '#ca8a04',
+                    fontSize: '0.7rem', 
+                    fontWeight: '900',
+                    textTransform: 'uppercase'
                   }}>
                     {req.status_compra || 'Pendiente'}
                   </span>
@@ -745,7 +766,7 @@ const Compras = () => {
 
       {showModal && (
         <div className="modal-overlay">
-          <div className="modal-card animate-modal" style={{ maxWidth: '1150px' }}>
+          <div className="modal-card animate-modal" style={{ maxWidth: '1450px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
                 <h2 style={{ margin: 0 }}>Gestión de Compra: {requisicionActiva?.correlativo}</h2>
