@@ -94,7 +94,7 @@ serve(async (req) => {
                 </div>
 
                 <div style="text-align: center;">
-                  <a href="http://localhost:5173/dashboard" 
+                  <a href="${Deno.env.get('SITE_URL') || 'http://localhost:5173'}/dashboard" 
                      style="background-color: ${COLORES.fondo_boton}; color: white; padding: 16px 35px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block; font-size: 14px; letter-spacing: 0.5px;">
                     REVISAR EN STOCKSMART
                   </a>
