@@ -27,8 +27,14 @@ const Usuarios = () => {
     foto_url: '', contrato: '', activo: true,
     password: '', 
     permisos_modulos: ["requisiciones", "fondos", "tickets", "usuarios"],
-    capacidades: {}
+    capacidades: {},
+    delegado_id: '',
+    delegacion_desde: '',
+    delegacion_hasta: ''
   });
+
+  const [userLogs, setUserLogs] = useState([]);
+  const [loadingLogs, setLoadingLogs] = useState(false);
 
   const MODULOS_DISPONIBLES = [
     { id: 'requisiciones', label: 'Requisiciones' },
@@ -79,11 +85,25 @@ const Usuarios = () => {
       // 1. Obtener mi propio perfil primero
       const { data: miPerfilLocal } = await supabase.from('perfiles').select('*').eq('id', session.user.id).single();
       const emailLower = (userEmail || '').toLowerCase();
-      const esAdminReal = emailLower === 'jcontreras.totalclean@gmail.com' || emailLower === 'cvega.totalclean@gmail.com';
+      // José (System Admin), Carlos (Gerente General), Karin (Control Interno)
+      const esJose = emailLower === 'jcontreras.totalclean@gmail.com';
+      const esAdminReal = esJose || 
+                          emailLower === 'cvega.totalclean@gmail.com' || 
+                          emailLower === 'cvega@totalclean.com' || 
+                          emailLower === 'karincmm1@gmail.com';
+      
       const rolUpper = (miPerfilLocal?.rol || '').trim().toUpperCase();
-      const esGlobalAdmin = esAdminReal || rolUpper === 'GERENTE GENERAL' || rolUpper === 'ADMIN';
+      const deptoUpper = (miPerfilLocal?.departamento || '').trim().toUpperCase();
+      
+      // Acceso Total: Admins, Gerencia General, o equipo de Administración
+      const esGlobalAdmin = esAdminReal || rolUpper === 'GERENTE GENERAL' || rolUpper === 'GERENCIA GENERAL' || rolUpper === 'ADMIN' || deptoUpper.includes('ADMINISTRACIÓN');
 
-      setCurrentUser({ ...miPerfilLocal, esAdminReal });
+      // Si falla la carga del perfil por RLS, creamos una sesión mínima para no romper la UI
+      if (!miPerfilLocal && session?.user) {
+        setCurrentUser({ id: session.user.id, correo: session.user.email, nombre: 'Usuario', apellido: '', esAdminReal });
+      } else {
+        setCurrentUser({ ...miPerfilLocal, esAdminReal });
+      }
 
       let dataFinal = [];
 
@@ -148,6 +168,40 @@ const Usuarios = () => {
     document.head.appendChild(style);
   }, []);
 
+  const registrarActividad = async (accion, detalle = "") => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.user) return;
+
+      await supabase.from('logs_actividad').insert([{
+        usuario_id: session.user.id,
+        usuario_nombre: currentUser?.nombre ? `${currentUser.nombre} ${currentUser.apellido}` : session.user.email,
+        corredor_id: formData.id,
+        accion: accion,
+        modulo: 'Usuarios',
+        detalle: detalle,
+        metadata: { target_email: formData.correo }
+      }]);
+    } catch (e) {
+      console.error("Error registrando log:", e);
+    }
+  };
+
+  const obtenerLogsUsuario = async (userId) => {
+    if (!userId) return;
+    setLoadingLogs(true);
+    try {
+      const { data } = await supabase
+        .from('logs_actividad')
+        .select('*')
+        .or(`usuario_id.eq.${userId},corredor_id.eq.${userId}`)
+        .order('created_at', { ascending: false })
+        .limit(20);
+      setUserLogs(data || []);
+    } catch (e) { console.error(e); }
+    finally { setLoadingLogs(false); }
+  };
+
   // Efecto para heredar permisos cuando cambia el cargo
   useEffect(() => {
     if (!formData.id && formData.rol) { // Solo si es nuevo usuario
@@ -185,38 +239,59 @@ const Usuarios = () => {
     
     setLoading(true);
     try {
-      const { password, ...datosRestantes } = formData;
+      const { password, ...datosForm } = formData;
       const gerenciaObj = gerencias.find(g => g.id === formData.gerencia_id);
       
-      const payload = {
-        ...datosRestantes,
-        departamento: gerenciaObj?.nombre || formData.departamento,
-        activo: formData.activo !== false,
-        gerencia_id: formData.gerencia_id
+      // Limpieza del payload para evitar errores 400 (Bad Request) en PostgREST
+      // Eliminamos campos que no pertenecen a la tabla 'perfiles' o que son redundantes
+      const payloadPerfil = {
+        nombre: datosForm.nombre,
+        apellido: datosForm.apellido,
+        correo: datosForm.correo,
+        rol: datosForm.rol,
+        departamento: gerenciaObj?.nombre || datosForm.departamento,
+        gerencia_id: datosForm.gerencia_id,
+        contrato: datosForm.contrato,
+        foto_url: datosForm.foto_url,
+        activo: datosForm.activo !== false,
+        permisos_modulos: datosForm.permisos_modulos,
+        capacidades: datosForm.capacidades,
+        delegado_id: datosForm.delegado_id || null,
+        delegacion_desde: datosForm.delegacion_desde || null,
+        delegacion_hasta: datosForm.delegacion_hasta || null
       };
 
       if (formData.id) {
-        // ACTUALIZAR CONTRASEÑA (SI SE PROPORCIONA)
+        // --- MODO ACTUALIZAR ---
         if (password && password.length >= 6) {
+           console.log("[USUARIOS] Actualizando contraseña...");
            const { data: fnData, error: fnError } = await supabase.functions.invoke('admin-user-manager', {
              body: { action: 'update_password', data: { id: formData.id, password } }
            });
-           if (fnError || fnData?.error) throw new Error(fnError?.message || fnData?.error || "Error actualizando clave");
-           toast.success("Contraseña actualizada");
+           
+           if (fnError || fnData?.error) {
+             const detailedMsg = fnData?.error || fnError?.message || "Error al actualizar contraseña";
+             throw new Error(detailedMsg);
+           }
+           toast.success("Contraseña actualizada vía Admin");
         }
 
-        // ACTUALIZAR PERFIL
-        const { error } = await supabase.from('perfiles').update(payload).eq('id', formData.id);
+        // ACTUALIZAR PERFIL (Excluimos gerencia_id si falla, por compatibilidad)
+        const { error } = await supabase.from('perfiles').update(payloadPerfil).eq('id', formData.id);
+        
         if (error) {
+            // Manejo de error de columna inexistente (fallback)
             if (error.code === '42703') {
-                const { gerencia_id, ...payloadSafe } = payload;
+                const { gerencia_id, ...payloadSafe } = payloadPerfil;
                 const { error: retryError } = await supabase.from('perfiles').update(payloadSafe).eq('id', formData.id);
                 if (retryError) throw retryError;
             } else throw error;
         }
         toast.success("Perfil actualizado con éxito");
+        await registrarActividad('UPDATE_PROFILE', `Cambios en perfil de ${formData.nombre}`);
       } else {
-        // CREAR USUARIO EN AUTH VÍA EDGE FUNCTION
+        // --- MODO CREAR ---
+        console.log("[USUARIOS] Creando cuenta en Auth vía Edge Function...");
         const { data: fnData, error: fnError } = await supabase.functions.invoke('admin-user-manager', {
           body: { 
             action: 'create_user', 
@@ -227,25 +302,40 @@ const Usuarios = () => {
           }
         });
         
-        if (fnError || fnData?.error) throw new Error(fnError?.message || fnData?.error || "Error creando acceso");
+        if (fnError || (fnData && fnData.error)) {
+          const detail = fnData?.error || fnError?.message || "Error desconocido en servidor";
+          throw new Error(`Error en Acceso Auth: ${detail}`);
+        }
 
-        // INSERTAR PERFIL
+        if (!fnData?.user?.id) throw new Error("La función no devolvió un ID de usuario válido.");
+
+        // INSERTAR PERFIL DESPUÉS DE CREAR EL AUTH
+        console.log("[USUARIOS] Insertando perfil para ID:", fnData.user.id);
         const { error: profileError } = await supabase.from('perfiles').insert([{ 
-          ...payload, id: fnData.user.id 
+          ...payloadPerfil, 
+          id: fnData.user.id 
         }]);
 
         if (profileError) {
              if (profileError.code === '42703') {
-                const { gerencia_id, ...payloadSafe } = payload;
+                const { gerencia_id, ...payloadSafe } = payloadPerfil;
                 const { error: retryError } = await supabase.from('perfiles').insert([{ ...payloadSafe, id: fnData.user.id }]);
                 if (retryError) throw retryError;
              } else throw profileError;
         }
         toast.success("Usuario creado exitosamente");
+        await registrarActividad('CREATE_USER', `Creado nuevo usuario: ${formData.correo}`);
       }
 
       obtenerUsuarios();
-      setShowModal(false);
+      
+      // SOLO CERRAR SI ES EDICIÓN. SI ES CREACIÓN, PERMITIR SEGUIR CREANDO.
+      if (formData.id) {
+        setShowModal(false);
+      } else {
+        toast.success("Puedes registrar otro integrante ahora.");
+      }
+
       setFormData({ 
         id: null, nombre: '', apellido: '', correo: '', rol: '', departamento: '', gerencia_id: '',
         foto_url: '', contrato: '', activo: true, password: '', 
@@ -254,13 +344,34 @@ const Usuarios = () => {
       });
       setVerPassword(false);
       setTabActiva('general');
-    } catch (err) { toast.error(err.message); } finally { setLoading(false); }
+      setUserLogs([]);
+    } catch (err) { 
+      console.error("[USUARIOS] Error Fatal:", err);
+      toast.error(err.message, { duration: 6000 }); 
+    } finally { 
+      setLoading(false); 
+    }
   };
 
   const eliminarUsuarioTotal = async (id, correo) => {
     if (!currentUser?.esAdminReal) return;
-    if (!window.confirm(`¿PELIGRO! Esta acción eliminará PERMANENTEMENTE a ${correo} de todo el sistema. Esta acción no se puede deshacer. ¿Deseas continuar?`)) return;
+    toast((t) => (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: 'bold', color: '#ef4444' }}>⚠️ ¡PELIGRO! Esta acción eliminará PERMANENTEMENTE a {correo} de todo el sistema. Esta acción no se puede deshacer.</p>
+        <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+          <button 
+            onClick={() => { toast.dismiss(t.id); ejecutarEliminacionDefinitiva(id); }}
+            style={{ padding: '4px 12px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}
+          >
+            SÍ, ELIMINAR TODO
+          </button>
+          <button onClick={() => toast.dismiss(t.id)} style={{ padding: '4px 12px', background: '#f1f5f9', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}>CANCELAR</button>
+        </div>
+      </div>
+    ), { duration: 10000 });
+  };
 
+  const ejecutarEliminacionDefinitiva = async (id) => {
     setLoading(true);
     try {
       const { data: fnData, error: fnError } = await supabase.functions.invoke('admin-user-manager', {
@@ -305,7 +416,7 @@ const Usuarios = () => {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '25px' }}>
           <h2 style={{ fontSize: '1.4rem', color: '#0f172a', margin: 0 }}>Gestión de Usuarios</h2>
           {(currentUser?.esAdminReal || (currentUser?.rol || '').toUpperCase() === 'GERENTE GENERAL' || (currentUser?.rol || '').toUpperCase() === 'ADMIN') && (
-            <button className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '8px' }} onClick={() => { setFormData({id:null, nombre:'', apellido:'', correo:'', rol:'', departamento:'', gerencia_id:'', contrato:'', activo: true, foto_url:'', password: '', permisos_modulos: ["requisiciones", "fondos", "tickets", "usuarios"], capacidades: {}}); setShowModal(true); }}>
+            <button className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '8px' }} onClick={() => { setFormData({id:null, nombre:'', apellido:'', correo:'', rol:'', departamento:'', gerencia_id:'', contrato:'', activo: true, foto_url:'', password: '', permisos_modulos: ["requisiciones", "fondos", "tickets", "usuarios"], capacidades: {}, delegado_id: '', delegacion_desde: '', delegacion_hasta: ''}); setShowModal(true); setTabActiva('general'); setUserLogs([]); }}>
               <UserPlus size={18} /> Nuevo Integrante
             </button>
           )}
@@ -376,11 +487,14 @@ const Usuarios = () => {
                       <button onClick={() => { 
                         setFormData({ 
                           ...u, 
-                          password: '',
-                          capacidades: u.capacidades || {}
+                          capacidades: u.capacidades || {},
+                          delegado_id: u.delegado_id || '',
+                          delegacion_desde: u.delegacion_desde || '',
+                          delegacion_hasta: u.delegacion_hasta || ''
                         });
                         setVerPassword(false);
                         setTabActiva('general');
+                        obtenerLogsUsuario(u.id);
                         setShowModal(true); 
                       }} style={{ color: '#0ea5e9', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>Editar</button>
                       <Trash2 size={16} color="#ef4444" style={{ cursor: 'pointer' }} onClick={() => eliminarUsuarioTotal(u.id, u.correo)} />
@@ -422,6 +536,9 @@ const Usuarios = () => {
               </div>
               <div style={estilos.tab(tabActiva === 'privilegios')} onClick={() => setTabActiva('privilegios')}>
                 <ShieldCheck size={18} /> Privilegios
+              </div>
+              <div style={estilos.tab(tabActiva === 'seguridad')} onClick={() => setTabActiva('seguridad')}>
+                <Shield size={18} /> Seguridad
               </div>
             </div>
 
@@ -497,6 +614,75 @@ const Usuarios = () => {
                 </div>
               )}
 
+              {tabActiva === 'seguridad' && (
+                <div className="tab-content">
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '30px' }}>
+                    {/* Delegación */}
+                    <div style={{ backgroundColor: 'white', padding: '25px', borderRadius: '24px', border: '1px solid #f1f5f9' }}>
+                      <h4 style={{ margin: '0 0 15px 0', display: 'flex', alignItems: 'center', gap: '10px', color: '#1e293b' }}>
+                        <UserCircle size={20} color="#3b82f6" /> Delegación Temporal
+                      </h4>
+                      <p style={{ fontSize: '0.75rem', color: '#64748b', marginBottom: '20px' }}>
+                        Selecciona a un colaborador del departamento para que quede como encargado.
+                      </p>
+                      
+                      <label style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#94a3b8', display: 'block', marginBottom: '8px' }}>ENCARGADO (Mismo Depto.)</label>
+                      <select 
+                        className="input-style" 
+                        style={{ width: '100%', marginBottom: '20px' }}
+                        value={formData.delegado_id}
+                        onChange={e => setFormData({...formData, delegado_id: e.target.value})}
+                      >
+                        <option value="">Ninguno</option>
+                        {usuarios
+                          .filter(u => u.departamento === formData.departamento && u.id !== formData.id)
+                          .map(u => (
+                            <option key={u.id} value={u.id}>{u.nombre} {u.apellido}</option>
+                          ))
+                        }
+                      </select>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
+                        <div>
+                          <label style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#94a3b8', display: 'block', marginBottom: '8px' }}>DESDE</label>
+                          <input type="date" className="input-style" style={{ width: '100%' }} value={formData.delegacion_desde} onChange={e => setFormData({...formData, delegacion_desde: e.target.value})} />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#94a3b8', display: 'block', marginBottom: '8px' }}>HASTA</label>
+                          <input type="date" className="input-style" style={{ width: '100%' }} value={formData.delegacion_hasta} onChange={e => setFormData({...formData, delegacion_hasta: e.target.value})} />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/*Logs de Actividad */}
+                    <div style={{ backgroundColor: 'white', padding: '25px', borderRadius: '24px', border: '1px solid #f1f5f9' }}>
+                      <h4 style={{ margin: '0 0 15px 0', display: 'flex', alignItems: 'center', gap: '10px', color: '#1e293b' }}>
+                        <Activity size={20} color="#8b5cf6" /> Actividad Reciente
+                      </h4>
+                      <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
+                        {loadingLogs ? (
+                          <div style={{ textAlign: 'center', padding: '20px', color: '#94a3b8', fontSize: '0.8rem' }}>Cargando registros...</div>
+                        ) : userLogs.length > 0 ? (
+                          userLogs.map(log => (
+                            <div key={log.id} style={{ padding: '12px 0', borderBottom: '1px solid #f1f5f9' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                                <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#475569' }}>{log.accion}</span>
+                                <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>{new Date(log.created_at).toLocaleString()}</span>
+                              </div>
+                              <p style={{ margin: 0, fontSize: '0.7rem', color: '#64748b' }}>{log.detalle || 'Acción realizada en el sistema'}</p>
+                              {log.usuario_nombre && (
+                                <div style={{ fontSize: '0.6rem', color: '#3b82f6', marginTop: '4px', fontWeight: '600' }}>Por: {log.usuario_nombre}</div>
+                              )}
+                            </div>
+                          ))
+                        ) : (
+                          <div style={{ textAlign: 'center', padding: '30px', color: '#cbd5e1', fontSize: '0.75rem' }}>No hay actividad registrada.</div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
               {tabActiva === 'privilegios' && (
                 <div className="tab-content">
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '12px' }}>

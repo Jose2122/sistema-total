@@ -12,6 +12,7 @@ import {
   DollarSign,
   RefreshCw
 } from 'lucide-react';
+import toast from 'react-hot-toast';
 import './Administracion.css';
 
 // Inline Component for Stat Cards moved UP
@@ -128,7 +129,7 @@ const Administracion = () => {
 
   const agregarBanco = async (e) => {
     e.preventDefault();
-    if (!nuevoBanco.nombre) return alert('El nombre del banco es obligatorio');
+    if (!nuevoBanco.nombre) return toast.error('El nombre del banco es obligatorio');
 
     try {
       const { error } = await supabase
@@ -146,9 +147,9 @@ const Administracion = () => {
       
       setNuevoBanco({ nombre: '', cbu: '', alias: '', tipo: 'Corriente', moneda: 'USD' });
       await cargarBancos();
-      alert('Banco agregado correctamente');
+      toast.success('Banco agregado correctamente');
     } catch (err) {
-      alert('Error al agregar banco: ' + err?.message);
+      toast.error('Error al agregar banco: ' + err?.message);
     }
   };
 
@@ -162,12 +163,28 @@ const Administracion = () => {
       if (error) throw error;
       await cargarBancos();
     } catch (err) {
-      alert('Error al actualizar banco: ' + err?.message);
+      toast.error('Error al actualizar banco: ' + err?.message);
     }
   };
 
   const eliminarBanco = async (id) => {
-    if (!window.confirm('¿Está seguro de eliminar este banco?')) return;
+    toast((t) => (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: '500' }}>¿Está seguro de eliminar este banco?</p>
+        <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+          <button 
+            onClick={() => { toast.dismiss(t.id); ejecutarEliminarBanco(id); }}
+            style={{ padding: '4px 12px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}
+          >
+            SÍ, ELIMINAR
+          </button>
+          <button onClick={() => toast.dismiss(t.id)} style={{ padding: '4px 12px', backgroundColor: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}>CANCELAR</button>
+        </div>
+      </div>
+    ), { duration: 6000, position: 'top-center' });
+  };
+
+  const ejecutarEliminarBanco = async (id) => {
     try {
       const { error } = await supabase
         .from('bancos')
@@ -175,9 +192,10 @@ const Administracion = () => {
         .eq('id', id);
 
       if (error) throw error;
+      toast.success('Banco eliminado correctamente');
       await cargarBancos();
     } catch (err) {
-      alert('Error al eliminar banco: ' + err?.message);
+      toast.error('Error al eliminar banco: ' + err?.message);
     }
   };
 

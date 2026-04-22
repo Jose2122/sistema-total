@@ -15,8 +15,9 @@
 
 body {
   margin: 0;
-  font-family: 'Montserrat', sans-serif;
+  font-family: 'Inter', sans-serif;
   -webkit-font-smoothing: antialiased;
+  background-color: var(--main-bg);
 }
 
 .dashboard-container {

@@ -29,7 +29,46 @@ function App() {
 
   return (
     <Router>
-      <Toaster position="top-right" toastOptions={{ duration: 4000 }} />
+      <Toaster 
+        position="top-right" 
+        toastOptions={{ 
+          duration: 5000,
+          style: {
+            background: '#ffffff',
+            color: '#1e293b',
+            borderRadius: '16px',
+            padding: '16px 24px',
+            fontSize: '14px',
+            fontWeight: '600',
+            fontFamily: "'Inter', sans-serif",
+            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+            border: '1px solid rgba(226, 232, 240, 0.8)',
+            maxWidth: '450px',
+          },
+          success: {
+            style: {
+              background: '#f0fdf4',
+              color: '#166534',
+              border: '1px solid #bbf7d0',
+            },
+            iconTheme: {
+              primary: '#10b981',
+              secondary: '#fff',
+            },
+          },
+          error: {
+            style: {
+              background: '#fef2f2',
+              color: '#991b1b',
+              border: '1px solid #fecaca',
+            },
+            iconTheme: {
+              primary: '#ef4444',
+              secondary: '#fff',
+            },
+          },
+        }} 
+      />
 
       <Routes>
         {/* Si hay sesión, al entrar a "/" te manda al Dashboard automáticamente */}

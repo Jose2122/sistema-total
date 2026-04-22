@@ -39,6 +39,7 @@ import {
   Calendar
 } from 'lucide-react';
 import { format, getWeek } from 'date-fns';
+import toast from 'react-hot-toast';
 import './TicketExpress.css';
 
 const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = null }) => {
@@ -81,6 +82,18 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
     return 1 + Math.round(((date.getTime() - week1.getTime()) / 86400000 - 3 + (week1.getDay() + 6) % 7) / 7);
   };
 
+  const esPrivilegiado = useMemo(() => {
+    if (!currentUser) return false;
+    const emailLower = (currentUser.correo || '').toLowerCase();
+    const deptoUpper = (currentUser.departamento || '').toUpperCase();
+    return emailLower === 'jcontreras.totalclean@gmail.com' || 
+           emailLower === 'cvega@totalclean.com' || 
+           emailLower === 'karincmm1@gmail.com' ||
+           deptoUpper.includes('ADMINISTRACIÓN') ||
+           deptoUpper === 'RECURSOS HUMANOS' ||
+           deptoUpper === 'CONTABILIDAD';
+  }, [currentUser]);
+
   // --- DATA MAESTRA ---
   const [centrosCosto, setCentrosCosto] = useState([]);
   const [todasClasificaciones, setTodasClasificaciones] = useState([]);
@@ -100,6 +113,9 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
       clasificacion: '', 
       categoria: '', 
       cantidad: 1, 
+      cantidad_pedida: 1,
+      cantidad_comprada: 0,
+      cantidad_pendiente: 1,
       unidad: 'UNID', 
       descripcion: '', 
       beneficiario: '', 
@@ -173,20 +189,26 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
           departamento: datosPredefinidos.gerencia || prev.departamento,
           solicitante: datosPredefinidos.solicitante || prev.solicitante,
           solicitud_ref: datosPredefinidos.solicitud_ref || '',
-          partidas: (datosPredefinidos.partidasSeleccionadas && Array.isArray(datosPredefinidos.partidasSeleccionadas)) 
-            ? datosPredefinidos.partidasSeleccionadas.map(p => ({
-                id: p.id || Date.now() + Math.random(),
-                cc: p.cc || '',
-                clasificacion: p.clasificacion || p.clasif || '',
-                categoria: p.categoria || p.cat || '',
-                cantidad: (p.cantidad !== undefined) ? Number(p.cantidad) : (p.cant !== undefined ? Number(p.cant) : 1),
-                unidad: p.unidad || p.uni || 'UNID',
-                descripcion: p.descripcion || p.desc || '',
-                beneficiario: p.beneficiario || p.ben || '',
-                pu: Number(p.puUsd || p.puBs || p.pu || 0),
-                total: (Number(p.puUsd || p.puBs || p.pu || 0)) * (Number(p.cantidad || p.cant || 1)),
-                pago_realizado: false
-              })) 
+          partidas: (datosPredefinidos.partidasSeleccionadas && Array.isArray(datosPredefinidos.partidasSeleccionadas))
+            ? datosPredefinidos.partidasSeleccionadas.map(p => {
+                const cant = (p.cantidad !== undefined) ? Number(p.cantidad) : (p.cant !== undefined ? Number(p.cant) : 1);
+                return {
+                  id: p.id || Date.now() + Math.random(),
+                  cc: p.cc || '',
+                  clasificacion: p.clasificacion || p.clasif || '',
+                  categoria: p.categoria || p.cat || '',
+                  cantidad: cant,
+                  cantidad_pedida: cant,
+                  cantidad_comprada: 0,
+                  cantidad_pendiente: cant,
+                  unidad: p.unidad || p.uni || 'UNID',
+                  descripcion: p.descripcion || p.desc || '',
+                  beneficiario: p.beneficiario || p.ben || '',
+                  pu: Number(p.puUsd || p.puBs || p.pu || 0),
+                  total: (Number(p.puUsd || p.puBs || p.pu || 0)) * cant,
+                  pago_realizado: false
+                };
+              }) 
             : prev.partidas
         }));
         datosCargadosRef.current = true;
@@ -236,13 +258,22 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
           .eq('id', user.id)
           .single();
 
-        const adminEmails = ['jcontreras.totalclean@gmail.com'];
+        const emailLower = (user.email || '').toLowerCase();
+        const esSuperAdmin = emailLower === 'jcontreras.totalclean@gmail.com';
+        const esAdminReal = esSuperAdmin || 
+                            emailLower === 'cvega.totalclean@gmail.com' || 
+                            emailLower === 'cvega@totalclean.com' || 
+                            emailLower === 'karincmm1@gmail.com';
+
         const userInfo = {
           id: user.id,
-          nombre: perfil ? `${perfil.nombre} ${perfil.apellido}` : user.email.split('@')[0],
+          nombre: perfil ? `${perfil.nombre} ${perfil.apellido}` : emailLower.split('@')[0],
+          correo: emailLower,
           departamento: perfil ? perfil.departamento : 'General',
           rol: perfil ? perfil.rol : 'Gerente',
-          esAdminGlobal: adminEmails.includes(user.email) || perfil?.rol === 'Gerente General' || perfil?.rol === 'Administrador'
+          esSuperAdmin,
+          esAdminReal,
+          esAdminGlobal: esAdminReal || perfil?.rol === 'Gerente General' || perfil?.rol === 'Administrador'
         };
 
         setCurrentUser(userInfo);
@@ -373,12 +404,25 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
     setForm({ ...form, partidas: nuevas, status: nuevoStatus });
   };
 
-  const añadirRenglón = () => {
     setForm({
       ...form,
-      partidas: [...form.partidas, { id: Date.now(), cc: '', clasificacion: '', categoria: '', cantidad: 1, unidad: 'UNID', descripcion: '', beneficiario: '', pu: '', total: 0 }]
+      partidas: [...form.partidas, { 
+        id: Date.now(), 
+        cc: '', 
+        clasificacion: '', 
+        categoria: '', 
+        cantidad: 1, 
+        cantidad_pedida: 1,
+        cantidad_comprada: 0,
+        cantidad_pendiente: 1,
+        unidad: 'UNID', 
+        descripcion: '', 
+        beneficiario: '', 
+        pu: '', 
+        total: 0,
+        pago_realizado: false
+      }]
     });
-  };
 
   const eliminarRenglón = (id) => {
     if (form.partidas.length > 1) {
@@ -418,13 +462,13 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
           .eq('id', form.id);
 
         if (updateError) throw updateError;
-        alert("Soporte actualizado");
+        toast.success("Soporte actualizado");
         cargarHistorial();
       } else {
-        alert("Soporte adjuntado con éxito");
+        toast.success("Soporte adjuntado con éxito");
       }
     } catch (err) {
-      alert("Error subiendo soporte: " + err.message);
+      toast.error("Error subiendo soporte: " + err.message);
     } finally {
       setLoading(false);
     }
@@ -440,13 +484,13 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
   // --- EMITIR TICKET ---
   const emitirTicket = async () => {
     if (!form.partidas.every(p => p.cc && p.clasificacion && p.descripcion)) {
-      return alert("Por favor complete los campos obligatorios de las partidas.");
+      return toast.error("Por favor complete los campos obligatorios de las partidas.");
     }
 
     // VALIDACIÓN DE CC ÚNICO
     const ccsUnicos = [...new Set(form.partidas.map(p => p.cc).filter(cc => cc))];
     if (ccsUnicos.length > 1) {
-      return alert("⚠️ No se pueden mezclar Centros de Costos en un mismo Ticket de Pago. Por favor, genere un ticket por separado.");
+      return toast.error("No se pueden mezclar Centros de Costos en un mismo Ticket de Pago. Por favor, genere un ticket por separado.");
     }
 
     setLoading(true);
@@ -484,7 +528,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
           .in('id', idsRelacionados);
       }
 
-      alert("🎟️ Ticket EMITIDO con éxito.");
+      toast.success("Ticket EMITIDO con éxito.");
       setShowModal(false);
       cargarHistorial();
       // Reset form
@@ -507,7 +551,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
         status: 'EMITIDO'
       });
     } catch (err) {
-      alert("Error al emitir ticket: " + err.message);
+      toast.error("Error al emitir ticket: " + err.message);
     } finally {
       setLoading(false);
     }
@@ -540,17 +584,38 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
         }
       }
 
-      alert("✅ Cambios guardados con éxito.");
+      toast.success("Cambios guardados con éxito.");
       cargarHistorial();
     } catch (err) {
-      alert("Error al actualizar: " + err.message);
+      toast.error("Error al actualizar: " + err.message);
     } finally {
       setLoading(false);
     }
   };
 
   const anularTicket = async (t) => {
-    if (!window.confirm(`¿Estás seguro de que deseas ANULAR el ticket ${t.codigo_control}? Esto liberará los renglones asociados en Fondos.`)) return;
+    if (currentUser?.correo?.toLowerCase() !== 'jcontreras.totalclean@gmail.com') {
+      toast.error("Solo el SuperAdministrador (José) tiene permisos para anular tickets.");
+      return;
+    }
+    
+    toast((toastId) => (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: '500' }}>¿Estás seguro de que deseas ANULAR el ticket {t.codigo_control}? Esto liberará los renglones asociados en Fondos.</p>
+        <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+          <button 
+            onClick={() => { toast.dismiss(toastId.id); ejecutarAnulacionTicket(t); }}
+            style={{ padding: '4px 12px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}
+          >
+            SÍ, ANULAR
+          </button>
+          <button onClick={() => toast.dismiss(toastId.id)} style={{ padding: '4px 12px', backgroundColor: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}>CANCELAR</button>
+        </div>
+      </div>
+    ), { duration: 6000, position: 'top-center' });
+  };
+
+  const ejecutarAnulacionTicket = async (t) => {
     setLoading(true);
     try {
       // 1. Marcar ticket como ANULADO
@@ -572,10 +637,10 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
         .eq('ticket_id', t.id);
       if (errorF) throw errorF;
 
-      alert("🚫 Ticket ANULADO y renglones liberados.");
+      toast.success("Ticket ANULADO y renglones liberados.");
       cargarHistorial();
     } catch (err) {
-      alert("Error al anular: " + err.message);
+      toast.error("Error al anular: " + err.message);
     } finally {
       setLoading(false);
     }
@@ -637,6 +702,9 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
                 clasificacion: '', 
                 categoria: '', 
                 cantidad: 1, 
+                cantidad_pedida: 1,
+                cantidad_comprada: 0,
+                cantidad_pendiente: 1,
                 unidad: 'UNID', 
                 descripcion: '', 
                 beneficiario: '', 
@@ -797,7 +865,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
               <div className="te-header-grid">
                 <div className="te-input-group">
                   <label className="te-label">Fecha Emisión</label>
-                  <input className="te-input" type="date" value={form.fecha} onChange={(e) => setForm({ ...form, fecha: e.target.value })} />
+                  <input className="te-input" type="date" value={form.fecha} onChange={(e) => setForm({ ...form, fecha: e.target.value })} disabled={isEditing && !esPrivilegiado} />
                 </div>
                 <div className="te-input-group">
                   <label className="te-label">Solicitante</label>
@@ -813,6 +881,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
                     className="te-input" 
                     value={form.clasificacion_admin}
                     onChange={(e) => setForm({...form, clasificacion_admin: e.target.value})}
+                    disabled={isEditing && !esPrivilegiado}
                   >
                     <option value="">Seleccione...</option>
                     <option value="Semanal">Semanal</option>
@@ -957,10 +1026,14 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
                   <button className="te-btn te-btn-primary" style={{ padding: '16px 32px' }} onClick={emitirTicket} disabled={loading}>
                     {loading ? <Loader2 className="animate-spin" size={20} /> : <CheckCircle2 size={20} />} Emitir Ticket Directo
                   </button>
-                ) : (
+                ) : esPrivilegiado ? (
                   <button className="te-btn" style={{ padding: '16px 32px', background: '#0f172a', color: 'white' }} onClick={actualizarTicket} disabled={loading}>
                     {loading ? <Loader2 className="animate-spin" size={20} /> : <CheckCircle2 size={20} />} Guardar Cambios
                   </button>
+                ) : (
+                  <div style={{ padding: '10px 20px', backgroundColor: '#fffbeb', borderRadius: '12px', border: '1px solid #fef3c7', color: '#92400e', fontSize: '0.8rem', fontWeight: 'bold' }}>
+                    ⚠️ Modo Lectura: No tiene permisos de edición sobre este ticket.
+                  </div>
                 )}
               </div>
             </div>

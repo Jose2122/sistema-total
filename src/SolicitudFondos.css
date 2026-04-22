@@ -85,11 +85,13 @@
 
 .sf-table-header {
   display: flex;
-  background: #f8fafc;
+  background: #1e3a8a;
   font-size: 10px;
-  font-weight: 900;
-  border-bottom: 2px solid #e2e8f0;
-  color: #475569;
+  font-weight: 800;
+  border: none;
+  color: white;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
 }
 
 /* Botones Dinámicos */
@@ -118,18 +120,19 @@
 }
 
 .sf-btn-primary {
-  background: linear-gradient(135deg, #0ea5e9 0%, #8b5cf6 100%);
+  background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%);
   color: white;
   border: none;
   padding: 12px 30px;
-  box-shadow: 0 4px 15px rgba(139, 92, 246, 0.25);
+  box-shadow: 0 4px 15px rgba(30, 58, 138, 0.25);
 }
 
 .sf-btn-success {
-  background: #22c55e;
+  background: #10b981;
   border: none;
   color: white;
   padding: 10px 20px;
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.2);
 }
 
 .sf-btn-add {

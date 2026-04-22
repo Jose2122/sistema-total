@@ -130,8 +130,23 @@ const Atributos = () => {
   };
 
   const handleEliminarItem = async (id, nombre, padreNombre) => {
-    if (!window.confirm(`¿Seguro que deseas eliminar "${nombre}" de "${padreNombre}"? Esta acción no se puede deshacer.`)) return;
-    
+    toast((t) => (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        <p style={{ margin: 0, fontSize: '0.9rem' }}>¿Seguro que deseas eliminar "{nombre}" de "{padreNombre}"? Esta acción no se puede deshacer.</p>
+        <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+          <button 
+            onClick={() => { toast.dismiss(t.id); ejecutarEliminacionItem(id, nombre); }}
+            style={{ padding: '4px 12px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}
+          >
+            ELIMINAR
+          </button>
+          <button onClick={() => toast.dismiss(t.id)} style={{ padding: '4px 12px', background: '#f1f5f9', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}>CANCELAR</button>
+        </div>
+      </div>
+    ), { duration: 5000 });
+  };
+
+  const ejecutarEliminacionItem = async (id, nombre) => {
     const config = LISTAS.find(l => l.id === listaActiva);
     try {
       setLoading(true);
@@ -148,8 +163,24 @@ const Atributos = () => {
 
   const handleEliminarGrupo = async (nombre, items) => {
     const total = items.length;
-    if (!window.confirm(`⚠️ ADVERTENCIA: Vas a eliminar "${nombre}" de las ${total} sedes donde existe. ¿Estás COMPLETAMENTE seguro?`)) return;
-    
+    toast((t) => (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: 'bold', color: '#ef4444' }}>⚠️ ADVERTENCIA: Vas a eliminar "{nombre}" de las {total} sedes donde existe. ¿Estás COMPLETAMENTE seguro?</p>
+        <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+          <button 
+            onClick={() => { toast.dismiss(t.id); ejecutarEliminacionGrupo(nombre, items); }}
+            style={{ padding: '4px 12px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}
+          >
+            ELIMINAR EN TODAS
+          </button>
+          <button onClick={() => toast.dismiss(t.id)} style={{ padding: '4px 12px', background: '#f1f5f9', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}>CANCELAR</button>
+        </div>
+      </div>
+    ), { duration: 7000 });
+  };
+
+  const ejecutarEliminacionGrupo = async (nombre, items) => {
+    const total = items.length;
     const config = LISTAS.find(l => l.id === listaActiva);
     try {
       setLoading(true);
@@ -168,8 +199,24 @@ const Atributos = () => {
   const handleEliminarSeleccionados = async () => {
     const total = seleccionados.length;
     if (total === 0) return;
-    if (!window.confirm(`⚠️ ¿Estás seguro de eliminar los ${total} ítems seleccionados? Esta acción es irreversible.`)) return;
+    toast((t) => (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: 'bold', color: '#ef4444' }}>⚠️ ¿Estás seguro de eliminar los {total} ítems seleccionados? Esta acción es irreversible.</p>
+        <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+          <button 
+            onClick={() => { toast.dismiss(t.id); ejecutarEliminacionMasiva(); }}
+            style={{ padding: '4px 12px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}
+          >
+            SÍ, ELIMINAR MASIVAMENTE
+          </button>
+          <button onClick={() => toast.dismiss(t.id)} style={{ padding: '4px 12px', background: '#f1f5f9', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}>CANCELAR</button>
+        </div>
+      </div>
+    ), { duration: 7000 });
+  };
 
+  const ejecutarEliminacionMasiva = async () => {
+    const total = seleccionados.length;
     const config = LISTAS.find(l => l.id === listaActiva);
     try {
       setLoading(true);
@@ -211,7 +258,23 @@ const Atributos = () => {
   };
 
   const ejecutarMigracionClasificaciones = async () => {
-    if (!window.confirm("¿Deseas iniciar la migración de Clasificaciones? Se asignarán los IDs numéricos basados en los nombres actuales.")) return;
+    toast((t) => (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        <p style={{ margin: 0, fontSize: '0.9rem' }}>¿Deseas iniciar la migración de Clasificaciones? Se asignarán los IDs numéricos basados en los nombres actuales.</p>
+        <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+          <button 
+            onClick={() => { toast.dismiss(t.id); realizarMigracion(); }}
+            style={{ padding: '4px 12px', backgroundColor: '#f59e0b', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}
+          >
+            INICIAR MIGRACIÓN
+          </button>
+          <button onClick={() => toast.dismiss(t.id)} style={{ padding: '4px 12px', background: '#f1f5f9', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}>CANCELAR</button>
+        </div>
+      </div>
+    ), { duration: 8000 });
+  };
+
+  const realizarMigracion = async () => {
     setLoading(true);
     try {
       const { data: centrosCosto } = await supabase.from('maestros_centros_costo').select('id, nombre');
@@ -221,7 +284,6 @@ const Atributos = () => {
       let noEncontrados = [];
 
       for (const clasif of clasificaciones) {
-        // Limpiamos espacios y comparamos
         const nombreBuscado = (clasif.maestros_centros_costo || "").trim().toLowerCase();
         const padre = centrosCosto.find(cc => cc.nombre.trim().toLowerCase() === nombreBuscado);
         

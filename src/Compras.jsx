@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { supabase } from './supabaseClient';
+import toast from 'react-hot-toast';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Loader2, Upload, FileText, MessageSquare, Paperclip, Clock, CheckCircle2, AlertCircle, ShoppingBag } from 'lucide-react';
 import './Requisiciones.css';
@@ -17,12 +18,33 @@ const Compras = () => {
   const [expandirHistorial, setExpandirHistorial] = useState({}); // { itemID: boolean }
   const [editandoObs, setEditandoObs] = useState(false);
   const [obsTemporal, setObsTemporal] = useState('');
+  const inputRefs = React.useRef({}); // { itemId: { doc_numero, proveedor, cant, pu, save } }
 
   // --- FILTROS ---
   const [busqueda, setBusqueda] = useState('');
   const [filtroGerencia, setFiltroGerencia] = useState('Todos');
   const [filtroStatusCompra, setFiltroStatusCompra] = useState('Todos');
+  const [filtroCategoria, setFiltroCategoria] = useState('Todos');
+  const [filtroCentroCosto, setFiltroCentroCosto] = useState('Todos');
   const [proveedores, setProveedores] = useState([]);
+
+  const categoriasUnicas = useMemo(() => {
+    const cats = new Set();
+    historial.forEach(req => {
+      (req.items || []).forEach(it => { if (it.categoria) cats.add(it.categoria); });
+    });
+    return ['Todos', ...Array.from(cats).sort()];
+  }, [historial]);
+
+  const centrosCostoUnicos = useMemo(() => {
+    const ccs = new Set(historial.map(r => r.centro_costo).filter(Boolean));
+    return ['Todos', ...Array.from(ccs).sort()];
+  }, [historial]);
+
+  const gerenciasUnicas = useMemo(() => {
+    const gs = new Set(historial.map(r => r.gerencia).filter(Boolean));
+    return ['Todos', ...Array.from(gs).sort()];
+  }, [historial]);
 
   // --- ESTADOS DEL FORMULARIO (PARA PROCESAMIENTO) ---
   const [requisicionActiva, setRequisicionActiva] = useState(null);
@@ -117,9 +139,12 @@ const Compras = () => {
         req.correlativo.toLowerCase().includes(busqueda.toLowerCase());
       const matchGerencia = filtroGerencia === 'Todos' || req.gerencia === filtroGerencia;
       const matchStatus = filtroStatusCompra === 'Todos' || (req.status_compra || 'En espera') === filtroStatusCompra;
-      return matchTexto && matchGerencia && matchStatus;
+      const matchCC = filtroCentroCosto === 'Todos' || req.centro_costo === filtroCentroCosto;
+      const matchCat = filtroCategoria === 'Todos' || (req.items || []).some(it => it.categoria === filtroCategoria);
+      
+      return matchTexto && matchGerencia && matchStatus && matchCC && matchCat;
     });
-  }, [historial, busqueda, filtroGerencia, filtroStatusCompra]);
+  }, [historial, busqueda, filtroGerencia, filtroStatusCompra, filtroCentroCosto, filtroCategoria]);
 
   const abrirProcesamiento = async (req) => {
     setRequisicionActiva(req);
@@ -198,8 +223,28 @@ const Compras = () => {
   };
 
   const liquidarNC = async (idRenglon, indexHistorial) => {
-    if (!window.confirm("¿Confirmar el pago de esta Nota de Crédito? El documento pasará a estado PAGADO.")) return;
+    toast((t) => (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: '500' }}>¿Confirmar el pago de esta Nota de Crédito? El documento pasará a estado PAGADO.</p>
+        <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+          <button
+            onClick={() => { toast.dismiss(t.id); ejecutarLiquidacionNC(idRenglon, indexHistorial); }}
+            style={{ padding: '4px 12px', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}
+          >
+            SÍ, PAGAR
+          </button>
+          <button
+            onClick={() => toast.dismiss(t.id)}
+            style={{ padding: '4px 12px', backgroundColor: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}
+          >
+            NO
+          </button>
+        </div>
+      </div>
+    ), { duration: 5000, position: 'top-center' });
+  };
 
+  const ejecutarLiquidacionNC = async (idRenglon, indexHistorial) => {
     setLoading(true);
     try {
       const renglonesActualizados = renglones.map(r => {
@@ -208,10 +253,9 @@ const Compras = () => {
           const entrada = { ...nuevoHistorial[indexHistorial] };
           entrada.metodo_pago = 'PAGADO (NC)';
           entrada.doc_tipo = 'FAC'; // Se convierte en factura al pagarse
-          entrada.fecha_pago = new Date().toISOString(); // NUEVO: registrar fecha de pago
+          entrada.fecha_pago = new Date().toISOString();
           nuevoHistorial[indexHistorial] = entrada;
 
-          // RECALCULAR STATUS
           const tieneCreditos = nuevoHistorial.some(h => h.doc_tipo === 'NC' || h.metodo_pago?.includes('CRÉDITO'));
           let nuevoStatus = r.status;
           if (!tieneCreditos && r.cantidad_pendiente === 0) nuevoStatus = 'Completado';
@@ -228,9 +272,9 @@ const Compras = () => {
 
       if (error) throw error;
       setRenglones(renglonesActualizados);
-      alert("NC Liquidada correctamente.");
+      toast.success("NC Liquidada correctamente.");
     } catch (err) {
-      alert("Error: " + err.message);
+      toast.error("Error: " + err.message);
     } finally {
       setLoading(false);
     }
@@ -239,15 +283,30 @@ const Compras = () => {
   const eliminarEntradaHistorial = async (idRenglon, indexHistorial) => {
     const rolUpper = (currentUser?.rol || '').toUpperCase();
     const deptoUpper = (currentUser?.departamento || '').toUpperCase();
-    const esCompras = deptoUpper.includes('COMPRAS') || 
-                     deptoUpper.includes('ADMINISTRACIÓN') || 
-                     currentUser?.esAdminReal ||
-                     rolUpper === 'ADMIN' ||
-                     rolUpper === 'GERENTE GENERAL';
-    if (!esCompras) return alert("Solo el personal de Compras / Administración puede eliminar registros del historial.");
+    const esCompras = deptoUpper.includes('COMPRAS') ||
+      deptoUpper.includes('ADMINISTRACIÓN') ||
+      currentUser?.esAdminReal ||
+      rolUpper === 'ADMIN' ||
+      rolUpper === 'GERENTE GENERAL';
+    if (!esCompras) return toast.error("Solo el personal de Compras / Administración puede eliminar registros del historial.");
 
-    if (!window.confirm("¿Está seguro de eliminar esta entrada? El saldo pendiente se restaurará automáticamente.")) return;
+    toast((t) => (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        <p style={{ margin: 0, fontSize: '0.9rem' }}>¿Está seguro de eliminar esta entrada? El saldo pendiente se restaurará automáticamente.</p>
+        <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+          <button
+            onClick={() => { toast.dismiss(t.id); ejecutarEliminacionHistorial(idRenglon, indexHistorial); }}
+            style={{ padding: '4px 12px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}
+          >
+            ELIMINAR
+          </button>
+          <button onClick={() => toast.dismiss(t.id)} style={{ padding: '4px 12px', background: '#f1f5f9', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}>CANCELAR</button>
+        </div>
+      </div>
+    ), { duration: 5000 });
+  };
 
+  const ejecutarEliminacionHistorial = async (idRenglon, indexHistorial) => {
     const renglonesActualizados = renglones.map(r => {
       if (r.id === idRenglon) {
         const entrada = r.historial_compras[indexHistorial];
@@ -274,15 +333,14 @@ const Compras = () => {
     });
 
     setRenglones(renglonesActualizados);
-    // Persistir cambios
     try {
       await supabase
         .from('requisiciones')
         .update({ items: renglonesActualizados })
         .eq('id', editandoId);
-      alert("Entrada eliminada y saldos restaurados.");
+      toast.success("Entrada eliminada y saldos restaurados.");
     } catch (err) {
-      alert("Error al persistir eliminación: " + err.message);
+      toast.error("Error al persistir eliminación: " + err.message);
     }
   };
 
@@ -418,8 +476,8 @@ const Compras = () => {
         let pendienteRow = estRow;
 
         if (p.requisiciones && p.requisiciones.items) {
-          const itemReq = p.requisiciones.items.find(item => 
-            item.descripcion === p.descripcion && 
+          const itemReq = p.requisiciones.items.find(item =>
+            item.descripcion === p.descripcion &&
             (item.cantidad_pedida === p.cantidad || item.cant === p.cantidad)
           );
 
@@ -456,7 +514,23 @@ const Compras = () => {
   };
 
   const anularRequisicion = async (id) => {
-    if (!window.confirm('¿Estás seguro de ANULAR esta requisición? Los renglones asociados en Fondos quedarán disponibles nuevamente.')) return;
+    toast((t) => (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        <p style={{ margin: 0, fontSize: '0.9rem' }}>¿Estás seguro de ANULAR esta requisición? Los renglones asociados en Fondos quedarán disponibles nuevamente.</p>
+        <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+          <button
+            onClick={() => { toast.dismiss(t.id); ejecutarAnulacion(id); }}
+            style={{ padding: '4px 12px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}
+          >
+            ANULAR
+          </button>
+          <button onClick={() => toast.dismiss(t.id)} style={{ padding: '4px 12px', background: '#f1f5f9', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}>CANCELAR</button>
+        </div>
+      </div>
+    ), { duration: 6000 });
+  };
+
+  const ejecutarAnulacion = async (id) => {
     setLoading(true);
     try {
       const { error } = await supabase
@@ -467,9 +541,15 @@ const Compras = () => {
 
       await liberarPartidasFondos(id);
 
+      // NOTIFICAR AL SOLICITANTE
+      const reqAnulada = historial.find(h => h.id === id);
+      if (reqAnulada?.user_id) {
+        await enviarNotificacion(reqAnulada.user_id, `Tu Requisición ${reqAnulada.correlativo} ha sido ANULADA.`, 'Anulación');
+      }
+
       setHistorial(prev => prev.filter(req => req.id !== id));
-      alert('Requisición ANULADA correctamente.');
-    } catch (err) { alert(err.message); } finally { setLoading(false); }
+      toast.success('Requisición ANULADA correctamente.');
+    } catch (err) { toast.error(err.message); } finally { setLoading(false); }
   };
 
   const actualizarFila = (id, campo, valor) => {
@@ -479,18 +559,18 @@ const Compras = () => {
         if (campo === 'compra_actual_pu') v = Math.max(0, Number(valor) || 0);
         if (campo === 'compra_actual_cant') {
           v = Math.max(0, Number(valor) || 0);
-          if (v > f.cantidad_pendiente) {
-            alert(`No puede comprar más de la cantidad pendiente (${f.cantidad_pendiente})`);
-            v = f.cantidad_pendiente;
-          }
         }
+
         const act = { ...f, [campo]: v };
 
-        // El total de esta fila en el modal es lo que se está comprando ahora
-        act.total = act.compra_actual_cant * (act.compra_actual_pu || 0);
+        // CÁLCULO EN TIEMPO REAL: TOTAL $
+        const c = campo === 'compra_actual_cant' ? v : (act.compra_actual_cant || 0);
+        const p = campo === 'compra_actual_pu' ? v : (act.compra_actual_pu || 0);
+        act.total = Number(c) * Number(p);
 
         // Alerta de precio si existe referencia
-        const ref = preciosReferencia[f.descripcion.trim().toUpperCase()];
+        const descKey = (f.descripcion || '').trim().toUpperCase();
+        const ref = descKey ? preciosReferencia[descKey] : null;
         if (campo === 'compra_actual_pu' && v > 0 && ref) {
           const variacion = ((v - ref) / ref) * 100;
           act.variacion_precio = variacion;
@@ -503,26 +583,53 @@ const Compras = () => {
     }));
   };
 
+  const handleKeyDown = (e, id, currentField) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const sequence = ['doc_numero', 'proveedor', 'cant', 'pu', 'save'];
+      const nextIdx = sequence.indexOf(currentField) + 1;
+
+      if (nextIdx < sequence.length) {
+        const nextField = sequence[nextIdx];
+        inputRefs.current[id]?.[nextField]?.focus();
+      } else if (currentField === 'save') {
+        guardarUnicoRenglon(id);
+      }
+    }
+  };
+
   const guardarUnicoRenglon = async (id) => {
     if (loading) return;
     const item = renglones.find(r => r.id === id);
     if (!item || !item.hasChanges) return;
 
+    // VALIDACIÓN: Si está comprando, debe tener Factura y Proveedor
+    if (item.compra_actual_cant > 0) {
+      if (item.compra_actual_cant > item.cantidad_pendiente) {
+        toast.error(`No puede comprar más de la cantidad pendiente (${item.cantidad_pendiente})`, { id: 'error-cantidad' });
+        return;
+      }
+      if (!item.doc_numero_actual?.trim() || !item.proveedor_seleccionado_id) {
+        toast.error("Debe indicar Número de Factura y Proveedor para procesar este ítem.", { id: 'error-campos' });
+        return;
+      }
+    }
+
     setLoading(true);
     try {
       // VALIDACIÓN DE DATOS OBLIGATORIOS (NÚMERO, CANTIDAD Y PROVEEDOR)
       if (!item.doc_numero_actual || !item.doc_numero_actual.trim()) {
-        alert("⚠️ Error: El número de " + (item.doc_tipo_actual || 'FAC/NC') + " es obligatorio para procesar la compra.");
+        toast.error("Error: El número de " + (item.doc_tipo_actual || 'FAC/NC') + " es obligatorio para procesar la compra.");
         setLoading(false);
         return;
       }
       if (Number(item.compra_actual_cant || 0) <= 0) {
-        alert("⚠️ Error: Debe ingresar una CANTIDAD REAL mayor a 0 para procesar la compra.");
+        toast.error("Error: Debe ingresar una CANTIDAD REAL mayor a 0 para procesar la compra.");
         setLoading(false);
         return;
       }
       if (!item.proveedor_seleccionado_id) {
-        alert("⚠️ Error: Debe seleccionar un PROVEEDOR para procesar la compra.");
+        toast.error("Error: Debe seleccionar un PROVEEDOR para procesar la compra.");
         setLoading(false);
         return;
       }
@@ -547,7 +654,7 @@ const Compras = () => {
       // LÓGICA DE STATUS CON CRÉDITO (NC)
       let nuevoStatus = item.status;
       const esCredito = item.doc_tipo_actual === 'NC';
-      
+
       if (esCredito) {
         nuevoStatus = 'POR PAGAR (NC)';
       } else {
@@ -600,9 +707,9 @@ const Compras = () => {
 
       setRenglones(nuevosRenglones);
       await actualizarTotalesSolicitud(editandoId);
-      alert("Ítem guardado con éxito.");
+      toast.success("Ítem guardado con éxito.");
     } catch (err) {
-      alert("Error: " + err.message);
+      toast.error("Error: " + err.message);
     } finally {
       setLoading(false);
     }
@@ -626,16 +733,29 @@ const Compras = () => {
   };
 
   const eliminarSoporteReal = async (idx, url) => {
-    if (!window.confirm("¿Está seguro de eliminar permanentemente este soporte? Se borrará tanto del registro como del servidor.")) return;
+    toast((t) => (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        <p style={{ margin: 0, fontSize: '0.9rem' }}>¿Está seguro de eliminar permanentemente este soporte? Se borrará tanto del registro como del servidor.</p>
+        <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+          <button
+            onClick={() => { toast.dismiss(t.id); ejecutarEliminacionSoporte(idx, url); }}
+            style={{ padding: '4px 12px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}
+          >
+            ELIMINAR
+          </button>
+          <button onClick={() => toast.dismiss(t.id)} style={{ padding: '4px 12px', background: '#f1f5f9', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}>CANCELAR</button>
+        </div>
+      </div>
+    ), { duration: 5000 });
+  };
 
+  const ejecutarEliminacionSoporte = async (idx, url) => {
     try {
       setUploading(true);
-      // 1. Detección dinámica y robusta del bucket desde la URL
       let bucketName = '';
       if (url.includes('comprobantes')) bucketName = 'comprobantes';
       else if (url.includes('facturas')) bucketName = 'facturas';
 
-      // 2. Extraer el path del archivo
       let filePath = '';
       if (bucketName) {
         const searchStr = bucketName + '/';
@@ -647,30 +767,26 @@ const Compras = () => {
         }
       }
 
-      // 3. Eliminar del Storage y actualizar DB
       if (bucketName && filePath) {
         const { error: storageError } = await supabase.storage
           .from(bucketName)
           .remove([filePath]);
-        
+
         if (storageError) console.warn("Aviso: El archivo físico no se pudo borrar (puede que no exista):", storageError.message);
       }
-      
-      if (storageError) console.warn("Error eliminando del storage:", storageError.message);
 
-      // 3. Actualizar la DB
       const nuevasUrls = facturasUrls.filter((_, i) => i !== idx);
       const { error: dbError } = await supabase
         .from('requisiciones')
         .update({ facturas_url: nuevasUrls })
         .eq('id', editandoId);
-      
+
       if (dbError) throw dbError;
 
       setFacturasUrls(nuevasUrls);
-      alert("Soporte eliminado físicamente.");
+      toast.success("Soporte eliminado físicamente.");
     } catch (err) {
-      alert("Error al eliminar soporte: " + err.message);
+      toast.error("Error al eliminar soporte: " + err.message);
     } finally {
       setUploading(false);
     }
@@ -715,12 +831,26 @@ const Compras = () => {
 
       if (updateError) throw updateError;
 
-      alert("Facturas/Soportes cargados y guardados correctamente.");
+      toast.success("Facturas/Soportes cargados y guardados correctamente.");
       event.target.value = ''; // Limpiar el input
     } catch (error) {
-      alert("Error al subir facturas: " + error.message);
+      toast.error("Error al subir facturas: " + error.message);
     } finally {
       setUploading(false);
+    }
+  };
+
+  const enviarNotificacion = async (usuario_id, mensaje, tipo = 'Sistema') => {
+    if (!usuario_id || usuario_id === currentUser?.id) return;
+    try {
+      await supabase.from('notificaciones').insert([{
+        usuario_id,
+        mensaje,
+        tipo,
+        leido: false
+      }]);
+    } catch (err) {
+      console.error("Error enviando notificación:", err);
     }
   };
 
@@ -735,19 +865,24 @@ const Compras = () => {
         .select();
       if (error) throw error;
 
+      // NOTIFICAR AL SOLICITANTE
+      if (requisicionActiva?.user_id) {
+        await enviarNotificacion(requisicionActiva.user_id, `Compras dejó una observación en tu REQ ${requisicionActiva.correlativo}`, 'Observación');
+      }
+
       setRequisicionActiva(prev => ({ ...prev, observaciones: obsTemporal }));
       setHistorial(prev => prev.map(req => req.id === editandoId ? { ...req, observaciones: obsTemporal } : req));
       setEditandoObs(false);
-      alert('Observaciones actualizadas correctamente.');
+      toast.success('Observaciones actualizadas correctamente.');
     } catch (err) {
-      alert("Error al actualizar observaciones: " + err.message);
+      toast.error("Error al actualizar observaciones: " + err.message);
     } finally {
       setLoading(false);
     }
   };
 
   const guardarJustificacion = async () => {
-    if (!motivoRetraso || !comentarioRetraso) return alert("Por favor complete el motivo y el comentario.");
+    if (!motivoRetraso || !comentarioRetraso) return toast.error("Por favor complete el motivo y el comentario.");
 
     setLoading(true);
     try {
@@ -790,15 +925,62 @@ const Compras = () => {
       setShowJustificacionModal(false);
       setMotivoRetraso('');
       setComentarioRetraso('');
-      alert("Justificación guardada correctamente.");
+      toast.success("Justificación guardada correctamente.");
     } catch (err) {
-      alert("Error guardando justificación: " + err.message);
+      toast.error("Error guardando justificación: " + err.message);
     } finally {
       setLoading(false);
     }
   };
+  const intentarCerrarModal = () => {
+    const hayCambios = renglones.some(r => r.hasChanges);
+    if (hayCambios) {
+      toast((t) => (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: 'bold', color: '#1e293b' }}>
+            ⚠️ Tienes cambios sin guardar
+          </p>
+          <p style={{ margin: 0, fontSize: '0.8rem', color: '#64748b' }}>
+            Si sales ahora, perderás los datos ingresados en la tabla. ¿Deseas salir de todos modos?
+          </p>
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '5px' }}>
+            <button
+              onClick={() => { toast.dismiss(t.id); setShowModal(false); }}
+              style={{ padding: '6px 12px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 'bold' }}
+            >
+              SALIR SIN GUARDAR
+            </button>
+            <button
+              onClick={() => toast.dismiss(t.id)}
+              style={{ padding: '6px 12px', backgroundColor: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '0.75rem' }}
+            >
+              CONTINUAR EDITANDO
+            </button>
+          </div>
+        </div>
+      ), { duration: 6000, position: 'top-center' });
+    } else {
+      setShowModal(false);
+    }
+  };
+
   const guardarCambiosProcesamiento = async (esBorrador = false) => {
     if (loading) return;
+
+    // Validación de seguridad adicional si no es borrador
+    if (!esBorrador) {
+      const excedeCant = renglones.find(r => r.compra_actual_cant > r.cantidad_pendiente);
+      if (excedeCant) {
+        toast.error(`El ítem ${excedeCant.descripcion} excede la cantidad pendiente.`, { id: 'error-cantidad' });
+        return;
+      }
+      const faltanDatos = renglones.some(r => r.compra_actual_cant > 0 && (!r.doc_numero_actual?.trim() || !r.proveedor_seleccionado_id));
+      if (faltanDatos) {
+        toast.error("Debe completar Factura y Proveedor en todos los ítems que está comprando.", { id: 'error-campos' });
+        return;
+      }
+    }
+
     setLoading(true);
     try {
       const renglonesProcesados = renglones.map(r => {
@@ -874,15 +1056,21 @@ const Compras = () => {
       await actualizarTotalesSolicitud(editandoId);
 
       if (esBorrador) {
-        alert("Borrador guardado correctamente.");
+        toast.success("Borrador guardado correctamente.");
         setRequisicionActiva(prev => ({ ...prev, items: renglonesProcesados }));
       } else {
-        alert(todasCompletas ? "Requisición Finalizada / Comprada al 100%." : "Compra parcial registrada con éxito.");
+        toast.success(todasCompletas ? "Requisición Finalizada / Comprada al 100%." : "Compra parcial registrada con éxito.");
+        
+        // NOTIFICAR AL SOLICITANTE SI SE COMPLETÓ
+        if (todasCompletas && requisicionActiva?.user_id) {
+          await enviarNotificacion(requisicionActiva.user_id, `¡Tu Requisición ${requisicionActiva.correlativo} ha sido COMPLETADA! Todos los ítems fueron procesados.`, 'Compra Lista');
+        }
+
         await cargarRequisicionesAprobadas();
         setShowModal(false);
       }
     } catch (err) {
-      alert("Error guardando cambios: " + err.message);
+      toast.error("Error guardando cambios: " + err.message);
     } finally {
       setLoading(false);
     }
@@ -927,12 +1115,12 @@ const Compras = () => {
   // --- RESTRICCIÓN DE ACCESO (VISTA) ---
   const rolUpperFinal = (currentUser?.rol || '').toUpperCase();
   const deptoUpperFinal = (currentUser?.departamento || '').toUpperCase();
-  
-  const esDeCompras = deptoUpperFinal.includes('COMPRAS') || 
-                     deptoUpperFinal.includes('ADMINISTRACIÓN') || 
-                     currentUser?.esAdminReal || 
-                     rolUpperFinal === 'GERENTE GENERAL' ||
-                     rolUpperFinal === 'ADMIN';
+
+  const esDeCompras = deptoUpperFinal.includes('COMPRAS') ||
+    deptoUpperFinal.includes('ADMINISTRACIÓN') ||
+    currentUser?.esAdminReal ||
+    rolUpperFinal === 'GERENTE GENERAL' ||
+    rolUpperFinal === 'ADMIN';
 
   if (!esDeCompras && currentUser) {
     return <div style={{ padding: '40px', textAlign: 'center' }}>No tiene permisos para acceder al módulo de Compras.</div>;
@@ -945,30 +1133,32 @@ const Compras = () => {
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
     >
-      <div className="rm-stats-grid">
-          <div className="rm-stat-card secondary" onClick={() => setFiltroStatusCompra('En espera')} style={{ cursor: 'pointer' }}>
-            <div className="rm-stat-info">
-              <label>Requisiciones en Espera</label>
-              <h3>{historial.filter(r => (r.status_compra || 'En espera') === 'En espera').length} No leídas</h3>
-            </div>
-            <div className="rm-stat-icon"><Clock size={24} /></div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '15px', marginBottom: '25px' }}>
+        {[
+          { label: 'REQUISICIONES EN ESPERA', val: `${historial.filter(r => (r.status_compra || 'En espera') === 'En espera').length} No leídas`, col: '#030712', filter: 'En espera' },
+          { label: 'COMPRAS EN PROCESO', val: `${historial.filter(r => r.status_compra === 'Parcial').length} Parciales`, col: '#030712', filter: 'Parcial' },
+          { label: 'COMPRAS FINALIZADAS', val: `${historial.filter(r => r.status_compra === 'Completado').length} Completas`, col: '#030712', filter: 'Completado' },
+        ].map((x, i) => (
+          <div
+            key={i}
+            className="stat-card"
+            onClick={() => setFiltroStatusCompra(x.filter)}
+            style={{
+              borderLeft: `6px solid ${x.col}`,
+              cursor: 'pointer',
+              backgroundColor: filtroStatusCompra === x.filter ? '#f8fafc' : 'white',
+              padding: '18px',
+              borderRadius: '12px',
+              boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
+              transition: 'all 0.2s ease',
+              border: '1px solid #e2e8f0',
+              borderLeft: `6px solid ${x.col}`
+            }}
+          >
+            <div style={{ fontSize: '0.65rem', fontWeight: '800', color: '#64748b', textTransform: 'uppercase' }}>{x.label}</div>
+            <div style={{ fontSize: '1.4rem', fontWeight: '900', color: '#1e293b', marginTop: '5px' }}>{x.val}</div>
           </div>
-
-          <div className="rm-stat-card highlight" onClick={() => setFiltroStatusCompra('Parcial')} style={{ cursor: 'pointer' }}>
-            <div className="rm-stat-info">
-              <label>Compras en Proceso</label>
-              <h3>{historial.filter(r => r.status_compra === 'Parcial').length} Parciales</h3>
-            </div>
-            <div className="rm-stat-icon"><AlertCircle size={24} /></div>
-          </div>
-
-          <div className="rm-stat-card primary" onClick={() => setFiltroStatusCompra('Completado')} style={{ cursor: 'pointer' }}>
-            <div className="rm-stat-info">
-              <label>Compras Finalizadas</label>
-              <h3>{historial.filter(r => r.status_compra === 'Completado').length} Completas</h3>
-            </div>
-            <div className="rm-stat-icon"><CheckCircle2 size={24} /></div>
-          </div>
+        ))}
       </div>
 
       <div className="table-container" style={{ marginBottom: '10px', padding: '15px' }}>
@@ -987,8 +1177,8 @@ const Compras = () => {
           )}
         </div>
 
-        <div style={{ marginTop: '15px', display: 'flex', gap: '15px', backgroundColor: '#f8fafc', padding: '12px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-          <div style={{ flex: 1, position: 'relative' }}>
+        <div style={{ marginTop: '15px', display: 'flex', gap: '15px', backgroundColor: '#f8fafc', padding: '12px', borderRadius: '12px', border: '1px solid #e2e8f0', flexWrap: 'wrap' }}>
+          <div style={{ flex: '1 1 300px', position: 'relative' }}>
             <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }}>🔍</span>
             <input
               className="input-tc"
@@ -998,34 +1188,64 @@ const Compras = () => {
               onChange={(e) => setBusqueda(e.target.value)}
             />
           </div>
+          
+          <select 
+            className="input-tc" 
+            style={{ width: '180px', margin: 0 }}
+            value={filtroCategoria}
+            onChange={(e) => setFiltroCategoria(e.target.value)}
+          >
+            <option value="Todos">Todas las Categorías</option>
+            {categoriasUnicas.filter(c => c !== 'Todos').map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+
+          <select 
+            className="input-tc" 
+            style={{ width: '180px', margin: 0 }}
+            value={filtroCentroCosto}
+            onChange={(e) => setFiltroCentroCosto(e.target.value)}
+          >
+            <option value="Todos">Centro de Costo</option>
+            {centrosCostoUnicos.filter(c => c !== 'Todos').map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+
+          <select 
+            className="input-tc" 
+            style={{ width: '180px', margin: 0 }}
+            value={filtroGerencia}
+            onChange={(e) => setFiltroGerencia(e.target.value)}
+          >
+            <option value="Todos">Gerencia</option>
+            {gerenciasUnicas.filter(g => g !== 'Todos').map(g => <option key={g} value={g}>{g}</option>)}
+          </select>
         </div>
       </div>
 
-      <div className="table-container">
-        <table className="tc-table">
+      <div className="table-container" style={{ padding: 0, overflow: 'hidden', borderRadius: '15px', border: '1px solid #e2e8f0' }}>
+        <table className="tc-table" style={{ borderCollapse: 'collapse', width: '100%' }}>
           <thead>
             <tr>
-              <th style={{ width: '150px' }}>ID REQ</th>
-              <th>CATEGORÍA</th>
-              <th>SOLICITANTE</th>
-              <th>C. COSTOS</th>
-              <th>GERENCIA</th>
-              <th style={{ textAlign: 'center', width: '120px' }}>PRIORIDAD</th>
-              <th>TOTAL $</th>
-              <th style={{ textAlign: 'center', width: '140px' }}>ESTATUS DE COMPRA</th>
+              <th style={{ width: '150px', padding: '12px 15px' }}>ID REQ</th>
+              <th style={{ padding: '12px 15px' }}>CATEGORÍA</th>
+              <th style={{ padding: '12px 15px' }}>SOLICITANTE</th>
+              <th style={{ padding: '12px 15px' }}>C. COSTOS</th>
+              <th style={{ padding: '12px 15px' }}>GERENCIA</th>
+              <th style={{ textAlign: 'center', width: '120px', padding: '12px 15px' }}>PRIORIDAD</th>
+              <th style={{ textAlign: 'right', padding: '12px 15px' }}>TOTAL $</th>
+              <th style={{ textAlign: 'center', width: '140px', padding: '12px 15px' }}>ESTATUS</th>
             </tr>
           </thead>
           <tbody>
             {(loading && historial.length === 0) ? (
               <tr><td colSpan="9" style={{ textAlign: 'center', padding: '30px' }}><Loader2 className="animate-spin" /> Cargando...</td></tr>
             ) : historialFiltrado.map(req => (
-              <tr key={req.id}>
+              <tr key={req.id} className="hover:bg-slate-50 transition-colors" style={{ borderBottom: '1px solid #f1f5f9' }}>
                 <td
-                  style={{ fontWeight: 'bold', color: 'var(--primary)', cursor: 'pointer', textDecoration: 'underline' }}
+                  style={{ fontWeight: 'bold', color: 'var(--primary)', cursor: 'pointer', padding: '8px 15px' }}
                   onClick={() => abrirProcesamiento(req)}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    {req.correlativo}
+                    <span style={{ textDecoration: 'underline' }}>{req.correlativo}</span>
                     {req.observaciones && (
                       <MessageSquare
                         size={14}
@@ -1033,54 +1253,61 @@ const Compras = () => {
                           color: req.leido_compras_at === null ? '#f59e0b' : '#16a34a',
                           fill: req.leido_compras_at === null ? '#fef3c7' : '#dcfce7'
                         }}
-                        title={`Observaciones: ${req.observaciones} ${req.leido_compras_at === null ? '(Nueva)' : '(Leída)'}`}
                       />
                     )}
                     {(req.facturas_url || []).length > 0 && (
-                      <Paperclip size={14} style={{ color: '#0ea5e9' }} title="Tiene adjuntos" />
+                      <Paperclip size={14} style={{ color: '#0ea5e9' }} />
                     )}
                   </div>
                 </td>
 
-                <td style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#64748b' }}>
-                  {req.detalles?.[0]?.categoria || 'N/A'}
+                <td style={{ padding: '8px 15px' }}>
+                  <div style={{ fontSize: '0.85rem', fontWeight: 'bold', color: '#1e293b', maxWidth: '250px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={req.items?.[0]?.descripcion}>
+                    {req.items?.[0]?.descripcion || 'Sin descripción'}
+                  </div>
+                  <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '500' }}>
+                    {req.items?.[0]?.categoria || 'N/A'} {req.items?.length > 1 ? <span style={{ color: '#0ea5e9' }}>(+{req.items.length - 1} más)</span> : ''}
+                  </div>
                 </td>
-                <td>{req.solicitante}</td>
-                <td>{req.centro_costo}</td>
-                <td>{req.gerencia}</td>
-                <td style={{ textAlign: 'center' }}>
+                <td style={{ padding: '8px 15px', color: '#475569', fontSize: '0.9rem' }}>{req.solicitante}</td>
+                <td style={{ padding: '8px 15px', color: '#475569', fontSize: '0.85rem' }}>{req.centro_costo}</td>
+                <td style={{ padding: '8px 15px', color: '#475569', fontSize: '0.85rem' }}>{req.gerencia}</td>
+                <td style={{ textAlign: 'center', padding: '8px 15px' }}>
                   {req.prioridad === 'Alta' ? (
-                    <span style={{
-                      color: '#ef4444',
-                      fontSize: '0.7rem',
-                      fontWeight: '900',
-                      textTransform: 'uppercase'
-                    }}>
-                      ⚠️ ALTA
-                    </span>
+                    <span style={{ color: '#ef4444', fontSize: '0.65rem', fontWeight: '900' }}>⚠️ ALTA</span>
                   ) : (
-                    <span style={{
-                      color: '#0ea5e9',
-                      fontSize: '0.7rem',
-                      fontWeight: '900',
-                      textTransform: 'uppercase'
-                    }}>
-                      NORMAL
-                    </span>
+                    <span style={{ color: '#94a3b8', fontSize: '0.65rem', fontWeight: '700' }}>NORMAL</span>
                   )}
                 </td>
-                <td style={{ fontWeight: 'bold' }}>$ {req.total?.toLocaleString('de-DE')}</td>
-                <td style={{ textAlign: 'center' }}>
-                  <span style={{
-                    color: req.status_compra === 'Completado' ? '#16a34a' : '#ca8a04',
-                    fontSize: '0.7rem',
-                    fontWeight: '900',
-                    textTransform: 'uppercase'
-                  }}>
-                    {req.status_compra || 'Pendiente'}
-                  </span>
+                <td style={{ textAlign: 'right', fontWeight: 'bold', color: '#1e293b', padding: '8px 15px' }}>
+                  $ {(req.total || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
                 </td>
-
+                <td style={{ textAlign: 'center', padding: '8px 15px' }}>
+                  {(() => {
+                    const status = req.status_compra || 'En espera';
+                    let bg = '#f1f5f9';
+                    let color = '#475569';
+                    if (status === 'Completado') { bg = '#dcfce7'; color = '#15803d'; }
+                    else if (status === 'Parcial') { bg = '#ffedd5'; color = '#c2410c'; }
+                    else if (status === 'En espera') { bg = '#fef9c3'; color = '#a16207'; }
+                    
+                    return (
+                      <span style={{
+                        backgroundColor: bg,
+                        color: color,
+                        padding: '4px 10px',
+                        borderRadius: '20px',
+                        fontSize: '0.65rem',
+                        fontWeight: '900',
+                        textTransform: 'uppercase',
+                        display: 'inline-block',
+                        minWidth: '85px'
+                      }}>
+                        {status}
+                      </span>
+                    );
+                  })()}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -1249,54 +1476,68 @@ const Compras = () => {
               <tbody>
                 {renglones.map((f, i) => (
                   <React.Fragment key={f.id}>
-                    <tr style={{ 
+                    <tr style={{
                       backgroundColor: (Number(f.cantidad_comprada || 0) + Number(f.compra_actual_cant || 0)) >= Number(f.cantidad_pedida) ? '#f0fdf4' : 'transparent',
-                      borderLeft: (Number(f.cantidad_comprada || 0) + Number(f.compra_actual_cant || 0)) >= Number(f.cantidad_pedida) ? '4px solid #22c55e' : 'none',
+                      borderLeft: (Number(f.cantidad_comprada || 0) + Number(f.compra_actual_cant || 0)) >= Number(f.cantidad_pedida) ? '4px solid #16a34a' : 'none',
                       transition: 'all 0.3s ease'
                     }}>
                       <td style={{ fontWeight: 'bold' }}>{i + 1}</td>
-                      <td>
-                        <div style={{ fontSize: '0.65rem', fontWeight: '800', color: '#94a3b8', textTransform: 'uppercase' }}>{f.categoria || 'N/A'}</div>
-                        <div style={{ fontSize: '0.75rem', color: '#1e293b', fontWeight: '500' }}>{f.descripcion}</div>
+                      <td style={{ verticalAlign: 'middle' }}>
+                        <div style={{ fontWeight: 'bold', color: '#1e293b', fontSize: '0.9rem' }}>{f.descripcion}</div>
+                        <div style={{ fontSize: '10px', color: '#64748b', fontWeight: '600' }}>{f.categoria}</div>
                       </td>
                       <td style={{ textAlign: 'center', fontWeight: '650', color: '#64748b' }}>{f.cantidad_pedida}</td>
                       <td style={{ textAlign: 'center', color: '#16a34a', fontWeight: '800' }}>{f.cantidad_comprada}</td>
-                      <td style={{ 
-                        textAlign: 'center', 
-                        fontWeight: '800', 
-                        color: f.cantidad_pendiente > 0 ? '#f97316' : '#94a3b8' 
+                      <td style={{
+                        textAlign: 'center',
+                        fontWeight: '800',
+                        color: f.cantidad_pendiente > 0 ? '#f97316' : '#94a3b8'
                       }}>{f.cantidad_pendiente}</td>
-                      
+
                       {/* CELDA COMPACTA PAGO / PROVEEDOR */}
                       <td>
-                        <div style={{ display: 'grid', gridTemplateColumns: '80px 1fr', gap: '8px', alignItems: 'center' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr', gap: '12px', alignItems: 'center' }}>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                            <span style={{ fontSize: '9px', fontWeight: '900', color: '#94a3b8' }}>DOC / #</span>
-                            <div style={{ display: 'flex', gap: '2px' }}>
-                              <select 
-                                className="input-tc" 
-                                style={{ fontSize: '10px', padding: '2px', width: '45px' }}
+                            <span style={{ fontSize: '9px', fontWeight: '900', color: '#94a3b8', textTransform: 'uppercase' }}>Documento / #</span>
+                            <div style={{ display: 'flex', gap: '4px' }}>
+                              <select
+                                className="input-tc focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                                style={{ fontSize: '10px', padding: '2px', width: '50px', border: '1px solid #cbd5e1', height: '32px' }}
                                 value={f.doc_tipo_actual || 'FAC'}
                                 onChange={(e) => actualizarFila(f.id, 'doc_tipo_actual', e.target.value)}
                               >
                                 <option value="FAC">FAC</option>
                                 <option value="NC">NC</option>
                               </select>
-                              <input 
-                                className="input-tc" 
-                                style={{ fontSize: '10px', padding: '2px', width: '45px' }}
+                              <input
+                                className="input-tc focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                                style={{ fontSize: '11px', padding: '4px 8px', width: '65px', border: '1px solid #cbd5e1', fontWeight: 'bold', height: '32px' }}
                                 value={f.doc_numero_actual || ''}
                                 onChange={(e) => actualizarFila(f.id, 'doc_numero_actual', e.target.value)}
+                                onKeyDown={(e) => handleKeyDown(e, f.id, 'doc_numero')}
+                                ref={el => { if (!inputRefs.current[f.id]) inputRefs.current[f.id] = {}; inputRefs.current[f.id].doc_numero = el; }}
                                 placeholder="000"
                               />
                             </div>
                           </div>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                              <span style={{ fontSize: '9px', fontWeight: '900', color: '#94a3b8' }}>PROVEEDOR / MONEDA</span>
-                              <select 
-                                className="input-tc" 
-                                style={{ width: '55px', fontSize: '9px', padding: '1px' }}
+                            <span style={{ fontSize: '9px', fontWeight: '900', color: '#94a3b8', textTransform: 'uppercase' }}>Proveedor y Moneda de Pago</span>
+                            <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                              <select
+                                className="input-tc focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                                style={{ flex: 1, fontSize: '11px', padding: '4px', fontWeight: 'bold', border: '1px solid #cbd5e1', height: '32px' }}
+                                value={f.proveedor_seleccionado_id || ''}
+                                onChange={(e) => actualizarFila(f.id, 'proveedor_seleccionado_id', Number(e.target.value))}
+                                onKeyDown={(e) => handleKeyDown(e, f.id, 'proveedor')}
+                                ref={el => { if (!inputRefs.current[f.id]) inputRefs.current[f.id] = {}; inputRefs.current[f.id].proveedor = el; }}
+                                disabled={f.cantidad_pendiente === 0}
+                              >
+                                <option value="">Proveedor</option>
+                                {proveedores.map(p => <option key={p.id} value={p.id}>{p.razon_social}</option>)}
+                              </select>
+                              <select
+                                className="input-tc focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                                style={{ width: '65px', fontSize: '10px', padding: '2px', height: '32px', border: '1px solid #cbd5e1', fontWeight: '800' }}
                                 value={f.metodo_pago_actual || '$ / BS'}
                                 onChange={(e) => actualizarFila(f.id, 'metodo_pago_actual', e.target.value)}
                               >
@@ -1304,59 +1545,53 @@ const Compras = () => {
                                 <option value="$ / $">$ / $</option>
                               </select>
                             </div>
-                            <select 
-                              className="input-tc" 
-                              style={{ width: '100%', fontSize: '11px', padding: '3px', fontWeight: 'bold' }}
-                              value={f.proveedor_seleccionado_id || ''}
-                              onChange={(e) => actualizarFila(f.id, 'proveedor_seleccionado_id', Number(e.target.value))}
-                              disabled={f.cantidad_pendiente === 0}
-                            >
-                              <option value="">Seleccione...</option>
-                              {proveedores.map(p => <option key={p.id} value={p.id}>{p.razon_social}</option>)}
-                            </select>
                           </div>
                         </div>
                       </td>
 
                       <td style={{ verticalAlign: 'middle' }}>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                          <span style={{ fontSize: '9px', fontWeight: '900', color: '#0ea5e9', textAlign: 'right' }}>COMPRAR</span>
+                          <span style={{ fontSize: '9px', fontWeight: '900', color: '#64748b', textAlign: 'right' }}>COMPRAR</span>
                           <input
-                            className="input-tc"
+                            className="input-tc focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
                             type="number"
                             value={f.compra_actual_cant}
                             disabled={f.cantidad_pendiente === 0}
-                            style={{ 
-                              textAlign: 'right', 
-                              fontWeight: '900', 
+                            style={{
+                              textAlign: 'right',
+                              fontWeight: '900',
                               fontSize: '13px',
-                              border: '2px solid #0ea5e9',
-                              backgroundColor: '#f0f9ff',
-                              boxShadow: '0 2px 4px rgba(14, 165, 233, 0.1)'
+                              border: '1px solid #cbd5e1',
+                              backgroundColor: '#ffffff',
+                              boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.05)'
                             }}
                             onChange={(e) => actualizarFila(f.id, 'compra_actual_cant', e.target.value)}
+                            onKeyDown={(e) => handleKeyDown(e, f.id, 'cant')}
+                            ref={el => { if (!inputRefs.current[f.id]) inputRefs.current[f.id] = {}; inputRefs.current[f.id].cant = el; }}
                           />
                         </div>
                       </td>
-                      
+
                       <td style={{ verticalAlign: 'middle' }}>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                          <span style={{ fontSize: '9px', fontWeight: '900', color: '#6366f1', textAlign: 'right' }}>P.U. REAL</span>
+                          <span style={{ fontSize: '9px', fontWeight: '900', color: '#64748b', textAlign: 'right' }}>P.U. REAL</span>
                           <div style={{ position: 'relative' }}>
                             <input
-                              className="input-tc"
+                              className="input-tc focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
                               type="number"
                               value={f.compra_actual_pu}
                               disabled={f.cantidad_pendiente === 0}
-                              style={{ 
-                                textAlign: 'right', 
-                                fontWeight: '900', 
+                              style={{
+                                textAlign: 'right',
+                                fontWeight: '900',
                                 fontSize: '13px',
-                                border: '2px solid #6366f1',
-                                backgroundColor: '#f5f3ff',
-                                boxShadow: '0 2px 4px rgba(99, 102, 241, 0.1)'
+                                border: '1px solid #cbd5e1',
+                                backgroundColor: '#ffffff',
+                                boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.05)'
                               }}
                               onChange={(e) => actualizarFila(f.id, 'compra_actual_pu', e.target.value)}
+                              onKeyDown={(e) => handleKeyDown(e, f.id, 'pu')}
+                              ref={el => { if (!inputRefs.current[f.id]) inputRefs.current[f.id] = {}; inputRefs.current[f.id].pu = el; }}
                             />
                             {f.variacion_precio >= 15 && (
                               <div style={{ position: 'absolute', top: '-15px', right: 0, fontSize: '8px', color: '#ef4444', fontWeight: '900' }}>
@@ -1368,51 +1603,70 @@ const Compras = () => {
                       </td>
 
                       <td style={{ textAlign: 'right', fontWeight: '900', color: '#0f172a', fontSize: '1rem' }}>
-                         $ {f.total?.toLocaleString('de-DE')}
-                         { (Number(f.cantidad_comprada || 0) + Number(f.compra_actual_cant || 0)) >= Number(f.cantidad_pedida) && 
-                           <div style={{ fontSize: '9px', color: '#16a34a', fontWeight: '900' }}>COMPLETO ✓</div>
-                         }
+                        $ {f.total?.toLocaleString('de-DE')}
+                        {(Number(f.cantidad_comprada || 0) + Number(f.compra_actual_cant || 0)) >= Number(f.cantidad_pedida) ? (
+                          <div style={{ fontSize: '9px', color: '#14532d', fontWeight: '900' }}>COMPLETO ✓</div>
+                        ) : (Number(f.cantidad_comprada || 0) + Number(f.compra_actual_cant || 0)) > 0 ? (
+                          <div style={{ fontSize: '9px', color: '#f97316', fontWeight: '900' }}>PARCIAL</div>
+                        ) : null}
                       </td>
 
                       <td style={{ textAlign: 'center' }}>
                         <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
-                           {f.hasChanges && !loading && (
-                             <button 
-                               onClick={() => guardarUnicoRenglon(f.id)}
-                               className="btn-tc btn-tc-primary"
-                               style={{ padding: '6px 10px', fontSize: '0.65rem', fontWeight: 'bold', background: '#22c55e', border: 'none' }}
-                               title="Guardar este renglón"
-                             >
-                               💾 GUARDAR
-                             </button>
-                           )}
-                           <div style={{ display: 'flex', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '2px', backgroundColor: '#f8fafc' }}>
-                              <button
-                                onClick={() => {
-                                  setItemParaJustificar(f);
-                                  setShowJustificacionModal(true);
-                                }}
-                                style={{ border: 'none', background: 'none', cursor: 'pointer', padding: '4px' }}
-                                title="Agregar Comentario / Justificación"
-                              >
-                                💬
-                              </button>
-                              <button
-                                onClick={() => setExpandirHistorial(prev => ({ ...prev, [f.id]: !prev[f.id] }))}
-                                style={{ border: 'none', background: 'none', cursor: 'pointer', padding: '4px', opacity: (f.historial_compras?.length > 0) ? 1 : 0.3 }}
-                                title="Ver Historial"
-                                disabled={!f.historial_compras?.length}
-                              >
-                                {expandirHistorial[f.id] ? '🔼' : '🕒'}
-                              </button>
-                              <button
-                                onClick={() => { if(window.confirm('¿Anular este renglón?')) actualizarFila(f.id, 'status', 'ANULADO') }}
-                                style={{ border: 'none', background: 'none', cursor: 'pointer', padding: '4px' }}
-                                title="Anular Renglón"
-                              >
-                                🗑️
-                              </button>
-                           </div>
+                          {f.hasChanges && !loading && (
+                            <button
+                              onClick={() => guardarUnicoRenglon(f.id)}
+                              onKeyDown={(e) => handleKeyDown(e, f.id, 'save')}
+                              ref={el => { if (!inputRefs.current[f.id]) inputRefs.current[f.id] = {}; inputRefs.current[f.id].save = el; }}
+                              className="btn-tc btn-tc-primary focus:ring-2 focus:ring-green-500 outline-none transition-all"
+                              style={{ padding: '6px 10px', fontSize: '0.65rem', fontWeight: 'bold', background: '#22c55e', border: 'none' }}
+                              title="Guardar este renglón"
+                            >
+                              💾 GUARDAR
+                            </button>
+                          )}
+                          <div style={{ display: 'flex', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '2px', backgroundColor: '#f1f5f9' }}>
+                            <button
+                              onClick={() => {
+                                setItemParaJustificar(f);
+                                setShowJustificacionModal(true);
+                              }}
+                              style={{ border: 'none', background: 'none', cursor: 'pointer', padding: '4px', fontSize: '1.1rem' }}
+                              title="Agregar Comentario / Justificación"
+                            >
+                              💬
+                            </button>
+                            <button
+                              onClick={() => setExpandirHistorial(prev => ({ ...prev, [f.id]: !prev[f.id] }))}
+                              style={{ border: 'none', background: 'none', cursor: 'pointer', padding: '4px', fontSize: '1.1rem', opacity: (f.historial_compras?.length > 0) ? 1 : 0.3 }}
+                              title="Ver Historial"
+                              disabled={!f.historial_compras?.length}
+                            >
+                              {expandirHistorial[f.id] ? '🔼' : '🕒'}
+                            </button>
+                            <button
+                              onClick={() => {
+                                toast((t) => (
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                    <p style={{ margin: 0, fontSize: '0.85rem' }}>¿Anular este renglón?</p>
+                                    <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                                      <button
+                                        onClick={() => { toast.dismiss(t.id); actualizarFila(f.id, 'status', 'ANULADO'); }}
+                                        style={{ padding: '2px 8px', background: '#ef4444', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.75rem' }}
+                                      >
+                                        ANULAR
+                                      </button>
+                                      <button onClick={() => toast.dismiss(t.id)} style={{ padding: '2px 8px', background: '#f1f5f9', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.75rem' }}>NO</button>
+                                    </div>
+                                  </div>
+                                ));
+                              }}
+                              style={{ border: 'none', background: 'none', cursor: 'pointer', padding: '4px', fontSize: '1.1rem' }}
+                              title="Anular Renglón"
+                            >
+                              🗑️
+                            </button>
+                          </div>
                         </div>
                       </td>
                     </tr>
@@ -1515,15 +1769,14 @@ const Compras = () => {
               <div style={{ backgroundColor: '#f8fafc', padding: '20px', borderRadius: '15px', border: '1px solid #e2e8f0' }}>
                 <h4 style={{ margin: '0 0 15px 0', fontSize: '0.9rem', color: '#1e293b' }}>🧾 Soporte de Documentos</h4>
                 <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap', marginBottom: '20px' }}>
-                  {facturasUrls.filter(item => {
+                  {facturasUrls.map((item, idx) => {
                     const url = typeof item === 'string' ? item : item?.url;
-                    return url && url.length > 5; // Evitara strings vacíos o corruptos
-                  }).map((item, idx) => {
-                    const url = typeof item === 'string' ? item : item.url;
-                    const etiqueta = typeof item === 'string' ? 'Archivo' : item.etiqueta;
+                    const etiqueta = typeof item === 'string' ? 'Archivo' : (item?.etiqueta || 'Sin etiqueta');
+                    if (!url || url.length < 5) return null;
+                    
                     const isImg = /\.(jpg|jpeg|png|webp|avif|gif)$/i.test(url.split('?')[0]);
                     return (
-                      <div key={idx} style={{ position: 'relative', display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                      <div key={idx} style={{ position: 'relative', display: 'flex', flexDirection: 'column', gap: '5px', width: '80px' }}>
                         <a href={url} target="_blank" rel="noreferrer" style={{
                           display: 'block',
                           width: '80px', height: '80px',
@@ -1547,7 +1800,23 @@ const Compras = () => {
                             </div>
                           )}
                         </a>
-                        <button 
+                        <input 
+                          type="text" 
+                          placeholder="Nombre..."
+                          value={etiqueta}
+                          onChange={(e) => renombrarAdjunto(idx, e.target.value)}
+                          style={{
+                            fontSize: '0.6rem',
+                            padding: '2px 4px',
+                            border: '1px solid #cbd5e1',
+                            borderRadius: '4px',
+                            width: '100%',
+                            boxSizing: 'border-box',
+                            backgroundColor: 'white',
+                            textAlign: 'center'
+                          }}
+                        />
+                        <button
                           onClick={() => eliminarSoporteReal(idx, url)}
                           style={{ position: 'absolute', top: '-8px', right: '-8px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '50%', width: '22px', height: '22px', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 4px rgba(0,0,0,0.2)', fontWeight: 'bold', zIndex: 10 }}
                           title="Eliminar Soporte Definitivamente"
@@ -1587,20 +1856,39 @@ const Compras = () => {
                     <span style={{ fontSize: '2rem', fontWeight: '900', color: '#0ea5e9' }}>$ {totalCalculado.toLocaleString('de-DE')}</span>
                   </div>
                 </div>
-                <div style={{ display: 'flex', gap: '12px', marginTop: '25px' }}>
-                  <button className="btn-tc btn-tc-secondary" onClick={() => setShowModal(false)} style={{ padding: '12px 25px' }}>Cancelar</button>
-                  <button className="btn-tc btn-tc-dark" onClick={() => guardarCambiosProcesamiento(true)} disabled={loading} style={{ padding: '12px 25px' }}>
-                    {loading ? <Loader2 className="animate-spin" size={16} /> : 'Guardar Borrador'}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', marginTop: '25px' }}>
+                  <button
+                    className="btn-tc btn-tc-secondary"
+                    onClick={intentarCerrarModal}
+                    style={{ padding: '12px 25px', backgroundColor: '#f1f5f9', color: '#475569', border: '1px solid #e2e8f0' }}
+                  >
+                    CERRAR
                   </button>
-                  <button className="btn-tc btn-tc-primary" onClick={() => guardarCambiosProcesamiento(false)} disabled={loading} style={{ padding: '12px 30px' }}>
-                    {loading ? <Loader2 className="animate-spin" size={16} /> : 'Actualizar'}
-                  </button>
+
+                  <div style={{ display: 'flex', gap: '12px' }}>
+                    <button
+                      className="btn-tc"
+                      onClick={() => guardarCambiosProcesamiento(true)}
+                      disabled={loading}
+                      style={{ padding: '12px 25px', backgroundColor: 'transparent', border: '2px solid #1e293b', color: '#1e293b', fontWeight: 'bold' }}
+                    >
+                      {loading ? <Loader2 className="animate-spin" size={16} /> : 'GUARDAR BORRADOR'}
+                    </button>
+                    <button
+                      className="btn-tc btn-tc-success"
+                      onClick={() => guardarCambiosProcesamiento(false)}
+                      disabled={loading || !renglones.every(r => r.compra_actual_cant > 0 ? (r.doc_numero_actual?.trim() && r.proveedor_seleccionado_id) : true)}
+                      style={{ padding: '12px 30px', backgroundColor: '#16a34a', color: 'white', fontWeight: '900', boxShadow: '0 4px 14px rgba(22, 163, 74, 0.3)' }}
+                    >
+                      {loading ? <Loader2 className="animate-spin" size={16} /> : 'PROCESAR COMPRA'}
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
         </div>
-      )}
+        )}
 
       {/* --- MODAL DE JUSTIFICACIÓN DE RETRASO --- */}
       {showJustificacionModal && (

@@ -3,11 +3,11 @@ import { supabase } from './supabaseClient';
 import Requisiciones from './Requisiciones';
 import TicketExpress from './TicketExpress';
 import { format, getWeek } from 'date-fns';
-import * as XLSX from 'xlsx';
+import toast from 'react-hot-toast';
 import { Loader2, Upload, FileText, Printer, FileSpreadsheet, BarChart3, Clock, Activity, CheckCircle2, DollarSign } from 'lucide-react';
 import './SolicitudFondos.css';
 
-const StockSmartTotalClean = () => {
+const StockSmartTotalClean = ({ currentUserProp }) => {
   const [showModal, setShowModal] = useState(false);
   const [historial, setHistorial] = useState([]);
   const [isEditing, setIsEditing] = useState(false);
@@ -22,7 +22,7 @@ const StockSmartTotalClean = () => {
 
   // --- ESTADO PARA GASTOS IMPREVISTOS ---
   const [mostrarImprevistos, setMostrarImprevistos] = useState(false);
-  const [currentUser, setCurrentUser] = useState(null);
+  const [currentUser, setCurrentUser] = useState(currentUserProp || null);
   const [loading, setLoading] = useState(false);
 
   // --- ESTADOS PARA VALIDACIÓN PREVIA Y CIERRE SEMANAL ---
@@ -34,6 +34,10 @@ const StockSmartTotalClean = () => {
   const [solCheckExitosa, setSolCheckExitosa] = useState(false);
   const [solicitudConflictiva, setSolicitudConflictiva] = useState(null);
   const [esAdminBypass, setEsAdminBypass] = useState(false);
+
+  useEffect(() => {
+    if (currentUserProp) setCurrentUser(currentUserProp);
+  }, [currentUserProp]);
 
   // --- ESTADOS DE DATA MAESTRA ---
   const [centrosCosto, setCentrosCosto] = useState([]);
@@ -98,21 +102,67 @@ const StockSmartTotalClean = () => {
   const [filtroSemana, setFiltroSemana] = useState("");
 
   // --- FUNCIÓN PARA ELIMINAR ---
-  const eliminarSolicitud = async (id_db) => {
-    if (window.confirm("¿Estás seguro de que deseas eliminar esta solicitud? Esta acción no se puede deshacer.")) {
-      try {
-        // Primero eliminamos las partidas relacionadas (por la integridad referencial)
-        await supabase.from('partidas_fondos').delete().eq('solicitud_id', id_db);
-        // Luego eliminamos la cabecera
-        const { error } = await supabase.from('solicitudes_fondos').delete().eq('id', id_db);
+  const eliminarSolicitud = (id_db) => {
+    if (currentUser?.correo?.toLowerCase() !== 'jcontreras.totalclean@gmail.com') {
+      toast.error("Solo el SuperAdministrador (José) tiene permisos para eliminar solicitudes.");
+      return;
+    }
 
-        if (error) throw error;
+    toast((t) => (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: '500' }}>¿Estás seguro de que deseas eliminar esta solicitud permanentemente? Se borrarán también todos los renglones asociados.</p>
+        <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+          <button 
+            onClick={() => { toast.dismiss(t.id); ejecutarEliminarSolicitud(id_db); }}
+            style={{ padding: '4px 12px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}
+          >
+            SÍ, ELIMINAR
+          </button>
+          <button onClick={() => toast.dismiss(t.id)} style={{ padding: '4px 12px', backgroundColor: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}>CANCELAR</button>
+        </div>
+      </div>
+    ), { duration: 6000, position: 'top-center' });
+  };
 
-        alert("Solicitud eliminada correctamente");
-        setHistorial(historial.filter(h => h.id_db !== id_db));
-      } catch (err) {
-        alert("Error al eliminar: " + err.message);
-      }
+  const ejecutarEliminarSolicitud = async (id_db) => {
+    try {
+      setLoading(true);
+      const { error: errorPartidas } = await supabase.from('partidas_fondos').delete().eq('solicitud_id', id_db);
+      if (errorPartidas) throw new Error("Error al eliminar partidas");
+
+      const { error: errorCabecera } = await supabase.from('solicitudes_fondos').delete().eq('id', id_db);
+      if (errorCabecera) throw new Error("Error al eliminar cabecera");
+
+      toast.success("Solicitud eliminada.");
+      setHistorial(prev => prev.filter(h => h.id_db !== id_db));
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const intentarCerrarModal = () => {
+    const hayContenido = form.partidas.some(p => p.desc?.trim() || p.cc);
+    if (hayContenido && !isEditing) {
+      toast((t) => (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: 'bold', color: '#1e293b' }}>⚠️ Tienes datos sin guardar</p>
+          <p style={{ margin: 0, fontSize: '0.8rem', color: '#64748b' }}>¿Estás seguro de que deseas cerrar? Se perderán los renglones añadidos.</p>
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '5px' }}>
+            <button
+              onClick={() => { toast.dismiss(t.id); setShowModal(false); }}
+              style={{ padding: '6px 12px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 'bold' }}
+            >CERRAR SIN GUARDAR</button>
+            <button
+              onClick={() => toast.dismiss(t.id)}
+              style={{ padding: '6px 12px', backgroundColor: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '0.75rem' }}
+            >CONTINUAR</button>
+          </div>
+        </div>
+      ), { duration: 6000, position: 'top-center' });
+    } else {
+      setShowModal(false);
     }
   };
 
@@ -168,15 +218,25 @@ const StockSmartTotalClean = () => {
       }
 
       if (perfil) {
-        const esAdminReal = email === 'jcontreras.totalclean@gmail.com' || email === 'cvega.totalclean@gmail.com';
+        const emailLower = (session.user.email || '').toLowerCase();
+        // José es el ÚNICO que puede borrar
+        const esSuperAdmin = emailLower === 'jcontreras.totalclean@gmail.com';
+        // Administradores reales (José, Carlos, Karin)
+        const esAdminReal = esSuperAdmin || 
+                            emailLower === 'cvega.totalclean@gmail.com' || 
+                            emailLower === 'cvega@totalclean.com' || 
+                            emailLower === 'karincmm1@gmail.com';
+        
         const userData = {
           ...perfil,
+          esSuperAdmin,
           esAdminReal,
+          correo: emailLower,
           departamento: (perfil.departamento || '').trim(),
           rol: (perfil.rol || '').trim()
         };
         setCurrentUser(userData);
-        console.log("[VISIBILIDAD FONDOS] Sesión sincronizada para:", email);
+        console.log("[VISIBILIDAD FONDOS] Sesión sincronizada para:", emailLower);
       }
     } catch (err) {
       console.error("[VISIBILIDAD FONDOS] Error fatal:", err.message);
@@ -213,11 +273,18 @@ const StockSmartTotalClean = () => {
       if (session?.user) {
         const { data: perfil } = await supabase.from('perfiles').select('*').eq('id', session.user.id).single();
         if (perfil) {
-          const email = session.user.email.toLowerCase();
-          const esAdminReal = email === 'jcontreras.totalclean@gmail.com' || email === 'cvega.totalclean@gmail.com';
+          const emailLower = (session.user.email || '').toLowerCase();
+          const esSuperAdmin = emailLower === 'jcontreras.totalclean@gmail.com';
+          const esAdminReal = esSuperAdmin || 
+                              emailLower === 'cvega.totalclean@gmail.com' || 
+                              emailLower === 'cvega@totalclean.com' || 
+                              emailLower === 'karincmm1@gmail.com';
+          
           userContext = { 
             ...perfil, 
+            esSuperAdmin,
             esAdminReal,
+            correo: emailLower,
             departamento: (perfil.departamento || '').trim(),
             rol: (perfil.rol || '').trim() 
           };
@@ -443,7 +510,7 @@ const StockSmartTotalClean = () => {
       }
       setIsEditing(true);
       setShowModal(true);
-    } catch (err) { alert("Error cargando detalles."); }
+    } catch (err) { toast.error("Error cargando detalles."); }
   };
 
   const manejarCambioPartida = (index, campo, valor) => {
@@ -472,7 +539,7 @@ const StockSmartTotalClean = () => {
       if (yaSeleccionados.length > 0) {
         const ccBase = yaSeleccionados[0].cc;
         if (ccBase && nuevos[index].cc && nuevos[index].cc !== ccBase) {
-          alert("⚠️ No se pueden mezclar Centros de Costos en un mismo Ticket de Pago. Por favor, genere un ticket por separado.");
+          toast.error("No se pueden mezclar Centros de Costos en un mismo Ticket de Pago. Por favor, genere un ticket por separado.");
           return; // Impedir la selección
         }
       }
@@ -532,8 +599,7 @@ const StockSmartTotalClean = () => {
   const aa = new Date(form.fecha).getFullYear().toString().slice(-2);
   
   // Complementamos el identificador con el Centro de Costo (Primeras 4 letras o similar)
-  const ccCodigo = (form.partidas[0]?.cc || ccPreVal || 'S-C').substring(0, 5).toUpperCase();
-  const idDinamico = isEditing ? form.id : `${siglasGerencia}-${ccCodigo}-SEM ${numSemana}-${aa}`;
+  const idDinamico = isEditing ? form.id : `${siglasGerencia}-SEM ${numSemana}-${aa}`;
   const periodoSemana = getWeekRange(numSemana, new Date(form.fecha).getFullYear());
 
   // --- LÓGICA DE CIERRE SEMANAL (DOMINGO 23:59:59) ---
@@ -550,7 +616,7 @@ const StockSmartTotalClean = () => {
   const isExpired = !isEditing && new Date() > deadlineDate;
 
   const verificarDisponibilidad = async () => {
-    if (!ccPreVal || !fechaPreVal) return setErrorCheck("Seleccione Fecha y Centro de Costo");
+    if (!fechaPreVal) return setErrorCheck("Por favor, seleccione una fecha operativa.");
     
     // --- EXCEPCIÓN DE ADMINISTRADOR / GERENTE GENERAL ---
     const rolUpper = (currentUser?.rol || '').toUpperCase();
@@ -926,7 +992,7 @@ const StockSmartTotalClean = () => {
       printWindow.document.write(html);
       printWindow.document.close();
     } catch (err) {
-      alert("Error al generar impresión: " + err.message);
+      toast.error("Error al generar impresión: " + err.message);
     } finally {
       setLoading(false);
     }
@@ -970,7 +1036,7 @@ const StockSmartTotalClean = () => {
           .eq('codigo_control', idDinamico);
 
         if (checkData && checkData.length > 0) {
-          return alert("Ya existe una Solicitud de Fondo para esta semana. Por favor, edite la existente para evitar redundancias.");
+          return toast.error("Ya existe una Solicitud de Fondo para esta semana. Por favor, edite la existente para evitar redundancias.");
         }
         finalCodigoControl = idDinamico;
       }
@@ -981,8 +1047,8 @@ const StockSmartTotalClean = () => {
         sede: form.sede,
         gerencia_nombre: form.gerencia,
         responsable_nombre: form.responsable,
-        total_bs: sumas.bs,
-        total_usd: sumas.usd
+        total_bs: sumas.bs + sumas.imprevistosBs,
+        total_usd: sumas.usd + sumas.imprevistosUsd
       };
 
       let cabeceraId;
@@ -1038,11 +1104,11 @@ const StockSmartTotalClean = () => {
       const { error: errorPartidas } = await supabase.from('partidas_fondos').insert(renglones);
       if (errorPartidas) throw errorPartidas;
 
-      alert("¡Guardado con éxito!");
+      toast.success("¡Guardado con éxito!");
       await cargarTodo();
       if (!keepOpen) setShowModal(false);
     } catch (err) {
-      alert("Error al guardar: " + err.message);
+      toast.error("Error al guardar: " + err.message);
     }
   };
 
@@ -1066,23 +1132,41 @@ const StockSmartTotalClean = () => {
 
   const handleCrearRequisicion = () => {
     const seleccionadas = form.partidas.filter(p => p.selected);
-    if (seleccionadas.length === 0) return alert("Selecciona al menos una partida");
+    if (seleccionadas.length === 0) return toast.error("Selecciona al menos una partida");
 
     // VALIDACIÓN ESTRICTA EN EJECUCIÓN (Centros y Clasificaciones)
     const centros = [...new Set(seleccionadas.map(f => f.cc))];
     const clases = [...new Set(seleccionadas.map(f => f.clasif))];
 
     if (centros.length > 1 || clases.length > 1) {
-      alert("⚠️ Error: Las filas deben tener el mismo Centro de Costo y Clasificación para generar una requisición.");
+      toast.error("Error: Las filas deben tener el mismo Centro de Costo y Clasificación para generar una requisición.");
       return;
     }
 
     // ADVERTENCIA DE CATEGORÍAS
     const cats = [...new Set(seleccionadas.map(f => f.cat))];
-    if (cats.length > 1 && !window.confirm("¿Está seguro de guardar filas con diferentes categorías?")) {
+    if (cats.length > 1) {
+      toast((t) => (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: '500' }}>¿Está seguro de guardar filas con diferentes categorías?</p>
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+            <button 
+              onClick={() => { toast.dismiss(t.id); ejecutarCrearRequisicion(seleccionadas); }}
+              style={{ padding: '4px 12px', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}
+            >
+              SÍ, CONTINUAR
+            </button>
+            <button onClick={() => toast.dismiss(t.id)} style={{ padding: '4px 12px', backgroundColor: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}>CANCELAR</button>
+          </div>
+        </div>
+      ), { duration: 6000, position: 'top-center' });
       return;
     }
 
+    ejecutarCrearRequisicion(seleccionadas);
+  };
+
+  const ejecutarCrearRequisicion = (seleccionadas) => {
     setDataParaReq({
       id_control: idDinamico, responsable: form.responsable, gerencia: form.gerencia,
       centro_costo: seleccionadas[0].cc, origen_proceso: `Generado desde Fondos: ${idDinamico}`,
@@ -1096,12 +1180,12 @@ const StockSmartTotalClean = () => {
 
   const handleEmitirTicketFromImprevisto = () => {
     const seleccionados = form.imprevistos.filter(i => i.selected);
-    if (seleccionados.length === 0) return alert("Selecciona al menos un imprevisto");
+    if (seleccionados.length === 0) return toast.error("Selecciona al menos un imprevisto");
 
     // VALIDACIÓN DE CC ÚNICO PARA TICKET DE PAGO
     const ccsUnicos = [...new Set(seleccionados.map(s => s.cc).filter(cc => cc))];
     if (ccsUnicos.length > 1) {
-      return alert("⚠️ No se pueden mezclar Centros de Costos en un mismo Ticket de Pago. Por favor, genere un ticket por separado.");
+      return toast.error("No se pueden mezclar Centros de Costos en un mismo Ticket de Pago. Por favor, genere un ticket por separado.");
     }
 
     setDataParaTicket({
@@ -1129,30 +1213,31 @@ const StockSmartTotalClean = () => {
     <div style={{ padding: '25px', backgroundColor: '#f1f5f9', minHeight: '100vh', fontFamily: 'Inter, sans-serif' }}>
 
       {/* --- DASHBOARD UNIFICADO PREMIUM --- */}
-      <div className="rm-stats-grid" style={{ marginBottom: '32px' }}>
-        <div className="rm-stat-card secondary">
-          <div className="rm-stat-info">
-            <label>Dólares pagaderos en Bolívares</label>
-            <h3 style={{ color: '#0ea5e9' }}>$ {totalesVisibles.bs.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</h3>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '20px', marginBottom: '32px' }}>
+        {[
+          { label: 'Dólares pagaderos en Bolívares', val: `$ ${totalesVisibles.bs.toLocaleString('de-DE', { minimumFractionDigits: 2 })}`, col: '#030712' },
+          { label: 'Dólares pagaderos en divisas', val: `$ ${totalesVisibles.usd.toLocaleString('de-DE', { minimumFractionDigits: 2 })}`, col: '#030712' },
+          { label: 'Total General ($)', val: `$ ${totalesVisibles.general.toLocaleString('de-DE', { minimumFractionDigits: 2 })}`, col: '#030712' },
+        ].map((x, i) => (
+          <div
+            key={i}
+            className="stat-card"
+            style={{
+              borderLeft: `6px solid ${x.col}`,
+              backgroundColor: 'white',
+              padding: '24px',
+              borderRadius: '20px',
+              boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
+              border: '1px solid #e2e8f0',
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'center'
+            }}
+          >
+            <div style={{ fontSize: '0.75rem', fontWeight: '800', color: '#64748b', textTransform: 'uppercase', marginBottom: '8px', letterSpacing: '0.5px' }}>{x.label}</div>
+            <div style={{ fontSize: '1.75rem', fontWeight: '900', color: '#1e293b', margin: 0 }}>{x.val}</div>
           </div>
-          <div className="rm-stat-icon"><Clock size={22} /></div>
-        </div>
-
-        <div className="rm-stat-card highlight">
-          <div className="rm-stat-info">
-            <label>Dólares pagaderos en divisas</label>
-            <h3 style={{ color: '#8b5cf6' }}>$ {totalesVisibles.usd.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</h3>
-          </div>
-          <div className="rm-stat-icon"><BarChart3 size={22} /></div>
-        </div>
-
-        <div className="rm-stat-card primary">
-          <div className="rm-stat-info">
-            <label>Total General ($)</label>
-            <h3 style={{ fontSize: '1.8rem' }}>$ {totalesVisibles.general.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</h3>
-          </div>
-          <div className="rm-stat-icon"><DollarSign size={22} /></div>
-        </div>
+        ))}
       </div>
 
       {/* TABLA DE HISTORIAL */}
@@ -1173,7 +1258,7 @@ const StockSmartTotalClean = () => {
                 try {
                   setLoading(true);
                   const solicitudesIds = historialFiltrado.map(h => h.id_db);
-                  if (solicitudesIds.length === 0) return alert("No hay solicitudes para reportar.");
+                  if (solicitudesIds.length === 0) return toast.error("No hay solicitudes para reportar.");
 
                   const { data: todasPartidas, error } = await supabase
                     .from('partidas_fondos')
@@ -1314,7 +1399,7 @@ const StockSmartTotalClean = () => {
                   printWindow.document.write(html);
                   printWindow.document.close();
                 } catch (err) {
-                  alert("Error: " + err.message);
+                  toast.error("Error: " + err.message);
                 } finally {
                   setLoading(false);
                 }
@@ -1469,9 +1554,13 @@ const StockSmartTotalClean = () => {
                     >
 
                     </button>
-                    {(currentUser?.rol === 'Gerente' || currentUser?.rol === 'Admin' || currentUser?.esAdminReal) && (
+                    {currentUser?.esSuperAdmin && (
                       <button
-                        onClick={() => eliminarSolicitud(h.id_db)}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          eliminarSolicitud(h.id_db);
+                        }}
                         style={{ color: '#ef4444', background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.2rem' }}
                         title="Eliminar Solicitud"
                       >
@@ -1591,7 +1680,7 @@ const StockSmartTotalClean = () => {
               <div style={{ display: 'flex', gap: '40px', textAlign: 'right', alignItems: 'center' }}>
                 <div style={{ borderLeft: '2px solid #e2e8f0', paddingLeft: '30px' }}>
                   <label style={{ fontSize: '10px', fontWeight: '900', color: '#64748b' }}>TOTAL SOLICITADO</label>
-                  <div style={{ fontSize: '1.8rem', fontWeight: '950', color: '#0f172a' }}>$ {(sumas.bs + sumas.usd).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                  <div style={{ fontSize: '1.8rem', fontWeight: '950', color: '#0f172a' }}>$ {(sumas.bs + sumas.usd + sumas.imprevistosBs + sumas.imprevistosUsd).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                 </div>
               </div>
             </div>
@@ -1852,7 +1941,7 @@ const StockSmartTotalClean = () => {
 
               {/* BOTONES */}
               <div style={{ display: 'flex', gap: '10px', alignSelf: 'flex-end' }}>
-                <button className="sf-btn sf-btn-close" onClick={() => setShowModal(false)}>CERRAR</button>
+                <button className="sf-btn sf-btn-close" onClick={intentarCerrarModal}>CERRAR</button>
                 <button 
                   className="sf-btn" 
                   style={{ background: '#f8fafc', border: '1px solid #cbd5e1', color: '#475569', padding: '12px 25px', opacity: isExpired ? 0.5 : 1 }} 
@@ -1904,28 +1993,21 @@ const StockSmartTotalClean = () => {
             </div>
             
             <h2 style={{ fontSize: '1.6rem', color: '#0f172a', fontWeight: '800', marginBottom: '10px' }}>Nueva Solicitud</h2>
-            <p style={{ color: '#64748b', fontSize: '14px', marginBottom: '30px', lineHeight: '1.5' }}>Seleccione el Centro de Costo y la Fecha para verificar la disponibilidad de la semana.</p>
-
+            <p style={{ color: '#64748b', fontSize: '14px', marginBottom: '30px', lineHeight: '1.5' }}>Seleccione la Fecha Operativa para verificar la disponibilidad de la semana.</p>
+            
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', textAlign: 'left', marginBottom: '30px' }}>
-                <div>
-                   <label style={{ fontSize: '11px', fontWeight: '800', color: '#0f172a', textTransform: 'uppercase', display: 'block', marginBottom: '8px' }}>Centro de Costo</label>
-                   <select 
-                     className="sf-input" 
-                     value={ccPreVal} 
-                     onChange={(e) => { setCcPreVal(e.target.value); setSolCheckExitosa(false); }}
-                     style={{ width: '100%', padding: '12px' }}
-                   >
-                     <option value="">Seleccione Proyecto...</option>
-                     {centrosCosto.map(cc => <option key={cc.id} value={cc.nombre}>{cc.nombre}</option>)}
-                   </select>
-                </div>
                 <div>
                    <label style={{ fontSize: '11px', fontWeight: '800', color: '#0f172a', textTransform: 'uppercase', display: 'block', marginBottom: '8px' }}>Fecha Operativa</label>
                    <input 
                      type="date" 
                      className="sf-input" 
                      value={fechaPreVal} 
-                     onChange={(e) => { setFechaPreVal(e.target.value); setSolCheckExitosa(false); }}
+                     onChange={(e) => { 
+                        setFechaPreVal(e.target.value); 
+                        setSolCheckExitosa(false); 
+                        setSolicitudConflictiva(null);
+                        setErrorCheck('');
+                      }}
                      style={{ width: '100%', padding: '12px' }}
                    />
                 </div>
@@ -1949,8 +2031,8 @@ const StockSmartTotalClean = () => {
                   {!solCheckExitosa && !solicitudConflictiva ? (
                     <button 
                       onClick={verificarDisponibilidad} 
-                      disabled={loadingCheck || !ccPreVal || !fechaPreVal}
-                      style={{ flex: 1.5, padding: '15px', borderRadius: '16px', border: 'none', backgroundColor: '#0f172a', color: 'white', fontWeight: 'bold', cursor: (loadingCheck || !ccPreVal || !fechaPreVal) ? 'not-allowed' : 'pointer', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '10px' }}
+                      disabled={loadingCheck || !fechaPreVal}
+                      style={{ flex: 1.5, padding: '15px', borderRadius: '16px', border: 'none', backgroundColor: '#0f172a', color: 'white', fontWeight: 'bold', cursor: (loadingCheck || !fechaPreVal) ? 'not-allowed' : 'pointer', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '10px' }}
                     >
                       {loadingCheck ? <Loader2 className="spinner" size={18} /> : null}
                       {loadingCheck ? 'VERIFICANDO...' : 'VERIFICAR'}
@@ -1968,8 +2050,8 @@ const StockSmartTotalClean = () => {
                             responsable: (['Gerente', 'Coordinador', 'Analista', 'Admin'].includes(currentUser?.rol) || currentUser?.esAdminReal)
                               ? `${currentUser.nombre} ${currentUser.apellido}`
                               : '',
-                            partidas: [{ id: Date.now(), selected: false, cc: ccPreVal, clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '' }],
-                            imprevistos: [{ id: Date.now() + 1, selected: false, cc: ccPreVal, clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '' }]
+                            partidas: [{ id: Date.now(), selected: false, cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '' }],
+                            imprevistos: [{ id: Date.now() + 1, selected: false, cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '' }]
                         });
                         setMostrarImprevistos(false);
                         setShowPreVal(false);

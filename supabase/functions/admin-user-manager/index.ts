@@ -68,14 +68,24 @@ serve(async (req) => {
     if (action === 'get_department_users') {
       const userDepto = perfil?.departamento || '';
       const deptoUpper = userDepto.trim().toUpperCase();
-      console.log(`[GET_DEPT_USERS] Requerido por dept: ${userDepto}`);
+      const emailLowerSolicitante = user.email?.toLowerCase() || '';
+      
+      // REGLA DE VISIBILIDAD TOTAL
+      const tieneAccesoTotal = emailLowerSolicitante === 'jcontreras.totalclean@gmail.com' || 
+                               emailLowerSolicitante === 'cvega.totalclean@gmail.com' || 
+                               emailLowerSolicitante === 'karincmm1@gmail.com' ||
+                               deptoUpper.includes('ADMINISTRACIÓN');
+
+      console.log(`[GET_DEPT_USERS] Requerido por email: ${emailLowerSolicitante}, depto: ${userDepto}`);
 
       let query = adminClient.from('perfiles').select('*');
       
-      if (deptoUpper === 'SEGURIDAD' || deptoUpper === 'SIAHO' || deptoUpper === 'SHA') {
-        query = query.or(`departamento.ilike.%Seguridad%,departamento.ilike.%SIAHO%,departamento.ilike.%SHA%`);
-      } else {
-        query = query.ilike('departamento', `%${userDepto.trim()}%`);
+      if (!tieneAccesoTotal) {
+        if (deptoUpper === 'SEGURIDAD' || deptoUpper === 'SIAHO' || deptoUpper === 'SHA') {
+          query = query.or(`departamento.ilike.%Seguridad%,departamento.ilike.%SIAHO%,departamento.ilike.%SHA%`);
+        } else {
+          query = query.ilike('departamento', `%${userDepto.trim()}%`);
+        }
       }
 
       const { data: users, error: fetchError } = await query.order('apellido');
@@ -138,8 +148,12 @@ serve(async (req) => {
       }
 
       default:
-        console.error('Acción no reconocida:', action);
-        return new Response(JSON.stringify({ error: 'Acción no reconocida' }), {
+        console.error(`Acción no reconocida: "${action}"`);
+        return new Response(JSON.stringify({ 
+          error: `Acción "${action}" no reconocida en esta versión de la función.`,
+          received_action: action,
+          detail: 'Asegúrate de que la función esté desplegada con la versión más reciente.' 
+        }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           status: 400,
         })

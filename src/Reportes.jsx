@@ -18,6 +18,9 @@ import {
   DollarSign,
   BarChart3
 } from 'lucide-react';
+import toast from 'react-hot-toast';
+import ExcelJS from 'exceljs';
+import { saveAs } from 'file-saver';
 import './Reportes.css';
 import './ReportesMaestro.css';
 
@@ -323,7 +326,7 @@ const Reportes = () => {
 
   const exportPendingToExcel = async () => {
     const pendientes = rows.filter(r => r.cantComprada < r.cantPedida);
-    if (pendientes.length === 0) return alert("No hay ítems pendientes por comprar en la selección actual.");
+    if (pendientes.length === 0) return toast.error("No hay ítems pendientes por comprar en la selección actual.");
 
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Pendientes por Comprar');

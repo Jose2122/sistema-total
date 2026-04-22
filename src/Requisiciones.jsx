@@ -4,16 +4,50 @@ import html2canvas from 'html2canvas';
 import { supabase } from './supabaseClient';
 import { motion, AnimatePresence } from 'framer-motion';
 import { format } from 'date-fns';
+import toast from 'react-hot-toast';
 import { Loader2, MessageSquare, FileText, Upload, Paperclip } from 'lucide-react';
 import './Requisiciones.css';
 
-const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
+const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentUserProp }) => {
   // --- ESTADOS DEL SISTEMA ---
   const [showModal, setShowModal] = useState(false);
   const [historial, setHistorial] = useState([]);
   const [editandoId, setEditandoId] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [currentUser, setCurrentUser] = useState(null);
+  const [currentUser, setCurrentUser] = useState(currentUserProp || null);
+
+  const getRank = (rol) => {
+    const r = (rol || '').toLowerCase();
+    if (r.includes('analista')) return 1;
+    if (r.includes('coordinador')) return 2;
+    if (r.includes('gerente general') || r.includes('admin')) return 4;
+    if (r.includes('gerente')) return 3;
+    return 0;
+  };
+
+  const enviarNotificacion = async (usuario_id, mensaje, tipo = 'Sistema') => {
+    if (!usuario_id || usuario_id === currentUser?.id) return;
+    try {
+      const { error } = await supabase
+        .from('notificaciones')
+        .insert([{
+          usuario_id,
+          mensaje,
+          tipo,
+          leido: false
+        }]);
+      if (error) throw error;
+    } catch (err) {
+      console.error("Error al enviar notificación:", err.message);
+    }
+  };
+
+  const getInitials = (name) => {
+    if (!name) return '??';
+    const parts = name.split(' ');
+    if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+    return name.substring(0, 2).toUpperCase();
+  };
 
   // --- NUEVOS ESTADOS PARA FILTROS ---
   const [busqueda, setBusqueda] = useState('');
@@ -24,6 +58,13 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
   const [filtroStatusCompra, setFiltroStatusCompra] = useState('Todos');
   const [fechaDesde, setFechaDesde] = useState('');
   const [fechaHasta, setFechaHasta] = useState('');
+  const [filtroSolicitante, setFiltroSolicitante] = useState('Todos');
+  const [listaSubordinados, setListaSubordinados] = useState([]);
+  const [listaGerencias, setListaGerencias] = useState([
+    "Administración Maracaibo", "Administración El Tigre", "Operaciones", "Mantenimiento",
+    "Seguridad", "Recursos Humanos", "Estimación", "Almacén", "Gerencia General",
+    "Servicios Generales", "Contabilidad"
+  ]);
   const [showRechazoModal, setShowRechazoModal] = useState(false);
   const [motivoRechazo, setMotivoRechazo] = useState('');
   const [rechazoAction, setRechazoAction] = useState(null); // 'area' o 'general'
@@ -45,37 +86,18 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.user) return;
-
-      const email = session.user.email.toLowerCase();
-      
-      // FORZAR lectura de perfil fresco (Sin caché)
-      const { data: perfil, error: pError } = await supabase
-        .from('perfiles')
-        .select('*')
-        .eq('id', session.user.id)
-        .single();
-
-      if (pError) {
-        console.error("[VISIBILIDAD] Error leyendo perfil:", pError.message);
-        return;
-      }
-
-      if (perfil) {
-        const esAdminReal = email === 'jcontreras.totalclean@gmail.com' || email === 'cvega.totalclean@gmail.com';
-        const userData = {
-          ...perfil,
-          esAdminReal,
-          departamento: (perfil.departamento || '').trim(),
-          rol: (perfil.rol || '').trim(),
-          firma_url: perfil.url_firma_digital
-        };
-        setCurrentUser(userData);
-        console.log("[VISIBILIDAD] Sesión sincronizada para:", email);
-      }
-    } catch (err) {
-      console.error("[VISIBILIDAD] Error fatal obteniendo sesión:", err.message);
-    }
+      const { data: perfil } = await supabase.from('perfiles').select('*').eq('id', session.user.id).single();
+      if (perfil) setCurrentUser({ ...perfil, departamento: (perfil.departamento || '').trim(), rol: (perfil.rol || '').trim() });
+    } catch (err) { console.error(err); }
   }, []);
+
+  useEffect(() => {
+    if (currentUserProp) {
+      setCurrentUser(currentUserProp);
+    } else {
+      obtenerSesionUsuario();
+    }
+  }, [currentUserProp, obtenerSesionUsuario]);
 
   // --- LÓGICA DE CARGA DESDE SUPABASE CON FILTROS JERÁRQUICOS POR FASE ---
   const cargarHistorialDesdeBD = useCallback(async () => {
@@ -88,36 +110,53 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
       const deptoUpper = (currentUser.departamento || '').toUpperCase();
       const tienePermisoDepto = currentUser.capacidades?.ver_departamento === true;
 
-      console.log(`[VISIBILIDAD REQUISICIONES] Usuario: ${currentUser.correo} | Depto: ${currentUser.departamento} | Rol: ${rolUpper} | Permiso Especial: ${tienePermisoDepto}`);
+      // José es el ÚNICO SuperAdmin (Borrar/Anular)
+      const emailLower = (currentUser?.correo || '').toLowerCase();
+      const esJose = emailLower === 'jcontreras.totalclean@gmail.com';
+      const esAdminReal = esJose ||
+        emailLower === 'cvega.totalclean@gmail.com' ||
+        emailLower === 'cvega@totalclean.com' ||
+        emailLower === 'karincmm1@gmail.com';
 
-      // FLUJO JERÁRQUICO DE VISIBILIDAD POR FASE (ESTADO_APROBACION)
-      if (!currentUser.esAdminReal && rolUpper !== 'GERENTE GENERAL' && rolUpper !== 'ADMIN') {
-        const puedeVerDepto = tienePermisoDepto || ['GERENTE', 'COORDINADOR', 'ANALISTA', 'COMPRAS'].includes(rolUpper) || deptoUpper.includes('COMPRAS');
+      const emailActual = (currentUser?.correo || '').toLowerCase();
+      const esGG = rolUpper.includes('GERENTE') || rolUpper.includes('ADMIN') || emailActual === 'cvega@totalclean.com' || emailActual === 'cvega.totalclean@gmail.com';
+      const esPrivilegiado = esAdminReal || esGG || deptoUpper.includes('ADMINISTRACIÓN');
 
-        if (puedeVerDepto) {
-          // Ven todo lo de su departamento/gerencia (Fuzzy Match + Case-insensitive)
-          const filtroDepto = (currentUser.departamento || '').trim();
-          
-          // Lógica de SINÓNIMOS para Seguridad
-          if (filtroDepto.toUpperCase() === 'SEGURIDAD' || filtroDepto.toUpperCase() === 'SIAHO') {
-            query = query.or(`gerencia.ilike.%Seguridad%,gerencia.ilike.%SIAHO%,gerencia.ilike.%SHA%`);
-            console.log(`[VISIBILIDAD REQUISICIONES] Aplicando filtro de búsqueda múltiple (SIAHO/SHA/Seguridad)`);
-          } else {
-            query = query.ilike('gerencia', `%${filtroDepto}%`);
-            console.log(`[VISIBILIDAD REQUISICIONES] Aplicando filtro de departamento: %${filtroDepto}%`);
-          }
-        } else {
-          // Otros roles sin permiso explícito: solo lo propio
-          query = query.eq('solicitante', `${currentUser.nombre} ${currentUser.apellido}`);
-          console.log(`[VISIBILIDAD REQUISICIONES] Aplicando filtro restrictivo personal: ${currentUser.nombre}`);
-        }
+      // 1. Obtener todos los perfiles para el Triple Match local (al no haber FK)
+      const { data: perfilesDB } = await supabase.from('perfiles').select('id, rol, departamento, gerencia_id');
+
+
+      const myRank = getRank(currentUser.rol);
+
+      if (!esPrivilegiado) {
+        // Filtro Triple Match: Mismo Depto + Misma Gerencia + Rango Superior
+        // En BD filtramos por depto para reducir carga
+        query = query.ilike('gerencia', `%${currentUser.departamento}%`);
       }
 
       const { data, error } = await query.order('fecha_emision', { ascending: false });
 
       if (error) throw error;
       if (data) {
-        const historialMapeado = data.map(db => ({
+        let finalData = data;
+
+        if (!esPrivilegiado) {
+          finalData = data.filter(req => {
+            // REGLA FUNDAMENTAL: Siempre puede ver lo suyo
+            if (currentUser.id === req.user_id) return true;
+
+            const creador = (perfilesDB || []).find(p => p.id === req.user_id);
+            if (!creador) return true;
+
+            const matchDepto = (creador.departamento || '').toLowerCase() === (currentUser.departamento || '').toLowerCase();
+            const matchGerencia = creador.gerencia_id === currentUser.gerencia_id;
+            const rankSuperior = myRank > getRank(creador.rol);
+
+            return matchDepto && matchGerencia && rankSuperior;
+          });
+        }
+
+        const historialMapeado = finalData.map(db => ({
           id: db.id,
           correlativo: db.correlativo_req || `REQ-${String(db.id).padStart(3, '0')}`,
           origen: db.origen || 'Manual',
@@ -142,6 +181,18 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
           id_referencia_proyecto: db.id_referencia_proyecto || ''
         }));
         setHistorial(historialMapeado);
+
+        // Extraer subordinados y gerencias únicas
+        const subords = [...new Set(historialMapeado.map(h => h.solicitante))].sort();
+        setListaSubordinados(subords);
+
+        const gerencias = [...new Set(historialMapeado.map(h => h.gerencia))].sort();
+        setListaGerencias(gerencias);
+
+        // Por defecto para Gerentes: mostrar lo que tienen pendiente
+        const myRank = getRank(currentUser.rol);
+        if (myRank === 3 && filtroAprobacion === 'Todos') setFiltroAprobacion('pendiente_area');
+        if (myRank === 4 && filtroAprobacion === 'Todos') setFiltroAprobacion('enviada_general');
 
         // Extraer IDs de referencia únicos para el datalist
         const prevIds = [...new Set(data.map(db => db.id_referencia_proyecto).filter(id => id))];
@@ -208,12 +259,13 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
       const matchCategoria = filtroCategoria === 'Todos' || (req.detalles && req.detalles.some(d => d.categoria === filtroCategoria));
       const matchCC = filtroCC === 'Todos' || req.centroCosto.includes(filtroCC);
       const matchStatusCompra = filtroStatusCompra === 'Todos' || req.status.toUpperCase() === filtroStatusCompra.toUpperCase();
+      const matchSolicitante = filtroSolicitante === 'Todos' || req.solicitante === filtroSolicitante;
 
       let matchFecha = true;
       if (fechaDesde && req.fecha < fechaDesde) matchFecha = false;
       if (fechaHasta && req.fecha > fechaHasta) matchFecha = false;
 
-      return matchTexto && matchDepto && matchStatus && matchCategoria && matchCC && matchStatusCompra && matchFecha;
+      return matchTexto && matchDepto && matchStatus && matchCategoria && matchCC && matchStatusCompra && matchFecha && matchSolicitante;
     }).sort((a, b) => {
       // Prioridad Alta primero
       if (a.prioridad === 'Alta' && b.prioridad !== 'Alta') return -1;
@@ -221,7 +273,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
       // Luego por fecha desc (ya viene ordenado de BD, pero por si acaso)
       return new Date(b.fecha) - new Date(a.fecha);
     });
-  }, [historial, busqueda, filtroDepto, filtroAprobacion, filtroCategoria, filtroCC, filtroStatusCompra, fechaDesde, fechaHasta]);
+  }, [historial, busqueda, filtroDepto, filtroAprobacion, filtroCategoria, filtroCC, filtroStatusCompra, fechaDesde, fechaHasta, filtroSolicitante]);
 
   // --- ESTADOS DEL FORMULARIO ---
   const [prioridad, setPrioridad] = useState('Normal');
@@ -286,7 +338,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
     "Compras": "CMP"
   };
 
-  const listaGerencias = [
+  const GERENCIAS_ESTATICAS = [
     "Administración Maracaibo", "Administración El Tigre", "Operaciones", "Mantenimiento",
     "Seguridad", "Recursos Humanos", "Estimación", "Almacén", "Gerencia General",
     "Servicios Generales", "Contabilidad"
@@ -326,10 +378,6 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
     if (todosCompletados) return { texto: 'COMPLETADO', color: '#22c55e' };
     if (algunoEnProceso) return { texto: 'PARCIAL', color: '#f59e0b' };
     return { texto: 'EN ESPERA', color: '#64748b' };
-  };
-
-  const getInitials = (nombre, apellido) => {
-    return `${nombre?.charAt(0) || ''}${apellido?.charAt(0) || ''}`.toUpperCase();
   };
 
   const estadoGlobal = obtenerEstadoGlobal();
@@ -428,7 +476,23 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
   };
 
   const anularRequisicion = async (id) => {
-    if (!window.confirm('¿Estás seguro de ANULAR esta requisición? Los renglones asociados en Fondos quedarán disponibles nuevamente.')) return;
+    toast((t) => (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: '500' }}>¿Estás seguro de ANULAR esta requisición? Los renglones asociados en Fondos quedarán disponibles nuevamente.</p>
+        <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+          <button
+            onClick={() => { toast.dismiss(t.id); ejecutarAnularRequisicion(id); }}
+            style={{ padding: '4px 12px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}
+          >
+            SÍ, ANULAR
+          </button>
+          <button onClick={() => toast.dismiss(t.id)} style={{ padding: '4px 12px', backgroundColor: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}>NO</button>
+        </div>
+      </div>
+    ), { duration: 6000, position: 'top-center' });
+  };
+
+  const ejecutarAnularRequisicion = async (id) => {
     setLoading(true);
     try {
       const { error } = await supabase
@@ -439,21 +503,43 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
 
       await liberarPartidasFondos(id);
 
+      // NOTIFICAR AL SOLICITANTE
+      const reqAnulada = historial.find(h => h.id === id);
+      if (reqAnulada) {
+        await enviarNotificacion(reqAnulada.user_id, `Tu Requisición ${reqAnulada.correlativo} ha sido ANULADA.`, 'Anulación');
+      }
+
       setHistorial(prev => prev.map(req => req.id === id ? { ...req, estado_aprobacion: 'ANULADA' } : req));
-      alert('Requisición ANULADA correctamente.');
-    } catch (err) { alert(err.message); } finally { setLoading(false); }
+      toast.success('Requisición ANULADA correctamente.');
+    } catch (err) { toast.error(err.message); } finally { setLoading(false); }
   };
 
   const manejarEliminar = async (id) => {
-    if (!window.confirm("¿Eliminar esta requisición de forma permanente? Esta acción liberará los renglones en Fondos.")) return;
+    toast((t) => (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: '500' }}>¿Eliminar esta requisición de forma permanente? Esta acción liberará los renglones en Fondos.</p>
+        <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+          <button
+            onClick={() => { toast.dismiss(t.id); ejecutarEliminarRequisicion(id); }}
+            style={{ padding: '4px 12px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}
+          >
+            SÍ, ELIMINAR
+          </button>
+          <button onClick={() => toast.dismiss(t.id)} style={{ padding: '4px 12px', backgroundColor: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}>CANCELAR</button>
+        </div>
+      </div>
+    ), { duration: 6000, position: 'top-center' });
+  };
+
+  const ejecutarEliminarRequisicion = async (id) => {
     setLoading(true);
     try {
       await liberarPartidasFondos(id);
       const { error } = await supabase.from('requisiciones').delete().eq('id', id);
       if (error) throw error;
-      alert("Eliminada correctamente.");
+      toast.success("Eliminada correctamente.");
       await cargarHistorialDesdeBD();
-    } catch (err) { alert(err.message); } finally { setLoading(false); }
+    } catch (err) { toast.error(err.message); } finally { setLoading(false); }
   };
 
   const resetearFormulario = () => {
@@ -481,6 +567,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
     setDepartamento(req.gerencia || 'Operaciones');
     setRenglones(req.detalles || []);
     setCentroCosto(req.centroCosto);
+    setSolicitante(req.solicitante || `${req.solicitante_nombre || ''} ${req.solicitante_apellido || ''}`);
     setShowModal(true);
   };
 
@@ -493,14 +580,21 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
 
   const manejarRechazarGeneral = () => {
     const rolUpper = (currentUser?.rol || '').toUpperCase();
-    if (!editandoId || (!currentUser?.esAdminReal && rolUpper !== 'GERENTE GENERAL' && rolUpper !== 'ADMIN')) return;
+    const emailLower = (currentUser?.correo || '').toLowerCase();
+    const esAdminPermitido = currentUser?.esAdminReal ||
+      rolUpper.includes('GERENTE') ||
+      rolUpper.includes('ADMIN') ||
+      emailLower === 'cvega@totalclean.com' ||
+      emailLower === 'cvega.totalclean@gmail.com';
+
+    if (!editandoId || !esAdminPermitido) return;
     setMotivoRechazo('');
     setRechazoAction('general');
     setShowRechazoModal(true);
   };
 
   const confirmRechazo = async () => {
-    if (!motivoRechazo.trim()) return alert('El motivo de rechazo es obligatorio.');
+    if (!motivoRechazo.trim()) return toast.error('El motivo de rechazo es obligatorio.');
 
     setLoading(true);
     try {
@@ -520,13 +614,21 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
       const { error } = await supabase.from('requisiciones').update(updatePayload).eq('id', editandoId);
       if (error) throw error;
 
-      alert('Requisición rechazada.');
+      toast.success('Requisición rechazada.');
+
+      // NOTIFICAR AL SOLICITANTE
+      const reqRechazada = historial.find(h => h.id === editandoId);
+      if (reqRechazada) {
+        await enviarNotificacion(reqRechazada.user_id, `Tu Requisición ${reqRechazada.correlativo} ha sido RECHAZADA. Motivo: ${motivoRechazo}`, 'Rechazo');
+      }
+
       await cargarHistorialDesdeBD();
       setShowRechazoModal(false);
       setShowModal(false);
       resetearFormulario();
-    } catch (err) { alert(err.message); } finally { setLoading(false); }
+    } catch (err) { toast.error(err.message); } finally { setLoading(false); }
   };
+
 
   const guardarObservacionesDirecto = async () => {
     if (!editandoId) return;
@@ -543,12 +645,24 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
         .select();
       if (error) throw error;
 
+      // NOTIFICAR A COMPRAS
+      const { data: usuariosCompras } = await supabase
+        .from('perfiles')
+        .select('id')
+        .or('departamento.ilike.%compras%,rol.ilike.%compras%');
+
+      if (usuariosCompras) {
+        for (const u of usuariosCompras) {
+          await enviarNotificacion(u.id, `Nueva observación en REQ ${previewCorrelativo || 'Pendiente'} de ${currentUser.nombre}`, 'Observación');
+        }
+      }
+
       setObservaciones(obsTemporal);
       setHistorial(prev => prev.map(req => req.id === editandoId ? { ...req, observaciones: obsTemporal } : req));
       setEditandoObs(false);
-      alert('Observaciones actualizadas correctamente.');
+      toast.success('Observaciones actualizadas correctamente.');
     } catch (err) {
-      alert("Error al actualizar observaciones: " + err.message);
+      toast.error("Error al actualizar observaciones: " + err.message);
     } finally {
       setLoading(true); // Se mantiene cargando un momento para refresco visual
       await cargarHistorialDesdeBD();
@@ -556,8 +670,76 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
     }
   };
 
+  const renombrarAdjunto = async (idx, nuevoNombre) => {
+    const reqActual = historial.find(h => String(h.id) === String(editandoId));
+    const urlsActuales = [...(reqActual?.facturas_url || [])];
+    const item = urlsActuales[idx];
+
+    if (typeof item === 'string') {
+      urlsActuales[idx] = { url: item, etiqueta: nuevoNombre };
+    } else {
+      urlsActuales[idx] = { ...item, etiqueta: nuevoNombre };
+    }
+
+    setFacturasUrls(urlsActuales);
+    try {
+      await supabase.from('requisiciones').update({ facturas_url: urlsActuales }).eq('id', editandoId);
+    } catch (err) { console.error(err); }
+  };
+
+  const eliminarSoporteReal = async (idx, url) => {
+    toast((t) => (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        <p style={{ margin: 0, fontSize: '0.9rem' }}>¿Está seguro de eliminar permanentemente este soporte? Se borrará tanto del registro como del servidor.</p>
+        <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+          <button
+            onClick={() => { toast.dismiss(t.id); ejecutarEliminacionSoporte(idx, url); }}
+            style={{ padding: '4px 12px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}
+          >
+            ELIMINAR
+          </button>
+          <button onClick={() => toast.dismiss(t.id)} style={{ padding: '4px 12px', background: '#f1f5f9', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}>CANCELAR</button>
+        </div>
+      </div>
+    ), { duration: 5000 });
+  };
+
+  const ejecutarEliminacionSoporte = async (idx, url) => {
+    try {
+      setUploading(true);
+      let bucketName = 'facturas';
+      let filePath = '';
+      const searchStr = bucketName + '/';
+      const bIndex = url.indexOf(searchStr);
+      if (bIndex !== -1) {
+        filePath = url.substring(bIndex + searchStr.length).split('?')[0];
+      } else {
+        filePath = url.split('?')[0];
+      }
+
+      if (filePath) {
+        const { error: storageError } = await supabase.storage.from(bucketName).remove([filePath]);
+        if (storageError) console.warn("Aviso storage:", storageError.message);
+      }
+
+      const reqActual = historial.find(h => String(h.id) === String(editandoId));
+      const nuevasUrls = (reqActual?.facturas_url || []).filter((_, i) => i !== idx);
+
+      const { error: dbError } = await supabase.from('requisiciones').update({ facturas_url: nuevasUrls }).eq('id', editandoId);
+      if (dbError) throw dbError;
+
+      setFacturasUrls(nuevasUrls);
+      toast.success("Soporte eliminado.");
+      cargarHistorialDesdeBD();
+    } catch (err) {
+      toast.error("Error al eliminar: " + err.message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const subirFactura = async (event) => {
-    if (!editandoId) return alert("Guarde la requisición primero para poder adjuntar documentos.");
+    if (!editandoId) return toast.error("Guarde la requisición primero para poder adjuntar documentos.");
     try {
       setUploading(true);
       const files = Array.from(event.target.files);
@@ -566,40 +748,29 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
       const uploadPromises = files.map(async (file, index) => {
         const fileExt = file.name.split('.').pop();
         const fileName = `factura_${editandoId}_${Date.now()}_${index}.${fileExt}`;
-        const filePath = `${fileName}`; // Subir a la raíz para evitar bloqueos por carpetas public/private
+        const filePath = `${fileName}`;
 
-        const { error: uploadError } = await supabase.storage
-          .from('facturas')
-          .upload(filePath, file);
-
+        const { error: uploadError } = await supabase.storage.from('facturas').upload(filePath, file);
         if (uploadError) throw uploadError;
 
-        // OBTENER LA URL PÚBLICA CORRECTAMENTE
         const { data: { publicUrl } } = supabase.storage.from('facturas').getPublicUrl(filePath);
         return publicUrl;
       });
 
       const nuevasDescargas = await Promise.all(uploadPromises);
-
-      // RECARGAR DATA ACTUAL PARA EVITAR SOBREESCRIBIR SI OTRO MODIFICÓ
       const { data: currentReq } = await supabase.from('requisiciones').select('facturas_url').eq('id', editandoId).single();
       const urlsActuales = currentReq?.facturas_url || [];
-      const nuevasUrls = [...urlsActuales, ...nuevasDescargas];
+      const nuevasUrls = [...urlsActuales, ...nuevasDescargas.map(url => ({ url, etiqueta: 'Archivo sin etiqueta' }))];
 
       setFacturasUrls(nuevasUrls);
-
-      const { error: updateError } = await supabase
-        .from('requisiciones')
-        .update({ facturas_url: nuevasUrls })
-        .eq('id', editandoId);
-
+      const { error: updateError } = await supabase.from('requisiciones').update({ facturas_url: nuevasUrls }).eq('id', editandoId);
       if (updateError) throw updateError;
 
-      alert("Documentos adjuntados y guardados correctamente.");
-      event.target.value = ''; // Limpiar el input
+      toast.success("Documentos adjuntados correctamente.");
+      event.target.value = '';
       cargarHistorialDesdeBD();
     } catch (error) {
-      alert("Error al subir archivo: " + error.message);
+      toast.error("Error al subir: " + error.message);
     } finally {
       setUploading(false);
     }
@@ -607,7 +778,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
 
   const manejarAprobarGerenteArea = async () => {
     if (!editandoId || currentUser?.rol !== 'Gerente') {
-      alert('Solo el Gerente de Área puede realizar esta aprobación.');
+      toast.error('Solo el Gerente de Área puede realizar esta aprobación.');
       return;
     }
     setLoading(true);
@@ -619,21 +790,52 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
         aprobacion_nombre: 'Aprobado por Área'
       }).eq('id', editandoId);
       if (error) throw error;
-      alert('Aprobada por Gerente de Área. Enviada al Gerente General.');
+      toast.success('Aprobada por Gerente de Área. Enviada al Gerente General.');
       await cargarHistorialDesdeBD();
       setShowModal(false);
       resetearFormulario();
-    } catch (err) { alert(err.message); } finally { setLoading(false); }
+    } catch (err) { toast.error(err.message); } finally { setLoading(false); }
   };
 
   const manejarAprobarGeneral = async () => {
     const rolUpper = (currentUser?.rol || '').toUpperCase();
-    if (!editandoId || (!currentUser?.esAdminReal && rolUpper !== 'GERENTE GENERAL' && rolUpper !== 'ADMIN')) {
-      alert('Solo el Gerente General tiene permisos para la aprobación final.');
+    const emailLower = (currentUser?.correo || '').toLowerCase();
+
+    const esAdminPermitido = currentUser?.esAdminReal ||
+      rolUpper.includes('GERENTE') ||
+      rolUpper.includes('ADMIN') ||
+      emailLower.includes('cvega');
+
+    if (!editandoId) {
+      toast.error("ERROR: No hay un ID de requisición válido.");
       return;
     }
+
+    if (!esAdminPermitido) {
+      toast.error(`ACCESO DENEGADO\nEmail: ${emailLower}\nRol: ${rolUpper}\nMotivo: El sistema no lo identifica como personal autorizado.`);
+      return;
+    }
+
+    toast((t) => (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: '500' }}>¿Desea proceder con la APROBACIÓN FINAL?</p>
+        <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+          <button
+            onClick={() => { toast.dismiss(t.id); ejecutarAprobacionFinal(); }}
+            style={{ padding: '4px 12px', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}
+          >
+            SÍ, APROBAR
+          </button>
+          <button onClick={() => toast.dismiss(t.id)} style={{ padding: '4px 12px', backgroundColor: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}>CANCELAR</button>
+        </div>
+      </div>
+    ), { duration: 6000, position: 'top-center' });
+  };
+
+  const ejecutarAprobacionFinal = async () => {
     setLoading(true);
     try {
+      console.log("[APROBACIÓN] Ejecutando Update en Supabase para ID:", editandoId);
       const updates = {
         aprobado_gerente_general: true,
         firma_gerente_general: currentUser.firma_url || null,
@@ -642,20 +844,29 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
         status_compra: 'En espera'
       };
 
-      // Si no tiene fecha_aprobacion previa, la grabamos ahora (Inmutabilidad)
-      const currentReq = historial.find(h => h.id === editandoId);
-      if (!currentReq?.fecha_aprobacion) {
-        updates.fecha_aprobacion = new Date().toISOString();
-        updates.gerente_aprobador = `${currentUser.nombre} ${currentUser.apellido}`;
+      const { data, error } = await supabase.from('requisiciones').update(updates).eq('id', editandoId).select();
+
+      if (error) {
+        console.error("[APROBACIÓN] Error de base de datos:", error);
+        toast.error(`ERROR DE BASE DE DATOS:\n${error.message}\nCódigo: ${error.code}`);
+        throw error;
       }
 
-      const { error } = await supabase.from('requisiciones').update(updates).eq('id', editandoId);
-      if (error) throw error;
-      alert("Aprobación final exitosa.");
+      if (!data || data.length === 0) {
+        toast.error("ERROR RLS: La base de datos no permitió actualizar el registro. Es posible que existan políticas de seguridad bloqueando el acceso de escritura para su cuenta.");
+        throw new Error("No se pudo actualizar el registro (RLS restriction).");
+      }
+
+      toast.success("¡APROBACIÓN COMPLETADA CON ÉXITO!");
       await cargarHistorialDesdeBD();
       setShowModal(false);
       resetearFormulario();
-    } catch (err) { alert(err.message); } finally { setLoading(false); }
+    } catch (err) {
+      console.error("[APROBACIÓN] Excepción capturada:", err);
+      toast.error("ERROR INESPERADO:\n" + err.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const manejarReenviar = async () => {
@@ -683,25 +894,25 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
         gerencia: departamento
       }).eq('id', editandoId);
       if (error) throw error;
-      alert("Requisición re-enviada correctamente.");
+      toast.success("Requisición re-enviada correctamente.");
       await cargarHistorialDesdeBD();
       setShowModal(false);
       resetearFormulario();
-    } catch (err) { alert(err.message); } finally { setLoading(false); }
+    } catch (err) { toast.error(err.message); } finally { setLoading(false); }
   };
 
   const manejarGenerarOActualizar = async () => {
     setLoading(true);
     if (editandoId) {
       if (!justificacion?.trim()) {
-        alert("La justificación es obligatoria.");
+        toast.error("La justificación es obligatoria.");
         setLoading(false);
         return;
       }
 
       // VALIDACIÓN ESTRICTA DE CLASIFICACIÓN
       if (!centroCosto) {
-        alert("⚠️ El Centro de Costo es obligatorio.");
+        toast.error("El Centro de Costo es obligatorio.");
         setLoading(false);
         return;
       }
@@ -709,12 +920,12 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
       for (let i = 0; i < renglones.length; i++) {
         const r = renglones[i];
         if (!r.clasificacion) {
-          alert(`⚠️ Renglón ${i + 1}: La Clasificación es obligatoria.`);
+          toast.error(`Renglón ${i + 1}: La Clasificación es obligatoria.`);
           setLoading(false);
           return;
         }
         if (!r.categoria) {
-          alert(`⚠️ Renglón ${i + 1}: La Categoría es obligatoria.`);
+          toast.error(`Renglón ${i + 1}: La Categoría es obligatoria.`);
           setLoading(false);
           return;
         }
@@ -723,7 +934,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
       // VALIDACIÓN PASIVA PERO ESTRICTA EN EJECUCIÓN (Clasificación única)
       const clases = [...new Set(renglones.map(r => r.clasificacion).filter(c => c))];
       if (clases.length > 1) {
-        alert("⚠️ Error: Todos los renglones deben tener la misma Clasificación.");
+        toast.error("Error: Todos los renglones deben tener la misma Clasificación.");
         setLoading(false);
         return;
       }
@@ -744,22 +955,53 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
         // ALERTA DE CATEGORÍAS DIFERENTES
         const catsUnicas = [...new Set(renglones.map(r => r.categoria).filter(c => c))];
         if (catsUnicas.length > 1) {
-          if (!window.confirm("Se han detectado diferentes categorías en los renglones. ¿Está seguro de que desea guardar la requisición así?")) {
-            setLoading(false);
-            return;
-          }
+          toast((t) => (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: '500' }}>Se han detectado diferentes categorías en los renglones. ¿Está seguro de que desea guardar la requisición así?</p>
+              <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                <button
+                  onClick={() => { toast.dismiss(t.id); ejecutarGuardarUpdate(editandoId); }}
+                  style={{ padding: '4px 12px', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}
+                >
+                  SÍ, GUARDAR
+                </button>
+                <button onClick={() => toast.dismiss(t.id)} style={{ padding: '4px 12px', backgroundColor: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}>CANCELAR</button>
+              </div>
+            </div>
+          ), { duration: 6000, position: 'top-center' });
+          setLoading(false);
+          return;
         }
 
-        alert("Cambios guardados.");
-        await cargarHistorialDesdeBD();
-        setShowModal(false);
-        resetearFormulario();
-      } catch (err) { alert(err.message); } finally { setLoading(false); }
+        await ejecutarGuardarUpdate(editandoId);
+      } catch (err) { toast.error(err.message); } finally { setLoading(false); }
       return;
     }
 
+    const ejecutarGuardarUpdate = async (id) => {
+      setLoading(true);
+      try {
+        const { error } = await supabase.from('requisiciones').update({
+          fecha_requerida: fechaRequerida,
+          centro_costo: centroCosto,
+          prioridad,
+          items: renglones,
+          justificacion,
+          observaciones,
+          id_referencia_proyecto: idReferenciaProyecto,
+          total_bs: Number(totalEstimado) || 0
+        }).eq('id', id);
+        if (error) throw error;
+
+        toast.success("Cambios guardados.");
+        await cargarHistorialDesdeBD();
+        setShowModal(false);
+        resetearFormulario();
+      } catch (err) { toast.error(err.message); } finally { setLoading(false); }
+    };
+
     if (!justificacion?.trim()) {
-      alert("La justificación es obligatoria.");
+      toast.error("La justificación es obligatoria.");
       setLoading(false);
       return;
     }
@@ -803,12 +1045,13 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
       justificacion,
       observaciones,
       id_referencia_proyecto: idReferenciaProyecto,
-      origen: datosPredefinidos ? `REF: ${datosPredefinidos.id_control}` : 'Manual'
+      origen: datosPredefinidos ? `REF: ${datosPredefinidos.id_control}` : 'Manual',
+      user_id: currentUser.id
     };
 
     // VALIDACIÓN ESTRICTA DE CLASIFICACIÓN PARA NUEVA REQ
     if (!centroCosto) {
-      alert("⚠️ El Centro de Costo es obligatorio.");
+      toast.error("El Centro de Costo es obligatorio.");
       setLoading(false);
       return;
     }
@@ -816,12 +1059,12 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
     for (let i = 0; i < renglones.length; i++) {
       const r = renglones[i];
       if (!r.clasificacion) {
-        alert(`⚠️ Renglón ${i + 1}: La Clasificación es obligatoria.`);
+        toast.error(`Renglón ${i + 1}: La Clasificación es obligatoria.`);
         setLoading(false);
         return;
       }
       if (!r.categoria) {
-        alert(`⚠️ Renglón ${i + 1}: La Categoría es obligatoria.`);
+        toast.error(`Renglón ${i + 1}: La Categoría es obligatoria.`);
         setLoading(false);
         return;
       }
@@ -830,7 +1073,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
     // VALIDACIÓN PASIVA PERO ESTRICTA EN EJECUCIÓN (Clasificación única)
     const clases = [...new Set(renglones.map(r => r.clasificacion).filter(c => c))];
     if (clases.length > 1) {
-      alert("⚠️ Error: Todos los renglones deben tener la misma Clasificación.");
+      toast.error("Error: Todos los renglones deben tener la misma Clasificación.");
       setLoading(false);
       return;
     }
@@ -838,33 +1081,123 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
     // ALERTA DE CATEGORÍAS DIFERENTES ANTES DE GUARDAR NUEVA
     const catsUnicas = [...new Set(renglones.map(r => r.categoria).filter(c => c))];
     if (catsUnicas.length > 1) {
-      if (!window.confirm("Se han detectado diferentes categorías en los renglones. ¿Está seguro de que desea guardar la requisición así?")) {
-        setLoading(false);
-        return;
-      }
+      toast((t) => (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: '500' }}>Se han detectado diferentes categorías en los renglones. ¿Está seguro de que desea guardar la requisición así?</p>
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+            <button
+              onClick={() => { toast.dismiss(t.id); ejecutarGuardarNueva(nuevaReqBD); }}
+              style={{ padding: '4px 12px', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}
+            >
+              SÍ, GENERAR
+            </button>
+            <button onClick={() => toast.dismiss(t.id)} style={{ padding: '4px 12px', backgroundColor: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}>CANCELAR</button>
+          </div>
+        </div>
+      ), { duration: 6000, position: 'top-center' });
+      setLoading(false);
+      return;
     }
 
+    await ejecutarGuardarNueva(nuevaReqBD);
+  };
+
+  const intentarCerrarModal = () => {
+    const hayContenido = justificacion?.trim() || renglones.some(r => r.descripcion?.trim() || r.categoria);
+    if (hayContenido && !editandoId) {
+      toast((t) => (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: 'bold', color: '#1e293b' }}>⚠️ Tienes datos sin guardar</p>
+          <p style={{ margin: 0, fontSize: '0.8rem', color: '#64748b' }}>¿Estás seguro de que deseas cerrar? Se perderá la información de la nueva requisición.</p>
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '5px' }}>
+            <button
+              onClick={() => { toast.dismiss(t.id); setShowModal(false); resetearFormulario(); }}
+              style={{ padding: '6px 12px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 'bold' }}
+            >CERRAR SIN GUARDAR</button>
+            <button
+              onClick={() => toast.dismiss(t.id)}
+              style={{ padding: '6px 12px', backgroundColor: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '0.75rem' }}
+            >CONTINUAR</button>
+          </div>
+        </div>
+      ), { duration: 6000, position: 'top-center' });
+    } else {
+      setShowModal(false);
+      resetearFormulario();
+    }
+  };
+
+  const ejecutarGuardarNueva = async (payload) => {
+    if (!currentUser?.id) {
+      toast.error("Error: Sesión de usuario no encontrada. Por favor recargue la página.");
+      return;
+    }
+    setLoading(true);
     try {
-      const { data: nuevaReq, error } = await supabase.from('requisiciones').insert([nuevaReqBD]).select().single();
+      const { data: nuevaReq, error } = await supabase.from('requisiciones').insert([payload]).select().single();
       if (error) throw error;
 
       // SI VIENE DE SOLICITUD DE FONDOS, VINCULAR LAS PARTIDAS USADAS
       let idsPartidas = [];
       if (datosPredefinidos?.partidasSeleccionadas && nuevaReq) {
         idsPartidas = datosPredefinidos.partidasSeleccionadas.map(p => p.id);
+        console.log("Vinculando partidas a la REQ:", nuevaReq.correlativo_req);
         await supabase
           .from('partidas_fondos')
-          .update({ requisicion_id: nuevaReq.id, status: 'Bloqueado' })
+          .update({
+            requisicion_id: nuevaReq.id,
+            codigo_req: nuevaReq.correlativo_req, // GUARDAR EL CORRELATIVO PARA TRAZABILIDAD
+            status: 'Bloqueado'
+          })
           .in('id', idsPartidas);
       }
 
-      alert("Generada y guardada.");
+      toast.success("Generada y guardada.");
+
+      // --- LÓGICA DE NOTIFICACIONES PARA NUEVA REQ ---
+      const miRango = getRank(currentUser.rol);
+
+      // 1. Notificar Superiores Directos (Misma gerencia si existe, mismo depto, rango mayor)
+      let querySuperiores = supabase
+        .from('perfiles')
+        .select('id, rol, nombre')
+        .eq('departamento', currentUser.departamento);
+
+      if (currentUser.gerencia_id) {
+        querySuperiores = querySuperiores.eq('gerencia_id', currentUser.gerencia_id);
+      }
+
+      const { data: superiores } = await querySuperiores;
+
+      console.log("Buscando superiores para:", currentUser.nombre, "en", currentUser.departamento);
+      if (superiores) {
+        const superioresFiltrados = superiores.filter(s => getRank(s.rol) > miRango);
+        console.log("Superiores encontrados:", superioresFiltrados.map(s => s.nombre));
+
+        for (const s of superioresFiltrados) {
+          await enviarNotificacion(s.id, `Nueva Requisición ${nuevaReq.correlativo_req} de ${currentUser.nombre} pendiente de su aprobación.`, 'Nueva Requisición');
+        }
+      }
+
+      // 2. Notificar a Carlos Vega (Gerente General)
+      const { data: carlos } = await supabase
+        .from('perfiles')
+        .select('id, nombre')
+        .ilike('rol', 'Gerente General')
+        .limit(1)
+        .single();
+
+      if (carlos) {
+        console.log("Notificando a Carlos Vega...");
+        await enviarNotificacion(carlos.id, `Nueva Requisición ${nuevaReq.correlativo_req} creada por ${currentUser.nombre}.`, 'Nueva Requisición');
+      }
+
       await cargarHistorialDesdeBD();
       onSuccess?.(nuevaReq.id, idsPartidas);
       setShowModal(false);
       onClose?.();
       resetearFormulario();
-    } catch (err) { alert(err.message); } finally { setLoading(false); }
+    } catch (err) { toast.error(err.message); } finally { setLoading(false); }
   };
 
   const exportarPDF = async () => {
@@ -888,21 +1221,22 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
       {/* --- DASHBOARD SUPERIOR (STATS CARDS INTERACTIVAS) --- */}
       <div className="dashboard-container" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '15px', marginBottom: '25px' }}>
         {[
-          { label: 'TOTAL REQUISICIONES', val: historial.length, col: '#64748b', filter: 'Todos' },
-          { label: 'GERENTE ÁREA', val: historial.filter(r => r.estado_aprobacion === 'pendiente_area').length, col: '#ef4444', filter: 'pendiente_area' },
-          { label: 'POR APROBAR', val: historial.filter(r => r.estado_aprobacion === 'enviada_general').length, col: '#facc15', filter: 'enviada_general' },
-          { label: 'APROBADA GLOBAL', val: historial.filter(r => r.estado_aprobacion === 'aprobado_final').length, col: '#22c55e', filter: 'aprobado_final' },
-          { label: 'RECHAZADA', val: historial.filter(r => r.estado_aprobacion === 'rechazada').length, col: '#ef4444', filter: 'rechazada' },
-          { label: 'ANULADA', val: historial.filter(r => r.estado_aprobacion === 'ANULADA').length, col: '#94a3b8', filter: 'ANULADA' }
+          { label: 'TOTAL REQUISICIONES', val: historial.length, col: '#030712', filter: 'Todos' },
+          { label: 'GERENTE ÁREA', val: historial.filter(r => r.estado_aprobacion === 'pendiente_area').length, col: '#030712', filter: 'pendiente_area' },
+          { label: 'POR APROBAR', val: historial.filter(r => r.estado_aprobacion === 'enviada_general').length, col: '#030712', filter: 'enviada_general' },
+          { label: 'APROBADA GLOBAL', val: historial.filter(r => r.estado_aprobacion === 'aprobado_final').length, col: '#030712', filter: 'aprobado_final' },
+          { label: 'RECHAZADA', val: historial.filter(r => r.estado_aprobacion === 'rechazada').length, col: '#030712', filter: 'rechazada' },
+          { label: 'ANULADA', val: historial.filter(r => r.estado_aprobacion === 'ANULADA').length, col: '#030712', filter: 'ANULADA' }
         ].filter(x => !(currentUser?.rol === 'Gerente General' && x.filter === 'pendiente_area')).map((x, i) => {
-          const colorUsar = currentUser?.rol === 'Gerente General' ? '#64748b' : x.col;
+          const colorBorde = x.col; // El color del estatus solo para el borde
+          const colorTexto = '#1e293b'; // Azul oscuro/Gris carbón profesional para todo el texto
           return (
             <div
               key={i}
               className="stat-card"
               onClick={() => setFiltroAprobacion(x.filter)}
               style={{
-                borderLeft: `6px solid ${colorUsar}`,
+                borderLeft: `6px solid ${colorBorde}`,
                 cursor: 'pointer',
                 backgroundColor: filtroAprobacion === x.filter ? '#f8fafc' : 'white',
                 transform: filtroAprobacion === x.filter ? 'scale(1.02)' : 'scale(1)',
@@ -913,10 +1247,10 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
               }}
             >
               {filtroAprobacion === x.filter && (
-                <div style={{ position: 'absolute', top: 0, right: 0, width: '4px', height: '100%', backgroundColor: colorUsar }}></div>
+                <div style={{ position: 'absolute', top: 0, right: 0, width: '4px', height: '100%', backgroundColor: colorBorde }}></div>
               )}
               <div className="stat-label" style={{ fontSize: '0.65rem', fontWeight: '800', color: '#64748b' }}>{x.label}</div>
-              <div className="stat-value" style={{ fontSize: '1.5rem', fontWeight: '900', color: colorUsar }}>{loading ? '...' : x.val}</div>
+              <div className="stat-value" style={{ fontSize: '1.5rem', fontWeight: '900', color: colorTexto }}>{loading ? '...' : x.val}</div>
             </div>
           );
         })}
@@ -954,8 +1288,27 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
             onChange={(e) => setFiltroDepto(e.target.value)}
           >
             <option value="Todos">Gerencias</option>
-            {listaGerencias.map(g => <option key={g} value={g}>{g}</option>)}
+            {listaGerencias
+              .filter(g => {
+                if (!currentUser) return true;
+                const rank = getRank(currentUser.rol);
+                if (rank <= 2) return g === currentUser.departamento;
+                return true;
+              })
+              .map(g => <option key={g} value={g}>{g}</option>)}
           </select>
+
+          {getRank(currentUser?.rol) >= 2 && (
+            <select
+              className="input-tc"
+              style={{ flex: 1, margin: 0, backgroundColor: 'white' }}
+              value={filtroSolicitante}
+              onChange={(e) => setFiltroSolicitante(e.target.value)}
+            >
+              <option value="Todos">Solicitante</option>
+              {listaSubordinados.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          )}
 
           <select
             className="input-tc"
@@ -1013,7 +1366,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
               <th>CENTRO DE COSTO</th>
               <th>TOTAL (C/IVA)</th>
               <th style={{ textAlign: 'center', width: '140px' }}>ESTATUS DE COMPRA</th>
-              {currentUser?.rol !== 'Gerente General' && <th style={{ textAlign: 'center' }}>ACCIONES</th>}
+              <th style={{ textAlign: 'center' }}>ACCIONES</th>
             </tr>
           </thead>
           <tbody>
@@ -1103,19 +1456,21 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
                   )}
                 </td>
 
-                {currentUser?.rol !== 'Gerente General' && (
-                  <td data-label="ACCIONES" style={{ textAlign: 'center' }}>
-                    <div style={{ display: 'flex', justifyContent: 'center', gap: '15px' }}>
-                      <button onClick={() => verRequisicion(req)} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '1.2rem' }} title="Ver Detalles">👁️</button>
-                      {req.estado_aprobacion !== 'ANULADA' && currentUser?.rol !== 'Gerente General' && (
-                        <button onClick={() => anularRequisicion(req.id)} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '1.2rem' }} title="Anular Requisición">🚫</button>
-                      )}
-                      {(currentUser?.esAdminReal || currentUser?.rol === 'Gerente' || currentUser?.rol === 'Admin' || currentUser?.rol === 'Gerente General') && (
-                        <button onClick={() => manejarEliminar(req.id)} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '1.2rem' }} title="Borrar Registro">🗑️</button>
-                      )}
-                    </div>
-                  </td>
-                )}
+                <td data-label="ACCIONES" style={{ textAlign: 'center' }}>
+                  <div style={{ display: 'flex', justifyContent: 'center', gap: '15px' }}>
+                    <button onClick={(e) => { e.stopPropagation(); verRequisicion(req); }} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '1.2rem' }} title="Ver Detalles">👁️</button>
+
+                    {/* Solo José puede Anular */}
+                    {req.estado_aprobacion !== 'ANULADA' && currentUser?.correo?.toLowerCase() === 'jcontreras.totalclean@gmail.com' && (
+                      <button onClick={(e) => { e.stopPropagation(); anularRequisicion(req.id); }} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '1.2rem' }} title="Anular Requisición">🚫</button>
+                    )}
+
+                    {/* Solo José puede Borrar */}
+                    {currentUser?.correo?.toLowerCase() === 'jcontreras.totalclean@gmail.com' && (
+                      <button onClick={(e) => { e.stopPropagation(); manejarEliminar(req.id); }} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '1.2rem' }} title="Borrar Registro">🗑️</button>
+                    )}
+                  </div>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -1131,6 +1486,22 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
                   <h2 style={{ margin: 0, color: 'var(--slate-900)' }}>Requisición de Recursos</h2>
+
+                  {/* DIAGNÓSTICO PARA GERENCIA */}
+                  {(currentUser?.esAdminReal || (currentUser?.rol || '').toUpperCase().includes('GERENTE')) && (
+                    <div style={{
+                      backgroundColor: '#fffbeb',
+                      border: '1px solid #fde68a',
+                      padding: '4px 8px',
+                      borderRadius: '6px',
+                      fontSize: '10px',
+                      color: '#92400e',
+                      marginTop: '5px'
+                    }}>
+                      <b>SISTEMA DETECTA:</b> {currentUser?.correo} | <b>ROL:</b> {(currentUser?.rol || 'N/D').toUpperCase()}
+                    </div>
+                  )}
+
                   {(datosPredefinidos?.id_control || (editandoId && historial.find(h => h.id === editandoId)?.origen?.startsWith('REF:'))) && (
                     <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#64748b', marginTop: '4px' }}>
                       {datosPredefinidos?.id_control ? `REF: ${datosPredefinidos.id_control}` : historial.find(h => h.id === editandoId)?.origen}
@@ -1143,8 +1514,20 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
                 </div>
                 <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
                   <span style={{ fontSize: '0.75rem', fontWeight: '800', color: 'var(--slate-600)', textTransform: 'uppercase' }}>Nivel de prioridad:</span>
-                  <button className={`btn-tc ${prioridad === 'Normal' ? 'btn-tc-primary' : 'btn-tc-secondary'}`} onClick={() => setPrioridad('Normal')}>NORMAL</button>
-                  <button className={`btn-tc ${prioridad === 'Alta' ? 'btn-tc-danger' : 'btn-tc-secondary'}`} onClick={() => setPrioridad('Alta')}>ALTA</button>
+                  <button
+                    className={`btn-tc ${prioridad === 'Normal' ? 'btn-tc-primary' : 'btn-tc-secondary'}`}
+                    onClick={() => setPrioridad('Normal')}
+                    disabled={!!editandoId}
+                  >
+                    NORMAL
+                  </button>
+                  <button
+                    className={`btn-tc ${prioridad === 'Alta' ? 'btn-tc-danger' : 'btn-tc-secondary'}`}
+                    onClick={() => setPrioridad('Alta')}
+                    disabled={!!editandoId}
+                  >
+                    ALTA
+                  </button>
                   <div style={{ backgroundColor: '#fef08a', padding: '10px 15px', borderRadius: '8px', fontWeight: '900' }}>
                     {editandoId ? (historial.find(h => h.id === editandoId)?.correlativo) : previewCorrelativo}
                   </div>
@@ -1156,20 +1539,20 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '20px', marginBottom: '25px' }}>
                 <div>
                   <label className="stat-label">FECHA REQUERIDA</label>
-                  <input className="input-tc" type="date" value={fechaRequerida} onChange={(e) => setFechaRequerida(e.target.value)} />
+                  <input className="input-tc" type="date" value={fechaRequerida} onChange={(e) => setFechaRequerida(e.target.value)} disabled={!!editandoId} />
                 </div>
                 <div>
                   <label className="stat-label">SOLICITANTE</label>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '5px' }}>
+                  <div className="input-tc" style={{ display: 'flex', alignItems: 'center', gap: '10px', backgroundColor: '#f8fafc', height: '42px', boxSizing: 'border-box' }}>
                     <div style={{
-                      width: '32px', height: '32px', borderRadius: '50%',
+                      width: '28px', height: '28px', borderRadius: '50%',
                       backgroundColor: 'var(--primary)', color: 'white',
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      fontSize: '0.75rem', fontWeight: 'bold'
+                      fontSize: '0.7rem', fontWeight: 'bold'
                     }}>
-                      {getInitials(currentUser?.nombre, currentUser?.apellido)}
+                      {getInitials(solicitante)}
                     </div>
-                    <span style={{ fontSize: '1rem', fontWeight: '600', color: 'var(--slate-800)' }}>
+                    <span style={{ fontSize: '0.9rem', fontWeight: '600', color: 'var(--slate-800)' }}>
                       {solicitante}
                     </span>
                   </div>
@@ -1179,6 +1562,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
                   <select
                     className="input-tc"
                     value={centroCosto}
+                    disabled={!!editandoId}
                     onChange={(e) => {
                       setCentroCosto(e.target.value);
                       // Resetear clasificaciones y categorías de todos los renglones al cambiar CC
@@ -1191,7 +1575,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
                 </div>
                 <div>
                   <label className="stat-label">GERENCIA</label>
-                  <select className="input-tc" value={departamento} onChange={(e) => setDepartamento(e.target.value)}>
+                  <select className="input-tc" value={departamento} onChange={(e) => setDepartamento(e.target.value)} disabled={!!editandoId}>
                     {listaGerencias.map(g => <option key={g} value={g}>{g}</option>)}
                   </select>
                 </div>
@@ -1234,6 +1618,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
                   onChange={(e) => setJustificacion(e.target.value)}
                   placeholder="Explique el motivo de la requisición (Obligatorio)"
                   required
+                  disabled={!!editandoId}
                 />
               </div>
 
@@ -1332,17 +1717,17 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
                           transition={{ duration: 0.3 }}
                         >
                           <td style={{ textAlign: 'center' }}>{index + 1}</td>
-                          <td><input className="input-tc" value={f.clasificacion} onChange={(e) => actualizarFila(f.id, 'clasificacion', e.target.value)} /></td>
-                          <td><input className="input-tc" value={f.categoria} onChange={(e) => actualizarFila(f.id, 'categoria', e.target.value)} /></td>
-                          <td><input className="input-tc" type="number" value={f.cant} onChange={(e) => actualizarFila(f.id, 'cant', e.target.value)} /></td>
+                          <td><input className="input-tc" value={f.clasificacion} onChange={(e) => actualizarFila(f.id, 'clasificacion', e.target.value)} disabled={!!editandoId} /></td>
+                          <td><input className="input-tc" value={f.categoria} onChange={(e) => actualizarFila(f.id, 'categoria', e.target.value)} disabled={!!editandoId} /></td>
+                          <td><input className="input-tc" type="number" value={f.cant} onChange={(e) => actualizarFila(f.id, 'cant', e.target.value)} disabled={!!editandoId} /></td>
                           <td>
-                            <select className="input-tc" value={f.uni} onChange={(e) => actualizarFila(f.id, 'uni', e.target.value)}>
+                            <select className="input-tc" value={f.uni} onChange={(e) => actualizarFila(f.id, 'uni', e.target.value)} disabled={!!editandoId}>
                               {unidades.map(u => <option key={u} value={u}>{u}</option>)}
                             </select>
                           </td>
-                          <td><textarea className="input-tc" value={f.descripcion} onChange={(e) => actualizarFila(f.id, 'descripcion', e.target.value)} style={{ resize: 'vertical', minHeight: '38px', paddingTop: '8px', width: '100%', boxSizing: 'border-box' }} rows="1" /></td>
-                          <td><input className="input-tc" value={f.beneficiario} onChange={(e) => actualizarFila(f.id, 'beneficiario', e.target.value)} placeholder="Beneficiario" /></td>
-                          <td><input className="input-tc" type="number" value={f.pu} style={{ textAlign: 'right' }} onChange={(e) => actualizarFila(f.id, 'pu', e.target.value)} /></td>
+                          <td><textarea className="input-tc" value={f.descripcion} onChange={(e) => actualizarFila(f.id, 'descripcion', e.target.value)} style={{ resize: 'vertical', minHeight: '38px', paddingTop: '8px', width: '100%', boxSizing: 'border-box' }} rows="1" disabled={!!editandoId} /></td>
+                          <td><input className="input-tc" value={f.beneficiario} onChange={(e) => actualizarFila(f.id, 'beneficiario', e.target.value)} placeholder="Beneficiario" disabled={!!editandoId} /></td>
+                          <td><input className="input-tc" type="number" value={f.pu} style={{ textAlign: 'right' }} onChange={(e) => actualizarFila(f.id, 'pu', e.target.value)} disabled={!!editandoId} /></td>
                           <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{f.total.toLocaleString('de-DE')}</td>
                           <td style={{ textAlign: 'center' }}>
                             <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', alignItems: 'center' }}>
@@ -1422,62 +1807,104 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
                 </tbody>
               </table>
 
-              {/* SECCIÓN DE DOCUMENTOS DE SOPORTE (IMÁGENES DE COMPRA) */}
-              {editandoId && (
-                <div style={{ marginTop: '30px', padding: '20px', backgroundColor: '#f8fafc', borderRadius: '15px', border: '1px solid #e2e8f0' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
-                    <h4 style={{ margin: 0, fontSize: '0.9rem', color: '#1e293b', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <FileText size={18} /> DOCUMENTOS Y SOPORTES
-                    </h4>
+              <div style={{ display: 'flex', gap: '30px', marginTop: '30px', alignItems: 'flex-start' }}>
+                <div style={{ flex: 1 }}>
+                  {/* SECCIÓN DE DOCUMENTOS DE SOPORTE (IMÁGENES DE COMPRA) */}
+                  {editandoId && (
+                    <div style={{ padding: '20px', backgroundColor: '#f8fafc', borderRadius: '15px', border: '1px solid #e2e8f0' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
+                        <h4 style={{ margin: 0, fontSize: '0.9rem', color: '#1e293b', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <FileText size={18} /> DOCUMENTOS Y SOPORTES
+                        </h4>
 
-                    <label className="btn-tc btn-tc-primary" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.75rem' }}>
-                      {uploading ? <Loader2 className="animate-spin" size={14} /> : <Upload size={14} />}
-                      {uploading ? 'SUBIENDO...' : 'ADJUNTAR SOPORTE'}
-                      <input 
-                        type="file" 
-                        multiple 
-                        style={{ display: 'none' }} 
-                        onChange={subirFactura} 
-                        disabled={uploading} 
-                        accept="image/*,application/pdf"
-                        capture="environment"
-                      />
-                    </label>
-                  </div>
+                        {/* Restricción de Adjuntos: Solo creación, aprobada/finalizada o modo compras. No en aprobación. */}
+                        {(() => {
+                          const reqActual = historial.find(h => String(h.id) === String(editandoId));
+                          const estado = reqActual?.estado_aprobacion;
+                          const esProcesoAprobacion = estado === 'pendiente_area' || estado === 'enviada_general';
+                          const esFinalizada = estado === 'aprobada' || estado === 'completado' || reqActual?.status_compra === 'Completado';
 
-                  <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap' }}>
-                    {(historial.find(h => h.id === editandoId)?.facturas_url || []).map((url, idx) => {
-                      const isImg = /\.(jpg|jpeg|png|webp|avif|gif)$/i.test(url.split('?')[0]);
-                      return (
-                        <div key={idx} style={{ position: 'relative' }}>
-                          <a href={url} target="_blank" rel="noreferrer" style={{
-                            display: 'block',
-                            width: '100px', height: '100px',
-                            borderRadius: '12px',
-                            overflow: 'hidden',
-                            border: '2px solid #e2e8f0',
-                            backgroundColor: 'white',
-                            boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'
-                          }}>
-                            {isImg ? (
-                              <img src={url} alt={`Soporte ${idx}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                            ) : (
-                              <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f8fafc', color: '#ef4444' }}>
-                                <FileText size={32} />
-                                <span style={{ fontSize: '0.6rem', fontWeight: 'bold', marginTop: '4px', color: '#64748b' }}>VER PDF</span>
-                              </div>
-                            )}
-                          </a>
-                        </div>
-                      );
-                    })}
-                  </div>
+                          // Solo permitir si: No se está editando (Creación), o está finalizada, o NO está en proceso de aprobación
+                          if (!editandoId || (!esProcesoAprobacion || esFinalizada)) {
+                            return (
+                              <label className="btn-tc btn-tc-primary" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.75rem' }}>
+                                {uploading ? <Loader2 className="animate-spin" size={14} /> : <Upload size={14} />}
+                                {uploading ? 'SUBIENDO...' : 'ADJUNTAR SOPORTE'}
+                                <input
+                                  type="file"
+                                  multiple
+                                  style={{ display: 'none' }}
+                                  onChange={subirFactura}
+                                  disabled={uploading}
+                                  accept="image/*,application/pdf"
+                                  capture="environment"
+                                />
+                              </label>
+                            );
+                          }
+                          return null;
+                        })()}
+                      </div>
+
+                      <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap' }}>
+                        {(historial.find(h => String(h.id) === String(editandoId))?.facturas_url || []).map((item, idx) => {
+                          const url = typeof item === 'string' ? item : item?.url;
+                          const etiqueta = typeof item === 'string' ? 'Archivo' : (item?.etiqueta || 'Sin etiqueta');
+                          if (!url || url.length < 5) return null;
+
+                          const isImg = /\.(jpg|jpeg|png|webp|avif|gif)$/i.test(url.split('?')[0]);
+                          return (
+                            <div key={idx} style={{ position: 'relative', display: 'flex', flexDirection: 'column', gap: '5px', width: '80px' }}>
+                              <a href={url} target="_blank" rel="noreferrer" style={{
+                                display: 'block',
+                                width: '80px', height: '80px',
+                                borderRadius: '12px',
+                                overflow: 'hidden',
+                                border: '2px solid #e2e8f0',
+                                backgroundColor: 'white',
+                                boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'
+                              }}>
+                                {isImg ? (
+                                  <img src={url} alt={`Soporte ${idx}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                ) : (
+                                  <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f8fafc', color: '#ef4444' }}>
+                                    <FileText size={24} />
+                                    <span style={{ fontSize: '0.5rem', fontWeight: 'bold', marginTop: '4px', color: '#64748b' }}>VER PDF</span>
+                                  </div>
+                                )}
+                              </a>
+                              <input
+                                type="text"
+                                placeholder="Nombre..."
+                                value={etiqueta}
+                                onChange={(e) => renombrarAdjunto(idx, e.target.value)}
+                                style={{
+                                  fontSize: '0.6rem',
+                                  padding: '2px 4px',
+                                  border: '1px solid #cbd5e1',
+                                  borderRadius: '4px',
+                                  width: '100%',
+                                  boxSizing: 'border-box',
+                                  backgroundColor: 'white',
+                                  textAlign: 'center'
+                                }}
+                              />
+                              <button
+                                onClick={() => eliminarSoporteReal(idx, url)}
+                                style={{ position: 'absolute', top: '-8px', right: '-8px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '50%', width: '22px', height: '22px', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 4px rgba(0,0,0,0.2)', fontWeight: 'bold', zIndex: 10 }}
+                                title="Eliminar Soporte"
+                              >
+                                X
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
-              )}
 
-
-              <div style={{ marginTop: '30px', display: 'flex', justifyContent: 'flex-end', alignItems: 'flex-end' }}>
-                <div className="totals-container" style={{ minWidth: '350px' }}>
+                <div className="totals-container" style={{ width: '100%', maxWidth: '350px', minWidth: '350px', marginTop: 0 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', color: '#64748b' }}>
                     <span className="stat-label" style={{ color: 'inherit' }}>SUB-TOTAL ESTIMADO:</span>
                     <span style={{ fontWeight: 'bold' }}>$ {subTotalEstimado.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span>
@@ -1547,7 +1974,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
 
                       {/* BOTONES PARA GERENTE DE ÁREA (Nivel 1) */}
                       {currentUser?.rol === 'Gerente' &&
-                        historial.find(h => h.id === editandoId)?.estado_aprobacion === 'pendiente_area' && (
+                        historial.find(h => String(h.id) === String(editandoId))?.estado_aprobacion === 'pendiente_area' && (
                           <>
                             <button className="btn-tc btn-tc-danger" onClick={manejarRechazarGerenteArea} disabled={loading}>
                               {loading ? <Loader2 className="animate-spin" size={16} /> : 'RECHAZAR'}
@@ -1558,18 +1985,38 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess }) => {
                           </>
                         )}
 
-                      {/* BOTONES PARA GERENTE GENERAL (Nivel 2) */}
-                      {(currentUser?.rol === 'Gerente General' || currentUser?.rol === 'Admin' || currentUser?.esAdminReal) &&
-                        historial.find(h => h.id === editandoId)?.estado_aprobacion === 'enviada_general' && (
-                          <>
-                            <button className="btn-tc btn-tc-danger" onClick={manejarRechazarGeneral} disabled={loading}>
-                              {loading ? <Loader2 className="animate-spin" size={16} /> : 'RECHAZAR'}
-                            </button>
-                            <button className="btn-tc btn-tc-success" onClick={manejarAprobarGeneral} disabled={loading}>
-                              {loading ? <Loader2 className="animate-spin" size={16} /> : '✓ APROBACIÓN FINAL'}
-                            </button>
-                          </>
-                        )}
+                      {(() => {
+                        const rolUpper = (currentUser?.rol || '').toUpperCase();
+                        const emailLower = (currentUser?.correo || '').toLowerCase();
+
+                        const esGG = currentUser?.esAdminReal ||
+                          rolUpper.includes('GERENTE') ||
+                          rolUpper.includes('ADMIN') ||
+                          emailLower.includes('cvega');
+
+                        const reqActual = historial.find(h => String(h.id) === String(editandoId));
+
+                        if (esGG && reqActual?.estado_aprobacion === 'enviada_general') {
+                          return (
+                            <>
+                              <button className="btn-tc btn-tc-danger" onClick={manejarRechazarGeneral} disabled={loading}>
+                                {loading ? <Loader2 className="animate-spin" size={16} /> : 'RECHAZAR'}
+                              </button>
+                              <button
+                                className="btn-tc btn-tc-success"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  manejarAprobarGeneral();
+                                }}
+                                disabled={loading}
+                              >
+                                {loading ? <Loader2 className="animate-spin" size={16} /> : '✓ APROBACIÓN FINAL'}
+                              </button>
+                            </>
+                          );
+                        }
+                        return null;
+                      })()}
                     </>
                   ) : (
                     <button className="btn-tc btn-tc-primary" onClick={manejarGenerarOActualizar} disabled={loading}>

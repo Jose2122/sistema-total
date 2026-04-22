@@ -119,17 +119,15 @@
 }
 
 .tc-table th {
-  padding: 10px 12px;
-  color: var(--slate-600);
-  font-size: 0.75rem;
-  /* Aumentado para visibilidad */
-  font-weight: 900;
-  /* Super negrita */
+  padding: 12px 15px;
+  color: white;
+  font-size: 0.7rem;
+  font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  background-color: var(--slate-50);
+  background-color: #1e3a8a;
   text-align: left;
-  border-bottom: 2px solid var(--slate-100);
+  border: none;
 }
 
 .tc-table td {
@@ -161,34 +159,52 @@
 }
 
 .modal-card {
-  background-color: rgba(255, 255, 255, 0.8);
-  /* Replicando SF */
-  backdrop-filter: blur(12px);
-  /* Unificado a SF */
-  -webkit-backdrop-filter: blur(12px);
+  background-color: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   padding: 35px 40px;
   border-radius: 24px;
-  width: 96%;
-  max-width: 1300px;
-  max-height: 94vh;
+  width: 95%;
+  max-width: 1500px;
+  height: auto;
+  max-height: 95vh;
   overflow-y: auto;
   border: 1px solid rgba(255, 255, 255, 0.6);
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.08);
-  /* Exacto a SF */
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+  margin: auto;
+
+  /* Scrollbar invisible (estilo sidebar) */
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge */
+}
+
+.modal-card::-webkit-scrollbar {
+  display: none; /* Chrome/Safari */
 }
 
 /* --- INPUTS ESTILO COMPACTO & "FUNDS-LIKE" --- */
 .input-tc {
   width: 100%;
-  padding: 12px 16px;
+  min-height: 42px;
+  /* Altura mínima unificada */
+  padding: 8px 16px;
   border-radius: 12px;
   border: 1px solid var(--slate-200);
   font-family: 'Inter', sans-serif;
   font-size: 0.85rem;
   background-color: rgba(255, 255, 255, 0.7);
-  /* Match SF */
   transition: all 0.3s var(--ease-out-expo);
   color: var(--slate-900);
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+}
+
+input.input-tc,
+select.input-tc,
+div.input-tc {
+  height: 42px;
+  padding: 0 16px;
 }
 
 .input-tc:focus {
@@ -311,29 +327,31 @@
 
 /* ⬅️ Degradado Azul Suave a los botones principales o "Normal" */
 .btn-tc-primary {
-  background: linear-gradient(135deg, #0ea5e9 0%, #3b82f6 100%);
+  background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%);
   color: white;
-  box-shadow: 0 4px 12px rgba(14, 165, 233, 0.25);
+  box-shadow: 0 4px 12px rgba(30, 58, 138, 0.25);
 }
 
 .btn-tc-success {
-  background-color: var(--success);
+  background-color: #10b981;
   color: white;
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.2);
 }
 
 .btn-tc-danger {
-  background-color: var(--danger);
+  background-color: #ef4444;
   color: white;
+  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.2);
 }
 
 .btn-tc-secondary {
-  background-color: var(--slate-100);
-  color: var(--slate-600);
-  border: 1px solid var(--slate-200);
+  background-color: #f1f5f9;
+  color: #475569;
+  border: 1px solid #e2e8f0;
 }
 
 .btn-tc-dark {
-  background-color: var(--slate-800);
+  background-color: #030712;
   color: white;
 }
 
@@ -359,7 +377,8 @@
 }
 
 .totals-container {
-  width: 280px;
+  width: 100%;
+  max-width: 350px;
   background: var(--slate-50);
   padding: 15px;
   border-radius: 12px;
@@ -418,7 +437,12 @@
   }
 
   /* Transformar Tablas en Tarjetas (Cards) */
-  .tc-table, .tc-table thead, .tc-table tbody, .tc-table th, .tc-table td, .tc-table tr {
+  .tc-table,
+  .tc-table thead,
+  .tc-table tbody,
+  .tc-table th,
+  .tc-table td,
+  .tc-table tr {
     display: block;
   }
 
@@ -434,7 +458,7 @@
     border: 1px solid var(--slate-200);
     border-radius: 12px;
     background-color: white;
-    box-shadow: 0 4px 10px rgba(0,0,0,0.03);
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.03);
     overflow: hidden;
     padding: 8px;
   }
@@ -481,6 +505,7 @@
   .renglon-row td {
     padding-left: 35% !important;
   }
+
   .renglon-row td::before {
     width: 30%;
   }

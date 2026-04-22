@@ -12,18 +12,17 @@ import ReportesMaestro from './ReportesMaestro';
 import Proveedores from './Proveedores';
 import Administracion from './Administracion';
 import Atributos from './Atributos';
-import { Menu, X as CloseIcon, Search } from 'lucide-react';
+import { Menu, X as CloseIcon, Search, Cloud, Sun, ChevronDown, Power } from 'lucide-react';
 
 function Dashboard() {
   const navigate = useNavigate();
   const [seccionActiva, setSeccionActiva] = useState('requisiciones');
-  const [sidebarAbierto, setSidebarAbierto] = useState(window.innerWidth > 768); 
+  const [sidebarAbierto, setSidebarAbierto] = useState(window.innerWidth > 768);
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
   const [usuario, setUsuario] = useState({ nombre: '', apellido: '', rol: '', departamento: '' });
   const [cargando, setCargando] = useState(true);
   const [notificacionesLog, setNotificacionesLog] = useState([]);
   const [verNotificaciones, setVerNotificaciones] = useState(false);
-  const [busquedaMenu, setBusquedaMenu] = useState('');
 
   // Helper para obtener semana actual
   const getSemanaActual = () => {
@@ -207,7 +206,7 @@ function Dashboard() {
         .eq('usuario_id', usuario.id)
         .order('created_at', { ascending: false })
         .limit(20);
-        
+
       if (data) {
         setNotificacionesLog(data.map(n => ({
           id: n.id,
@@ -222,120 +221,37 @@ function Dashboard() {
 
   // --- REALTIME NOTIFICATIONS ---
   useEffect(() => {
-    if (!usuario?.rol) return;
-
-    const semActual = getSemanaActual();
-    const currYear = new Date().getFullYear().toString().slice(-2);
+    if (!usuario?.id) return;
 
     const channel = supabase
-      .channel('dashboard_realtime')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'requisiciones' }, async (payload) => {
-        const rolUsuario = usuario?.rol?.trim().toLowerCase() || '';
-        const deptoUsuario = usuario?.departamento?.trim().toLowerCase() || '';
-        const deptoReq = payload.new.gerencia?.trim().toLowerCase() || '';
-        
-        let rolCreador = '';
-        if (payload.new.usuario_id) {
-          const { data: perfilCreador } = await supabase.from('perfiles').select('rol').eq('id', payload.new.usuario_id).single();
-          if (perfilCreador) rolCreador = perfilCreador.rol.trim().toLowerCase();
-        }
+      .channel(`notificaciones_user_${usuario.id}`)
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'notificaciones',
+        filter: `usuario_id=eq.${usuario.id}`
+      }, (payload) => {
+        console.log("Notificación recibida en tiempo real:", payload.new);
+        const msg = payload.new.mensaje;
+        toast(msg, { icon: '🔔', duration: 8000 });
 
-        const getRank = (rol) => {
-          if (rol.includes('analista')) return 1;
-          if (rol.includes('coordinador')) return 2;
-          if (rol.includes('gerente general') || rol.includes('admin')) return 4;
-          if (rol.includes('gerente')) return 3;
-          return 0;
-        };
-
-        const userRank = getRank(rolUsuario);
-        const creatorRank = getRank(rolCreador);
-
-        const esGestionArea = deptoUsuario === deptoReq && userRank > creatorRank;
-        const esGerenteGeneralSuperior = (rolUsuario === 'gerente general' || usuario?.esAdminReal) && creatorRank >= 3;
-
-        if (esGestionArea || esGerenteGeneralSuperior) {
-          const msg = `Tienes una nueva requisición pendiente de revisar: ${payload.new.correlativo_req || payload.new.id}`;
-          toast(msg, { icon: '🔔', duration: 8000 });
-          
-          setNotificacionesLog(prev => {
-            if (prev.length > 0 && prev[0].msg === msg) return prev;
-            return [{ id: Date.now(), msg, hora: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), nuevo: true }, ...prev];
-          });
-          
-          try {
-            await supabase.from('notificaciones').insert([{ mensaje: msg, tipo: 'Requisición', usuario_id: usuario.id, leido: false }]);
-          } catch (e) {
-            console.error("Error guardando notif", e);
-          }
-        }
-      })
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'requisiciones' }, async (payload) => {
-        const oldRow = payload.old || {};
-        const newRow = payload.new || {};
-        const rolUsuario = usuario?.rol?.trim().toLowerCase() || '';
-        const deptoUsuario = usuario?.departamento?.trim().toLowerCase() || '';
-
-        // Notificación para Gerente General/Admin cuando se aprueba por área
-        if (newRow.estado_aprobacion === 'enviada_general' && oldRow.estado_aprobacion !== 'enviada_general') {
-          if (rolUsuario === 'gerente general' || usuario?.esAdminReal) {
-            const msg = `Nueva requisición pendiente final: ${newRow.correlativo_req || newRow.id}`;
-            toast(msg, { icon: '🔔', duration: 8000 });
-            setNotificacionesLog(prev => [{ id: Date.now(), msg, hora: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), nuevo: true }, ...prev]);
-            await supabase.from('notificaciones').insert([{ mensaje: msg, tipo: 'Requisición', usuario_id: usuario.id, leido: false }]);
-          }
-        }
-
-        // LÓGICA DE COMPRAS/ADMIN/SUPERIOR: Detección de nueva observación
-        const observacionCambio = Boolean(newRow.observaciones && newRow.observaciones !== oldRow.observaciones);
-        const resetLeido = Boolean(newRow.leido_compras_at === null && oldRow.leido_compras_at !== null);
-
-        if (observacionCambio || resetLeido) {
-          let rolCreador = '';
-          if (newRow.usuario_id) {
-            const { data: perfilCreador } = await supabase.from('perfiles').select('rol').eq('id', newRow.usuario_id).single();
-            if (perfilCreador) rolCreador = perfilCreador.rol.trim().toLowerCase();
-          }
-
-          const getRank = (rol) => {
-            if (rol.includes('analista')) return 1;
-            if (rol.includes('coordinador')) return 2;
-            if (rol.includes('gerente general') || rol.includes('admin')) return 4;
-            if (rol.includes('gerente')) return 3;
-            return 0;
-          };
-
-          const userRank = getRank(rolUsuario);
-          const creatorRank = getRank(rolCreador);
-          const deptoReq = newRow.gerencia?.trim().toLowerCase() || '';
-
-          const esCompras = deptoUsuario === 'compras' || rolUsuario.includes('compras') || usuario?.esAdminReal;
-          const esSuperiorArea = deptoUsuario === deptoReq && userRank > creatorRank;
-          const esCreador = usuario.id === newRow.usuario_id;
-          
-          if (esCompras || esSuperiorArea || esCreador) {
-            const msg = `Nueva observación en requisición ${newRow.correlativo_req || newRow.id}`;
-            toast(msg, { icon: '💬', duration: 8000 });
-            
-            setNotificacionesLog(prev => {
-              if (prev.length > 0 && prev[0].msg === msg) return prev;
-              return [{ id: Date.now(), msg, hora: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), nuevo: true }, ...prev];
-            });
-            
-            await supabase.from('notificaciones').insert([{ mensaje: msg, tipo: 'Mensajería', usuario_id: usuario.id, leido: false }]);
-          }
-        }
+        setNotificacionesLog(prev => [{
+          id: payload.new.id,
+          msg: payload.new.mensaje,
+          hora: new Date(payload.new.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          nuevo: true
+        }, ...prev]);
       })
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
-          console.log('Realtime activado correctamente.');
+          console.log(`Suscrito a notificaciones para usuario: ${usuario.id}`);
         }
       });
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [usuario]);
+  }, [usuario?.id]);
 
   const cerrarSesion = async () => {
     await supabase.auth.signOut();
@@ -358,46 +274,46 @@ function Dashboard() {
       overflow: 'visible',
       zIndex: 1000
     },
-    principal: { 
-      flex: 1, 
-      padding: isMobile ? '5px' : '10px', 
-      overflowY: 'auto', 
-      height: '100vh', 
-      boxSizing: 'border-box', 
-      transition: 'all 0.3s' 
+    principal: {
+      flex: 1,
+      padding: isMobile ? '5px' : '10px',
+      overflowY: 'auto',
+      height: '100vh',
+      boxSizing: 'border-box',
+      transition: 'all 0.3s'
     },
-    card: { 
-      backgroundColor: 'white', 
-      padding: isMobile ? '15px' : '30px', 
-      borderRadius: isMobile ? '16px' : '24px', 
-      boxShadow: '0 4px 15px rgba(0,0,0,0.03)', 
-      border: '1px solid #e2e8f0' 
+    card: {
+      backgroundColor: 'white',
+      padding: isMobile ? '15px' : '30px',
+      borderRadius: isMobile ? '16px' : '24px',
+      boxShadow: '0 4px 15px rgba(0,0,0,0.03)',
+      border: '1px solid #e2e8f0'
     },
-    gridStats: { 
-      display: 'grid', 
-      gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(auto-fit, minmax(200px, 1fr))', 
-      gap: isMobile ? '8px' : '20px', 
-      marginBottom: isMobile ? '15px' : '30px' 
+    gridStats: {
+      display: 'grid',
+      gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(auto-fit, minmax(200px, 1fr))',
+      gap: isMobile ? '8px' : '20px',
+      marginBottom: isMobile ? '15px' : '30px'
     },
-    miniCard: (color) => ({ 
-      backgroundColor: 'white', 
-      padding: isMobile ? '12px' : '20px', 
-      borderRadius: '14px', 
-      borderLeft: `${isMobile ? '4px' : '6px'} solid ${color}`, 
-      display: 'flex', 
-      justifyContent: 'space-between', 
+    miniCard: (color) => ({
+      backgroundColor: 'white',
+      padding: isMobile ? '12px' : '20px',
+      borderRadius: '14px',
+      borderLeft: `${isMobile ? '4px' : '6px'} solid ${color}`,
+      display: 'flex',
+      justifyContent: 'space-between',
       alignItems: 'center',
       minHeight: isMobile ? '70px' : 'auto'
     }),
-    iconCircle: (bg) => ({ 
-      width: isMobile ? '36px' : '48px', 
-      height: isMobile ? '36px' : '48px', 
-      borderRadius: '10px', 
-      backgroundColor: bg, 
-      display: 'flex', 
-      alignItems: 'center', 
-      justifyContent: 'center', 
-      color: 'white' 
+    iconCircle: (bg) => ({
+      width: isMobile ? '36px' : '48px',
+      height: isMobile ? '36px' : '48px',
+      borderRadius: '10px',
+      backgroundColor: bg,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      color: 'white'
     })
   };
 
@@ -418,11 +334,11 @@ function Dashboard() {
       administracion: { titulo: "Administración Central", icon: "fa-gears", color: "#8b5cf6" }
     };
 
-    if (seccionActiva === 'requisiciones') return <Requisiciones />;
+    if (seccionActiva === 'requisiciones') return <Requisiciones currentUserProp={usuario} />;
     if (seccionActiva === 'usuarios') return <Usuarios currentUser={usuario} />;
-    if (seccionActiva === 'fondos') return <SolicitudFondos />;
-    if (seccionActiva === 'tickets') return <ModuloTicketsPago />;
-    if (seccionActiva === 'compras') return <Compras />;
+    if (seccionActiva === 'fondos') return <SolicitudFondos currentUserProp={usuario} />;
+    if (seccionActiva === 'tickets') return <ModuloTicketsPago currentUser={usuario} />;
+    if (seccionActiva === 'compras') return <Compras currentUser={usuario} />;
     if (seccionActiva === 'reportes') return <Reportes />;
     if (seccionActiva === 'reportesmaestro') return <ReportesMaestro />;
     if (seccionActiva === 'proveedores') return <Proveedores />;
@@ -443,11 +359,11 @@ function Dashboard() {
   // Protección de seguridad: si la sección activa no está permitida, reset a la primera permitida
   useEffect(() => {
     if (!usuario?.id) return;
-    const esAdmin = usuario?.correo === 'jcontreras.totalclean@gmail.com' || 
-                   usuario?.correo === 'cvega.totalclean@gmail.com' || 
-                   usuario?.esAdminReal || 
-                   usuario?.rol === 'Admin' || 
-                   usuario?.rol === 'Gerente General';
+    const esAdmin = usuario?.correo === 'jcontreras.totalclean@gmail.com' ||
+      usuario?.correo === 'cvega.totalclean@gmail.com' ||
+      usuario?.esAdminReal ||
+      usuario?.rol === 'Admin' ||
+      usuario?.rol === 'Gerente General';
     if (esAdmin) return;
 
     const modulosPermitidos = usuario?.permisos_modulos || [];
@@ -460,176 +376,270 @@ function Dashboard() {
     }
   }, [seccionActiva, usuario?.permisos_modulos]);
 
-  if (cargando) return <div style={{ padding: '20px' }}>Iniciando SmartTC...</div>;
+  const toggleNotificaciones = () => {
+    if (!verNotificaciones) { // Al abrir el panel
+      setNotificacionesLog(prev => prev.map(n => ({ ...n, nuevo: false })));
+      if (usuario?.id) {
+        supabase.from('notificaciones').update({ leido: true }).eq('usuario_id', usuario.id).then();
+      }
+    }
+    setVerNotificaciones(!verNotificaciones);
+  };
+
+  if (cargando) return (
+    <div style={{
+      height: '100vh',
+      width: '100vw',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'center',
+      background: 'linear-gradient(135deg, #030712 0%, #1e293b 100%)',
+      color: 'white',
+      fontFamily: '"Inter", sans-serif'
+    }}>
+      <div style={{
+        width: '60px',
+        height: '60px',
+        border: '4px solid rgba(14, 165, 233, 0.2)',
+        borderTopColor: '#0ea5e9',
+        borderRadius: '50%',
+        animation: 'spin 1s linear infinite',
+        marginBottom: '20px'
+      }}></div>
+      <h2 style={{ fontSize: '1.2rem', fontWeight: '800', letterSpacing: '2px', margin: 0 }}>SMART<span style={{ color: '#0ea5e9' }}>TC</span></h2>
+      <p style={{ fontSize: '0.7rem', color: '#64748b', marginTop: '10px', textTransform: 'uppercase', letterSpacing: '1px' }}>Iniciando sistema...</p>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+    </div>
+  );
 
   return (
-    <div style={estilos.contenedor}>
-      {/* OVERLAY PARA MÓVIL */}
-      {isMobile && sidebarAbierto && (
-        <div className="sidebar-overlay" onClick={() => setSidebarAbierto(false)}></div>
-      )}
-
-      <div style={estilos.sidebar} className={`sidebar ${isMobile ? 'mobile-drawer' : ''} ${sidebarAbierto ? 'open' : ''}`}>
-
-        {/* BOTÓN TOGGLE SUTIL (ESTILO <<) */}
-        <div
-          onClick={() => setSidebarAbierto(!sidebarAbierto)}
-          style={{
-            position: 'absolute', right: isMobile ? '10px' : '-12px', top: '15px', backgroundColor: '#030712', color: 'white',
-            width: '24px', height: '24px', borderRadius: '50%', display: 'flex', alignItems: 'center',
-            justifyContent: 'center', cursor: 'pointer', boxShadow: '0 4px 10px rgba(0,0,0,0.3)', zIndex: 100,
-            transform: sidebarAbierto ? 'rotate(0deg)' : 'rotate(180deg)', transition: 'transform 0.3s',
-            border: '2px solid #1e3a8a'
-          }}
-        >
-          {isMobile ? <CloseIcon size={14} /> : <i className="fa-solid fa-angles-left" style={{ fontSize: '0.7rem' }}></i>}
-        </div>
-
-        {/* LOGO REMOVIDO POR SOLICITUD */}
-        {/* BARRA DE BÚSQUEDA */}
-        {sidebarAbierto && (
-          <div className="sidebar-search">
-            <Search size={18} color="#94a3b8" />
-            <input 
-              type="text" 
-              placeholder="Search..." 
-              value={busquedaMenu}
-              onChange={(e) => setBusquedaMenu(e.target.value)}
-            />
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', overflow: 'hidden', backgroundColor: '#f1f5f9', fontFamily: '"Inter", sans-serif' }}>
+      
+      {/* BARRA SUPERIOR FULL WIDTH (DASHBOARD PROFESIONAL) */}
+      <div style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          backgroundColor: '#0f172a', /* Azul marino profundo */
+          padding: '8px 24px',
+          boxShadow: '0 4px 15px rgba(0, 0, 0, 0.2)',
+          color: 'white',
+          position: 'relative',
+          minHeight: '45px',
+          zIndex: 1100
+      }}>
+        {/* LADO IZQUIERDO: Toggle y Logo */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+          <div
+            onClick={() => setSidebarAbierto(!sidebarAbierto)}
+            style={{
+              color: '#cbd5e1', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '4px',
+              transition: 'color 0.2s'
+            }}
+            title={sidebarAbierto ? 'Ocultar menú' : 'Mostrar menú'}
+          >
+            <Menu size={22} />
           </div>
-        )}
-
-        {!sidebarAbierto && (
-          <div style={{ padding: '8px', display: 'flex', justifyContent: 'center', marginBottom: '15px' }}>
-             <Search size={20} color="#94a3b8" />
-          </div>
-        )}
-
-        <div className="sidebar-scrollable">
-          {[
-            { id: 'compras', icon: 'fa-cart-plus', label: 'Compras', cat: 'COMPRAS' },
-            { id: 'reportesmaestro', icon: 'fa-chart-line', label: 'Reportes Maestro', cat: 'COMPRAS' },
-            { id: 'reportes', icon: 'fa-file-contract', label: 'Reporte de Compras', cat: 'COMPRAS' },
-            { id: 'proveedores', icon: 'fa-address-book', label: 'Proveedores', cat: 'COMPRAS' },
-            { id: 'requisiciones', icon: 'fa-file-signature', label: 'Requisiciones', cat: 'GESTIONES' },
-            { id: 'fondos', icon: 'fa-hand-holding-dollar', label: 'Solicitud de Fondos', cat: 'GESTIONES' },
-            { id: 'tickets', icon: 'fa-ticket', label: 'Ticket de Pago', cat: 'GESTIONES' },
-            { id: 'usuarios', icon: 'fa-users', label: 'Usuarios', cat: 'CONFIGURACIÓN' },
-            { id: 'atributos', icon: 'fa-database', label: 'Atributos', cat: 'CONFIGURACIÓN' },
-          ].reduce((acc, item) => {
-            const hasPerm = usuario?.correo === 'jcontreras.totalclean@gmail.com' || 
-                           usuario?.correo === 'cvega.totalclean@gmail.com' ||
-                           usuario?.esAdminReal ||
-                           usuario?.rol === 'Admin' || 
-                           usuario?.rol === 'Gerente General' ||
-                           usuario?.permisos_modulos?.includes(item.id);
-            
-            const matchesSearch = item.label.toLowerCase().includes(busquedaMenu.toLowerCase());
-            
-            if (hasPerm && matchesSearch) {
-              if (acc.length === 0 || acc[acc.length - 1].type !== 'header' || acc[acc.length - 1].cat !== item.cat) {
-                 const lastItem = acc.length > 0 ? acc[acc.length-1] : null;
-                 if (!lastItem || lastItem.cat !== item.cat) {
-                    acc.push({ type: 'header', label: item.cat, cat: item.cat });
-                 }
-              }
-              acc.push({ ...item, type: 'item' });
-            }
-            return acc;
-          }, []).map((node, index) => (
-            node.type === 'header' ? (
-              sidebarAbierto && (
-                <div key={`header-${index}`} style={{ fontSize: '0.6rem', fontWeight: '900', color: '#475569', margin: '20px 0 10px 0', letterSpacing: '0.5px', textAlign: 'center' }}>
-                  {node.label}
-                </div>
-              )
-            ) : (
-              <div 
-                key={node.id} 
-                className={`menu-item-new ${seccionActiva === node.id ? 'active' : ''}`}
-                onClick={() => { setSeccionActiva(node.id); if(isMobile) setSidebarAbierto(false); }}
-                title={node.label}
-              >
-                <i className={`fa-solid ${node.icon}`}></i>
-                {sidebarAbierto && (
-                  <span>{node.label}</span>
-                )}
-                {node.id === 'requisiciones' && notificacionesLog.some(n => n.nuevo) && (
-                  <div style={{ 
-                    position: 'absolute', top: '2px', right: '12px', background: '#ef4444', color: 'white', 
-                    fontSize: '0.6rem', minWidth: '16px', height: '16px', borderRadius: '50%', 
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold',
-                    border: '1px solid #030712'
-                  }}>
-                    {notificacionesLog.filter(n => n.nuevo).length}
-                  </div>
-                )}
-              </div>
-            )
-          ))}
-        </div>
-
-        <div style={{ marginBottom: '20px' }}></div>
-      </div>
-
-      <div style={estilos.principal}>
-        <div style={{ display: 'flex', justifyContent: isMobile ? 'space-between' : 'flex-end', alignItems: 'center', marginBottom: isMobile ? '12px' : '30px', position: 'relative' }}>
           
-          {isMobile && (
-            <button 
-              onClick={() => setSidebarAbierto(true)}
-              style={{ background: '#030712', color: 'white', border: 'none', padding: '10px', borderRadius: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
-            >
-              <Menu size={20} />
-            </button>
-          )}
+          <h2 style={{ fontSize: '1.2rem', fontWeight: '800', letterSpacing: '2px', margin: 0 }}>SMART<span style={{ color: '#0ea5e9' }}>TC</span></h2>
+        </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? '8px' : '15px' }}>
-            <div style={{ backgroundColor: 'white', padding: isMobile ? '4px 8px' : '10px 20px', borderRadius: isMobile ? '10px' : '15px', display: 'flex', alignItems: 'center', gap: isMobile ? '6px' : '10px', boxShadow: '0 2px 8px rgba(0,0,0,0.04)', fontWeight: '700', color: '#1e3a8a', fontSize: isMobile ? '0.7rem' : '1rem' }}>
-              {!isMobile && <i className="fa-solid fa-id-card" style={{ color: '#0ea5e9' }}></i>} {!isMobile ? usuario.rol?.toUpperCase() : getInitials(usuario.nombre, usuario.apellido)}
-              <div style={{ borderLeft: '1px solid #e2e8f0', height: '20px', marginLeft: '5px', marginRight: '5px' }}></div>
-              <i className="fa-solid fa-user" style={{ color: '#64748b' }}></i> {!isMobile && usuario.nombre}
-              <div style={{ borderLeft: '1px solid #e2e8f0', height: '20px', marginLeft: '5px', marginRight: '5px' }}></div>
-              <button onClick={cerrarSesion} className="btn-exit-small" style={{ fontSize: '0.7rem', fontWeight: 'bold' }}><i className="fa-solid fa-power-off"></i> {!isMobile && 'SALIR'}</button>
+        {/* LADO DERECHO: Utilidades */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+            {/* Indicador de Nube/Sincronización */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.65rem', fontWeight: '700', color: '#60a5fa', letterSpacing: '0.5px' }} title="Conectado a Supabase">
+              <Cloud size={14} />
+              {!isMobile && <span>ONLINE</span>}
             </div>
 
+            <div style={{ width: '1px', height: '18px', backgroundColor: 'rgba(255,255,255,0.15)' }}></div>
+
+            {/* Modo Oscuro/Claro */}
+            <button style={{ background: 'none', border: 'none', color: '#cbd5e1', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: '4px' }} title="Cambiar Tema">
+              <Sun size={16} />
+            </button>
+
+            <div style={{ width: '1px', height: '18px', backgroundColor: 'rgba(255,255,255,0.15)' }}></div>
+
+            {/* Centro de Notificaciones */}
             <div
-              style={{ backgroundColor: 'white', padding: '10px', width: '40px', height: '40px', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 8px rgba(0,0,0,0.04)', cursor: 'pointer', position: 'relative' }}
-              onClick={() => setVerNotificaciones(!verNotificaciones)}
+              style={{ position: 'relative', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center' }}
+              onClick={toggleNotificaciones}
             >
-              <i className="fa-solid fa-bell" style={{ color: notificacionesLog.length > 0 ? '#f59e0b' : '#94a3b8' }}></i>
-              {notificacionesLog.length > 0 && <div className="notif-badge">{notificacionesLog.length}</div>}
+              <i className="fa-solid fa-bell" style={{ fontSize: '1rem', color: notificacionesLog.some(n => n.nuevo) ? '#facc15' : '#cbd5e1', transition: 'color 0.2s' }}></i>
+              {notificacionesLog.some(n => n.nuevo) && (
+                <div style={{
+                  position: 'absolute', top: '-2px', right: '-4px', background: '#3b82f6', color: 'white',
+                  fontSize: '0.55rem', fontWeight: 'bold', minWidth: '14px', height: '14px', borderRadius: '50%',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', border: '2px solid #0f172a'
+                }}>
+                  {notificacionesLog.filter(n => n.nuevo).length}
+                </div>
+              )}
 
               {/* DROPDOWN DE NOTIFICACIONES */}
               {verNotificaciones && (
-                <div style={{ position: 'absolute', top: '50px', right: 0, width: '320px', backgroundColor: 'white', borderRadius: '18px', boxShadow: '0 10px 25px rgba(0,0,0,0.2)', padding: '15px', zIndex: 1000, maxHeight: '400px', overflowY: 'auto' }}>
-                  <div style={{ fontSize: '0.8rem', fontWeight: '900', color: '#1e293b', marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    LOG DE ACTIVIDAD
-                    <span onClick={async () => {
-                        // Limpiar UI visualmente de inmediato
-                        setNotificacionesLog(prev => prev.map(n => ({...n, nuevo: false})));
-                        if(usuario?.id) await supabase.from('notificaciones').update({leido: true}).eq('usuario_id', usuario.id);
-                    }} style={{ color: '#0ea5e9', fontWeight: 'bold', fontSize: '0.65rem', cursor: 'pointer', padding: '4px 8px', borderRadius: '6px', backgroundColor: '#e0f2fe' }}>MARCAR LEÍDAS</span>
+                <div className="animate-fade" style={{ position: 'absolute', top: '35px', right: 0, width: '320px', backgroundColor: 'white', borderRadius: '20px', boxShadow: '0 15px 35px rgba(0,0,0,0.15)', zIndex: 1000, overflow: 'hidden', border: '1px solid #f1f5f9' }}>
+                  <div style={{ padding: '15px 20px', background: '#f8fafc', borderBottom: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: '0.75rem', fontWeight: '900', color: '#1e293b', letterSpacing: '0.5px' }}>NOTIFICACIONES</span>
+                    <span style={{ fontSize: '0.65rem', color: '#64748b', fontWeight: '600' }}>{notificacionesLog.length} totales</span>
                   </div>
-                  {notificacionesLog.length === 0 ? (
-                    <div style={{ padding: '20px', textAlign: 'center', color: '#94a3b8', fontSize: '0.8rem' }}>No hay notificaciones recientes</div>
-                  ) : (
-                    notificacionesLog.map(n => (
-                      <div key={n.id} style={{ padding: '12px', borderBottom: '1px solid #f1f5f9', marginBottom: '5px', backgroundColor: n.nuevo ? '#f0f9ff' : 'transparent', borderRadius: '8px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
-                          <div style={{ fontSize: '0.75rem', color: '#1e293b', fontWeight: n.nuevo ? '700' : '500', lineHeight: '1.4' }}>{n.msg}</div>
-                          {n.nuevo && <div style={{ minWidth: '8px', height: '8px', backgroundColor: '#0ea5e9', borderRadius: '50%', marginTop: '4px' }}></div>}
-                        </div>
-                        <div style={{ fontSize: '0.65rem', color: '#94a3b8', marginTop: '6px', fontWeight: '600' }}>{n.hora}</div>
+                  <div style={{ maxHeight: '350px', overflowY: 'auto', padding: '10px' }}>
+                    {notificacionesLog.length === 0 ? (
+                      <div style={{ padding: '40px 20px', textAlign: 'center' }}>
+                        <i className="fa-solid fa-bell-slash" style={{ fontSize: '1.5rem', color: '#e2e8f0', marginBottom: '10px', display: 'block' }}></i>
+                        <span style={{ color: '#94a3b8', fontSize: '0.75rem', fontWeight: '500' }}>No hay alertas recientes</span>
                       </div>
-                    ))
-                  )}
+                    ) : (
+                      notificacionesLog.map((n, idx) => (
+                        <div key={n.id || idx} style={{
+                          padding: '12px 15px',
+                          borderRadius: '12px',
+                          marginBottom: '6px',
+                          backgroundColor: n.nuevo ? '#f0f9ff' : 'transparent',
+                          transition: 'all 0.2s',
+                          borderLeft: n.nuevo ? '3px solid #0ea5e9' : '3px solid transparent'
+                        }}>
+                          <div style={{ fontSize: '0.75rem', color: '#1e293b', fontWeight: n.nuevo ? '700' : '500', lineHeight: '1.4' }}>{n.msg}</div>
+                          <div style={{ fontSize: '0.6rem', color: '#94a3b8', marginTop: '6px', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                            <i className="fa-regular fa-clock"></i> {n.hora}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                  <div style={{ padding: '10px', borderTop: '1px solid #f1f5f9', textAlign: 'center' }}>
+                    <button style={{ background: 'none', border: 'none', color: '#0ea5e9', fontSize: '0.7rem', fontWeight: '800', cursor: 'pointer' }}>VER TODO EL HISTORIAL</button>
+                  </div>
                 </div>
               )}
             </div>
-          </div>
+
+            <div style={{ width: '1px', height: '18px', backgroundColor: 'rgba(255,255,255,0.15)' }}></div>
+
+            {/* Perfil de Usuario Compacto */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', padding: '2px 6px', borderRadius: '8px', transition: 'background 0.2s' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', lineHeight: '1.2' }}>
+                <span style={{ fontSize: '0.75rem', fontWeight: '800', color: 'white' }}>{usuario.nombre || 'Usuario'}</span>
+                <span style={{ fontSize: '0.6rem', fontWeight: '600', color: '#94a3b8', textTransform: 'uppercase' }}>{usuario.rol || 'Rol'}</span>
+              </div>
+              <div style={{
+                width: '32px', height: '32px', borderRadius: '50%', backgroundColor: '#3b82f6',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.8rem', fontWeight: 'bold', color: 'white',
+                border: '2px solid rgba(255,255,255,0.2)'
+              }}>
+                {getInitials(usuario.nombre, usuario.apellido)}
+              </div>
+              <ChevronDown size={14} style={{ color: '#94a3b8', marginLeft: '2px' }} title="Opciones" />
+            </div>
+
+            <div style={{ width: '1px', height: '18px', backgroundColor: 'rgba(255,255,255,0.15)' }}></div>
+
+            {/* Botón de Apagar / Salir */}
+            <button
+              onClick={cerrarSesion}
+              style={{
+                background: 'rgba(239, 68, 68, 0.15)',
+                border: '1px solid rgba(239, 68, 68, 0.3)',
+                color: '#f87171',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '8px',
+                borderRadius: '10px',
+                transition: 'all 0.2s',
+                marginLeft: '5px'
+              }}
+              title="Cerrar Sesión (Apagar Sistema)"
+              onMouseEnter={(e) => { e.currentTarget.style.background = '#ef4444'; e.currentTarget.style.color = 'white'; e.currentTarget.style.boxShadow = '0 0 10px rgba(239, 68, 68, 0.5)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(239, 68, 68, 0.15)'; e.currentTarget.style.color = '#f87171'; e.currentTarget.style.boxShadow = 'none'; }}
+            >
+              <Power size={16} strokeWidth={2.5} />
+            </button>
         </div>
-        {renderContenido()}
+      </div>
+
+      {/* ÁREA DE CONTENIDO (SIDEBAR + PRINCIPAL) */}
+      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+        
+        {/* OVERLAY PARA MÓVIL */}
+        {isMobile && sidebarAbierto && (
+          <div className="sidebar-overlay" onClick={() => setSidebarAbierto(false)}></div>
+        )}
+
+        {/* SIDEBAR */}
+        <div style={{ ...estilos.sidebar, height: '100%', boxShadow: '4px 0 10px rgba(0,0,0,0.1)', zIndex: 100, paddingTop: '10px' }} className={`sidebar ${isMobile ? 'mobile-drawer' : ''} ${sidebarAbierto ? 'open' : ''}`}>
+          <div className="sidebar-scrollable">
+            {[
+              { id: 'compras', icon: 'fa-cart-plus', label: 'Compras', cat: 'COMPRAS' },
+              { id: 'reportesmaestro', icon: 'fa-chart-line', label: 'Reportes Maestro', cat: 'COMPRAS' },
+              { id: 'reportes', icon: 'fa-file-contract', label: 'Reporte de Compras', cat: 'COMPRAS' },
+              { id: 'proveedores', icon: 'fa-address-book', label: 'Proveedores', cat: 'COMPRAS' },
+              { id: 'requisiciones', icon: 'fa-file-signature', label: 'Requisiciones', cat: 'GESTIONES' },
+              { id: 'fondos', icon: 'fa-hand-holding-dollar', label: 'Solicitud de Fondos', cat: 'GESTIONES' },
+              { id: 'tickets', icon: 'fa-ticket', label: 'Ticket de Pago', cat: 'GESTIONES' },
+              { id: 'usuarios', icon: 'fa-users', label: 'Usuarios', cat: 'CONFIGURACIÓN' },
+              { id: 'atributos', icon: 'fa-database', label: 'Atributos', cat: 'CONFIGURACIÓN' },
+            ].reduce((acc, item) => {
+              const hasPerm = usuario?.correo === 'jcontreras.totalclean@gmail.com' ||
+                usuario?.correo === 'cvega.totalclean@gmail.com' ||
+                usuario?.esAdminReal ||
+                usuario?.rol === 'Admin' ||
+                usuario?.rol === 'Gerente General' ||
+                usuario?.permisos_modulos?.includes(item.id);
+
+              if (hasPerm) {
+                if (acc.length === 0 || acc[acc.length - 1].type !== 'header' || acc[acc.length - 1].cat !== item.cat) {
+                  const lastItem = acc.length > 0 ? acc[acc.length - 1] : null;
+                  if (!lastItem || lastItem.cat !== item.cat) {
+                    acc.push({ type: 'header', label: item.cat, cat: item.cat });
+                  }
+                }
+                acc.push({ ...item, type: 'item' });
+              }
+              return acc;
+            }, []).map((node, index) => (
+              node.type === 'header' ? (
+                sidebarAbierto && (
+                  <div key={`header-${index}`} style={{ fontSize: '0.6rem', fontWeight: '900', color: '#475569', margin: '20px 0 10px 0', letterSpacing: '0.5px', textAlign: 'center' }}>
+                    {node.label}
+                  </div>
+                )
+              ) : (
+                <div
+                  key={node.id}
+                  className={`menu-item-new ${seccionActiva === node.id ? 'active' : ''}`}
+                  onClick={() => { setSeccionActiva(node.id); if (isMobile) setSidebarAbierto(false); }}
+                  title={node.label}
+                >
+                  <i className={`fa-solid ${node.icon}`}></i>
+                  {sidebarAbierto && (
+                    <span>{node.label}</span>
+                  )}
+                  {node.id === 'requisiciones' && notificacionesLog.some(n => n.nuevo) && (
+                    <div style={{
+                      position: 'absolute', top: '2px', right: '12px', background: '#ef4444', color: 'white',
+                      fontSize: '0.6rem', minWidth: '16px', height: '16px', borderRadius: '50%',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold',
+                      border: '1px solid #030712'
+                    }}>
+                      {notificacionesLog.filter(n => n.nuevo).length}
+                    </div>
+                  )}
+                </div>
+              )
+            ))}
+          </div>
+
+          <div style={{ marginBottom: '20px' }}></div>
+        </div>
+
+        {/* CONTENIDO PRINCIPAL */}
+        <div style={{ ...estilos.principal, height: '100%', overflowY: 'auto' }}>
+          {renderContenido()}
+        </div>
       </div>
     </div>
   );

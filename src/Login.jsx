@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Warehouse, LogIn, Eye, EyeOff, Lock, Mail } from 'lucide-react';
 import { supabase } from './supabaseClient';
+import toast from 'react-hot-toast';
 import './Auth.css';
 
 const Auth = () => {
@@ -26,7 +27,7 @@ const Auth = () => {
     });
 
     if (error) {
-      alert("Credenciales incorrectas: " + error.message);
+      toast.error("Credenciales incorrectas: " + error.message);
       setLoading(false);
       return;
     }
@@ -39,7 +40,7 @@ const Auth = () => {
 
     if (perfil && perfil.activo === false) {
       await supabase.auth.signOut();
-      alert("Acceso restringido. Contacte a sistemas.");
+      toast.error("Acceso restringido. Contacte a sistemas.");
       setLoading(false);
       return;
     }
