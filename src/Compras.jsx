@@ -1144,7 +1144,6 @@ const Compras = () => {
             className="stat-card"
             onClick={() => setFiltroStatusCompra(x.filter)}
             style={{
-              borderLeft: `6px solid ${x.col}`,
               cursor: 'pointer',
               backgroundColor: filtroStatusCompra === x.filter ? '#f8fafc' : 'white',
               padding: '18px',
