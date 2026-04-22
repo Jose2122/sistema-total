@@ -126,12 +126,11 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       const { data: perfilesDB } = await supabase.from('perfiles').select('id, rol, departamento, gerencia_id');
 
 
-      const myRank = getRank(currentUser.rol);
-
       if (!esPrivilegiado) {
-        // Filtro Triple Match: Mismo Depto + Misma Gerencia + Rango Superior
-        // En BD filtramos por depto para reducir carga
-        query = query.ilike('gerencia', `%${currentUser.departamento}%`);
+        // Filtro Triple Match: En BD filtramos por depto O por creador (ID o Nombre para reqs antiguas)
+        const nombreMatch = (currentUser.nombre || '').split(' ')[0] || 'Unknown';
+        const userIdMatch = currentUser.id || '00000000-0000-0000-0000-000000000000';
+        query = query.or(`gerencia.ilike.%${currentUser.departamento}%,user_id.eq.${userIdMatch},solicitante.ilike.%${nombreMatch}%`);
       }
 
       const { data, error } = await query.order('fecha_emision', { ascending: false });
@@ -139,14 +138,21 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       if (error) throw error;
       if (data) {
         let finalData = data;
+        const myRank = getRank(currentUser.rol);
 
         if (!esPrivilegiado) {
           finalData = data.filter(req => {
-            // REGLA FUNDAMENTAL: Siempre puede ver lo suyo
-            if (currentUser.id === req.user_id) return true;
+            // REGLA FUNDAMENTAL: Siempre puede ver lo suyo (Por ID o por coincidencia de nombre si es antigua)
+            if (currentUser.id && req.user_id === currentUser.id) return true;
+            if (req.solicitante && req.solicitante.toLowerCase().includes((currentUser.nombre || '').toLowerCase().split(' ')[0])) return true;
 
             const creador = (perfilesDB || []).find(p => p.id === req.user_id);
-            if (!creador) return true;
+            // Si tiene user_id pero no lo encontramos en perfiles, lo dejamos pasar por si acaso
+            if (req.user_id && !creador) return true;
+            // Si NO tiene user_id y no coincidió el nombre arriba, sigue las reglas de depto
+            if (!creador) {
+               return (req.gerencia || '').toLowerCase() === (currentUser.departamento || '').toLowerCase();
+            }
 
             const matchDepto = (creador.departamento || '').toLowerCase() === (currentUser.departamento || '').toLowerCase();
             const matchGerencia = creador.gerencia_id === currentUser.gerencia_id;
@@ -190,7 +196,6 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
         setListaGerencias(gerencias);
 
         // Por defecto para Gerentes: mostrar lo que tienen pendiente
-        const myRank = getRank(currentUser.rol);
         if (myRank === 3 && filtroAprobacion === 'Todos') setFiltroAprobacion('pendiente_area');
         if (myRank === 4 && filtroAprobacion === 'Todos') setFiltroAprobacion('enviada_general');
 
