@@ -12,6 +12,7 @@ import ReportesMaestro from './ReportesMaestro';
 import Proveedores from './Proveedores';
 import Administracion from './Administracion';
 import Atributos from './Atributos';
+import Almacen from './Almacen';
 import { Menu, X as CloseIcon, Search, Cloud, Sun, ChevronDown, Power } from 'lucide-react';
 
 function Dashboard() {
@@ -344,6 +345,7 @@ function Dashboard() {
     if (seccionActiva === 'proveedores') return <Proveedores />;
     if (seccionActiva === 'administracion') return <Administracion />;
     if (seccionActiva === 'atributos') return <Atributos />;
+    if (seccionActiva === 'almacen') return <Almacen />;
 
     return (
       <div className="animate-fade">
@@ -580,6 +582,7 @@ function Dashboard() {
               { id: 'requisiciones', icon: 'fa-file-signature', label: 'Requisiciones', cat: 'GESTIONES' },
               { id: 'fondos', icon: 'fa-hand-holding-dollar', label: 'Solicitud de Fondos', cat: 'GESTIONES' },
               { id: 'tickets', icon: 'fa-ticket', label: 'Ticket de Pago', cat: 'GESTIONES' },
+              { id: 'almacen', icon: 'fa-warehouse', label: 'Almacén', cat: 'GESTIONES' },
               { id: 'usuarios', icon: 'fa-users', label: 'Usuarios', cat: 'CONFIGURACIÓN' },
               { id: 'atributos', icon: 'fa-database', label: 'Atributos', cat: 'CONFIGURACIÓN' },
             ].reduce((acc, item) => {

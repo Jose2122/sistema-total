@@ -5,6 +5,7 @@ import { Toaster } from 'react-hot-toast';
 import Auth from './Login'; 
 import Dashboard from './Dashboard'; 
 import SolicitudFondos from './SolicitudFondos';
+import Almacen from './Almacen';
 
 function App() {
   const [session, setSession] = useState(null);
@@ -31,6 +32,7 @@ function App() {
     <Router>
       <Toaster 
         position="top-right" 
+        containerStyle={{ zIndex: 999999 }}
         toastOptions={{ 
           duration: 5000,
           style: {
@@ -77,6 +79,7 @@ function App() {
         {/* Rutas protegidas: Si no hay sesión, te mandan al Login "/" */}
         <Route path="/dashboard" element={session ? <Dashboard /> : <Navigate to="/" />} />
         <Route path="/SolicitudFondos" element={session ? <SolicitudFondos /> : <Navigate to="/" />} />
+        <Route path="/almacen" element={session ? <Almacen /> : <Navigate to="/" />} />
       </Routes>
     </Router>
   );

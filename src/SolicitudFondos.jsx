@@ -4,7 +4,7 @@ import Requisiciones from './Requisiciones';
 import TicketExpress from './TicketExpress';
 import { format, getWeek } from 'date-fns';
 import toast from 'react-hot-toast';
-import { Loader2, Upload, FileText, Printer, FileSpreadsheet, BarChart3, Clock, Activity, CheckCircle2, DollarSign } from 'lucide-react';
+import { Loader2, Upload, FileText, Printer, FileSpreadsheet, BarChart3, Clock, Activity, CheckCircle2, DollarSign, Copy } from 'lucide-react';
 import './SolicitudFondos.css';
 
 const StockSmartTotalClean = ({ currentUserProp }) => {
@@ -60,7 +60,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
     "Contabilidad": ["Jorge Urdaneta"]
   };
 
-  const unidades = ["UNID", "KG", "LTS", "ML", "M2", "M3", "SERV", "SG", "VIAJES"];
+  const unidades = ["UNID", "KG", "LTS", "ML", "M2", "M3", "SERV", "SG", "VIAJES", "Gal", "Sacos", "Rollo", "Pipa", "Jgo"];
 
   // --- LÓGICA DE SIGLAS GERENCIA ---
   const obtenerSiglas = (nombreGerencia) => {
@@ -112,7 +112,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
         <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: '500' }}>¿Estás seguro de que deseas eliminar esta solicitud permanentemente? Se borrarán también todos los renglones asociados.</p>
         <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-          <button 
+          <button
             onClick={() => { toast.dismiss(t.id); ejecutarEliminarSolicitud(id_db); }}
             style={{ padding: '4px 12px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}
           >
@@ -140,6 +140,42 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const duplicarPartida = (index) => {
+    const original = form.partidas[index];
+    const nueva = {
+      ...original,
+      id: Date.now() + Math.random(),
+      selected: false,
+      desc: '',
+      puBs: '',
+      puUsd: '',
+      requisicion_id: null,
+      codigo_req: null,
+      status: 'Disponible'
+    };
+    const nuevasPartidas = [...form.partidas];
+    nuevasPartidas.splice(index + 1, 0, nueva);
+    setForm({ ...form, partidas: nuevasPartidas });
+  };
+
+  const duplicarImprevisto = (index) => {
+    const original = form.imprevistos[index];
+    const nueva = {
+      ...original,
+      id: Date.now() + Math.random(),
+      selected: false,
+      desc: '',
+      puBs: '',
+      puUsd: '',
+      requisicion_id: null,
+      codigo_req: null,
+      status: 'Disponible'
+    };
+    const nuevosImprevistos = [...form.imprevistos];
+    nuevosImprevistos.splice(index + 1, 0, nueva);
+    setForm({ ...form, imprevistos: nuevosImprevistos });
   };
 
   const intentarCerrarModal = () => {
@@ -222,11 +258,11 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         // José es el ÚNICO que puede borrar
         const esSuperAdmin = emailLower === 'jcontreras.totalclean@gmail.com';
         // Administradores reales (José, Carlos, Karin)
-        const esAdminReal = esSuperAdmin || 
-                            emailLower === 'cvega.totalclean@gmail.com' || 
-                            emailLower === 'cvega@totalclean.com' || 
-                            emailLower === 'karincmm1@gmail.com';
-        
+        const esAdminReal = esSuperAdmin ||
+          emailLower === 'cvega.totalclean@gmail.com' ||
+          emailLower === 'cvega@totalclean.com' ||
+          emailLower === 'karincmm1@gmail.com';
+
         const userData = {
           ...perfil,
           esSuperAdmin,
@@ -247,11 +283,11 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
   const kpis = useMemo(() => {
     const list = historial || [];
     const totalInversion = list.reduce((acc, h) => acc + (h.total || 0), 0);
-    
+
     // Calcular semana actual
     const d = new Date();
     const semAhora = getWeek(d, { weekStartsOn: 1 });
-    
+
     const solicitudesSemana = list.filter(h => {
       if (!h.fecha_operativa) return false;
       return getWeek(new Date(h.fecha_operativa + 'T12:00:00'), { weekStartsOn: 1 }) === semAhora;
@@ -275,18 +311,18 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         if (perfil) {
           const emailLower = (session.user.email || '').toLowerCase();
           const esSuperAdmin = emailLower === 'jcontreras.totalclean@gmail.com';
-          const esAdminReal = esSuperAdmin || 
-                              emailLower === 'cvega.totalclean@gmail.com' || 
-                              emailLower === 'cvega@totalclean.com' || 
-                              emailLower === 'karincmm1@gmail.com';
-          
-          userContext = { 
-            ...perfil, 
+          const esAdminReal = esSuperAdmin ||
+            emailLower === 'cvega.totalclean@gmail.com' ||
+            emailLower === 'cvega@totalclean.com' ||
+            emailLower === 'karincmm1@gmail.com';
+
+          userContext = {
+            ...perfil,
             esSuperAdmin,
             esAdminReal,
             correo: emailLower,
             departamento: (perfil.departamento || '').trim(),
-            rol: (perfil.rol || '').trim() 
+            rol: (perfil.rol || '').trim()
           };
           setCurrentUser(userContext);
         }
@@ -317,8 +353,27 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
     // REGLAS DE JERARQUÍA
     if (!userContext.esAdminReal && rolUpper !== 'GERENTE GENERAL' && rolUpper !== 'ADMIN') {
       const puedeVerDepto = tienePermisoDepto || ['GERENTE', 'COORDINADOR', 'ANALISTA', 'COMPRAS'].includes(rolUpper) || deptoUpper.includes('COMPRAS');
+      const misObras = userContext.obras_asignadas || [];
+      const esRestringidoObra = rolUpper.includes('PROYECTO') || (rolUpper.includes('ANALISTA') && misObras.length > 0);
 
-      if (puedeVerDepto) {
+      if (esRestringidoObra) {
+        // Lógica de visibilidad por OBRA (Proyecto/Analista asignado)
+        // Necesitamos primero las solicitudes que tengan al menos una partida de sus obras
+        const { data: partidasMias } = await supabase
+          .from('partidas_fondos')
+          .select('solicitud_id')
+          .in('centro_costo', misObras);
+
+        const idsSolicitudes = [...new Set((partidasMias || []).map(p => p.solicitud_id).filter(id => id))];
+
+        if (idsSolicitudes.length > 0) {
+          query = query.in('id', idsSolicitudes);
+        } else {
+          // Si no hay partidas de sus obras, solo puede ver lo que él mismo creó (si aplica)
+          query = query.eq('responsable_nombre', `${userContext.nombre} ${userContext.apellido}`);
+        }
+        console.log(`[VISIBILIDAD FONDOS] Aplicando restricción por Obras Asignadas: ${misObras.join(', ')}`);
+      } else if (puedeVerDepto) {
         // Ven todo lo de su departamento/gerencia (Fuzzy Match + Case-insensitive)
         const filtroDepto = (userContext.departamento || '').trim();
 
@@ -408,7 +463,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
   const cargarDetallesYEditar = async (solicitud) => {
     try {
       const targetId = solicitud.id_db || solicitud.id;
-      
+
       // 1. Obtener Partidas
       const { data: partidasRaw } = await supabase
         .from('partidas_fondos')
@@ -423,8 +478,8 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         if (p.requisiciones && p.requisiciones.items) {
           // Intentar hacer match del item de la requisición con esta partida
           // Usamos descripción y cantidad como match primario para solicitudes de fondos
-          const itemReq = p.requisiciones.items.find(item => 
-            item.descripcion === p.descripcion && 
+          const itemReq = p.requisiciones.items.find(item =>
+            item.descripcion === p.descripcion &&
             (item.cantidad_pedida === p.cantidad || item.cant === p.cantidad)
           );
 
@@ -597,7 +652,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
   const numSemana = getWeek(new Date(form.fecha + 'T12:00:00'), { weekStartsOn: 1 });
   const siglasGerencia = obtenerSiglas(form.gerencia);
   const aa = new Date(form.fecha).getFullYear().toString().slice(-2);
-  
+
   // Complementamos el identificador con el Centro de Costo (Primeras 4 letras o similar)
   const idDinamico = isEditing ? form.id : `${siglasGerencia}-SEM ${numSemana}-${aa}`;
   const periodoSemana = getWeekRange(numSemana, new Date(form.fecha).getFullYear());
@@ -617,7 +672,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
 
   const verificarDisponibilidad = async () => {
     if (!fechaPreVal) return setErrorCheck("Por favor, seleccione una fecha operativa.");
-    
+
     // --- EXCEPCIÓN DE ADMINISTRADOR / GERENTE GENERAL ---
     const rolUpper = (currentUser?.rol || '').toUpperCase();
     const isPrivileged = currentUser?.esAdminReal || rolUpper === 'GERENTE GENERAL' || rolUpper === 'ADMIN';
@@ -626,46 +681,46 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
     setLoadingCheck(true);
     setErrorCheck('');
     setSolicitudConflictiva(null);
-    
+
     try {
-        const week = getWeek(new Date(fechaPreVal + 'T12:00:00'), { weekStartsOn: 1 });
-        const year = new Date(fechaPreVal).getFullYear();
-        const depto = currentUser?.departamento;
+      const week = getWeek(new Date(fechaPreVal + 'T12:00:00'), { weekStartsOn: 1 });
+      const year = new Date(fechaPreVal).getFullYear();
+      const depto = currentUser?.departamento;
 
-        // Calculamos rango de fechas para la consulta segura
-        const d = new Date(fechaPreVal + 'T12:00:00');
-        const day = d.getDay() || 7;
-        const monday = new Date(d); monday.setDate(d.getDate() - (day - 1));
-        const sunday = new Date(monday); sunday.setDate(monday.getDate() + 6);
-        
-        const pad = (n) => String(n).padStart(2, '0');
-        const fStart = `${monday.getFullYear()}-${pad(monday.getMonth()+1)}-${pad(monday.getDate())}`;
-        const fEnd = `${sunday.getFullYear()}-${pad(sunday.getMonth()+1)}-${pad(sunday.getDate())}`;
+      // Calculamos rango de fechas para la consulta segura
+      const d = new Date(fechaPreVal + 'T12:00:00');
+      const day = d.getDay() || 7;
+      const monday = new Date(d); monday.setDate(d.getDate() - (day - 1));
+      const sunday = new Date(monday); sunday.setDate(monday.getDate() + 6);
 
-        // Verificamos si ya existe una solicitud para esa gerencia en esa semana
-        const { data: existencias, error } = await supabase
-            .from('solicitudes_fondos')
-            .select('*')
-            .eq('gerencia_nombre', depto)
-            .gte('fecha_operativa', fStart)
-            .lte('fecha_operativa', fEnd)
-            .limit(1);
+      const pad = (n) => String(n).padStart(2, '0');
+      const fStart = `${monday.getFullYear()}-${pad(monday.getMonth() + 1)}-${pad(monday.getDate())}`;
+      const fEnd = `${sunday.getFullYear()}-${pad(sunday.getMonth() + 1)}-${pad(sunday.getDate())}`;
 
-        if (error) throw error;
+      // Verificamos si ya existe una solicitud para esa gerencia en esa semana
+      const { data: existencias, error } = await supabase
+        .from('solicitudes_fondos')
+        .select('*')
+        .eq('gerencia_nombre', depto)
+        .gte('fecha_operativa', fStart)
+        .lte('fecha_operativa', fEnd)
+        .limit(1);
 
-        if (existencias && existencias.length > 0) {
-            const sol = existencias[0];
-            setSolicitudConflictiva(sol);
-            setErrorCheck(`Error: El departamento de ${depto} ya tiene una solicitud abierta para la Semana ${week} por ${sol.responsable_nombre}. Por favor, colabora en esa solicitud o espera a que se finalice.`);
-            setSolCheckExitosa(isPrivileged); // Si es admin, dejamos el check en éxito parcial
-        } else {
-            setSolCheckExitosa(true);
-            setErrorCheck('');
-        }
+      if (error) throw error;
+
+      if (existencias && existencias.length > 0) {
+        const sol = existencias[0];
+        setSolicitudConflictiva(sol);
+        setErrorCheck(`Error: El departamento de ${depto} ya tiene una solicitud abierta para la Semana ${week} por ${sol.responsable_nombre}. Por favor, colabora en esa solicitud o espera a que se finalice.`);
+        setSolCheckExitosa(isPrivileged); // Si es admin, dejamos el check en éxito parcial
+      } else {
+        setSolCheckExitosa(true);
+        setErrorCheck('');
+      }
     } catch (err) {
-        setErrorCheck("Error al validar: " + err.message);
+      setErrorCheck("Error al validar: " + err.message);
     } finally {
-        setLoadingCheck(false);
+      setLoadingCheck(false);
     }
   };
 
@@ -1011,11 +1066,11 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
 
   const dashEjecucion = useMemo(() => {
     const estimado = (sumas.bs + sumas.usd) + (sumas.imprevistosBs + sumas.imprevistosUsd);
-    const ejecutado = form.partidas.reduce((acc, p) => acc + (p.montoReal || 0), 0) + 
-                     form.imprevistos.reduce((acc, p) => acc + (p.montoReal || 0), 0);
+    const ejecutado = form.partidas.reduce((acc, p) => acc + (p.montoReal || 0), 0) +
+      form.imprevistos.reduce((acc, p) => acc + (p.montoReal || 0), 0);
     const pendiente = form.partidas.reduce((acc, p) => acc + (p.montoPendiente || 0), 0) +
-                     form.imprevistos.reduce((acc, p) => acc + (p.montoPendiente || 0), 0);
-    
+      form.imprevistos.reduce((acc, p) => acc + (p.montoPendiente || 0), 0);
+
     return {
       estimado,
       ejecutado,
@@ -1150,7 +1205,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
           <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: '500' }}>¿Está seguro de guardar filas con diferentes categorías?</p>
           <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-            <button 
+            <button
               onClick={() => { toast.dismiss(t.id); ejecutarCrearRequisicion(seleccionadas); }}
               style={{ padding: '4px 12px', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}
             >
@@ -1583,8 +1638,8 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         <div className="sf-modal-overlay">
           <div className="sf-modal-container">
             {/* BANNER DE FECHA TOPE */}
-            <div style={{ 
-              backgroundColor: isExpired ? '#fef2f2' : '#f0f9ff', 
+            <div style={{
+              backgroundColor: isExpired ? '#fef2f2' : '#f0f9ff',
               borderBottom: `1px solid ${isExpired ? '#fecaca' : '#bae6fd'}`,
               padding: '10px 30px',
               display: 'flex',
@@ -1593,28 +1648,28 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
               margin: '-25px -25px 20px -25px',
               borderRadius: '20px 20px 0 0'
             }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-                    <div style={{ 
-                        backgroundColor: isExpired ? '#ef4444' : '#0ea5e9', 
-                        color: 'white', 
-                        padding: '4px 12px', 
-                        borderRadius: '20px', 
-                        fontSize: '11px', 
-                        fontWeight: '800' 
-                    }}>
-                        {isExpired ? 'SEMANA CERRADA' : 'SEMANA ACTIVA'}
-                    </div>
-                    <span style={{ fontSize: '12px', color: isExpired ? '#991b1b' : '#0369a1', fontWeight: '600' }}>
-                        Período: <span style={{ fontWeight: '800' }}>{periodoSemana}</span>
-                    </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+                <div style={{
+                  backgroundColor: isExpired ? '#ef4444' : '#0ea5e9',
+                  color: 'white',
+                  padding: '4px 12px',
+                  borderRadius: '20px',
+                  fontSize: '11px',
+                  fontWeight: '800'
+                }}>
+                  {isExpired ? 'SEMANA CERRADA' : 'SEMANA ACTIVA'}
                 </div>
-                <div style={{ fontSize: '12px', color: isExpired ? '#ef4444' : '#64748b', fontWeight: 'bold' }}>
-                    {isExpired ? (
-                        <span>🛑 Plazo vencido. No se pueden añadir nuevos registros.</span>
-                    ) : (
-                        <span>⏰ Fecha Tope Requisciones: <span style={{ color: '#0f172a' }}>Domingo {format(deadlineDate, 'dd/MM')} - 11:59 PM</span></span>
-                    )}
-                </div>
+                <span style={{ fontSize: '12px', color: isExpired ? '#991b1b' : '#0369a1', fontWeight: '600' }}>
+                  Período: <span style={{ fontWeight: '800' }}>{periodoSemana}</span>
+                </span>
+              </div>
+              <div style={{ fontSize: '12px', color: isExpired ? '#ef4444' : '#64748b', fontWeight: 'bold' }}>
+                {isExpired ? (
+                  <span>🛑 Plazo vencido. No se pueden añadir nuevos registros.</span>
+                ) : (
+                  <span>⏰ Fecha Tope Requisciones: <span style={{ color: '#0f172a' }}>Domingo {format(deadlineDate, 'dd/MM')} - 11:59 PM</span></span>
+                )}
+              </div>
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '15px' }}>
@@ -1652,9 +1707,9 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                   <div className="rm-stat-icon" style={{ width: '32px', height: '32px' }}><Clock size={16} color="#f59e0b" /></div>
                 </div>
 
-                <div className={`rm-stat-card ${dashEjecucion.diferencia < 0 ? 'danger' : 'info'}`} style={{ 
-                  padding: '12px 20px', 
-                  minWidth: '160px', 
+                <div className={`rm-stat-card ${dashEjecucion.diferencia < 0 ? 'danger' : 'info'}`} style={{
+                  padding: '12px 20px',
+                  minWidth: '160px',
                   borderRadius: '14px',
                   backgroundColor: dashEjecucion.diferencia < 0 ? '#fff1f2' : '#f0f9ff',
                   borderColor: dashEjecucion.diferencia < 0 ? '#fecaca' : '#bae6fd'
@@ -1667,8 +1722,8 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                       $ {Math.abs(dashEjecucion.diferencia).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
                     </h3>
                   </div>
-                  <div className="rm-stat-icon" style={{ 
-                    width: '32px', 
+                  <div className="rm-stat-icon" style={{
+                    width: '32px',
                     height: '32px',
                     backgroundColor: dashEjecucion.diferencia < 0 ? '#ffe4e6' : '#e0f2fe'
                   }}>
@@ -1805,10 +1860,13 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                     <div style={{ width: '90px', padding: '6px' }}><select className="sf-table-input" value={p.uni} onChange={(e) => manejarCambioPartida(i, 'uni', e.target.value)} disabled={!!p.codigo_ticket}>{unidades.map(u => <option key={u}>{u}</option>)}</select></div>
                     <div style={{ width: '460px', padding: '10px' }}><textarea className="sf-table-input" value={p.desc} onChange={(e) => manejarCambioPartida(i, 'desc', e.target.value)} style={{ resize: 'none' }} rows="1" disabled={!!p.codigo_ticket} /></div>
                     <div style={{ width: '200px', padding: '6px' }}><input className="sf-table-input" value={p.ben} onChange={(e) => manejarCambioPartida(i, 'ben', e.target.value)} disabled={!!p.codigo_ticket} /></div>
-                    <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puBs} onChange={(e) => manejarCambioPartida(i, 'puBs', e.target.value)} style={{ textAlign: 'right' }} disabled={p.puUsd > 0 || !!p.codigo_ticket} /></div>
-                    <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puUsd} onChange={(e) => manejarCambioPartida(i, 'puUsd', e.target.value)} style={{ textAlign: 'right' }} disabled={p.puBs > 0 || !!p.codigo_ticket} /></div>
+                    <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puBs === 0 ? '' : p.puBs} onChange={(e) => manejarCambioPartida(i, 'puBs', e.target.value)} style={{ textAlign: 'right' }} disabled={p.puUsd > 0 || !!p.codigo_ticket} /></div>
+                    <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puUsd === 0 ? '' : p.puUsd} onChange={(e) => manejarCambioPartida(i, 'puUsd', e.target.value)} style={{ textAlign: 'right' }} disabled={p.puBs > 0 || !!p.codigo_ticket} /></div>
                     <div style={{ width: '120px', padding: '6px', textAlign: 'right', fontWeight: 'bold' }}>{((parseFloat(p.puBs) || parseFloat(p.puUsd) || 0) * (p.cant || 0)).toLocaleString('de-DE')}</div>
-                    <div style={{ width: '40px', textAlign: 'center' }}><button onClick={() => setForm({ ...form, partidas: form.partidas.filter((_, idx) => idx !== i) })} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: (p.codigo_ticket || p.requisicion_id) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (p.codigo_ticket || p.requisicion_id) ? 0.3 : 1 }} disabled={!!p.codigo_ticket || !!p.requisicion_id} title="Eliminar renglón">🗑️</button></div>
+                    <div style={{ width: '80px', display: 'flex', gap: '5px', justifyContent: 'center' }}>
+                      <button onClick={() => duplicarPartida(i)} style={{ background: 'none', border: 'none', color: '#0ea5e9', cursor: (p.codigo_ticket || p.requisicion_id) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (p.codigo_ticket || p.requisicion_id) ? 0.3 : 1 }} disabled={!!p.codigo_ticket || !!p.requisicion_id} title="Duplicar renglón">👯</button>
+                      <button onClick={() => setForm({ ...form, partidas: form.partidas.filter((_, idx) => idx !== i) })} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: (p.codigo_ticket || p.requisicion_id) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (p.codigo_ticket || p.requisicion_id) ? 0.3 : 1 }} disabled={!!p.codigo_ticket || !!p.requisicion_id} title="Eliminar renglón">🗑️</button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -1905,8 +1963,9 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                         <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.puBs} onChange={(e) => manejarCambioImprevisto(i, 'puBs', e.target.value)} style={{ textAlign: 'right' }} disabled={imp.puUsd > 0} /></div>
                         <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.puUsd} onChange={(e) => manejarCambioImprevisto(i, 'puUsd', e.target.value)} style={{ textAlign: 'right' }} disabled={imp.puBs > 0} /></div>
                         <div style={{ width: '120px', padding: '6px', textAlign: 'right', fontWeight: 'bold' }}>{((parseFloat(imp.puBs) || parseFloat(imp.puUsd) || 0) * (imp.cant || 1)).toLocaleString('de-DE')}</div>
-                        <div style={{ width: '40px', textAlign: 'center' }}>
-                          <button onClick={() => setForm({ ...form, imprevistos: form.imprevistos.filter((_, idx) => idx !== i) })} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '1rem' }} title="Eliminar imprevisto">🗑️</button>
+                        <div style={{ width: '80px', display: 'flex', gap: '5px', justifyContent: 'center' }}>
+                          <button onClick={() => duplicarImprevisto(i)} style={{ background: 'none', border: 'none', color: '#f59e0b', cursor: (imp.requisicion_id || imp.status === 'Bloqueado') ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (imp.requisicion_id || imp.status === 'Bloqueado') ? 0.3 : 1 }} disabled={!!imp.requisicion_id || imp.status === 'Bloqueado'} title="Duplicar imprevisto">👯</button>
+                          <button onClick={() => setForm({ ...form, imprevistos: form.imprevistos.filter((_, idx) => idx !== i) })} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: (imp.requisicion_id || imp.status === 'Bloqueado') ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (imp.requisicion_id || imp.status === 'Bloqueado') ? 0.3 : 1 }} disabled={!!imp.requisicion_id || imp.status === 'Bloqueado'} title="Eliminar imprevisto">🗑️</button>
                         </div>
                       </div>
                     ))}
@@ -1922,8 +1981,8 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
 
             <div style={{ marginTop: '25px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
               <div style={{ display: 'flex', gap: '10px' }}>
-                <button 
-                  className="sf-btn sf-btn-add" 
+                <button
+                  className="sf-btn sf-btn-add"
                   onClick={() => setForm({ ...form, partidas: [...form.partidas, { id: Date.now(), selected: false, cc: form.partidas[0]?.cc || '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '' }] })}
                   disabled={isExpired}
                   style={{ opacity: isExpired ? 0.5 : 1, cursor: isExpired ? 'not-allowed' : 'pointer' }}
@@ -1942,9 +2001,9 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
               {/* BOTONES */}
               <div style={{ display: 'flex', gap: '10px', alignSelf: 'flex-end' }}>
                 <button className="sf-btn sf-btn-close" onClick={intentarCerrarModal}>CERRAR</button>
-                <button 
-                  className="sf-btn" 
-                  style={{ background: '#f8fafc', border: '1px solid #cbd5e1', color: '#475569', padding: '12px 25px', opacity: isExpired ? 0.5 : 1 }} 
+                <button
+                  className="sf-btn"
+                  style={{ background: '#f8fafc', border: '1px solid #cbd5e1', color: '#475569', padding: '12px 25px', opacity: isExpired ? 0.5 : 1 }}
                   onClick={() => registrarOActualizar(true)}
                   disabled={isExpired}
                 >
@@ -1989,28 +2048,28 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15, 23, 42, 0.9)', backdropFilter: 'blur(12px)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 2000 }}>
           <div style={{ backgroundColor: 'white', width: '450px', borderRadius: '28px', padding: '40px', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)', textAlign: 'center' }}>
             <div style={{ width: '70px', height: '70px', backgroundColor: '#e0f2fe', borderRadius: '20px', display: 'flex', justifyContent: 'center', alignItems: 'center', margin: '0 auto 25px', color: '#0ea5e9' }}>
-               <FileText size={35} />
+              <FileText size={35} />
             </div>
-            
+
             <h2 style={{ fontSize: '1.6rem', color: '#0f172a', fontWeight: '800', marginBottom: '10px' }}>Nueva Solicitud</h2>
             <p style={{ color: '#64748b', fontSize: '14px', marginBottom: '30px', lineHeight: '1.5' }}>Seleccione la Fecha Operativa para verificar la disponibilidad de la semana.</p>
-            
+
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', textAlign: 'left', marginBottom: '30px' }}>
-                <div>
-                   <label style={{ fontSize: '11px', fontWeight: '800', color: '#0f172a', textTransform: 'uppercase', display: 'block', marginBottom: '8px' }}>Fecha Operativa</label>
-                   <input 
-                     type="date" 
-                     className="sf-input" 
-                     value={fechaPreVal} 
-                     onChange={(e) => { 
-                        setFechaPreVal(e.target.value); 
-                        setSolCheckExitosa(false); 
-                        setSolicitudConflictiva(null);
-                        setErrorCheck('');
-                      }}
-                     style={{ width: '100%', padding: '12px' }}
-                   />
-                </div>
+              <div>
+                <label style={{ fontSize: '11px', fontWeight: '800', color: '#0f172a', textTransform: 'uppercase', display: 'block', marginBottom: '8px' }}>Fecha Operativa</label>
+                <input
+                  type="date"
+                  className="sf-input"
+                  value={fechaPreVal}
+                  onChange={(e) => {
+                    setFechaPreVal(e.target.value);
+                    setSolCheckExitosa(false);
+                    setSolicitudConflictiva(null);
+                    setErrorCheck('');
+                  }}
+                  style={{ width: '100%', padding: '12px' }}
+                />
+              </div>
             </div>
 
             {errorCheck && (
@@ -2020,91 +2079,91 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
             )}
 
             <div style={{ display: 'flex', gap: '15px', flexDirection: 'column' }}>
-               <div style={{ display: 'flex', gap: '15px' }}>
-                  <button 
-                    onClick={() => setShowPreVal(false)} 
-                    style={{ flex: 1, padding: '15px', borderRadius: '16px', border: '1px solid #e2e8f0', backgroundColor: 'white', color: '#64748b', fontWeight: 'bold', cursor: 'pointer' }}
-                  >
-                    CANCELAR
-                  </button>
-                  
-                  {!solCheckExitosa && !solicitudConflictiva ? (
-                    <button 
-                      onClick={verificarDisponibilidad} 
-                      disabled={loadingCheck || !fechaPreVal}
-                      style={{ flex: 1.5, padding: '15px', borderRadius: '16px', border: 'none', backgroundColor: '#0f172a', color: 'white', fontWeight: 'bold', cursor: (loadingCheck || !fechaPreVal) ? 'not-allowed' : 'pointer', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '10px' }}
-                    >
-                      {loadingCheck ? <Loader2 className="spinner" size={18} /> : null}
-                      {loadingCheck ? 'VERIFICANDO...' : 'VERIFICAR'}
-                    </button>
-                  ) : null}
+              <div style={{ display: 'flex', gap: '15px' }}>
+                <button
+                  onClick={() => setShowPreVal(false)}
+                  style={{ flex: 1, padding: '15px', borderRadius: '16px', border: '1px solid #e2e8f0', backgroundColor: 'white', color: '#64748b', fontWeight: 'bold', cursor: 'pointer' }}
+                >
+                  CANCELAR
+                </button>
 
-                  {(solCheckExitosa && !solicitudConflictiva) && (
-                    <button 
+                {!solCheckExitosa && !solicitudConflictiva ? (
+                  <button
+                    onClick={verificarDisponibilidad}
+                    disabled={loadingCheck || !fechaPreVal}
+                    style={{ flex: 1.5, padding: '15px', borderRadius: '16px', border: 'none', backgroundColor: '#0f172a', color: 'white', fontWeight: 'bold', cursor: (loadingCheck || !fechaPreVal) ? 'not-allowed' : 'pointer', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '10px' }}
+                  >
+                    {loadingCheck ? <Loader2 className="spinner" size={18} /> : null}
+                    {loadingCheck ? 'VERIFICANDO...' : 'VERIFICAR'}
+                  </button>
+                ) : null}
+
+                {(solCheckExitosa && !solicitudConflictiva) && (
+                  <button
+                    onClick={() => {
+                      setForm({
+                        id: '',
+                        fecha: fechaPreVal,
+                        sede: 'MARACAIBO',
+                        gerencia: currentUser?.departamento || '',
+                        responsable: (['Gerente', 'Coordinador', 'Analista', 'Admin'].includes(currentUser?.rol) || currentUser?.esAdminReal)
+                          ? `${currentUser.nombre} ${currentUser.apellido}`
+                          : '',
+                        partidas: [{ id: Date.now(), selected: false, cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '' }],
+                        imprevistos: [{ id: Date.now() + 1, selected: false, cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '' }]
+                      });
+                      setMostrarImprevistos(false);
+                      setShowPreVal(false);
+                      setShowModal(true);
+                    }}
+                    style={{ flex: 1.5, padding: '15px', borderRadius: '16px', border: 'none', backgroundColor: '#15803d', color: 'white', fontWeight: 'bold', cursor: 'pointer' }}
+                  >
+                    CREAR NUEVA ✅
+                  </button>
+                )}
+              </div>
+
+              {solicitudConflictiva && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <button
+                    onClick={() => {
+                      setShowPreVal(false);
+                      cargarDetallesYEditar({
+                        ...solicitudConflictiva,
+                        id_db: solicitudConflictiva.id,
+                        id: solicitudConflictiva.codigo_control,
+                        responsable: solicitudConflictiva.responsable_nombre,
+                        gerencia: solicitudConflictiva.gerencia_nombre
+                      });
+                    }}
+                    style={{ width: '100%', padding: '15px', borderRadius: '16px', border: 'none', backgroundColor: '#0ea5e9', color: 'white', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+                  >
+                    <i className="fa-solid fa-users"></i> UNIRSE A LA SOLICITUD DE {solicitudConflictiva.responsable_nombre.toUpperCase()}
+                  </button>
+
+                  {esAdminBypass && (
+                    <button
                       onClick={() => {
                         setForm({
-                            id: '',
-                            fecha: fechaPreVal,
-                            sede: 'MARACAIBO',
-                            gerencia: currentUser?.departamento || '',
-                            responsable: (['Gerente', 'Coordinador', 'Analista', 'Admin'].includes(currentUser?.rol) || currentUser?.esAdminReal)
-                              ? `${currentUser.nombre} ${currentUser.apellido}`
-                              : '',
-                            partidas: [{ id: Date.now(), selected: false, cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '' }],
-                            imprevistos: [{ id: Date.now() + 1, selected: false, cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '' }]
+                          id: '',
+                          fecha: fechaPreVal,
+                          sede: 'MARACAIBO',
+                          gerencia: currentUser?.departamento || '',
+                          responsable: `${currentUser.nombre} ${currentUser.apellido}`,
+                          partidas: [{ id: Date.now(), selected: false, cc: ccPreVal, clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '' }],
+                          imprevistos: [{ id: Date.now() + 1, selected: false, cc: ccPreVal, clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '' }]
                         });
                         setMostrarImprevistos(false);
                         setShowPreVal(false);
                         setShowModal(true);
-                      }} 
-                      style={{ flex: 1.5, padding: '15px', borderRadius: '16px', border: 'none', backgroundColor: '#15803d', color: 'white', fontWeight: 'bold', cursor: 'pointer' }}
+                      }}
+                      style={{ width: '100%', padding: '10px', borderRadius: '12px', border: '1px dashed #94a3b8', backgroundColor: '#f8fafc', color: '#475569', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}
                     >
-                      CREAR NUEVA ✅
+                      IGNORAR Y CONTINUAR (EXCEPCIÓN DE ADMINISTRADOR)
                     </button>
                   )}
-               </div>
-
-               {solicitudConflictiva && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    <button 
-                      onClick={() => {
-                        setShowPreVal(false);
-                        cargarDetallesYEditar({
-                            ...solicitudConflictiva,
-                            id_db: solicitudConflictiva.id,
-                            id: solicitudConflictiva.codigo_control,
-                            responsable: solicitudConflictiva.responsable_nombre,
-                            gerencia: solicitudConflictiva.gerencia_nombre
-                        });
-                      }}
-                      style={{ width: '100%', padding: '15px', borderRadius: '16px', border: 'none', backgroundColor: '#0ea5e9', color: 'white', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
-                    >
-                      <i className="fa-solid fa-users"></i> UNIRSE A LA SOLICITUD DE {solicitudConflictiva.responsable_nombre.toUpperCase()}
-                    </button>
-
-                    {esAdminBypass && (
-                      <button 
-                        onClick={() => {
-                          setForm({
-                              id: '',
-                              fecha: fechaPreVal,
-                              sede: 'MARACAIBO',
-                              gerencia: currentUser?.departamento || '',
-                              responsable: `${currentUser.nombre} ${currentUser.apellido}`,
-                              partidas: [{ id: Date.now(), selected: false, cc: ccPreVal, clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '' }],
-                              imprevistos: [{ id: Date.now() + 1, selected: false, cc: ccPreVal, clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '' }]
-                          });
-                          setMostrarImprevistos(false);
-                          setShowPreVal(false);
-                          setShowModal(true);
-                        }}
-                        style={{ width: '100%', padding: '10px', borderRadius: '12px', border: '1px dashed #94a3b8', backgroundColor: '#f8fafc', color: '#475569', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}
-                      >
-                        IGNORAR Y CONTINUAR (EXCEPCIÓN DE ADMINISTRADOR)
-                      </button>
-                    )}
-                  </div>
-               )}
+                </div>
+              )}
             </div>
           </div>
         </div>

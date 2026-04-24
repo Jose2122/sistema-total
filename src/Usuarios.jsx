@@ -30,7 +30,8 @@ const Usuarios = () => {
     capacidades: {},
     delegado_id: '',
     delegacion_desde: '',
-    delegacion_hasta: ''
+    delegacion_hasta: '',
+    obras_asignadas: []
   });
 
   const [userLogs, setUserLogs] = useState([]);
@@ -53,8 +54,9 @@ const Usuarios = () => {
   const CAPACIDADES_DISPONIBLES = [
     { id: 'ver_global', label: 'Ver Historial Global', desc: 'Acceso a todas las sedes' },
     { id: 'ver_departamento', label: 'Ver Historial de Depto.', desc: 'Acceso a su propio departamento' },
-    { id: 'puede_aprobar_area', label: 'Aprobación Nivel 1', desc: 'Gerente de Área' },
-    { id: 'puede_aprobar_final', label: 'Aprobación Nivel 2', desc: 'Gerencia General' },
+    { id: 'puede_aprobar_proyecto', label: 'Aprobación Nivel 0 (Proyecto)', desc: 'Gerente de Proyecto' },
+    { id: 'puede_aprobar_area', label: 'Aprobación Nivel 1 (Área)', desc: 'Gerente de Área' },
+    { id: 'puede_aprobar_final', label: 'Aprobación Nivel 2 (General)', desc: 'Gerencia General' },
     { id: 'gestionar_usuarios', label: 'Gestión de Usuarios', desc: 'Crear/Editar personal' },
     { id: 'acceso_compras', label: 'Módulo de Compras', desc: 'Procesamiento de órdenes' },
     { id: 'gestionar_atributos', label: 'Configuración de Atributos', desc: 'Listas maestras' }
@@ -258,7 +260,8 @@ const Usuarios = () => {
         capacidades: datosForm.capacidades,
         delegado_id: datosForm.delegado_id || null,
         delegacion_desde: datosForm.delegacion_desde || null,
-        delegacion_hasta: datosForm.delegacion_hasta || null
+        delegacion_hasta: datosForm.delegacion_hasta || null,
+        obras_asignadas: datosForm.obras_asignadas || []
       };
 
       if (formData.id) {
@@ -557,7 +560,11 @@ const Usuarios = () => {
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
                       <select className="input-style" style={{ width: '100%' }} value={formData.rol} onChange={e => setFormData({...formData, rol: e.target.value})}>
                         <option value="">Seleccione Cargo...</option>
-                        {cargos.map(c => <option key={c.id} value={c.nombre}>{c.nombre}</option>)}
+                        {cargos
+                          .filter(c => c.nombre !== "Gerente de Proyecto")
+                          .map(c => <option key={c.id} value={c.nombre}>{c.nombre}</option>)
+                        }
+                        <option value="Gerente de Proyecto">Gerente de Proyecto</option>
                       </select>
                       <select className="input-style" value={formData.gerencia_id} onChange={e => setFormData({...formData, gerencia_id: e.target.value})}>
                         <option value="">Departamento...</option>
@@ -580,11 +587,38 @@ const Usuarios = () => {
                   </div>
 
                   <div>
-                    <label style={{ fontSize: '0.65rem', fontWeight: '800', color: '#64748b', display: 'block', marginBottom: '10px' }}>ASIGNACIÓN DE COSTOS</label>
+                    <label style={{ fontSize: '0.65rem', fontWeight: '800', color: '#64748b', display: 'block', marginBottom: '10px' }}>ASIGNACIÓN DE COSTOS (OBRA PRINCIPAL)</label>
                     <select className="input-style" style={{ width: '100%' }} value={formData.contrato} onChange={e => setFormData({...formData, contrato: e.target.value})}>
                       <option value="">Centro de Costo...</option>
                       {centrosCosto.map(cc => <option key={cc.id} value={cc.nombre}>{cc.nombre}</option>)}
                     </select>
+
+                    <label style={{ fontSize: '0.65rem', fontWeight: '800', color: '#64748b', display: 'block', marginTop: '20px', marginBottom: '10px' }}>OBRAS BAJO SU CARGO (MULTI-SELECCIÓN)</label>
+                    <div style={{
+                      maxHeight: '150px',
+                      overflowY: 'auto',
+                      border: '1.5px solid #e2e8f0',
+                      borderRadius: '12px',
+                      padding: '10px',
+                      backgroundColor: 'white'
+                    }}>
+                      {centrosCosto.map(cc => (
+                        <label key={cc.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '5px', fontSize: '0.8rem', cursor: 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={formData.obras_asignadas?.includes(cc.nombre)}
+                            onChange={(e) => {
+                              const list = formData.obras_asignadas || [];
+                              const updated = e.target.checked
+                                ? [...list, cc.nombre]
+                                : list.filter(name => name !== cc.nombre);
+                              setFormData({ ...formData, obras_asignadas: updated });
+                            }}
+                          />
+                          {cc.nombre}
+                        </label>
+                      ))}
+                    </div>
 
                     <div style={{ marginTop: '25px', padding: '20px', borderRadius: '15px', backgroundColor: '#f8fafc', border: '1.5px dashed #e2e8f0', textAlign: 'center' }}>
                       <UserCircle size={40} color="#94a3b8" />

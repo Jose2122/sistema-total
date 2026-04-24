@@ -170,7 +170,8 @@ const ReportesMaestro = () => {
                         cc: r.centro_costo,
                         gerencia: r.gerencia,
                         tipo: 'REQUISICIÓN',
-                        ref: r.correlativo_req || `REQ-${r.id}`
+                        ref: r.correlativo_req || `REQ-${r.id}`,
+                        factura: h.doc_numero || '-'
                     });
                 });
             });
@@ -542,7 +543,8 @@ const ReportesMaestro = () => {
             { header: 'MONTO ($)', key: 'monto', width: 18 },
             { header: 'PROYECTO (CC)', key: 'cc', width: 25 },
             { header: 'GERENCIA', key: 'gerencia', width: 25 },
-            { header: 'REF', key: 'ref', width: 15 }
+            { header: 'REF', key: 'ref', width: 15 },
+            { header: 'N° FACTURA', key: 'factura', width: 18 }
         ];
 
         worksheet.columns = columns;
@@ -558,7 +560,8 @@ const ReportesMaestro = () => {
                 monto: Number(r.monto) || 0,
                 cc: r.cc,
                 gerencia: r.gerencia,
-                ref: r.ref
+                ref: r.ref,
+                factura: r.factura
             });
             if (r.fecha) {
                 try {
@@ -601,16 +604,22 @@ const ReportesMaestro = () => {
             r.descripcion,
             `$ ${(Number(r.monto) || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}`,
             (r.cc || '').split('(')[0],
-            r.gerencia
+            r.gerencia,
+            r.ref,
+            r.factura
         ]);
 
         doc.autoTable({
-            startY: 38,
-            head: [['Fecha', 'Sem', 'Categoría', 'Descripción', 'Monto ($)', 'Proyecto', 'Gerencia']],
+            head: [['FECHA', 'SEM', 'CATEGORÍA', 'DESCRIPCIÓN', 'MONTO ($)', 'PROYECTO', 'GERENCIA', 'REF', 'FACTURA']],
             body: tableData,
-            headStyles: { fillColor: [30, 58, 138], fontSize: 9 },
-            bodyStyles: { fontSize: 8 },
-            columnStyles: { 4: { halign: 'right', fontStyle: 'bold' } },
+            startY: 35,
+            theme: 'grid',
+            headStyles: { fillColor: [30, 58, 138], fontSize: 8 },
+            styles: { fontSize: 7, cellPadding: 2 },
+            columnStyles: {
+                4: { halign: 'right', fontStyle: 'bold' },
+                8: { fontStyle: 'bold', textColor: [37, 99, 235] }
+            },
             foot: [['', '', '', 'TOTAL GENERAL', `$ ${(Number(totalGasto) || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}`, '', '']],
             footStyles: { fillColor: [248, 250, 252], textColor: [15, 23, 42], fontStyle: 'bold' }
         });
@@ -914,7 +923,7 @@ const ReportesMaestro = () => {
                                 <div className="rm-table-card">
                                     <table className="rm-table">
                                         <thead>
-                                            <tr><th>FECHA</th><th>SEM</th><th>CATEGORÍA</th><th>DESCRIPCIÓN</th><th style={{ textAlign: 'right' }}>MONTO</th><th>PROYECTO</th><th>GERENCIA</th></tr>
+                                            <tr><th>FECHA</th><th>SEM</th><th>CATEGORÍA</th><th>DESCRIPCIÓN</th><th style={{ textAlign: 'right' }}>MONTO</th><th>PROYECTO</th><th>GERENCIA</th><th>N° FACTURA</th></tr>
                                         </thead>
                                         <tbody>
                                             {costosRows.map((r) => (
@@ -926,6 +935,7 @@ const ReportesMaestro = () => {
                                                     <td className="rm-td-amount">$ {(r.monto || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
                                                     <td className="rm-td-cc">{r.cc?.split('(')[0]}</td>
                                                     <td className="rm-td-gerencia">{r.gerencia}</td>
+                                                    <td style={{ fontSize: '10px', fontWeight: 'bold', color: '#3b82f6' }}>{r.factura}</td>
                                                 </tr>
                                             ))}
                                         </tbody>

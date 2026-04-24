@@ -20,6 +20,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     const r = (rol || '').toLowerCase();
     if (r.includes('analista')) return 1;
     if (r.includes('coordinador')) return 2;
+    if (r.includes('gerente de proyecto')) return 2.5;
+    if (r.includes('gerente de área') || r.includes('gerente area')) return 3;
     if (r.includes('gerente general') || r.includes('admin')) return 4;
     if (r.includes('gerente')) return 3;
     return 0;
@@ -67,7 +69,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
   ]);
   const [showRechazoModal, setShowRechazoModal] = useState(false);
   const [motivoRechazo, setMotivoRechazo] = useState('');
-  const [rechazoAction, setRechazoAction] = useState(null); // 'area' o 'general'
+  const [rechazoAction, setRechazoAction] = useState(null); // 'proyecto', 'area' o 'general'
   const [expandirHistorial, setExpandirHistorial] = useState({}); // { itemID: boolean }
   const [editandoObs, setEditandoObs] = useState(false);
   const [obsTemporal, setObsTemporal] = useState('');
@@ -122,8 +124,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       const esGG = rolUpper.includes('GERENTE') || rolUpper.includes('ADMIN') || emailActual === 'cvega@totalclean.com' || emailActual === 'cvega.totalclean@gmail.com';
       const esPrivilegiado = esAdminReal || esGG || deptoUpper.includes('ADMINISTRACIÓN');
 
-      // 1. Obtener todos los perfiles para el Triple Match local (al no haber FK)
-      const { data: perfilesDB } = await supabase.from('perfiles').select('id, rol, departamento, gerencia_id');
+      // 1. Obtener todos los perfiles para el Triple Match local y Obras Asignadas
+      const { data: perfilesDB } = await supabase.from('perfiles').select('id, rol, departamento, gerencia_id, obras_asignadas');
 
 
       if (!esPrivilegiado) {
@@ -142,16 +144,23 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
 
         if (!esPrivilegiado) {
           finalData = data.filter(req => {
-            // REGLA FUNDAMENTAL: Siempre puede ver lo suyo (Por ID o por coincidencia de nombre si es antigua)
+            // REGLA FUNDAMENTAL: Siempre puede ver lo suyo
             if (currentUser.id && req.user_id === currentUser.id) return true;
             if (req.solicitante && req.solicitante.toLowerCase().includes((currentUser.nombre || '').toLowerCase().split(' ')[0])) return true;
 
             const creador = (perfilesDB || []).find(p => p.id === req.user_id);
+
+            // NUEVA LÓGICA: Restricción por obras_asignadas para Gerentes de Proyecto y Analistas
+            const misObras = currentUser.obras_asignadas || [];
+            if (misObras.length > 0 && (rolUpper.includes('PROYECTO') || rolUpper.includes('ANALISTA'))) {
+              if (misObras.includes(req.centro_costo)) return true;
+            }
+
             // Si tiene user_id pero no lo encontramos en perfiles, lo dejamos pasar por si acaso
             if (req.user_id && !creador) return true;
-            // Si NO tiene user_id y no coincidió el nombre arriba, sigue las reglas de depto
+
             if (!creador) {
-               return (req.gerencia || '').toLowerCase() === (currentUser.departamento || '').toLowerCase();
+              return (req.gerencia || '').toLowerCase() === (currentUser.departamento || '').toLowerCase();
             }
 
             const matchDepto = (creador.departamento || '').toLowerCase() === (currentUser.departamento || '').toLowerCase();
@@ -179,6 +188,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
           gerencia: db.gerencia,
           aprobado_gerente_area: db.aprobado_gerente_area || false,
           aprobado_gerente_general: db.aprobado_gerente_general || false,
+          aprobado_gerente_proyecto: db.aprobado_gerente_proyecto || false,
           estado_aprobacion: db.estado_aprobacion || 'pendiente_area',
           motivo_rechazo: db.motivo_rechazo || '',
           firma_gerente_general: db.firma_gerente_general,
@@ -196,6 +206,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
         setListaGerencias(gerencias);
 
         // Por defecto para Gerentes: mostrar lo que tienen pendiente
+        if (myRank === 2.5 && filtroAprobacion === 'Todos') setFiltroAprobacion('pendiente_proyecto');
         if (myRank === 3 && filtroAprobacion === 'Todos') setFiltroAprobacion('pendiente_area');
         if (myRank === 4 && filtroAprobacion === 'Todos') setFiltroAprobacion('enviada_general');
 
@@ -349,7 +360,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     "Servicios Generales", "Contabilidad"
   ];
 
-  const unidades = ["UNID", "KG", "LTS", "ML", "M2", "M3", "SERV", "SG", "BOLSAS", "VIAJES"];
+  const unidades = ["UNID", "KG", "LTS", "ML", "M2", "M3", "SERV", "SG", "BOLSAS", "VIAJES", "Gal", "Sacos", "Rollo", "Pipa", "Jgo"];
 
   const calcularTotales = () => {
     // Estimado: Cantidad original por precio estimado
@@ -457,7 +468,11 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     setRenglones(prev => prev.map(f => {
       if (f.id === id) {
         let v = valor;
-        if (campo === 'cant' || campo === 'pu') v = Math.max(0, Number(valor) || 0);
+        if (campo === 'cant' || campo === 'pu') {
+          // Si el valor es vacío o solo un cero, lo dejamos como cadena vacía para permitir escribir
+          if (valor === '' || valor === '0') v = '';
+          else v = Math.max(0, Number(valor) || 0);
+        }
         const act = { ...f, [campo]: v };
         if (campo === 'clasificacion') act.categoria = ''; // Reset hijo
         if (campo === 'pu') act.pu_estimado = v;
@@ -466,6 +481,24 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       }
       return f;
     }));
+  };
+
+  const duplicarRenglon = (id) => {
+    const original = renglones.find(r => r.id === id);
+    if (!original) return;
+    const nuevo = {
+      ...original,
+      id: Date.now() + Math.random(),
+      descripcion: '', // Se deja vacío para edición manual
+      cant: 1,
+      pu: 0,
+      total: 0,
+      status: 'En Espera'
+    };
+    const index = renglones.findIndex(r => r.id === id);
+    const nuevosRenglones = [...renglones];
+    nuevosRenglones.splice(index + 1, 0, nuevo);
+    setRenglones(nuevosRenglones);
   };
 
   const liberarPartidasFondos = async (requisicionId) => {
@@ -576,8 +609,15 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     setShowModal(true);
   };
 
+  const manejarRechazarGerenteProyecto = () => {
+    if (!editandoId || !currentUser?.rol?.toLowerCase()?.includes('proyecto')) return;
+    setMotivoRechazo('');
+    setRechazoAction('proyecto');
+    setShowRechazoModal(true);
+  };
+
   const manejarRechazarGerenteArea = () => {
-    if (!editandoId || currentUser?.rol !== 'Gerente') return;
+    if (!editandoId || !currentUser?.rol?.toLowerCase()?.includes('gerente')) return;
     setMotivoRechazo('');
     setRechazoAction('area');
     setShowRechazoModal(true);
@@ -608,7 +648,10 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
         motivo_rechazo: motivoRechazo,
       };
 
-      if (rechazoAction === 'area') {
+      if (rechazoAction === 'proyecto') {
+        updatePayload.aprobacion_nombre = 'Rechazado por Proyecto';
+        updatePayload.aprobado_gerente_proyecto = false;
+      } else if (rechazoAction === 'area') {
         updatePayload.aprobacion_nombre = 'Rechazado por Área';
         updatePayload.aprobado_gerente_area = false;
       } else {
@@ -781,8 +824,55 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     }
   };
 
+  const eliminarSoporteDefinitivo = async (index) => {
+    if (!editandoId) return;
+
+    const confirmacion = window.confirm("¿Está seguro de que desea eliminar este documento permanentemente?");
+    if (!confirmacion) return;
+
+    try {
+      const nuevasUrls = [...facturasUrls];
+      nuevasUrls.splice(index, 1);
+
+      setFacturasUrls(nuevasUrls);
+
+      const { error } = await supabase
+        .from('requisiciones')
+        .update({ facturas_url: nuevasUrls })
+        .eq('id', editandoId);
+
+      if (error) throw error;
+
+      toast.success("Documento eliminado.");
+      await cargarHistorialDesdeBD();
+    } catch (err) {
+      toast.error("Error al eliminar: " + err.message);
+    }
+  };
+
+  const manejarAprobarGerenteProyecto = async () => {
+    if (!editandoId || !currentUser?.rol?.toLowerCase()?.includes('proyecto')) {
+      toast.error('Solo el Gerente de Proyecto puede realizar esta aprobación.');
+      return;
+    }
+    setLoading(true);
+    try {
+      const { error } = await supabase.from('requisiciones').update({
+        aprobado_gerente_proyecto: true,
+        firma_gerente_proyecto: currentUser.firma_url || null,
+        estado_aprobacion: 'pendiente_area',
+        aprobacion_nombre: 'Aprobado por Proyecto'
+      }).eq('id', editandoId);
+      if (error) throw error;
+      toast.success('Aprobada por Gerente de Proyecto. Enviada al Gerente de Área.');
+      await cargarHistorialDesdeBD();
+      setShowModal(false);
+      resetearFormulario();
+    } catch (err) { toast.error(err.message); } finally { setLoading(false); }
+  };
+
   const manejarAprobarGerenteArea = async () => {
-    if (!editandoId || currentUser?.rol !== 'Gerente') {
+    if (!editandoId || !currentUser?.rol?.toLowerCase()?.includes('gerente')) {
       toast.error('Solo el Gerente de Área puede realizar esta aprobación.');
       return;
     }
@@ -953,7 +1043,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
           justificacion,
           observaciones,
           id_referencia_proyecto: idReferenciaProyecto,
-          total_bs: Number(totalEstimado) || 0
+          total_bs: Number(totalEstimado) || 0,
+          facturas_url: facturasUrls
         }).eq('id', editandoId);
         if (error) throw error;
 
@@ -986,6 +1077,9 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     const ejecutarGuardarUpdate = async (id) => {
       setLoading(true);
       try {
+        const { data: antigua } = await supabase.from('requisiciones').select('items').eq('id', id).single();
+        const itemsAntiguos = antigua?.items || [];
+
         const { error } = await supabase.from('requisiciones').update({
           fecha_requerida: fechaRequerida,
           centro_costo: centroCosto,
@@ -994,11 +1088,60 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
           justificacion,
           observaciones,
           id_referencia_proyecto: idReferenciaProyecto,
-          total_bs: Number(totalEstimado) || 0
+          total_bs: Number(totalEstimado) || 0,
+          facturas_url: facturasUrls
         }).eq('id', id);
         if (error) throw error;
 
-        toast.success("Cambios guardados.");
+        // --- SINCRONIZACIÓN Y AUDITORÍA ---
+        for (let i = 0; i < renglones.length; i++) {
+          const itemNuevo = renglones[i];
+          const itemViejo = itemsAntiguos[i] || {};
+
+          // Si hubo cambios, registrar en auditoría
+          if (JSON.stringify(itemNuevo) !== JSON.stringify(itemViejo)) {
+            await supabase.from('historial_acciones').insert([{
+              requisicion_id: id,
+              usuario_nombre: currentUser?.nombre || 'Usuario',
+              accion: 'EDICIÓN',
+              campo: `ITEM_${i}`,
+              valor_anterior: JSON.stringify(itemViejo),
+              valor_nuevo: JSON.stringify(itemNuevo)
+            }]);
+
+            // Sincronizar con Solicitud de Fondos (Proyecciones)
+            // Buscamos si existe una fila en solicitudes_fondos vinculada a esta requisición y este item_idx
+            const { data: fondSync } = await supabase
+              .from('solicitudes_fondos')
+              .select('*')
+              .eq('requisicion_id', id);
+
+            if (fondSync && fondSync.length > 0) {
+              for (const sol of fondSync) {
+                const itemsSol = sol.items || [];
+                const idxEnSol = itemsSol.findIndex(s => s.item_idx_original === i);
+
+                if (idxEnSol !== -1) {
+                  itemsSol[idxEnSol] = {
+                    ...itemsSol[idxEnSol],
+                    descripcion: itemNuevo.descripcion,
+                    cant: itemNuevo.cant,
+                    monto: itemNuevo.precio_unitario || itemsSol[idxEnSol].monto,
+                    total: (itemNuevo.cant || 0) * (itemNuevo.precio_unitario || 0)
+                  };
+
+                  const nuevoTotalSol = itemsSol.reduce((acc, curr) => acc + (curr.total || 0), 0);
+                  await supabase.from('solicitudes_fondos').update({
+                    items: itemsSol,
+                    monto_total: nuevoTotalSol
+                  }).eq('id', sol.id);
+                }
+              }
+            }
+          }
+        }
+
+        toast.success("Cambios sincronizados con éxito.");
         await cargarHistorialDesdeBD();
         setShowModal(false);
         resetearFormulario();
@@ -1044,14 +1187,15 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       status_compra: 'En espera',
       aprobacion: false,
       aprobacion_nombre: 'Pendiente',
-      estado_aprobacion: 'pendiente_area',
+      estado_aprobacion: 'pendiente_area', // Por defecto
       total_bs: Number(totalEstimado) || 0,
       items: renglones,
       justificacion,
       observaciones,
       id_referencia_proyecto: idReferenciaProyecto,
       origen: datosPredefinidos ? `REF: ${datosPredefinidos.id_control}` : 'Manual',
-      user_id: currentUser.id
+      user_id: currentUser.id,
+      facturas_url: facturasUrls
     };
 
     // VALIDACIÓN ESTRICTA DE CLASIFICACIÓN PARA NUEVA REQ
@@ -1102,6 +1246,22 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       ), { duration: 6000, position: 'top-center' });
       setLoading(false);
       return;
+    }
+
+    // DETERMINAR SI TIENE GERENTE DE PROYECTO ASIGNADO
+    try {
+      const { data: gProyectos } = await supabase
+        .from('perfiles')
+        .select('id')
+        .contains('obras_asignadas', [centroCosto])
+        .ilike('rol', '%proyecto%');
+
+      if (gProyectos && gProyectos.length > 0) {
+        nuevaReqBD.estado_aprobacion = 'pendiente_proyecto';
+        nuevaReqBD.aprobacion_nombre = 'Pendiente por Proyecto';
+      }
+    } catch (err) {
+      console.error("Error verificando gerente de proyecto:", err);
     }
 
     await ejecutarGuardarNueva(nuevaReqBD);
@@ -1227,12 +1387,13 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       <div className="dashboard-container" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '15px', marginBottom: '25px' }}>
         {[
           { label: 'TOTAL REQUISICIONES', val: historial.length, col: '#030712', filter: 'Todos' },
+          { label: 'GERENTE PROYECTO', val: historial.filter(r => r.estado_aprobacion === 'pendiente_proyecto').length, col: '#030712', filter: 'pendiente_proyecto' },
           { label: 'GERENTE ÁREA', val: historial.filter(r => r.estado_aprobacion === 'pendiente_area').length, col: '#030712', filter: 'pendiente_area' },
           { label: 'POR APROBAR', val: historial.filter(r => r.estado_aprobacion === 'enviada_general').length, col: '#030712', filter: 'enviada_general' },
           { label: 'APROBADA GLOBAL', val: historial.filter(r => r.estado_aprobacion === 'aprobado_final').length, col: '#030712', filter: 'aprobado_final' },
           { label: 'RECHAZADA', val: historial.filter(r => r.estado_aprobacion === 'rechazada').length, col: '#030712', filter: 'rechazada' },
           { label: 'ANULADA', val: historial.filter(r => r.estado_aprobacion === 'ANULADA').length, col: '#030712', filter: 'ANULADA' }
-        ].filter(x => !(currentUser?.rol === 'Gerente General' && x.filter === 'pendiente_area')).map((x, i) => {
+        ].filter(x => !(currentUser?.rol === 'Gerente General' && (x.filter === 'pendiente_area' || x.filter === 'pendiente_proyecto'))).map((x, i) => {
           const colorBorde = x.col; // El color del estatus solo para el borde
           const colorTexto = '#1e293b'; // Azul oscuro/Gris carbón profesional para todo el texto
           return (
@@ -1423,9 +1584,10 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                     width: '100%'
                   }}>
                     {req.estado_aprobacion === 'aprobado_final' ? 'APROBADA' :
-                      req.estado_aprobacion === 'pendiente_area' || req.estado_aprobacion === 'enviada_area' ? 'GERENTE DE ÁREA' :
-                        req.estado_aprobacion === 'enviada_general' ? 'GERENTE GENERAL' :
-                          req.estado_aprobacion?.replace('_', ' ') || 'PENDIENTE'}
+                      req.estado_aprobacion === 'pendiente_proyecto' ? 'GERENTE DE PROYECTO' :
+                        req.estado_aprobacion === 'pendiente_area' || req.estado_aprobacion === 'enviada_area' ? 'GERENTE DE ÁREA' :
+                          req.estado_aprobacion === 'enviada_general' ? 'GERENTE GENERAL' :
+                            req.estado_aprobacion?.replace('_', ' ') || 'PENDIENTE'}
                   </span>
                 </td>
 
@@ -1465,8 +1627,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                   <div style={{ display: 'flex', justifyContent: 'center', gap: '15px' }}>
                     <button onClick={(e) => { e.stopPropagation(); verRequisicion(req); }} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '1.2rem' }} title="Ver Detalles">👁️</button>
 
-                    {/* Solo José puede Anular */}
-                    {req.estado_aprobacion !== 'ANULADA' && currentUser?.correo?.toLowerCase() === 'jcontreras.totalclean@gmail.com' && (
+                    {/* Solo José y Analistas pueden Anular */}
+                    {req.estado_aprobacion !== 'ANULADA' && (currentUser?.correo?.toLowerCase() === 'jcontreras.totalclean@gmail.com' || (currentUser?.rol || '').toLowerCase().includes('analista')) && (
                       <button onClick={(e) => { e.stopPropagation(); anularRequisicion(req.id); }} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '1.2rem' }} title="Anular Requisición">🚫</button>
                     )}
 
@@ -1652,6 +1814,12 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                       style={{ minHeight: '80px', paddingTop: '10px' }}
                       value={obsTemporal}
                       onChange={(e) => setObsTemporal(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          guardarObservacionesDirecto();
+                        }
+                      }}
                       placeholder="Actualice las observaciones aquí..."
                     />
                     <div style={{ display: 'flex', gap: '8px' }}>
@@ -1722,17 +1890,17 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                           transition={{ duration: 0.3 }}
                         >
                           <td style={{ textAlign: 'center' }}>{index + 1}</td>
-                          <td><input className="input-tc" value={f.clasificacion} onChange={(e) => actualizarFila(f.id, 'clasificacion', e.target.value)} disabled={!!editandoId} /></td>
-                          <td><input className="input-tc" value={f.categoria} onChange={(e) => actualizarFila(f.id, 'categoria', e.target.value)} disabled={!!editandoId} /></td>
-                          <td><input className="input-tc" type="number" value={f.cant} onChange={(e) => actualizarFila(f.id, 'cant', e.target.value)} disabled={!!editandoId} /></td>
+                          <td><input className="input-tc" value={f.clasificacion} onChange={(e) => actualizarFila(f.id, 'clasificacion', e.target.value)} /></td>
+                          <td><input className="input-tc" value={f.categoria} onChange={(e) => actualizarFila(f.id, 'categoria', e.target.value)} /></td>
+                          <td><input className="input-tc" type="number" value={f.cant === '' ? '' : Number(f.cant)} onChange={(e) => actualizarFila(f.id, 'cant', e.target.value)} /></td>
                           <td>
-                            <select className="input-tc" value={f.uni} onChange={(e) => actualizarFila(f.id, 'uni', e.target.value)} disabled={!!editandoId}>
+                            <select className="input-tc" value={f.uni} onChange={(e) => actualizarFila(f.id, 'uni', e.target.value)}>
                               {unidades.map(u => <option key={u} value={u}>{u}</option>)}
                             </select>
                           </td>
-                          <td><textarea className="input-tc" value={f.descripcion} onChange={(e) => actualizarFila(f.id, 'descripcion', e.target.value)} style={{ resize: 'vertical', minHeight: '38px', paddingTop: '8px', width: '100%', boxSizing: 'border-box' }} rows="1" disabled={!!editandoId} /></td>
-                          <td><input className="input-tc" value={f.beneficiario} onChange={(e) => actualizarFila(f.id, 'beneficiario', e.target.value)} placeholder="Beneficiario" disabled={!!editandoId} /></td>
-                          <td><input className="input-tc" type="number" value={f.pu} style={{ textAlign: 'right' }} onChange={(e) => actualizarFila(f.id, 'pu', e.target.value)} disabled={!!editandoId} /></td>
+                          <td><textarea className="input-tc" value={f.descripcion} onChange={(e) => actualizarFila(f.id, 'descripcion', e.target.value)} style={{ resize: 'vertical', minHeight: '38px', paddingTop: '8px', width: '100%', boxSizing: 'border-box' }} rows="1" /></td>
+                          <td><input className="input-tc" value={f.beneficiario} onChange={(e) => actualizarFila(f.id, 'beneficiario', e.target.value)} placeholder="Beneficiario" /></td>
+                          <td><input className="input-tc" type="number" value={f.pu === '' ? '' : Number(f.pu)} style={{ textAlign: 'right' }} onChange={(e) => actualizarFila(f.id, 'pu', e.target.value)} /></td>
                           <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{f.total.toLocaleString('de-DE')}</td>
                           <td style={{ textAlign: 'center' }}>
                             <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', alignItems: 'center' }}>
@@ -1747,6 +1915,13 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                             </div>
                           </td>
                           <td style={{ textAlign: 'center' }}>
+                            <button
+                              onClick={() => duplicarRenglon(f.id)}
+                              style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '1rem' }}
+                              title="Duplicar Renglón"
+                            >
+                              👯
+                            </button>
                           </td>
                         </motion.tr>
                         {expandirHistorial[f.id] && f.historial_compras?.length > 0 && (
@@ -1852,50 +2027,38 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                       </div>
 
                       <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap' }}>
-                        {(historial.find(h => String(h.id) === String(editandoId))?.facturas_url || []).map((item, idx) => {
+                        {(facturasUrls || []).map((item, idx) => {
                           const url = typeof item === 'string' ? item : item?.url;
                           const etiqueta = typeof item === 'string' ? 'Archivo' : (item?.etiqueta || 'Sin etiqueta');
                           if (!url || url.length < 5) return null;
 
                           const isImg = /\.(jpg|jpeg|png|webp|avif|gif)$/i.test(url.split('?')[0]);
                           return (
-                            <div key={idx} style={{ position: 'relative', display: 'flex', flexDirection: 'column', gap: '5px', width: '80px' }}>
+                            <div key={idx} style={{ position: 'relative', display: 'flex', flexDirection: 'column', gap: '5px', width: '90px' }}>
                               <a href={url} target="_blank" rel="noreferrer" style={{
                                 display: 'block',
-                                width: '80px', height: '80px',
-                                borderRadius: '12px',
+                                width: '90px', height: '90px',
+                                borderRadius: '16px',
                                 overflow: 'hidden',
                                 border: '2px solid #e2e8f0',
                                 backgroundColor: 'white',
-                                boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'
-                              }}>
+                                boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)',
+                                transition: 'transform 0.2s'
+                              }} onMouseOver={(e) => e.currentTarget.style.transform = 'scale(1.05)'} onMouseOut={(e) => e.currentTarget.style.transform = 'scale(1)'}>
                                 {isImg ? (
                                   <img src={url} alt={`Soporte ${idx}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                                 ) : (
-                                  <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f8fafc', color: '#ef4444' }}>
-                                    <FileText size={24} />
-                                    <span style={{ fontSize: '0.5rem', fontWeight: 'bold', marginTop: '4px', color: '#64748b' }}>VER PDF</span>
+                                  <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backgroundColor: '#fef2f2', color: '#ef4444' }}>
+                                    <FileText size={28} />
+                                    <span style={{ fontSize: '0.6rem', fontWeight: '900', marginTop: '4px' }}>PDF</span>
                                   </div>
                                 )}
                               </a>
-                              <input
-                                type="text"
-                                placeholder="Nombre..."
-                                value={etiqueta}
-                                onChange={(e) => renombrarAdjunto(idx, e.target.value)}
-                                style={{
-                                  fontSize: '0.6rem',
-                                  padding: '2px 4px',
-                                  border: '1px solid #cbd5e1',
-                                  borderRadius: '4px',
-                                  width: '100%',
-                                  boxSizing: 'border-box',
-                                  backgroundColor: 'white',
-                                  textAlign: 'center'
-                                }}
-                              />
+                              <div style={{ fontSize: '0.65rem', fontWeight: '700', textAlign: 'center', color: '#475569', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {etiqueta}
+                              </div>
                               <button
-                                onClick={() => eliminarSoporteReal(idx, url)}
+                                onClick={() => eliminarSoporteDefinitivo(idx)}
                                 style={{ position: 'absolute', top: '-8px', right: '-8px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '50%', width: '22px', height: '22px', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 4px rgba(0,0,0,0.2)', fontWeight: 'bold', zIndex: 10 }}
                                 title="Eliminar Soporte"
                               >
@@ -1977,8 +2140,21 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                           </button>
                         )}
 
+                      {/* BOTONES PARA GERENTE DE PROYECTO */}
+                      {currentUser?.rol?.toLowerCase()?.includes('proyecto') &&
+                        historial.find(h => String(h.id) === String(editandoId))?.estado_aprobacion === 'pendiente_proyecto' && (
+                          <>
+                            <button className="btn-tc btn-tc-danger" onClick={manejarRechazarGerenteProyecto} disabled={loading}>
+                              {loading ? <Loader2 className="animate-spin" size={16} /> : 'RECHAZAR'}
+                            </button>
+                            <button className="btn-tc btn-tc-success" onClick={manejarAprobarGerenteProyecto} disabled={loading}>
+                              {loading ? <Loader2 className="animate-spin" size={16} /> : '✓ APROBAR PROYECTO'}
+                            </button>
+                          </>
+                        )}
+
                       {/* BOTONES PARA GERENTE DE ÁREA (Nivel 1) */}
-                      {currentUser?.rol === 'Gerente' &&
+                      {currentUser?.rol?.toLowerCase()?.includes('gerente') && !currentUser?.rol?.toLowerCase()?.includes('general') &&
                         historial.find(h => String(h.id) === String(editandoId))?.estado_aprobacion === 'pendiente_area' && (
                           <>
                             <button className="btn-tc btn-tc-danger" onClick={manejarRechazarGerenteArea} disabled={loading}>

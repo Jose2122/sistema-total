@@ -36,7 +36,8 @@ import {
   FileImage,
   Loader2,
   Eye,
-  Calendar
+  Calendar,
+  Copy
 } from 'lucide-react';
 import { format, getWeek } from 'date-fns';
 import toast from 'react-hot-toast';
@@ -404,6 +405,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
     setForm({ ...form, partidas: nuevas, status: nuevoStatus });
   };
 
+  const añadirRenglon = () => {
     setForm({
       ...form,
       partidas: [...form.partidas, { 
@@ -423,8 +425,9 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
         pago_realizado: false
       }]
     });
+  };
 
-  const eliminarRenglón = (id) => {
+  const eliminarRenglon = (id) => {
     if (form.partidas.length > 1) {
       setForm({ ...form, partidas: form.partidas.filter(p => p.id !== id) });
     }
@@ -678,9 +681,11 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
   }, [historial, busqueda]);
 
   return (
-    <div className="te-container animate-fade-in">
+    <div className="te-container animate-fade-in" style={datosPredefinidos ? { background: 'transparent', padding: 0, boxShadow: 'none', border: 'none' } : {}}>
 
-      {/* HEADER SECTION */}
+      {!datosPredefinidos && (
+        <>
+          {/* HEADER SECTION */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
         <div>
           <h1 className="te-title">Ticket de Pago</h1>
@@ -841,11 +846,13 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
           </tbody>
         </table>
       </div>
+      </>
+      )}
 
       {/* MODAL EMISIÓN TICKET */}
       {showModal && (
-        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15, 23, 42, 0.4)', backdropFilter: 'blur(8px)', zIndex: 9999, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-          <div className="te-card animate-fade-in" style={{ width: '95%', maxWidth: '1400px', maxHeight: '90vh', overflowY: 'auto', background: 'white' }}>
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'transparent', zIndex: 9999, display: 'flex', justifyContent: 'center', alignItems: 'center', pointerEvents: 'none' }}>
+          <div className="te-card animate-fade-in" style={{ width: '90%', maxWidth: '1300px', maxHeight: '90vh', overflowY: 'auto', background: 'white', borderRadius: '24px', boxShadow: '0 25px 80px rgba(0,0,0,0.4)', pointerEvents: 'auto' }}>
 
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '24px', paddingBottom: '16px', borderBottom: '1px solid #f1f5f9' }}>
               <div>
@@ -957,15 +964,13 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
                       <td className="te-td" style={{ textAlign: 'right', fontWeight: '800', color: '#b45309' }}>$ {p.total.toLocaleString('de-DE')}</td>
                       <td className="te-td">
                       </td>
-                      <td className="te-td">
-                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
               {!isEditing && !form.solicitud_ref && (
-                <div style={{ padding: '12px', background: '#f8fafc', borderTop: '1px solid #e2e880' }}>
-                  <button className="te-btn te-btn-outline" onClick={añadirRenglón} style={{ fontSize: '0.75rem' }}><Plus size={14} /> Añadir otro renglón</button>
+                <div style={{ padding: '12px', background: '#f8fafc', borderTop: '1px solid #e2e8f0' }}>
+                  <button className="te-btn te-btn-outline" onClick={añadirRenglon} style={{ fontSize: '0.75rem' }}><Plus size={14} /> Añadir otro renglón</button>
                 </div>
               )}
             </div>

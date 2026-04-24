@@ -12,6 +12,12 @@ const Proveedores = () => {
   const [filtroCategoria, setFiltroCategoria] = useState('Todos');
   const [saving, setSaving] = useState(false);
 
+  const LISTA_CATEGORIAS = [
+    "SERVICIO", "REPUESTO", "ALIMENTACIÓN", "TECNOLOGÍA", "PAPELERÍA", 
+    "LIMPIEZA", "MANTENIMIENTO", "FERRETERÍA", "CONSUMIBLE", "EQUIPO",
+    "TRANSPORTE", "OTROS"
+  ];
+
   const [formData, setFormData] = useState({
     id: null,
     rif: '',
@@ -19,7 +25,7 @@ const Proveedores = () => {
     correo: '',
     telefono: '',
     direccion: '',
-    categoria: '',
+    categoria: [], // Cambiado a array
     status: true
   });
 
@@ -105,7 +111,7 @@ const Proveedores = () => {
             correo: formData.correo,
             telefono: formData.telefono,
             direccion: formData.direccion,
-            categoria: formData.categoria,
+            categoria: Array.isArray(formData.categoria) ? formData.categoria.join(', ') : formData.categoria,
             status: formData.status
           })
           .eq('id', formData.id);
@@ -120,7 +126,7 @@ const Proveedores = () => {
             correo: formData.correo,
             telefono: formData.telefono,
             direccion: formData.direccion,
-            categoria: formData.categoria,
+            categoria: Array.isArray(formData.categoria) ? formData.categoria.join(', ') : formData.categoria,
             status: formData.status
           }]);
         if (error) throw error;
@@ -172,28 +178,39 @@ const Proveedores = () => {
       correo: '',
       telefono: '',
       direccion: '',
-      categoria: '',
+      categoria: [],
       status: true
     });
   };
 
   const handleEdit = (p) => {
-    setFormData(p);
+    setFormData({
+        ...p,
+        categoria: p.categoria ? p.categoria.split(', ').filter(c => c) : []
+    });
     setShowModal(true);
   };
 
   const categoriasUnicas = useMemo(() => {
     const cats = new Set();
     proveedores.forEach(p => {
-      if (p.categoria) cats.add(p.categoria);
+      if (p.categoria) {
+        const pCats = p.categoria.split(', ').filter(c => c);
+        pCats.forEach(c => cats.add(c));
+      }
     });
+    // Asegurar que las categorías de la lista también estén presentes si se desea
+    LISTA_CATEGORIAS.forEach(c => cats.add(c));
     return Array.from(cats).sort();
   }, [proveedores]);
 
   const proveedoresFiltrados = proveedores.filter(p => {
     const matchTexto = p.razon_social?.toLowerCase().includes(busqueda.toLowerCase()) ||
                        p.rif?.toLowerCase().includes(busqueda.toLowerCase());
-    const matchCat = filtroCategoria === 'Todos' || p.categoria === filtroCategoria;
+    
+    const pCats = p.categoria ? p.categoria.split(', ').filter(c => c) : [];
+    const matchCat = filtroCategoria === 'Todos' || pCats.includes(filtroCategoria);
+    
     return matchTexto && matchCat;
   });
 
@@ -272,11 +289,13 @@ const Proveedores = () => {
                     <td className="rif-cell">{p.rif}</td>
                     <td className="name-cell">{p.razon_social}</td>
                     <td>
-                      {p.categoria ? (
-                        <span style={{ backgroundColor: '#f1f5f9', padding: '4px 10px', borderRadius: '8px', fontSize: '0.65rem', fontWeight: '800', color: '#475569' }}>
-                          {p.categoria}
-                        </span>
-                      ) : <span style={{ color: '#cbd5e1' }}>-</span>}
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                        {p.categoria ? p.categoria.split(', ').map((cat, i) => (
+                          <span key={i} style={{ backgroundColor: '#f1f5f9', padding: '2px 8px', borderRadius: '6px', fontSize: '0.6rem', fontWeight: '800', color: '#475569', border: '1px solid #e2e8f0' }}>
+                            {cat}
+                          </span>
+                        )) : <span style={{ color: '#cbd5e1' }}>-</span>}
+                      </div>
                     </td>
                     <td>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
@@ -382,17 +401,48 @@ const Proveedores = () => {
                 </div>
 
                 <div className="prov-field">
-                  <label className="prov-label">Categoría del Proveedor</label>
-                  <input 
-                    className="prov-input"
-                    placeholder="Ej: SERVICIOS, REPUESTOS, ALIMENTOS..."
-                    value={formData.categoria}
-                    onChange={e => setFormData({...formData, categoria: e.target.value.toUpperCase()})}
-                    list="cat-suggestions"
-                  />
-                  <datalist id="cat-suggestions">
-                    {categoriasUnicas.map(cat => <option key={cat} value={cat} />)}
-                  </datalist>
+                  <label className="prov-label">Categorías del Proveedor (Multi-selección)</label>
+                  <div style={{ 
+                    display: 'flex', 
+                    flexWrap: 'wrap', 
+                    gap: '8px', 
+                    padding: '12px', 
+                    border: '1px solid #e2e8f0', 
+                    borderRadius: '12px',
+                    backgroundColor: '#f8fafc'
+                  }}>
+                    {LISTA_CATEGORIAS.map(cat => {
+                      const isSelected = formData.categoria.includes(cat);
+                      return (
+                        <button
+                          key={cat}
+                          type="button"
+                          onClick={() => {
+                            if (isSelected) {
+                              setFormData({...formData, categoria: formData.categoria.filter(c => c !== cat)});
+                            } else {
+                              setFormData({...formData, categoria: [...formData.categoria, cat]});
+                            }
+                          }}
+                          style={{
+                            padding: '6px 12px',
+                            borderRadius: '20px',
+                            fontSize: '0.7rem',
+                            fontWeight: '800',
+                            cursor: 'pointer',
+                            transition: 'all 0.2s',
+                            border: isSelected ? '2px solid #3b82f6' : '2px solid transparent',
+                            backgroundColor: isSelected ? '#eff6ff' : 'white',
+                            color: isSelected ? '#1d4ed8' : '#64748b',
+                            boxShadow: isSelected ? '0 2px 4px rgba(59, 130, 246, 0.1)' : '0 1px 2px rgba(0,0,0,0.05)'
+                          }}
+                        >
+                          {cat} {isSelected && '✓'}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p style={{ fontSize: '0.65rem', color: '#94a3b8', marginTop: '5px', fontWeight: '500' }}>Seleccione todas las categorías que apliquen a este proveedor.</p>
                 </div>
 
                 <div className="prov-form-grid">

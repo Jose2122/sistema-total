@@ -10,3 +10,20 @@ body {
   -moz-osx-font-smoothing: grayscale;
   background-color: #f8fafc;
 }
+
+/* Eliminar flechas (spinners) de inputs numéricos */
+input[type=number]::-webkit-inner-spin-button, 
+input[type=number]::-webkit-outer-spin-button { 
+  -webkit-appearance: none; 
+  margin: 0; 
+}
+
+input[type=number] {
+  -moz-appearance: textfield;
+  appearance: none;
+}
+
+/* Asegurar que las notificaciones de toast estén siempre por encima de todo */
+div[role="status"] {
+  z-index: 99999 !important;
+}
