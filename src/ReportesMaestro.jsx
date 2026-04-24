@@ -96,6 +96,33 @@ const ReportesMaestro = () => {
         } catch (e) { return 0; }
     };
 
+    const calcularSLA = (req) => {
+        const ahora = new Date();
+        const inicio = req.fecha_emision ? new Date(req.fecha_emision) : null;
+        if (!inicio) return { duracion: '-', alerta: false };
+
+        const fin = req.f_finalizado ? new Date(req.f_finalizado) : ahora;
+        
+        const diffMs = Math.max(0, fin - inicio);
+        const dias = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+        const horas = Math.floor((diffMs / (1000 * 60 * 60)) % 24);
+        const duracionStr = dias > 0 ? `${dias}d ${horas}h` : `${horas}h`;
+
+        let alerta = false;
+        if (!req.f_finalizado) {
+            const t1 = req.f_inicio_compras ? new Date(req.f_inicio_compras) :
+                       req.f_aprobacion_general ? new Date(req.f_aprobacion_general) :
+                       req.f_aprobacion_area ? new Date(req.f_aprobacion_area) :
+                       req.f_aprobacion_proyecto ? new Date(req.f_aprobacion_proyecto) :
+                       inicio;
+            const diffUltimo = ahora - t1;
+            const horasEstancado = diffUltimo / (1000 * 60 * 60);
+            if (horasEstancado > 48) alerta = true;
+        }
+
+        return { duracion: duracionStr, alerta };
+    };
+
     const cargarDatos = useCallback(async () => {
         setLoading(true);
         try {
@@ -783,14 +810,19 @@ const ReportesMaestro = () => {
                                                 <th>FECHA SOLICITUD</th>
                                                 <th>PROYECTO (CC)</th>
                                                 <th>JUSTIFICACIÓN</th>
-                                                <th>GERENTE APROBADOR</th>
-                                                <th style={{ textAlign: 'center' }}>FECHA FINAL</th>
+                                                <th style={{ textAlign: 'center', fontSize: '0.65rem' }}>APROB. PROYECTO</th>
+                                                <th style={{ textAlign: 'center', fontSize: '0.65rem' }}>APROB. ÁREA</th>
+                                                <th style={{ textAlign: 'center', fontSize: '0.65rem' }}>APROB. GENERAL</th>
+                                                <th style={{ textAlign: 'center', fontSize: '0.65rem' }}>INICIO COMPRAS</th>
+                                                <th style={{ textAlign: 'center', fontSize: '0.65rem' }}>DURACIÓN TOTAL</th>
                                                 <th style={{ textAlign: 'center' }}>ESTATUS</th>
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            {requisicionesControl.map((r) => (
-                                                <tr key={r.id}>
+                                            {requisicionesControl.map((r) => {
+                                                const sla = calcularSLA(r);
+                                                return (
+                                                <tr key={r.id} style={sla.alerta ? { backgroundColor: '#fff7ed', borderLeft: '4px solid #f97316' } : {}}>
                                                     <td>
                                                         <button onClick={() => setReqSeleccionada(r)} className="rm-link-btn">
                                                             {r.correlativo_req || `REQ-${r.id}`}
@@ -799,17 +831,33 @@ const ReportesMaestro = () => {
                                                     <td>{safeFormatDate(r.fecha_emision)}</td>
                                                     <td className="rm-td-cc">{r.centro_costo?.split('(')[0]}</td>
                                                     <td className="rm-td-justif">{r.justificacion}</td>
-                                                    <td style={{ fontSize: '0.75rem', fontWeight: 'bold' }}>{r.gerente_aprobador || '-'}</td>
-                                                    <td style={{ textAlign: 'center', fontSize: '0.75rem' }}>
-                                                        {safeFormatDate(r.fecha_aprobacion)}
+                                                    
+                                                    <td style={{ textAlign: 'center', fontSize: '0.65rem' }}>
+                                                        <div style={{ fontWeight: 'bold' }}>{safeFormatDate(r.f_aprobacion_proyecto, 'dd/MM HH:mm')}</div>
+                                                        <div style={{ color: '#64748b' }}>{r.n_aprobacion_proyecto?.split(' ')[0] || '-'}</div>
                                                     </td>
+                                                    <td style={{ textAlign: 'center', fontSize: '0.65rem' }}>
+                                                        <div style={{ fontWeight: 'bold' }}>{safeFormatDate(r.f_aprobacion_area, 'dd/MM HH:mm')}</div>
+                                                        <div style={{ color: '#64748b' }}>{r.n_aprobacion_area?.split(' ')[0] || '-'}</div>
+                                                    </td>
+                                                    <td style={{ textAlign: 'center', fontSize: '0.65rem' }}>
+                                                        <div style={{ fontWeight: 'bold' }}>{safeFormatDate(r.f_aprobacion_general, 'dd/MM HH:mm')}</div>
+                                                        <div style={{ color: '#64748b' }}>{r.n_aprobacion_general?.split(' ')[0] || '-'}</div>
+                                                    </td>
+                                                    <td style={{ textAlign: 'center', fontSize: '0.65rem', fontWeight: 'bold', color: r.f_inicio_compras ? '#0ea5e9' : '#94a3b8' }}>
+                                                        {safeFormatDate(r.f_inicio_compras, 'dd/MM HH:mm')}
+                                                    </td>
+                                                    <td style={{ textAlign: 'center', fontSize: '0.75rem', fontWeight: 'bold', color: sla.alerta ? '#ef4444' : '#10b981' }}>
+                                                        {sla.duracion}
+                                                    </td>
+
                                                     <td style={{ textAlign: 'center' }}>
                                                         <span className={`rm-badge-status ${r.statusDisplay.toLowerCase()}`}>
                                                             {r.statusDisplay}
                                                         </span>
                                                     </td>
                                                 </tr>
-                                            ))}
+                                            )})}
                                         </tbody>
                                     </table>
                                 </div>

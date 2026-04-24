@@ -1042,13 +1042,19 @@ const Compras = () => {
 
       const totalConIVA = totalDinamicoReal * 1.16;
 
+      const updatePayload = {
+        items: renglonesProcesados,
+        total_bs: totalConIVA,
+        status_compra: nuevoStatusCompra
+      };
+      
+      if (nuevoStatusCompra === 'Completado' || nuevoStatusCompra === 'COMPLETADO') {
+        updatePayload.f_finalizado = new Date().toISOString();
+      }
+
       const { error } = await supabase
         .from('requisiciones')
-        .update({
-          items: renglonesProcesados,
-          total_bs: totalConIVA,
-          status_compra: nuevoStatusCompra
-        })
+        .update(updatePayload)
         .eq('id', editandoId);
 
       if (error) throw error;

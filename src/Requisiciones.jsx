@@ -27,7 +27,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     return 0;
   };
 
-  const enviarNotificacion = async (usuario_id, mensaje, tipo = 'Sistema') => {
+  const enviarNotificacion = async (usuario_id, mensaje, tipo = 'Sistema', requisicion_id = null) => {
     if (!usuario_id || usuario_id === currentUser?.id) return;
     try {
       const { error } = await supabase
@@ -36,7 +36,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
           usuario_id,
           mensaje,
           tipo,
-          leido: false
+          leido: false,
+          requisicion_id
         }]);
       if (error) throw error;
     } catch (err) {
@@ -122,17 +123,45 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
 
       const emailActual = (currentUser?.correo || '').toLowerCase();
       const esGG = rolUpper.includes('GERENTE') || rolUpper.includes('ADMIN') || emailActual === 'cvega@totalclean.com' || emailActual === 'cvega.totalclean@gmail.com';
-      const esPrivilegiado = esAdminReal || esGG || deptoUpper.includes('ADMINISTRACIÓN');
+      // --- NUEVA LÓGICA DE SEGURIDAD JERÁRQUICA (SOLICITUD 24/04) ---
+      const rolUserLower = (currentUser.rol || '').toLowerCase();
+      const deptoUserLower = (currentUser.departamento || '').toLowerCase();
+      
+      const esAdminRealOCarlos = esAdminReal || 
+                                 (currentUser.correo || '').toLowerCase() === 'cvega@totalclean.com' ||
+                                 (currentUser.nombre || '').toLowerCase().includes('carlos');
 
-      // 1. Obtener todos los perfiles para el Triple Match local y Obras Asignadas
-      const { data: perfilesDB } = await supabase.from('perfiles').select('id, rol, departamento, gerencia_id, obras_asignadas');
-
-
-      if (!esPrivilegiado) {
-        // Filtro Triple Match: En BD filtramos por depto O por creador (ID o Nombre para reqs antiguas)
+      if (!esAdminRealOCarlos) {
+        const rawUserId = currentUser.id || '';
+        const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawUserId);
+        const userIdMatch = isUUID ? rawUserId : '00000000-0000-0000-0000-000000000000';
+        
+        const deptoMatch = currentUser.departamento;
         const nombreMatch = (currentUser.nombre || '').split(' ')[0] || 'Unknown';
-        const userIdMatch = currentUser.id || '00000000-0000-0000-0000-000000000000';
-        query = query.or(`gerencia.ilike.%${currentUser.departamento}%,user_id.eq.${userIdMatch},solicitante.ilike.%${nombreMatch}%`);
+        
+        // Soporte para Gerentes de Proyecto (Filtro por obras asignadas)
+        const misObras = currentUser.obras_asignadas || [];
+        const obrasFiltro = misObras.length > 0 ? `centro_costo.in.(${misObras.map(o => `"${o}"`).join(',')})` : '';
+
+        if (rolUserLower.includes('analista')) {
+          // 1. ANALISTAS: Ven sus PROPIAS requisiciones + Obras Asignadas
+          let orQ = `user_id.eq.${userIdMatch},solicitante.ilike.%${nombreMatch}%`;
+          if (obrasFiltro) orQ += `,${obrasFiltro}`;
+          query = query.or(orQ);
+          
+        } else if (rolUserLower.includes('gerente') || rolUserLower.includes('coordinador')) {
+          // 2. GERENTES DE ÁREA/PROYECTO: Ven su DEPARTAMENTO + OBRAS ASIGNADAS
+          let orFiltros = [];
+          if (deptoMatch) orFiltros.push(`gerencia.ilike.%${deptoMatch}%`);
+          if (obrasFiltro) orFiltros.push(obrasFiltro);
+          
+          if (orFiltros.length > 0) {
+            query = query.or(orFiltros.join(','));
+          } else {
+            // Seguridad de respaldo
+            query = query.or(`user_id.eq.${userIdMatch},solicitante.ilike.%${nombreMatch}%`);
+          }
+        }
       }
 
       const { data, error } = await query.order('fecha_emision', { ascending: false });
@@ -141,35 +170,6 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       if (data) {
         let finalData = data;
         const myRank = getRank(currentUser.rol);
-
-        if (!esPrivilegiado) {
-          finalData = data.filter(req => {
-            // REGLA FUNDAMENTAL: Siempre puede ver lo suyo
-            if (currentUser.id && req.user_id === currentUser.id) return true;
-            if (req.solicitante && req.solicitante.toLowerCase().includes((currentUser.nombre || '').toLowerCase().split(' ')[0])) return true;
-
-            const creador = (perfilesDB || []).find(p => p.id === req.user_id);
-
-            // NUEVA LÓGICA: Restricción por obras_asignadas para Gerentes de Proyecto y Analistas
-            const misObras = currentUser.obras_asignadas || [];
-            if (misObras.length > 0 && (rolUpper.includes('PROYECTO') || rolUpper.includes('ANALISTA'))) {
-              if (misObras.includes(req.centro_costo)) return true;
-            }
-
-            // Si tiene user_id pero no lo encontramos en perfiles, lo dejamos pasar por si acaso
-            if (req.user_id && !creador) return true;
-
-            if (!creador) {
-              return (req.gerencia || '').toLowerCase() === (currentUser.departamento || '').toLowerCase();
-            }
-
-            const matchDepto = (creador.departamento || '').toLowerCase() === (currentUser.departamento || '').toLowerCase();
-            const matchGerencia = creador.gerencia_id === currentUser.gerencia_id;
-            const rankSuperior = myRank > getRank(creador.rol);
-
-            return matchDepto && matchGerencia && rankSuperior;
-          });
-        }
 
         const historialMapeado = finalData.map(db => ({
           id: db.id,
@@ -258,8 +258,21 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       })
       .subscribe();
 
+    // --- DEEP LINKING LISTENER ---
+    const handleDeepLink = (e) => {
+      const targetId = e.detail;
+      if (targetId && historial.length > 0) {
+        const targetReq = historial.find(h => h.id === targetId || String(h.id) === String(targetId));
+        if (targetReq) {
+          verRequisicion(targetReq);
+        }
+      }
+    };
+    window.addEventListener('abrirRequisicionDeepLink', handleDeepLink);
+
     return () => {
       supabase.removeChannel(channel);
+      window.removeEventListener('abrirRequisicionDeepLink', handleDeepLink);
     };
   }, [cargarHistorialDesdeBD]);
 
@@ -363,16 +376,19 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
   const unidades = ["UNID", "KG", "LTS", "ML", "M2", "M3", "SERV", "SG", "BOLSAS", "VIAJES", "Gal", "Sacos", "Rollo", "Pipa", "Jgo"];
 
   const calcularTotales = () => {
+    const arraySeguro = Array.isArray(renglones) ? renglones : [];
+    
     // Estimado: Cantidad original por precio estimado
-    const subTotalEstimado = renglones.reduce((acc, r) => {
+    const subTotalEstimado = arraySeguro.reduce((acc, r) => {
       const cantOri = Number(r.cantidad_pedida ?? r.cant) || 0;
       const puEst = Number(r.pu_estimado ?? r.pu) || 0;
       return acc + (cantOri * puEst);
     }, 0);
 
     // Ejecutado: Suma de historiales
-    const subTotalEjecutado = renglones.reduce((acc, r) => {
-      const ejecutadoItem = (r.historial_compras || []).reduce((sum, h) => {
+    const subTotalEjecutado = arraySeguro.reduce((acc, r) => {
+      const historialArray = Array.isArray(r.historial_compras) ? r.historial_compras : [];
+      const ejecutadoItem = historialArray.reduce((sum, h) => {
         if (h.tipo === 'JUSTIFICACION') return sum;
         return sum + ((Number(h.cant) || 0) * (Number(h.pu) || 0));
       }, 0);
@@ -388,9 +404,10 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
   const { subTotalEstimado, subTotalEjecutado, totalEstimado, totalEjecutado } = calcularTotales();
 
   const obtenerEstadoGlobal = () => {
-    if (renglones.length === 0) return { texto: 'SIN ITEMS', color: '#94a3b8' };
-    const todosCompletados = renglones.every(r => r.status === 'Completado');
-    const algunoEnProceso = renglones.some(r => r.status === 'Parcial' || r.status === 'Completado');
+    const arraySeguro = Array.isArray(renglones) ? renglones : [];
+    if (arraySeguro.length === 0) return { texto: 'SIN ITEMS', color: '#94a3b8' };
+    const todosCompletados = arraySeguro.every(r => r.status === 'Completado');
+    const algunoEnProceso = arraySeguro.some(r => r.status === 'Parcial' || r.status === 'Completado');
     if (todosCompletados) return { texto: 'COMPLETADO', color: '#22c55e' };
     if (algunoEnProceso) return { texto: 'PARCIAL', color: '#f59e0b' };
     return { texto: 'EN ESPERA', color: '#64748b' };
@@ -544,7 +561,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       // NOTIFICAR AL SOLICITANTE
       const reqAnulada = historial.find(h => h.id === id);
       if (reqAnulada) {
-        await enviarNotificacion(reqAnulada.user_id, `Tu Requisición ${reqAnulada.correlativo} ha sido ANULADA.`, 'Anulación');
+        await enviarNotificacion(reqAnulada.user_id, `Tu Requisición ${reqAnulada.correlativo} ha sido ANULADA.`, 'Anulación', id);
       }
 
       setHistorial(prev => prev.map(req => req.id === id ? { ...req, estado_aprobacion: 'ANULADA' } : req));
@@ -603,7 +620,24 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     setFacturasUrls(req.facturas_url || []);
     setFechaRequerida(req.fecha_requerida || req.fecha);
     setDepartamento(req.gerencia || 'Operaciones');
-    setRenglones(req.detalles || []);
+    
+    // SANITIZACIÓN DE DATOS (Raíz del problema)
+    let detallesSeguros = [];
+    if (typeof req.detalles === 'string') {
+      try {
+        detallesSeguros = JSON.parse(req.detalles);
+        // Sometimes it's double stringified
+        if (typeof detallesSeguros === 'string') {
+           detallesSeguros = JSON.parse(detallesSeguros);
+        }
+      } catch(e) {
+        detallesSeguros = [];
+      }
+    } else if (Array.isArray(req.detalles)) {
+      detallesSeguros = req.detalles;
+    }
+    
+    setRenglones(detallesSeguros);
     setCentroCosto(req.centroCosto);
     setSolicitante(req.solicitante || `${req.solicitante_nombre || ''} ${req.solicitante_apellido || ''}`);
     setShowModal(true);
@@ -667,7 +701,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       // NOTIFICAR AL SOLICITANTE
       const reqRechazada = historial.find(h => h.id === editandoId);
       if (reqRechazada) {
-        await enviarNotificacion(reqRechazada.user_id, `Tu Requisición ${reqRechazada.correlativo} ha sido RECHAZADA. Motivo: ${motivoRechazo}`, 'Rechazo');
+        await enviarNotificacion(reqRechazada.user_id, `Tu Requisición ${reqRechazada.correlativo} ha sido RECHAZADA. Motivo: ${motivoRechazo}`, 'Rechazo', editandoId);
       }
 
       await cargarHistorialDesdeBD();
@@ -701,7 +735,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
 
       if (usuariosCompras) {
         for (const u of usuariosCompras) {
-          await enviarNotificacion(u.id, `Nueva observación en REQ ${previewCorrelativo || 'Pendiente'} de ${currentUser.nombre}`, 'Observación');
+          await enviarNotificacion(u.id, `Nueva observación en REQ ${previewCorrelativo || 'Pendiente'} de ${currentUser.nombre}`, 'Observación', editandoId);
         }
       }
 
@@ -861,10 +895,30 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
         aprobado_gerente_proyecto: true,
         firma_gerente_proyecto: currentUser.firma_url || null,
         estado_aprobacion: 'pendiente_area',
-        aprobacion_nombre: 'Aprobado por Proyecto'
+        aprobacion_nombre: 'Aprobado por Proyecto',
+        f_aprobacion_proyecto: new Date().toISOString(),
+        n_aprobacion_proyecto: `${currentUser.nombre} ${currentUser.apellido}`.trim()
       }).eq('id', editandoId);
       if (error) throw error;
       toast.success('Aprobada por Gerente de Proyecto. Enviada al Gerente de Área.');
+      
+      const reqActual = historial.find(h => String(h.id) === String(editandoId));
+      if (reqActual) {
+        const { data: gerentesArea } = await supabase
+          .from('perfiles')
+          .select('id, rol')
+          .eq('departamento', reqActual.gerencia);
+        if (gerentesArea) {
+          const areaManagers = gerentesArea.filter(g => {
+            const r = (g.rol || '').toLowerCase();
+            return (r.includes('área') || r.includes('area') || g.rol === 'Gerente') && !r.includes('proyecto');
+          });
+          for (const g of areaManagers) {
+            await enviarNotificacion(g.id, `REQ ${reqActual.correlativo || 'N/A'} superó validación técnica de Proyecto. Requiere su aprobación.`, 'Validación Área', editandoId);
+          }
+        }
+      }
+
       await cargarHistorialDesdeBD();
       setShowModal(false);
       resetearFormulario();
@@ -882,7 +936,9 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
         aprobado_gerente_area: true,
         firma_gerente: currentUser.firma_url || null, // Firma Nivel 1 guardada en firma_gerente
         estado_aprobacion: 'enviada_general',
-        aprobacion_nombre: 'Aprobado por Área'
+        aprobacion_nombre: 'Aprobado por Área',
+        f_aprobacion_area: new Date().toISOString(),
+        n_aprobacion_area: `${currentUser.nombre} ${currentUser.apellido}`.trim()
       }).eq('id', editandoId);
       if (error) throw error;
       toast.success('Aprobada por Gerente de Área. Enviada al Gerente General.');
@@ -936,7 +992,10 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
         firma_gerente_general: currentUser.firma_url || null,
         estado_aprobacion: 'aprobado_final',
         aprobacion_nombre: 'Aprobación Final',
-        status_compra: 'En espera'
+        status_compra: 'En espera',
+        f_aprobacion_general: new Date().toISOString(),
+        n_aprobacion_general: `${currentUser.nombre} ${currentUser.apellido}`.trim(),
+        f_inicio_compras: new Date().toISOString()
       };
 
       const { data, error } = await supabase.from('requisiciones').update(updates).eq('id', editandoId).select();
@@ -968,15 +1027,30 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     if (!editandoId) return;
     setLoading(true);
     try {
+      const rangoSolicitante = getRank(currentUser?.rol);
+      let estadoInicial = 'pendiente_proyecto';
+      let nombreEstado = 'Re-enviada (Pendiente Proyecto)';
+
+      if (rangoSolicitante >= 2.5) {
+        estadoInicial = 'pendiente_area';
+        nombreEstado = 'Re-enviada (Pendiente Área)';
+      }
+      if (rangoSolicitante >= 3) {
+        estadoInicial = 'enviada_general';
+        nombreEstado = 'Re-enviada (Pendiente General)';
+      }
+
       const { error } = await supabase.from('requisiciones').update({
-        estado_aprobacion: 'pendiente_area',
+        estado_aprobacion: estadoInicial,
         motivo_rechazo: null,
-        aprobacion_nombre: 'Re-enviada (Pendiente Área)',
+        aprobacion_nombre: nombreEstado,
         // Limpiar firmas y aprobaciones anteriores
         firma_gerente: null,
         firma_gerente_general: null,
         aprobado_gerente_area: false,
         aprobado_gerente_general: false,
+        aprobado_gerente_proyecto: false,
+        firma_gerente_proyecto: null,
         // Se preservan los datos editados en los inputs
         items: renglones,
         justificacion,
@@ -1027,7 +1101,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       }
 
       // VALIDACIÓN PASIVA PERO ESTRICTA EN EJECUCIÓN (Clasificación única)
-      const clases = [...new Set(renglones.map(r => r.clasificacion).filter(c => c))];
+      const clases = [...new Set((Array.isArray(renglones) ? renglones : []).map(r => r.clasificacion).filter(c => c))];
       if (clases.length > 1) {
         toast.error("Error: Todos los renglones deben tener la misma Clasificación.");
         setLoading(false);
@@ -1049,7 +1123,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
         if (error) throw error;
 
         // ALERTA DE CATEGORÍAS DIFERENTES
-        const catsUnicas = [...new Set(renglones.map(r => r.categoria).filter(c => c))];
+        const catsUnicas = [...new Set((Array.isArray(renglones) ? renglones : []).map(r => r.categoria).filter(c => c))];
         if (catsUnicas.length > 1) {
           toast((t) => (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -1176,6 +1250,19 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     }
     const nuevoCorrelativo = `RR-${siglaGerencia}-${aa}-${String(maxNumero + 1).padStart(4, '0')}`;
 
+    const rangoSolicitante = getRank(currentUser?.rol);
+    let estadoInicial = 'pendiente_proyecto';
+    let nombreEstado = 'Pendiente Proyecto';
+
+    if (rangoSolicitante >= 2.5) {
+      estadoInicial = 'pendiente_area';
+      nombreEstado = 'Pendiente Área';
+    }
+    if (rangoSolicitante >= 3) {
+      estadoInicial = 'enviada_general';
+      nombreEstado = 'Pendiente General';
+    }
+
     const nuevaReqBD = {
       correlativo_req: nuevoCorrelativo,
       fecha_emision: new Date().toISOString(),
@@ -1186,8 +1273,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       prioridad,
       status_compra: 'En espera',
       aprobacion: false,
-      aprobacion_nombre: 'Pendiente',
-      estado_aprobacion: 'pendiente_area', // Por defecto
+      aprobacion_nombre: nombreEstado,
+      estado_aprobacion: estadoInicial,
       total_bs: Number(totalEstimado) || 0,
       items: renglones,
       justificacion,
@@ -1220,7 +1307,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     }
 
     // VALIDACIÓN PASIVA PERO ESTRICTA EN EJECUCIÓN (Clasificación única)
-    const clases = [...new Set(renglones.map(r => r.clasificacion).filter(c => c))];
+    const clases = [...new Set((Array.isArray(renglones) ? renglones : []).map(r => r.clasificacion).filter(c => c))];
     if (clases.length > 1) {
       toast.error("Error: Todos los renglones deben tener la misma Clasificación.");
       setLoading(false);
@@ -1228,7 +1315,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     }
 
     // ALERTA DE CATEGORÍAS DIFERENTES ANTES DE GUARDAR NUEVA
-    const catsUnicas = [...new Set(renglones.map(r => r.categoria).filter(c => c))];
+    const catsUnicas = [...new Set((Array.isArray(renglones) ? renglones : []).map(r => r.categoria).filter(c => c))];
     if (catsUnicas.length > 1) {
       toast((t) => (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -1340,7 +1427,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
         console.log("Superiores encontrados:", superioresFiltrados.map(s => s.nombre));
 
         for (const s of superioresFiltrados) {
-          await enviarNotificacion(s.id, `Nueva Requisición ${nuevaReq.correlativo_req} de ${currentUser.nombre} pendiente de su aprobación.`, 'Nueva Requisición');
+          await enviarNotificacion(s.id, `Nueva Requisición ${nuevaReq.correlativo_req} de ${currentUser.nombre} pendiente de su aprobación.`, 'Nueva Requisición', nuevaReq.id);
         }
       }
 
@@ -1354,7 +1441,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
 
       if (carlos) {
         console.log("Notificando a Carlos Vega...");
-        await enviarNotificacion(carlos.id, `Nueva Requisición ${nuevaReq.correlativo_req} creada por ${currentUser.nombre}.`, 'Nueva Requisición');
+        await enviarNotificacion(carlos.id, `Nueva Requisición ${nuevaReq.correlativo_req} creada por ${currentUser.nombre}.`, 'Nueva Requisición', nuevaReq.id);
       }
 
       await cargarHistorialDesdeBD();
@@ -1393,7 +1480,17 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
           { label: 'APROBADA GLOBAL', val: historial.filter(r => r.estado_aprobacion === 'aprobado_final').length, col: '#030712', filter: 'aprobado_final' },
           { label: 'RECHAZADA', val: historial.filter(r => r.estado_aprobacion === 'rechazada').length, col: '#030712', filter: 'rechazada' },
           { label: 'ANULADA', val: historial.filter(r => r.estado_aprobacion === 'ANULADA').length, col: '#030712', filter: 'ANULADA' }
-        ].filter(x => !(currentUser?.rol === 'Gerente General' && (x.filter === 'pendiente_area' || x.filter === 'pendiente_proyecto'))).map((x, i) => {
+        ].filter(x => {
+          const rolUser = (currentUser?.rol || '').toLowerCase();
+          if (rolUser.includes('proyecto')) {
+            return !(x.filter === 'pendiente_area' || x.filter === 'enviada_general');
+          } else if (rolUser.includes('gerente') && !rolUser.includes('general')) {
+            return !(x.filter === 'pendiente_proyecto' || x.filter === 'enviada_general');
+          } else if (rolUser.includes('general')) {
+            return !(x.filter === 'pendiente_proyecto' || x.filter === 'pendiente_area');
+          }
+          return true; // Admins, Analistas, Coordinadores ven todo
+        }).map((x, i) => {
           const colorBorde = x.col; // El color del estatus solo para el borde
           const colorTexto = '#1e293b'; // Azul oscuro/Gris carbón profesional para todo el texto
           return (
@@ -1733,7 +1830,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                     onChange={(e) => {
                       setCentroCosto(e.target.value);
                       // Resetear clasificaciones y categorías de todos los renglones al cambiar CC
-                      setRenglones(prev => prev.map(r => ({ ...r, clasificacion: '', categoria: '' })));
+                      setRenglones(prev => (Array.isArray(prev) ? prev : []).map(r => ({ ...r, clasificacion: '', categoria: '' })));
                     }}
                   >
                     <option value="">Seleccione Centro de Costo...</option>
@@ -1880,7 +1977,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                 </thead>
                 <tbody>
                   <AnimatePresence>
-                    {renglones.map((f, index) => (
+                    {(Array.isArray(renglones) ? renglones : []).map((f, index) => (
                       <React.Fragment key={f.id}>
                         <motion.tr
                           className="renglon-row"
@@ -1924,7 +2021,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                             </button>
                           </td>
                         </motion.tr>
-                        {expandirHistorial[f.id] && f.historial_compras?.length > 0 && (
+                        {expandirHistorial[f.id] && Array.isArray(f.historial_compras) && f.historial_compras.length > 0 && (
                           <tr>
                             <td colSpan="11" style={{ padding: '0 0 15px 40px' }}>
                               <div style={{ backgroundColor: 'white', borderRadius: '8px', border: '1px solid #e2e8f0', overflow: 'hidden', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
@@ -1946,7 +2043,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                                     </tr>
                                   </thead>
                                   <tbody>
-                                    {f.historial_compras.map((h, idx) => (
+                                    {(Array.isArray(f.historial_compras) ? f.historial_compras : []).map((h, idx) => (
                                       <tr key={idx} style={{
                                         borderBottom: idx < f.historial_compras.length - 1 ? '1px solid #f1f5f9' : 'none',
                                         backgroundColor: h.tipo === 'JUSTIFICACION' ? '#fffbeb' : 'transparent'
@@ -2132,9 +2229,12 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
 
                   {editandoId ? (
                     <>
+                      <button className="btn-tc btn-tc-primary" style={{ backgroundColor: '#0284c7' }} onClick={manejarGenerarOActualizar} disabled={loading}>
+                        {loading ? <Loader2 className="animate-spin" size={16} /> : '💾 GUARDAR CAMBIOS'}
+                      </button>
                       {/* ACCIONES PARA ANALISTA / COORDINADOR (Re-enviar si está rechazada) */}
                       {(currentUser?.rol === 'Analista' || currentUser?.rol === 'Coordinador') &&
-                        historial.find(h => h.id === editandoId)?.estado_aprobacion === 'rechazada' && (
+                        historial.find(h => String(h.id) === String(editandoId))?.estado_aprobacion === 'rechazada' && (
                           <button className="btn-tc btn-tc-primary" onClick={manejarReenviar} disabled={loading}>
                             {loading ? <Loader2 className="animate-spin" size={16} /> : 'MODIFICAR Y RE-ENVIAR'}
                           </button>

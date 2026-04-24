@@ -11,16 +11,44 @@ function App() {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    // 1. Revisar sesión actual al cargar la app
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
+  const handleSession = async (currentSession) => {
+    if (!currentSession) {
+      setSession(null);
       setLoading(false);
+      return;
+    }
+    
+    try {
+      // Check if active
+      const { data } = await supabase.from('perfiles').select('activo').eq('id', currentSession.user.id).single();
+      
+      if (data && data.activo === false) {
+        await supabase.auth.signOut();
+        alert("Tu cuenta ha sido desactivada. Contacta al administrador.");
+        setSession(null);
+      } else {
+        // Update last_login
+        await supabase.from('perfiles').update({ last_login: new Date().toISOString() }).eq('id', currentSession.user.id);
+        setSession(currentSession);
+      }
+    } catch(err) {
+      console.error("Error validando sesión:", err);
+      setSession(currentSession); // Fallback if DB fails
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      handleSession(session);
     });
 
-    // 2. Escuchar cambios en la autenticación (Login/Logout)
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
+      if (_event === 'SIGNED_IN' || _event === 'TOKEN_REFRESHED' || _event === 'INITIAL_SESSION') {
+         handleSession(session);
+      } else if (_event === 'SIGNED_OUT') {
+         setSession(null);
+      }
     });
 
     return () => subscription.unsubscribe();

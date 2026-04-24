@@ -355,8 +355,7 @@ const Proveedores = () => {
                 </button>
               </div>
 
-              <form onSubmit={guardarProveedor} className="prov-form">
-                <div className="prov-form-grid">
+              <form onSubmit={guardarProveedor} className="prov-form prov-form-grid">
                   <div className="prov-field">
                     <label className="prov-label">RIF</label>
                     <input 
@@ -387,9 +386,8 @@ const Proveedores = () => {
                       </button>
                     </div>
                   </div>
-                </div>
 
-                <div className="prov-field">
+                <div className="prov-field prov-form-full">
                   <label className="prov-label">Razón Social</label>
                   <input 
                     className="prov-input"
@@ -400,7 +398,7 @@ const Proveedores = () => {
                   />
                 </div>
 
-                <div className="prov-field">
+                <div className="prov-field prov-form-full">
                   <label className="prov-label">Categorías del Proveedor (Multi-selección)</label>
                   <div style={{ 
                     display: 'flex', 
@@ -445,7 +443,6 @@ const Proveedores = () => {
                   <p style={{ fontSize: '0.65rem', color: '#94a3b8', marginTop: '5px', fontWeight: '500' }}>Seleccione todas las categorías que apliquen a este proveedor.</p>
                 </div>
 
-                <div className="prov-form-grid">
                   <div className="prov-field">
                     <label className="prov-label">Correo  (OPCIONAL)</label>
                     <input 
@@ -465,9 +462,8 @@ const Proveedores = () => {
                       onChange={e => setFormData({...formData, telefono: e.target.value})}
                     />
                   </div>
-                </div>
 
-                <div className="prov-field">
+                <div className="prov-field prov-form-full">
                   <label className="prov-label">Dirección</label>
                   <textarea 
                     className="prov-input prov-textarea"

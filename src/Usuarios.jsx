@@ -2,9 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import { 
   Eye, EyeOff, UserPlus, Save, X, Shield, Trash2, UserCircle, 
-  Settings, ShieldCheck, Layout, Activity 
+  Settings, ShieldCheck, Layout, Activity, Key
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { formatDistanceToNow } from 'date-fns';
+import { es } from 'date-fns/locale';
 
 const Usuarios = () => {
   const [usuarios, setUsuarios] = useState([]);
@@ -356,6 +358,69 @@ const Usuarios = () => {
     }
   };
 
+  const formatearUltimaConexion = (fechaIso) => {
+    if (!fechaIso) return <span style={{ color: '#94a3b8', fontSize: '0.75rem' }}>Nunca</span>;
+    const fecha = new Date(fechaIso);
+    const ahora = new Date();
+    const diffMinutos = (ahora - fecha) / 1000 / 60;
+    
+    if (diffMinutos < 10) return (
+      <span style={{ color: '#10b981', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '6px' }}>
+        <span style={{ display: 'inline-block', width: '8px', height: '8px', backgroundColor: '#10b981', borderRadius: '50%', boxShadow: '0 0 8px #10b981' }}></span>
+        En línea
+      </span>
+    );
+    
+    return <span style={{ color: '#64748b' }}>{formatDistanceToNow(fecha, { addSuffix: true, locale: es })}</span>;
+  };
+
+  const manejarToggleActivo = async (id, estadoActual) => {
+    const nuevoEstado = !estadoActual;
+    const toastId = toast.loading(nuevoEstado ? "Activando usuario..." : "Desactivando usuario...");
+    try {
+      const { error } = await supabase.from('perfiles').update({ activo: nuevoEstado }).eq('id', id);
+      if (error) throw error;
+      toast.success(`Usuario ${nuevoEstado ? 'activado' : 'desactivado'} con éxito`, { id: toastId });
+      setUsuarios(prev => prev.map(u => u.id === id ? { ...u, activo: nuevoEstado } : u));
+    } catch (err) {
+      toast.error(err.message, { id: toastId });
+    }
+  };
+
+  const manejarResetPassword = async (id, correo) => {
+    if (!currentUser?.esAdminReal) return;
+    toast((t) => (
+      <div>
+        <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: 'bold', color: '#f59e0b' }}>⚠️ ¿Seguro que deseas restablecer la contraseña para {correo}?</p>
+        <p style={{ fontSize: '0.8rem', color: '#64748b', margin: '8px 0' }}>Se asignará una contraseña temporal genérica (<b>TotalClean123!</b>).</p>
+        <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
+          <button 
+            style={{ padding: '6px 12px', backgroundColor: '#f59e0b', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}
+            onClick={async () => {
+              toast.dismiss(t.id);
+              const toastLoading = toast.loading('Restableciendo contraseña...');
+              const { data, error } = await supabase.functions.invoke('admin-user-manager', {
+                body: { action: 'reset_password', userId: id, newPassword: 'TotalClean123!' }
+              });
+              if (error || data?.error) {
+                toast.error(error?.message || data?.error, { id: toastLoading });
+              } else {
+                toast.success('Contraseña restablecida a TotalClean123!', { id: toastLoading, duration: 6000 });
+              }
+            }}
+          >
+            Confirmar Restablecimiento
+          </button>
+          <button 
+            style={{ padding: '6px 12px', backgroundColor: '#e2e8f0', color: '#475569', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}
+            onClick={() => toast.dismiss(t.id)}
+          >Cancelar</button>
+        </div>
+      </div>
+    ), { duration: Infinity });
+  };
+
+
   const eliminarUsuarioTotal = async (id, correo) => {
     if (!currentUser?.esAdminReal) return;
     toast((t) => (
@@ -396,9 +461,9 @@ const Usuarios = () => {
     modalContent: { backgroundColor: 'white', width: '900px', maxWidth: '95vw', borderRadius: '32px', overflow: 'hidden', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)', animation: 'slideUp 0.3s ease-out' },
     panelLeft: { padding: '40px', borderRight: '1px solid #f1f5f9' },
     panelRight: { padding: '40px', backgroundColor: '#f8fafc' },
-    th: { textAlign: 'left', padding: '16px', color: '#64748b', fontSize: '0.7rem', fontWeight: 'bold', textTransform: 'uppercase', borderBottom: '1px solid #f1f5f9' },
-    td: { padding: '16px', borderBottom: '1px solid #f1f5f9', fontSize: '0.85rem', color: '#1e293b' },
-    badge: (rol) => ({ padding: '5px 12px', borderRadius: '10px', fontSize: '0.75rem', fontWeight: '600', backgroundColor: rol?.includes('Gerente') ? '#eff6ff' : '#f1f5f9', color: rol?.includes('Gerente') ? '#3b82f6' : '#64748b' }),
+    th: { textAlign: 'left', padding: '18px 16px', color: '#64748b', fontSize: '0.7rem', fontWeight: 'bold', textTransform: 'uppercase', borderBottom: '1px solid #e2e8f0' },
+    td: { padding: '18px 16px', borderBottom: '1px solid #f1f5f9', fontSize: '0.85rem', color: '#1e293b' },
+    badge: (rol) => ({ padding: '6px 14px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: '700', backgroundColor: rol?.includes('Gerente') ? '#e0f2fe' : '#f1f5f9', color: rol?.includes('Gerente') ? '#0284c7' : '#475569' }),
     tab: (active) => ({ flex: 1, padding: '15px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', cursor: 'pointer', borderBottom: active ? '3px solid #3b82f6' : '3px solid transparent', backgroundColor: active ? '#f8fafc' : 'white', transition: '0.3s', color: active ? '#3b82f6' : '#94a3b8', fontWeight: active ? 'bold' : 'normal' }),
   };
 
@@ -411,7 +476,7 @@ const Usuarios = () => {
         </div>
         <div className="stat-card-new stat-gerente">
           <div style={{ fontSize: '0.7rem', color: '#f59e0b', fontWeight: '800', textTransform: 'uppercase' }}>Departamentos</div>
-          <div style={{ fontSize: '1.8rem', fontWeight: '800', color: '#1e293b' }}>{usuariosFiltrados.filter(u => u.rol?.includes('Gerente')).length}</div>
+          <div style={{ fontSize: '1.8rem', fontWeight: '800', color: '#1e293b' }}>{new Set(usuariosFiltrados.map(u => u.departamento).filter(Boolean)).size}</div>
         </div>
       </div>
 
@@ -441,17 +506,37 @@ const Usuarios = () => {
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>
+                <th style={estilos.th}>Estado</th>
                 <th style={estilos.th}>Colaborador</th>
                 <th style={estilos.th}>Cargo</th>
                 <th style={estilos.th}>Departamento</th>
-                <th style={estilos.th}>Atribuciones</th>
-                <th style={estilos.th}>C. Costo</th>
+                <th style={estilos.th}>C. Costos Asignados</th>
+                <th style={estilos.th}>Última Conexión</th>
                 <th style={estilos.th}>Acciones</th>
               </tr>
             </thead>
             <tbody>
               {usuariosFiltrados.map(u => (
-                <tr key={u.id} className="row-hover">
+                <tr key={u.id} className="row-hover" style={{ opacity: u.activo ? 1 : 0.5, backgroundColor: u.activo ? 'transparent' : '#f8fafc', transition: 'all 0.3s' }}>
+                  <td style={estilos.td}>
+                    {/* Switch de Estado */}
+                    <div 
+                      onClick={() => currentUser?.esAdminReal && manejarToggleActivo(u.id, u.activo)}
+                      style={{
+                        width: '40px', height: '22px', borderRadius: '11px', 
+                        backgroundColor: u.activo ? '#10b981' : '#cbd5e1',
+                        position: 'relative', cursor: currentUser?.esAdminReal ? 'pointer' : 'default',
+                        transition: 'background-color 0.3s'
+                      }}
+                      title={u.activo ? 'Usuario Activo' : 'Usuario Inactivo (Bloqueado)'}
+                    >
+                      <div style={{
+                        width: '18px', height: '18px', backgroundColor: 'white', borderRadius: '50%',
+                        position: 'absolute', top: '2px', left: u.activo ? '20px' : '2px',
+                        transition: 'left 0.3s', boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
+                      }} />
+                    </div>
+                  </td>
                   <td style={estilos.td}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                       <div style={{ width: '40px', height: '40px', borderRadius: '50%', backgroundColor: '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
@@ -466,25 +551,21 @@ const Usuarios = () => {
                   <td style={estilos.td}><span style={estilos.badge(u.rol)}>{u.rol}</span></td>
                   <td style={estilos.td}>{u.departamento || 'Sin asignar'}</td>
                   <td style={estilos.td}>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', maxWidth: '300px' }}>
-                      {/* Capacidades Especiales */}
-                      {CAPACIDADES_DISPONIBLES.filter(p => u.capacidades?.[p.id]).map(p => (
-                        <span key={p.id} style={{ fontSize: '0.6rem', backgroundColor: '#f0fdf4', color: '#16a34a', padding: '2px 8px', borderRadius: '6px', fontWeight: 'bold', border: '1px solid #dcfce7' }}>
-                          {p.label}
-                        </span>
-                      ))}
-                      {/* Resumen de Módulos (si son muchos, mostramos contador) */}
-                      {u.permisos_modulos?.length > 0 && (
-                        <span style={{ fontSize: '0.6rem', backgroundColor: '#eff6ff', color: '#3b82f6', padding: '2px 8px', borderRadius: '6px', fontWeight: 'bold', border: '1px solid #dbeafe' }}>
-                          {u.permisos_modulos.length} Módulos
-                        </span>
-                      )}
-                      {!u.permisos_modulos?.length && !Object.values(u.capacidades || {}).some(v => v) && (
-                        <span style={{ fontSize: '0.65rem', color: '#94a3b8', fontStyle: 'italic' }}>Sin atribuciones</span>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', maxWidth: '280px' }}>
+                      {u.obras_asignadas && u.obras_asignadas.length > 0 ? (
+                        u.obras_asignadas.map((obra, idx) => (
+                          <span key={idx} style={{ fontSize: '0.65rem', backgroundColor: '#f8fafc', color: '#475569', padding: '4px 8px', borderRadius: '8px', fontWeight: 'bold', border: '1px solid #e2e8f0' }}>
+                            {obra}
+                          </span>
+                        ))
+                      ) : (
+                        <span style={{ color: '#0ea5e9', fontWeight: 'bold', fontSize: '0.75rem' }}>{u.contrato || 'General'}</span>
                       )}
                     </div>
                   </td>
-                  <td style={estilos.td}><span style={{ color: '#0ea5e9', fontWeight: 'bold' }}>{u.contrato}</span></td>
+                  <td style={estilos.td}>
+                    {formatearUltimaConexion(u.last_login)}
+                  </td>
                   <td style={estilos.td}>
                     <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
                       <button onClick={() => { 
@@ -500,7 +581,12 @@ const Usuarios = () => {
                         obtenerLogsUsuario(u.id);
                         setShowModal(true); 
                       }} style={{ color: '#0ea5e9', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>Editar</button>
-                      <Trash2 size={16} color="#ef4444" style={{ cursor: 'pointer' }} onClick={() => eliminarUsuarioTotal(u.id, u.correo)} />
+                      {currentUser?.esAdminReal && (
+                        <>
+                          <Key size={16} color="#f59e0b" style={{ cursor: 'pointer' }} onClick={() => manejarResetPassword(u.id, u.correo)} title="Restablecer Contraseña" />
+                          <Trash2 size={16} color="#ef4444" style={{ cursor: 'pointer' }} onClick={() => eliminarUsuarioTotal(u.id, u.correo)} title="Eliminar Usuario" />
+                        </>
+                      )}
                     </div>
                   </td>
                 </tr>

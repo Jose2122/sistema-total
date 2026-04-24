@@ -24,6 +24,12 @@ input[type=number] {
 }
 
 /* Asegurar que las notificaciones de toast estén siempre por encima de todo */
-div[role="status"] {
-  z-index: 99999 !important;
+.go3958315123 {
+  z-index: 9999999 !important;
+}
+
+/* Hover de notificaciones en el Dashboard */
+.notificacion-card-item:hover {
+  background-color: #f8fafc !important;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.02);
 }
