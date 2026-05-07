@@ -2714,14 +2714,14 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                         </button>
                       ) : (
                         <button className="btn-tc btn-tc-primary" style={{ backgroundColor: '#0284c7' }} onClick={manejarGenerarOActualizar} disabled={loading}>
-                          {loading ? <Loader2 className="animate-spin" size={16} /> : '💾 GUARDAR CAMBIOS'}
+                          {loading ? <Loader2 className="animate-spin" size={16} /> : '💾 ACTUALIZAR Y FINALIZAR'}
                         </button>
                       )}
                       {/* ACCIONES PARA ANALISTA / COORDINADOR (Re-enviar si está rechazada) */}
                       {(currentUser?.rol === 'Analista' || currentUser?.rol === 'Coordinador') &&
                         historial.find(h => String(h.id) === String(editandoId))?.estado_aprobacion === 'rechazada' && (
                           <button className="btn-tc btn-tc-primary" onClick={manejarReenviar} disabled={loading}>
-                            {loading ? <Loader2 className="animate-spin" size={16} /> : 'MODIFICAR Y RE-ENVIAR'}
+                            {loading ? <Loader2 className="animate-spin" size={16} /> : 'ACTUALIZAR Y FINALIZAR (RE-ENVIAR)'}
                           </button>
                         )}
 
@@ -2787,7 +2787,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                     </>
                   ) : (
                     <button className="btn-tc btn-tc-primary" onClick={manejarGenerarOActualizar} disabled={loading}>
-                      {loading ? <Loader2 className="animate-spin" size={16} /> : 'GENERAR REQUISICIÓN'}
+                      {loading ? <Loader2 className="animate-spin" size={16} /> : 'GENERAR Y FINALIZAR REQUISICIÓN'}
                     </button>
                   )}
                 </div>

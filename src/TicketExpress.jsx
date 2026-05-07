@@ -559,7 +559,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
           .in('id', idsRelacionados);
       }
 
-      toast.success("Ticket EMITIDO con éxito.");
+      toast.success("Ticket EMITIDO Y FINALIZADO con éxito.");
       setShowModal(false);
       cargarHistorial();
       // Reset form
@@ -619,7 +619,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
         }
       }
 
-      toast.success("Cambios guardados con éxito.");
+      toast.success("Ticket ACTUALIZADO Y FINALIZADO con éxito.");
       cargarHistorial();
     } catch (err) {
       toast.error("Error al actualizar: " + err.message);
@@ -1223,7 +1223,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
                       transition: 'all 0.3s ease'
                     }}
                   >
-                    EMITIR TICKET DE PAGO
+                    EMITIR Y FINALIZAR TICKET
                   </button>
                 ) : esPrivilegiado && (
                   <button
@@ -1244,7 +1244,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
                       transition: 'all 0.3s ease'
                     }}
                   >
-                    GUARDAR CAMBIOS
+                    ACTUALIZAR Y FINALIZAR
                   </button>
                 )}
               </div>
