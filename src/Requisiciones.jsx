@@ -5,7 +5,12 @@ import { supabase } from './supabaseClient';
 import { motion, AnimatePresence } from 'framer-motion';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
-import { Loader2, MessageSquare, FileText, Upload, Paperclip } from 'lucide-react';
+import {
+  Loader2, MessageSquare, FileText, Upload, Paperclip,
+  ChevronDown, ChevronUp, Settings, Building2, Diamond,
+  ShoppingCart, CheckCircle2, Eye, EyeOff, ChevronRight,
+  Clock, User, Ban, Trash2, Camera, Plus
+} from 'lucide-react';
 import './Requisiciones.css';
 
 const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentUserProp }) => {
@@ -15,6 +20,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
   const [editandoId, setEditandoId] = useState(null);
   const [loading, setLoading] = useState(false);
   const [currentUser, setCurrentUser] = useState(currentUserProp || null);
+  const [modoEdicion, setModoEdicion] = useState(false);
 
   const getRank = (rol) => {
     const r = (rol || '').toLowerCase();
@@ -78,6 +84,9 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
   const [facturasUrls, setFacturasUrls] = useState([]);
   const [idReferenciaProyecto, setIdReferenciaProyecto] = useState('');
   const [idsReferenciaPrevios, setIdsReferenciaPrevios] = useState([]);
+  const [mostrarTimeline, setMostrarTimeline] = useState(false);
+  const [mostrarSoportes, setMostrarSoportes] = useState(false);
+  const [mostrarObservaciones, setMostrarObservaciones] = useState(false);
 
   // --- MAESTROS ---
   const [centrosCosto, setCentrosCosto] = useState([]);
@@ -126,19 +135,19 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       // --- NUEVA LÓGICA DE SEGURIDAD JERÁRQUICA (SOLICITUD 24/04) ---
       const rolUserLower = (currentUser.rol || '').toLowerCase();
       const deptoUserLower = (currentUser.departamento || '').toLowerCase();
-      
-      const esAdminRealOCarlos = esAdminReal || 
-                                 (currentUser.correo || '').toLowerCase() === 'cvega@totalclean.com' ||
-                                 (currentUser.nombre || '').toLowerCase().includes('carlos');
+
+      const esAdminRealOCarlos = esAdminReal ||
+        (currentUser.correo || '').toLowerCase() === 'cvega@totalclean.com' ||
+        (currentUser.nombre || '').toLowerCase().includes('carlos');
 
       if (!esAdminRealOCarlos) {
         const rawUserId = currentUser.id || '';
         const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawUserId);
         const userIdMatch = isUUID ? rawUserId : '00000000-0000-0000-0000-000000000000';
-        
+
         const deptoMatch = currentUser.departamento;
         const nombreMatch = (currentUser.nombre || '').split(' ')[0] || 'Unknown';
-        
+
         // Soporte para Gerentes de Proyecto (Filtro por obras asignadas)
         const misObras = currentUser.obras_asignadas || [];
         const obrasFiltro = misObras.length > 0 ? `centro_costo.in.(${misObras.map(o => `"${o}"`).join(',')})` : '';
@@ -148,13 +157,13 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
           let orQ = `user_id.eq.${userIdMatch},solicitante.ilike.%${nombreMatch}%`;
           if (obrasFiltro) orQ += `,${obrasFiltro}`;
           query = query.or(orQ);
-          
+
         } else if (rolUserLower.includes('gerente') || rolUserLower.includes('coordinador')) {
           // 2. GERENTES DE ÁREA/PROYECTO: Ven su DEPARTAMENTO + OBRAS ASIGNADAS
           let orFiltros = [];
           if (deptoMatch) orFiltros.push(`gerencia.ilike.%${deptoMatch}%`);
           if (obrasFiltro) orFiltros.push(obrasFiltro);
-          
+
           if (orFiltros.length > 0) {
             query = query.or(orFiltros.join(','));
           } else {
@@ -179,7 +188,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
           centroCosto: db.centro_costo,
           aprobacion: db.aprobacion_nombre || (db.aprobacion ? 'Aprobado' : 'Pendiente'),
           status: db.status_compra || 'Pendiente',
-          prioridad: db.prioridad,
+          prioridad: db.prioridad || 'Normal',
           total: Number(db.total_bs) || 0,
           detalles: db.items,
           fecha: db.fecha_emision ? db.fecha_emision.split('T')[0] : '',
@@ -194,7 +203,19 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
           firma_gerente_general: db.firma_gerente_general,
           observaciones: db.observaciones || '',
           facturas_url: db.facturas_url || [],
-          id_referencia_proyecto: db.id_referencia_proyecto || ''
+          id_referencia_proyecto: db.id_referencia_proyecto || '',
+          user_id: db.user_id,
+          fecha_emision: db.fecha_emision,
+          f_aprobacion_proyecto: db.f_aprobacion_proyecto,
+          n_aprobacion_proyecto: db.n_aprobacion_proyecto,
+          f_aprobacion_area: db.f_aprobacion_area,
+          n_aprobacion_area: db.n_aprobacion_area,
+          f_aprobacion_general: db.f_aprobacion_general,
+          n_aprobacion_general: db.n_aprobacion_general,
+          f_culminacion_compras: db.f_culminacion_compras,
+          fecha_limite_compra: db.fecha_limite_compra,
+          is_pausada: db.is_pausada,
+          motivo_postergacion: db.motivo_postergacion
         }));
         setHistorial(historialMapeado);
 
@@ -305,7 +326,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
   }, [historial, busqueda, filtroDepto, filtroAprobacion, filtroCategoria, filtroCC, filtroStatusCompra, fechaDesde, fechaHasta, filtroSolicitante]);
 
   // --- ESTADOS DEL FORMULARIO ---
-  const [prioridad, setPrioridad] = useState('Normal');
+  const [prioridad, setPrioridad] = useState('');
   const [solicitante, setSolicitante] = useState('');
   const [centroCosto, setCentroCosto] = useState('MTTO MAYOR-BOSCAN');
   const [departamento, setDepartamento] = useState('Operaciones');
@@ -377,7 +398,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
 
   const calcularTotales = () => {
     const arraySeguro = Array.isArray(renglones) ? renglones : [];
-    
+
     // Estimado: Cantidad original por precio estimado
     const subTotalEstimado = arraySeguro.reduce((acc, r) => {
       const cantOri = Number(r.cantidad_pedida ?? r.cant) || 0;
@@ -608,7 +629,10 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     setIdReferenciaProyecto('');
     setEditandoId(null);
     setFechaRequerida(new Date().toISOString().split('T')[0]);
+    setPrioridad('');
     setRenglones([{ id: Date.now(), clasificacion: '', categoria: '', cant: 1, uni: 'UNID', descripcion: '', beneficiario: '', pu: 0, total: 0, status: 'En Espera' }]);
+    setModoEdicion(false);
+    setMostrarSoportes(false);
   };
 
   const verRequisicion = (req) => {
@@ -620,7 +644,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     setFacturasUrls(req.facturas_url || []);
     setFechaRequerida(req.fecha_requerida || req.fecha);
     setDepartamento(req.gerencia || 'Operaciones');
-    
+
     // SANITIZACIÓN DE DATOS (Raíz del problema)
     let detallesSeguros = [];
     if (typeof req.detalles === 'string') {
@@ -628,18 +652,20 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
         detallesSeguros = JSON.parse(req.detalles);
         // Sometimes it's double stringified
         if (typeof detallesSeguros === 'string') {
-           detallesSeguros = JSON.parse(detallesSeguros);
+          detallesSeguros = JSON.parse(detallesSeguros);
         }
-      } catch(e) {
+      } catch (e) {
         detallesSeguros = [];
       }
     } else if (Array.isArray(req.detalles)) {
       detallesSeguros = req.detalles;
     }
-    
+
     setRenglones(detallesSeguros);
     setCentroCosto(req.centroCosto);
     setSolicitante(req.solicitante || `${req.solicitante_nombre || ''} ${req.solicitante_apellido || ''}`);
+    setModoEdicion(false);
+    setMostrarSoportes(detallesSeguros.length > 0 && (req.facturas_url?.length > 0));
     setShowModal(true);
   };
 
@@ -706,7 +732,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
 
       await cargarHistorialDesdeBD();
       setShowRechazoModal(false);
-      setShowModal(false);
+      setShowModal(false); if (onClose) onClose();
+      if (onClose) onClose();
       resetearFormulario();
     } catch (err) { toast.error(err.message); } finally { setLoading(false); }
   };
@@ -820,11 +847,10 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     }
   };
 
-  const subirFactura = async (event) => {
+  const subirArchivos = async (files) => {
     if (!editandoId) return toast.error("Guarde la requisición primero para poder adjuntar documentos.");
     try {
       setUploading(true);
-      const files = Array.from(event.target.files);
       if (!files || files.length === 0) return;
 
       const uploadPromises = files.map(async (file, index) => {
@@ -849,13 +875,24 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       if (updateError) throw updateError;
 
       toast.success("Documentos adjuntados correctamente.");
-      event.target.value = '';
       cargarHistorialDesdeBD();
     } catch (error) {
       toast.error("Error al subir: " + error.message);
     } finally {
       setUploading(false);
     }
+  };
+
+  const subirFactura = async (event) => {
+    const files = Array.from(event.target.files);
+    await subirArchivos(files);
+    event.target.value = '';
+  };
+
+  const handleDrop = async (event) => {
+    event.preventDefault();
+    const files = Array.from(event.dataTransfer.files);
+    await subirArchivos(files);
   };
 
   const eliminarSoporteDefinitivo = async (index) => {
@@ -901,7 +938,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       }).eq('id', editandoId);
       if (error) throw error;
       toast.success('Aprobada por Gerente de Proyecto. Enviada al Gerente de Área.');
-      
+
       const reqActual = historial.find(h => String(h.id) === String(editandoId));
       if (reqActual) {
         const { data: gerentesArea } = await supabase
@@ -920,14 +957,19 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       }
 
       await cargarHistorialDesdeBD();
-      setShowModal(false);
+      setShowModal(false); if (onClose) onClose();
       resetearFormulario();
     } catch (err) { toast.error(err.message); } finally { setLoading(false); }
   };
 
   const manejarAprobarGerenteArea = async () => {
+    const reqActual = historial.find(h => String(h.id) === String(editandoId));
     if (!editandoId || !currentUser?.rol?.toLowerCase()?.includes('gerente')) {
       toast.error('Solo el Gerente de Área puede realizar esta aprobación.');
+      return;
+    }
+    if (reqActual?.solicitante === `${currentUser.nombre} ${currentUser.apellido}`) {
+      toast.error('No puede aprobar su propia requisición.');
       return;
     }
     setLoading(true);
@@ -943,19 +985,25 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       if (error) throw error;
       toast.success('Aprobada por Gerente de Área. Enviada al Gerente General.');
       await cargarHistorialDesdeBD();
-      setShowModal(false);
+      setShowModal(false); if (onClose) onClose();
       resetearFormulario();
     } catch (err) { toast.error(err.message); } finally { setLoading(false); }
   };
 
   const manejarAprobarGeneral = async () => {
+    const reqActual = historial.find(h => String(h.id) === String(editandoId));
     const rolUpper = (currentUser?.rol || '').toUpperCase();
     const emailLower = (currentUser?.correo || '').toLowerCase();
 
     const esAdminPermitido = currentUser?.esAdminReal ||
-      rolUpper.includes('GERENTE') ||
-      rolUpper.includes('ADMIN') ||
+      rolUpper === 'GERENTE GENERAL' ||
+      rolUpper === 'ADMIN' ||
       emailLower.includes('cvega');
+
+    if (reqActual?.solicitante === `${currentUser.nombre} ${currentUser.apellido}`) {
+      toast.error('No puede aprobar su propia requisición.');
+      return;
+    }
 
     if (!editandoId) {
       toast.error("ERROR: No hay un ID de requisición válido.");
@@ -1013,7 +1061,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
 
       toast.success("¡APROBACIÓN COMPLETADA CON ÉXITO!");
       await cargarHistorialDesdeBD();
-      setShowModal(false);
+      setShowModal(false); if (onClose) onClose();
       resetearFormulario();
     } catch (err) {
       console.error("[APROBACIÓN] Excepción capturada:", err);
@@ -1028,16 +1076,30 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     setLoading(true);
     try {
       const rangoSolicitante = getRank(currentUser?.rol);
-      let estadoInicial = 'pendiente_proyecto';
-      let nombreEstado = 'Re-enviada (Pendiente Proyecto)';
+      let estadoInicial = 'pendiente_area';
+      let nombreEstado = 'Re-enviada (Pendiente Área)';
 
-      if (rangoSolicitante >= 2.5) {
-        estadoInicial = 'pendiente_area';
-        nombreEstado = 'Re-enviada (Pendiente Área)';
-      }
       if (rangoSolicitante >= 3) {
         estadoInicial = 'enviada_general';
         nombreEstado = 'Re-enviada (Pendiente General)';
+      }
+
+      // DETERMINAR SI TIENE GERENTE DE PROYECTO ASIGNADO (Solo si el solicitante es Analista/Coordinador)
+      if (rangoSolicitante < 2.5) {
+        try {
+          const { data: gProyectos } = await supabase
+            .from('perfiles')
+            .select('id')
+            .contains('obras_asignadas', [centroCosto])
+            .ilike('rol', '%proyecto%');
+
+          if (gProyectos && gProyectos.length > 0) {
+            estadoInicial = 'pendiente_proyecto';
+            nombreEstado = 'Re-enviada (Pendiente Proyecto)';
+          }
+        } catch (err) {
+          console.error("Error verificando gerente de proyecto:", err);
+        }
       }
 
       const { error } = await supabase.from('requisiciones').update({
@@ -1065,7 +1127,82 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       if (error) throw error;
       toast.success("Requisición re-enviada correctamente.");
       await cargarHistorialDesdeBD();
-      setShowModal(false);
+      setShowModal(false); if (onClose) onClose();
+      if (onClose) onClose();
+      resetearFormulario();
+    } catch (err) { toast.error(err.message); } finally { setLoading(false); }
+  };
+  const ejecutarGuardarUpdate = async (id) => {
+    setLoading(true);
+    try {
+      const { data: antigua } = await supabase.from('requisiciones').select('items').eq('id', id).single();
+      const itemsAntiguos = antigua?.items || [];
+
+      const { error } = await supabase.from('requisiciones').update({
+        fecha_requerida: fechaRequerida,
+        centro_costo: centroCosto,
+        prioridad,
+        items: renglones,
+        justificacion,
+        observaciones,
+        id_referencia_proyecto: idReferenciaProyecto,
+        total_bs: Number(totalEstimado) || 0,
+        facturas_url: facturasUrls
+      }).eq('id', id);
+      if (error) throw error;
+
+      // --- SINCRONIZACIÓN Y AUDITORÍA ---
+      for (let i = 0; i < renglones.length; i++) {
+        const itemNuevo = renglones[i];
+        const itemViejo = itemsAntiguos[i] || {};
+
+        // Si hubo cambios, registrar en auditoría
+        if (JSON.stringify(itemNuevo) !== JSON.stringify(itemViejo)) {
+          await supabase.from('historial_acciones').insert([{
+            requisicion_id: id,
+            usuario_nombre: currentUser?.nombre || 'Usuario',
+            accion: 'EDICIÓN',
+            campo: `ITEM_${i}`,
+            valor_anterior: JSON.stringify(itemViejo),
+            valor_nuevo: JSON.stringify(itemNuevo)
+          }]);
+
+          // Sincronizar con Solicitud de Fondos (Proyecciones)
+          const { data: fondSync } = await supabase
+            .from('solicitudes_fondos')
+            .select('*')
+            .eq('requisicion_id', id);
+
+          if (fondSync && fondSync.length > 0) {
+            for (const sol of fondSync) {
+              const itemsSol = sol.items || [];
+              const idxEnSol = itemsSol.findIndex(s => s.item_idx_original === i);
+
+              if (idxEnSol !== -1) {
+                itemsSol[idxEnSol] = {
+                  ...itemsSol[idxEnSol],
+                  descripcion: itemNuevo.descripcion,
+                  cant: itemNuevo.cant,
+                  monto: itemNuevo.precio_unitario || itemsSol[idxEnSol].monto,
+                  total: (itemNuevo.cant || 0) * (itemNuevo.precio_unitario || 0)
+                };
+
+                const nuevoTotalSol = itemsSol.reduce((acc, curr) => acc + (curr.total || 0), 0);
+                await supabase.from('solicitudes_fondos').update({
+                  items: itemsSol,
+                  monto_total: nuevoTotalSol
+                }).eq('id', sol.id);
+              }
+            }
+          }
+        }
+      }
+
+      toast.success("Cambios sincronizados con éxito.");
+      await cargarHistorialDesdeBD();
+      setModoEdicion(false);
+      setShowModal(false); if (onClose) onClose();
+      if (onClose) onClose();
       resetearFormulario();
     } catch (err) { toast.error(err.message); } finally { setLoading(false); }
   };
@@ -1075,6 +1212,11 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     if (editandoId) {
       if (!justificacion?.trim()) {
         toast.error("La justificación es obligatoria.");
+        setLoading(false);
+        return;
+      }
+      if (!prioridad) {
+        toast.error("Seleccione el nivel de prioridad.");
         setLoading(false);
         return;
       }
@@ -1148,82 +1290,15 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       return;
     }
 
-    const ejecutarGuardarUpdate = async (id) => {
-      setLoading(true);
-      try {
-        const { data: antigua } = await supabase.from('requisiciones').select('items').eq('id', id).single();
-        const itemsAntiguos = antigua?.items || [];
-
-        const { error } = await supabase.from('requisiciones').update({
-          fecha_requerida: fechaRequerida,
-          centro_costo: centroCosto,
-          prioridad,
-          items: renglones,
-          justificacion,
-          observaciones,
-          id_referencia_proyecto: idReferenciaProyecto,
-          total_bs: Number(totalEstimado) || 0,
-          facturas_url: facturasUrls
-        }).eq('id', id);
-        if (error) throw error;
-
-        // --- SINCRONIZACIÓN Y AUDITORÍA ---
-        for (let i = 0; i < renglones.length; i++) {
-          const itemNuevo = renglones[i];
-          const itemViejo = itemsAntiguos[i] || {};
-
-          // Si hubo cambios, registrar en auditoría
-          if (JSON.stringify(itemNuevo) !== JSON.stringify(itemViejo)) {
-            await supabase.from('historial_acciones').insert([{
-              requisicion_id: id,
-              usuario_nombre: currentUser?.nombre || 'Usuario',
-              accion: 'EDICIÓN',
-              campo: `ITEM_${i}`,
-              valor_anterior: JSON.stringify(itemViejo),
-              valor_nuevo: JSON.stringify(itemNuevo)
-            }]);
-
-            // Sincronizar con Solicitud de Fondos (Proyecciones)
-            // Buscamos si existe una fila en solicitudes_fondos vinculada a esta requisición y este item_idx
-            const { data: fondSync } = await supabase
-              .from('solicitudes_fondos')
-              .select('*')
-              .eq('requisicion_id', id);
-
-            if (fondSync && fondSync.length > 0) {
-              for (const sol of fondSync) {
-                const itemsSol = sol.items || [];
-                const idxEnSol = itemsSol.findIndex(s => s.item_idx_original === i);
-
-                if (idxEnSol !== -1) {
-                  itemsSol[idxEnSol] = {
-                    ...itemsSol[idxEnSol],
-                    descripcion: itemNuevo.descripcion,
-                    cant: itemNuevo.cant,
-                    monto: itemNuevo.precio_unitario || itemsSol[idxEnSol].monto,
-                    total: (itemNuevo.cant || 0) * (itemNuevo.precio_unitario || 0)
-                  };
-
-                  const nuevoTotalSol = itemsSol.reduce((acc, curr) => acc + (curr.total || 0), 0);
-                  await supabase.from('solicitudes_fondos').update({
-                    items: itemsSol,
-                    monto_total: nuevoTotalSol
-                  }).eq('id', sol.id);
-                }
-              }
-            }
-          }
-        }
-
-        toast.success("Cambios sincronizados con éxito.");
-        await cargarHistorialDesdeBD();
-        setShowModal(false);
-        resetearFormulario();
-      } catch (err) { toast.error(err.message); } finally { setLoading(false); }
-    };
 
     if (!justificacion?.trim()) {
       toast.error("La justificación es obligatoria.");
+      setLoading(false);
+      return;
+    }
+
+    if (!prioridad) {
+      toast.error("Seleccione el nivel de prioridad.");
       setLoading(false);
       return;
     }
@@ -1251,13 +1326,9 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     const nuevoCorrelativo = `RR-${siglaGerencia}-${aa}-${String(maxNumero + 1).padStart(4, '0')}`;
 
     const rangoSolicitante = getRank(currentUser?.rol);
-    let estadoInicial = 'pendiente_proyecto';
-    let nombreEstado = 'Pendiente Proyecto';
+    let estadoInicial = 'pendiente_area';
+    let nombreEstado = 'Pendiente Área';
 
-    if (rangoSolicitante >= 2.5) {
-      estadoInicial = 'pendiente_area';
-      nombreEstado = 'Pendiente Área';
-    }
     if (rangoSolicitante >= 3) {
       estadoInicial = 'enviada_general';
       nombreEstado = 'Pendiente General';
@@ -1355,15 +1426,20 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
   };
 
   const intentarCerrarModal = () => {
-    const hayContenido = justificacion?.trim() || renglones.some(r => r.descripcion?.trim() || r.categoria);
-    if (hayContenido && !editandoId) {
+    // Si estamos editando activamente una requisición existente y hay cambios, preguntamos
+    if (editandoId && modoEdicion) {
       toast((t) => (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-          <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: 'bold', color: '#1e293b' }}>⚠️ Tienes datos sin guardar</p>
-          <p style={{ margin: 0, fontSize: '0.8rem', color: '#64748b' }}>¿Estás seguro de que deseas cerrar? Se perderá la información de la nueva requisición.</p>
+          <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: 'bold', color: '#1e293b' }}>⚠️ Tienes cambios sin guardar</p>
+          <p style={{ margin: 0, fontSize: '0.8rem', color: '#64748b' }}>¿Estás seguro de que deseas cerrar? Se perderán los cambios realizados.</p>
           <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '5px' }}>
             <button
-              onClick={() => { toast.dismiss(t.id); setShowModal(false); resetearFormulario(); }}
+              onClick={() => { 
+                toast.dismiss(t.id); 
+                setShowModal(false);
+                if (onClose) onClose();
+                resetearFormulario(); 
+              }}
               style={{ padding: '6px 12px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 'bold' }}
             >CERRAR SIN GUARDAR</button>
             <button
@@ -1374,8 +1450,11 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
         </div>
       ), { duration: 6000, position: 'top-center' });
     } else {
-      setShowModal(false);
-      resetearFormulario();
+      // Si estamos creando una nueva o solo observando, cerramos directo
+      setShowModal(false); if (onClose) onClose();
+      if (onClose) onClose();
+      // Solo reseteamos si estábamos viendo una específica para no dejar basura en el estado
+      if (editandoId) resetearFormulario();
     }
   };
 
@@ -1446,7 +1525,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
 
       await cargarHistorialDesdeBD();
       onSuccess?.(nuevaReq.id, idsPartidas);
-      setShowModal(false);
+      setShowModal(false); if (onClose) onClose();
       onClose?.();
       resetearFormulario();
     } catch (err) { toast.error(err.message); } finally { setLoading(false); }
@@ -1617,121 +1696,231 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       </div>
 
       {/* --- TABLA DE HISTORIAL --- */}
-      <div className="table-container">
-        <table className="tc-table">
-          <thead>
+      <div className="table-container" style={{ borderRadius: 0, border: 'none', boxShadow: 'none' }}>
+        <table className="tc-table" style={{ borderCollapse: 'collapse', width: '100%' }}>
+          <thead style={{ background: 'linear-gradient(to right, #f8fafc, #f1f5f9)', borderBottom: '1px solid #e2e8f0' }}>
             <tr>
-              <th style={{ width: '150px' }}>ID</th>
-              <th style={{ textAlign: 'center', width: '160px' }}>ESTATUS DE APROBACIÓN</th>
-              <th>FECHA</th>
-              <th>SOLICITANTE / GERENCIA</th>
-              <th>CATEGORÍA</th>
-              <th>CENTRO DE COSTO</th>
-              <th>TOTAL (C/IVA)</th>
-              <th style={{ textAlign: 'center', width: '140px' }}>ESTATUS DE COMPRA</th>
-              <th style={{ textAlign: 'center' }}>ACCIONES</th>
+              <th style={{ width: '130px', fontSize: '11px', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#64748b', padding: '15px' }}>ID / FECHA</th>
+              <th style={{ width: '220px', fontSize: '11px', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#64748b' }}>SOLICITANTE / GERENCIA</th>
+              <th style={{ textAlign: 'center', width: '150px', fontSize: '11px', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#64748b' }}>ESTATUS APROBACIÓN</th>
+              <th style={{ width: '300px', fontSize: '11px', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#64748b' }}>JUSTIFICACIÓN / CATEGORÍA</th>
+              <th style={{ width: '180px', fontSize: '11px', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#64748b' }}>CENTRO DE COSTO</th>
+              <th style={{ width: '100px', fontSize: '11px', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#64748b' }}>TOTAL ($)</th>
+              <th style={{ textAlign: 'center', width: '130px', fontSize: '11px', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#64748b' }}>TIEMPO SLA</th>
+              <th style={{ textAlign: 'center', width: '120px', fontSize: '11px', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#64748b' }}>ESTATUS COMPRA</th>
+              <th style={{ textAlign: 'center', width: '100px', fontSize: '11px', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#64748b' }}>ACCIONES</th>
             </tr>
           </thead>
           <tbody>
             {historialFiltrado.map(req => (
               <tr key={req.id}>
                 <td data-label="CORRELATIVO"
-                  style={{ fontWeight: 'bold', color: 'var(--primary)', cursor: 'pointer', textDecoration: 'underline' }}
+                  style={{ cursor: 'pointer', padding: '15px', verticalAlign: 'middle' }}
                   onClick={() => verRequisicion(req)}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    {/* Punto de color para prioridad */}
-                    <div
-                      style={{
-                        width: '8px',
-                        height: '8px',
-                        borderRadius: '50%',
-                        backgroundColor: req.prioridad === 'Alta' ? '#ef4444' : '#0ea5e9',
-                        flexShrink: 0
-                      }}
-                      title={`Prioridad: ${req.prioridad}`}
-                    ></div>
-
-                    {req.correlativo}
-                    {req.observaciones && (
-                      <MessageSquare
-                        size={14}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <div
                         style={{
-                          color: req.leido_compras_at === null ? '#f59e0b' : '#16a34a',
-                          fill: req.leido_compras_at === null ? '#fef3c7' : '#dcfce7'
+                          width: '6px',
+                          height: '6px',
+                          borderRadius: '50%',
+                          backgroundColor: req.prioridad === 'Alta' ? '#ef4444' : '#0ea5e9',
+                          flexShrink: 0
                         }}
-                        title={`Observaciones: ${req.observaciones} \nStatus: ${req.leido_compras_at === null ? 'Pendiente por Compras' : 'Leído por Compras'}`}
                       />
-                    )}
-                    {req.facturas_url?.length > 0 && (
-                      <Paperclip size={14} style={{ color: '#0ea5e9' }} title="Tiene adjuntos" />
+                      <motion.span
+                        whileHover={{ scale: 1.05, x: 2 }}
+                        whileTap={{ scale: 0.95 }}
+                        style={{
+                          fontSize: '12px',
+                          fontWeight: '700',
+                          color: '#007BFF',
+                          textDecoration: 'underline',
+                          textUnderlineOffset: '3px',
+                          textDecorationColor: 'rgba(0, 123, 255, 0.3)'
+                        }}
+                      >
+                        {req.correlativo}
+                      </motion.span>
+                    </div>
+                    <div style={{ fontSize: '10px', color: '#94a3b8', marginLeft: '14px', fontWeight: '500' }}>
+                      {req.fecha ? format(new Date(req.fecha + 'T12:00:00'), 'dd/MM/yyyy') : 'N/A'}
+                    </div>
+                  </div>
+                </td>
+
+                <td data-label="SOLICITANTE" style={{ verticalAlign: 'middle' }}>
+                  <div style={{ fontSize: '12px', fontWeight: '600', color: '#2D2D2D', lineHeight: '1.2' }}>{req.solicitante}</div>
+                  <div style={{ fontSize: '11px', fontWeight: '400', color: '#757575', marginTop: '1px', lineHeight: '1.2' }}>{req.gerencia}</div>
+                </td>
+
+                <td data-label="ESTADO" style={{ textAlign: 'center', verticalAlign: 'middle' }}>
+                  {(() => {
+                    const status = req.estado_aprobacion === 'aprobado_final' ? 'APROBADA' :
+                      req.estado_aprobacion === 'ANULADA' ? 'ANULADA' :
+                        req.estado_aprobacion === 'rechazada' ? 'RECHAZADA' : 'PENDIENTE';
+
+                    const isGerente = req.estado_aprobacion?.includes('pendiente') || req.estado_aprobacion?.includes('enviada');
+
+                    let bg = '#FFF9E6'; // Ámbar muy claro
+                    let color = '#B25E00'; // Marrón oscuro
+
+                    if (status === 'APROBADA') { bg = '#ECFDF5'; color = '#065F46'; }
+                    else if (status === 'ANULADA' || status === 'RECHAZADA') { bg = '#F1F5F9'; color = '#475569'; }
+                    else if (isGerente) { bg = '#EFF6FF'; color = '#1E40AF'; }
+
+                    return (
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+                        <span style={{
+                          fontSize: '11px',
+                          fontWeight: '500',
+                          backgroundColor: bg,
+                          color: color,
+                          padding: '4px 10px',
+                          borderRadius: '6px',
+                          display: 'inline-block'
+                        }}>
+                          {req.estado_aprobacion === 'aprobado_final' ? 'APROBADA' :
+                            req.estado_aprobacion === 'pendiente_proyecto' ? 'GERENTE PROYECTO' :
+                              req.estado_aprobacion === 'pendiente_area' || req.estado_aprobacion === 'enviada_area' ? 'GERENTE ÁREA' :
+                                req.estado_aprobacion === 'enviada_general' ? 'GERENTE GENERAL' :
+                                  req.estado_aprobacion?.replace('_', ' ') || 'PENDIENTE'}
+                        </span>
+                      </div>
+                    );
+                  })()}
+                </td>
+
+                <td data-label="JUSTIFICACIÓN / CATEGORÍA" style={{ verticalAlign: 'middle' }}>
+                  <div style={{
+                    fontSize: '12px',
+                    fontWeight: '700',
+                    color: '#2D2D2D',
+                    textTransform: 'uppercase',
+                    maxWidth: '280px',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis'
+                  }} title={req.justificacion}>
+                    {req.justificacion || 'SIN JUSTIFICACIÓN'}
+                    {req.observaciones && <MessageSquare size={14} style={{ color: '#8b5cf6', marginLeft: '8px', verticalAlign: 'middle' }} title="Tiene observaciones" />}
+                  </div>
+                  <div style={{ fontSize: '11px', color: '#757575', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                    <span>{req.estado_aprobacion === 'ANULADA' ? '-' : (req.detalles?.[0]?.categoria || 'N/A')}</span>
+                    {req.detalles?.length > 1 && (
+                      <span
+                        style={{ color: '#0ea5e9', fontWeight: '700', cursor: 'help' }}
+                        title={req.detalles.slice(1).map(d => `- ${d.descripcion}`).join('\n')}
+                      >
+                        (+{req.detalles.length - 1} más)
+                      </span>
                     )}
                   </div>
                 </td>
 
-                <td data-label="ESTADO" style={{ textAlign: 'center' }}>
-                  <span style={{
-                    fontSize: '0.7rem',
-                    fontWeight: '900',
-                    textTransform: 'uppercase',
-                    color: req.estado_aprobacion === 'aprobado_final' ? '#16a34a' :
-                      req.estado_aprobacion === 'rechazada' ? '#ef4444' :
-                        req.estado_aprobacion === 'ANULADA' ? '#64748b' : '#0ea5e9',
-                    display: 'inline-block',
-                    width: '100%'
-                  }}>
-                    {req.estado_aprobacion === 'aprobado_final' ? 'APROBADA' :
-                      req.estado_aprobacion === 'pendiente_proyecto' ? 'GERENTE DE PROYECTO' :
-                        req.estado_aprobacion === 'pendiente_area' || req.estado_aprobacion === 'enviada_area' ? 'GERENTE DE ÁREA' :
-                          req.estado_aprobacion === 'enviada_general' ? 'GERENTE GENERAL' :
-                            req.estado_aprobacion?.replace('_', ' ') || 'PENDIENTE'}
-                  </span>
+                <td data-label="CENTRO COSTO" style={{ fontSize: '12px', color: '#2D2D2D', verticalAlign: 'middle' }}>
+                  {req.centroCosto}
                 </td>
 
-                <td data-label="FECHA" style={{ color: 'var(--slate-400)' }}>{req.fecha ? format(new Date(req.fecha + 'T12:00:00'), 'dd/MM/yyyy') : 'N/A'}</td>
-
-                <td data-label="SOLICITANTE">
-                  <div style={{ fontWeight: '500' }}>{req.solicitante}</div>
-                  <div style={{ fontSize: '0.7rem', color: '#64748b' }}>{req.gerencia}</div>
+                <td data-label="TOTAL" style={{ verticalAlign: 'middle' }}>
+                  {req.estado_aprobacion === 'ANULADA' ? (
+                    <span style={{ color: '#757575', fontSize: '12px' }}>-</span>
+                  ) : (
+                    <span style={{
+                      fontSize: '12px',
+                      fontWeight: req.total > 0 ? '700' : '400',
+                      color: req.total > 0 ? '#2D2D2D' : '#757575'
+                    }}>
+                      $ {req.total?.toLocaleString('de-DE')}
+                    </span>
+                  )}
                 </td>
 
-                <td data-label="CATEGORÍA" style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#64748b' }}>
-                  {req.estado_aprobacion === 'ANULADA' ? '-' : (req.detalles?.[0]?.categoria || 'N/A')}
+                <td data-label="TIEMPO SLA" style={{ textAlign: 'center', verticalAlign: 'middle' }}>
+                  {(() => {
+                    let deadline = req.fecha_limite_compra;
+                    if (!deadline && req.estado_aprobacion === 'aprobado_final' && req.fecha_emision) {
+                      const base = new Date(req.fecha_emision);
+                      const dias = req.prioridad === 'Emergencia' ? 1 : 5;
+                      deadline = new Date(base.getTime() + (dias * 24 * 60 * 60 * 1000)).toISOString();
+                    }
+
+                    if (deadline && req.status?.toUpperCase() !== 'COMPLETADO') {
+                      const limite = new Date(deadline);
+                      const hoy = new Date();
+                      const diff = limite.getTime() - hoy.getTime();
+                      
+                      if (req.is_pausada) return <span style={{ color: '#f59e0b', fontSize: '0.7rem', fontWeight: '900' }}>⏸️ PAUSADO</span>;
+                      
+                      const horasTotales = Math.floor(diff / (1000 * 60 * 60));
+                      const color = horasTotales < 0 ? '#ef4444' : (horasTotales < 24 ? '#f59e0b' : '#16a34a');
+                      
+                      const d = Math.floor(horasTotales / 24);
+                      const h = horasTotales % 24;
+                      const label = horasTotales < 0 ? 'VENCIDO' : (d > 0 ? `${d}d ${h}h` : `${h}h`);
+
+                      return (
+                        <div style={{ 
+                           fontSize: '0.75rem', 
+                           fontWeight: '800', 
+                           backgroundColor: `${color}15`, 
+                           color: color,
+                           padding: '4px 8px',
+                           borderRadius: '6px',
+                           display: 'inline-block'
+                         }}>
+                           {label}
+                        </div>
+                      );
+                    }
+                    return <span style={{ color: '#94a3b8', fontSize: '11px' }}>-</span>;
+                  })()}
                 </td>
 
-                <td data-label="CENTRO COSTO">{req.centroCosto}</td>
-
-                <td data-label="TOTAL" style={{ fontWeight: 'bold' }}>
-                  {req.estado_aprobacion === 'ANULADA' ? '-' : `$ ${req.total?.toLocaleString('de-DE')}`}
-                </td>
-
-                <td data-label="STATUS COMPRA" style={{ textAlign: 'center' }}>
+                <td data-label="STATUS COMPRA" style={{ textAlign: 'center', verticalAlign: 'middle' }}>
                   {req.estado_aprobacion === 'ANULADA' ? '-' : (
                     <span style={{
-                      color:
-                        req.status?.toUpperCase() === 'COMPLETADO' ? '#16a34a' :
-                          req.status?.toUpperCase() === 'PARCIAL' ? '#f59e0b' : '#ca8a04',
-                      fontSize: '0.7rem',
-                      fontWeight: '900',
-                      textTransform: 'uppercase'
+                      backgroundColor: req.status?.toUpperCase() === 'COMPLETADO' ? '#ECFDF5' : '#FFF9E6',
+                      color: req.status?.toUpperCase() === 'COMPLETADO' ? '#065F46' : '#B25E00',
+                      fontSize: '11px',
+                      fontWeight: '500',
+                      padding: '4px 10px',
+                      borderRadius: '6px',
+                      display: 'inline-block'
                     }}>
                       {req.status}
                     </span>
                   )}
                 </td>
 
-                <td data-label="ACCIONES" style={{ textAlign: 'center' }}>
+                <td data-label="ACCIONES" style={{ textAlign: 'center', verticalAlign: 'middle' }}>
                   <div style={{ display: 'flex', justifyContent: 'center', gap: '15px' }}>
-                    <button onClick={(e) => { e.stopPropagation(); verRequisicion(req); }} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '1.2rem' }} title="Ver Detalles">👁️</button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); verRequisicion(req); }}
+                      style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#94a3b8' }}
+                    >
+                      <Eye size={18} />
+                    </button>
 
-                    {/* Solo José y Analistas pueden Anular */}
                     {req.estado_aprobacion !== 'ANULADA' && (currentUser?.correo?.toLowerCase() === 'jcontreras.totalclean@gmail.com' || (currentUser?.rol || '').toLowerCase().includes('analista')) && (
-                      <button onClick={(e) => { e.stopPropagation(); anularRequisicion(req.id); }} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '1.2rem' }} title="Anular Requisición">🚫</button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); anularRequisicion(req.id); }}
+                        style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#94a3b8' }}
+                      >
+                        <Ban size={18} />
+                      </button>
                     )}
 
-                    {/* Solo José puede Borrar */}
                     {currentUser?.correo?.toLowerCase() === 'jcontreras.totalclean@gmail.com' && (
-                      <button onClick={(e) => { e.stopPropagation(); manejarEliminar(req.id); }} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '1.2rem' }} title="Borrar Registro">🗑️</button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); manejarEliminar(req.id); }}
+                        style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#94a3b8', transition: 'color 0.2s' }}
+                        onMouseOver={(e) => e.currentTarget.style.color = '#ef4444'}
+                        onMouseOut={(e) => e.currentTarget.style.color = '#94a3b8'}
+                      >
+                        <Trash2 size={18} />
+                      </button>
                     )}
                   </div>
                 </td>
@@ -1743,70 +1932,249 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       </div>
 
       {/* --- MODAL DE FORMULARIO (NUEVA / EDITAR) --- */}
-      {(isOpen || showModal) && (
-        <div className="modal-overlay">
-          <div className="modal-card animate-modal" style={{ maxWidth: '95%', width: '1300px' }}>
-            <div id="area-pdf">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div>
-                  <h2 style={{ margin: 0, color: 'var(--slate-900)' }}>Requisición de Recursos</h2>
-
-                  {/* DIAGNÓSTICO PARA GERENCIA */}
-                  {(currentUser?.esAdminReal || (currentUser?.rol || '').toUpperCase().includes('GERENTE')) && (
-                    <div style={{
-                      backgroundColor: '#fffbeb',
-                      border: '1px solid #fde68a',
-                      padding: '4px 8px',
-                      borderRadius: '6px',
-                      fontSize: '10px',
-                      color: '#92400e',
-                      marginTop: '5px'
+      {(isOpen || showModal) && ( (() => {
+        const reqActual = editandoId ? historial.find(h => String(h.id) === String(editandoId)) : null;
+        return (
+          <div className="modal-overlay">
+            <div className="modal-card animate-modal" style={{ maxWidth: '95%', width: '1300px' }}>
+              <div id="area-pdf">
+              {/* --- ENCABEZADO REFINADO EMPRESARIAL (STICKY) --- */}
+              <div style={{
+                position: 'sticky',
+                top: '-35px',
+                zIndex: 1000,
+                background: 'rgba(235, 245, 255, 0.95)',
+                backdropFilter: 'blur(12px)',
+                padding: '20px 40px',
+                borderRadius: '20px 20px 0 0',
+                margin: '-35px -40px 20px -40px',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)',
+                borderBottom: '1px solid rgba(0,0,0,0.05)'
+              }}>
+                {/* IZQUIERDA: TÍTULO Y REF + TIMELINE ICON */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+                    <h1 style={{ 
+                      margin: 0, 
+                      fontSize: '1.4rem', 
+                      fontWeight: '1000', 
+                      color: '#1e293b', 
+                      letterSpacing: '-0.02em',
+                      textTransform: 'uppercase'
                     }}>
-                      <b>SISTEMA DETECTA:</b> {currentUser?.correo} | <b>ROL:</b> {(currentUser?.rol || 'N/D').toUpperCase()}
-                    </div>
-                  )}
-
-                  {(datosPredefinidos?.id_control || (editandoId && historial.find(h => h.id === editandoId)?.origen?.startsWith('REF:'))) && (
-                    <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#64748b', marginTop: '4px' }}>
-                      {datosPredefinidos?.id_control ? `REF: ${datosPredefinidos.id_control}` : historial.find(h => h.id === editandoId)?.origen}
-                    </div>
-                  )}
-                  <div className="status-purchase-badge" style={{ marginTop: '8px' }}>
-                    <span className="stat-label" style={{ fontSize: '9px' }}>ESTATUS DE COMPRA:</span>
-                    <span style={{ fontSize: '10px', color: estadoGlobal.color, fontWeight: '900' }}>{estadoGlobal.texto}</span>
+                      REQUISICIÓN DE RECURSOS
+                    </h1>
+                    {observaciones && <MessageSquare size={20} style={{ color: '#8b5cf6' }} title="Esta requisición tiene observaciones" />}
+                    
+                    {editandoId && (
+                      <button
+                        onClick={() => setMostrarTimeline(!mostrarTimeline)}
+                        style={{
+                          width: '32px', height: '32px', borderRadius: '50%',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          cursor: 'pointer', transition: 'all 0.2s',
+                          backgroundColor: mostrarTimeline ? '#0ea5e9' : 'white',
+                          color: mostrarTimeline ? 'white' : '#64748b',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
+                          border: '1px solid #e2e8f0'
+                        }}
+                        title="Ver Línea de Tiempo"
+                      >
+                        <Clock size={16} />
+                      </button>
+                    )}
                   </div>
+
+
+                  {(() => {
+                    const reqActual = editandoId ? historial.find(h => h.id === editandoId) : null;
+                    const ref = datosPredefinidos?.id_control ? `REF: ${datosPredefinidos.id_control}` : (reqActual?.origen || '');
+                    if (!ref) return null;
+                    return (
+                      <div style={{
+                        background: 'white',
+                        color: '#475569',
+                        padding: '2px 10px',
+                        borderRadius: '6px',
+                        fontSize: '0.65rem',
+                        fontWeight: '900',
+                        border: '1px solid #cbd5e1',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '5px',
+                        width: 'fit-content',
+                        boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
+                      }}>
+                        <Diamond size={12} /> {ref}
+                      </div>
+                    );
+                  })()}
                 </div>
-                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                  <span style={{ fontSize: '0.75rem', fontWeight: '800', color: 'var(--slate-600)', textTransform: 'uppercase' }}>Nivel de prioridad:</span>
-                  <button
-                    className={`btn-tc ${prioridad === 'Normal' ? 'btn-tc-primary' : 'btn-tc-secondary'}`}
-                    onClick={() => setPrioridad('Normal')}
-                    disabled={!!editandoId}
-                  >
-                    NORMAL
-                  </button>
-                  <button
-                    className={`btn-tc ${prioridad === 'Alta' ? 'btn-tc-danger' : 'btn-tc-secondary'}`}
-                    onClick={() => setPrioridad('Alta')}
-                    disabled={!!editandoId}
-                  >
-                    ALTA
-                  </button>
-                  <div style={{ backgroundColor: '#fef08a', padding: '10px 15px', borderRadius: '8px', fontWeight: '900' }}>
-                    {editandoId ? (historial.find(h => h.id === editandoId)?.correlativo) : previewCorrelativo}
+
+                {/* DERECHA: ID (AL TOPE) + SLA TIMER */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+                  {(() => {
+                    const reqActual = editandoId ? historial.find(h => h.id === editandoId) : null;
+                    if (!reqActual || reqActual.status?.toUpperCase() === 'COMPLETADO') return null;
+                    
+                    if (reqActual.estado_aprobacion !== 'aprobado_final' && reqActual.estado_aprobacion !== 'finalizado') return null;
+
+                    let limiteDate = reqActual.fecha_limite_compra;
+                    if (!limiteDate && reqActual.fecha_emision) {
+                       const base = new Date(reqActual.fecha_emision);
+                       const dias = reqActual.prioridad === 'Emergencia' ? 1 : 5;
+                       limiteDate = new Date(base.getTime() + (dias * 24 * 60 * 60 * 1000));
+                    } else if (limiteDate) {
+                       limiteDate = new Date(limiteDate);
+                    }
+
+                    if (!limiteDate) return null;
+                    
+                    const hoy = new Date();
+                    const diff = limiteDate.getTime() - hoy.getTime();
+                    const isPausada = reqActual.is_pausada;
+                    
+                    return (
+                      <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '12px',
+                        backgroundColor: isPausada ? '#fffbeb' : '#f8fafc',
+                        padding: '8px 15px',
+                        borderRadius: '10px',
+                        border: '1px solid',
+                        borderColor: isPausada ? '#fde68a' : '#e2e8f0'
+                      }}>
+                        {isPausada ? <Ban size={16} color="#d97706" /> : <Clock size={16} color="#64748b" />}
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                          <span style={{ fontSize: '0.65rem', fontWeight: '900', color: '#64748b', textTransform: 'uppercase' }}>
+                            {isPausada ? 'SLA PAUSADO' : 'Tiempo Límite'}
+                          </span>
+                          <span style={{ 
+                            fontSize: '0.9rem', 
+                            fontWeight: '1000', 
+                            color: (() => {
+                              if (isPausada) return '#d97706';
+                              return diff < 0 ? '#ef4444' : (diff < 86400000 ? '#f59e0b' : '#16a34a');
+                            })()
+                          }}>
+                            {(() => {
+                              if (diff < 0 && !isPausada) return 'PLAZO VENCIDO';
+                              if (isPausada) return 'EN PAUSA';
+                              const d = Math.floor(diff / (1000 * 60 * 60 * 24));
+                              const h = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+                              return `${d}d ${h}h restantes`;
+                            })()}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{
+                      fontSize: '1.8rem',
+                      fontWeight: '1000',
+                      color: '#1e3a8a',
+                      lineHeight: '1',
+                      letterSpacing: '0.05em'
+                    }}>
+                      {editandoId ? (historial.find(h => h.id === editandoId)?.correlativo) : previewCorrelativo}
+                    </div>
+                    <div style={{
+                      fontSize: '0.6rem',
+                      fontWeight: '900',
+                      color: '#64748b',
+                      marginTop: '3px',
+                      letterSpacing: '0.1em',
+                      opacity: 0.8
+                    }}>
+                      ID REQ
+                    </div>
                   </div>
                 </div>
               </div>
 
-              <div className="req-header-line"></div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '20px', marginBottom: '25px' }}>
+
+              {/* --- LÍNEA DE TIEMPO COLAPSABLE --- */}
+              {editandoId && (
+                <div style={{ width: '100%' }}>
+                  <AnimatePresence>
+                    {mostrarTimeline && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: 'auto', opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        style={{ overflow: 'hidden' }}
+                      >
+                        <div className="timeline-container-premium">
+                          <div className="timeline-line"></div>
+                          {(() => {
+                            const reqActual = historial.find(h => String(h.id) === String(editandoId));
+                            if (!reqActual) return null;
+
+                            const tieneProyecto = reqActual.aprobado_gerente_proyecto || reqActual.f_aprobacion_proyecto || reqActual.firma_gerente_proyecto;
+                            
+                            const steps = [
+                              { label: 'SOLICITADO', name: reqActual.solicitante, date: reqActual.fecha_emision, icon: <User size={20} />, completed: true },
+                              ...(tieneProyecto ? [{ label: 'GERENTE PROYECTO', name: reqActual.n_aprobacion_proyecto, date: reqActual.f_aprobacion_proyecto, icon: <Settings size={20} />, completed: true }] : []),
+                              { label: 'GERENTE ÁREA', name: reqActual.n_aprobacion_area, date: reqActual.f_aprobacion_area, icon: <Building2 size={20} />, completed: reqActual.aprobado_gerente_area || (reqActual.estado_aprobacion !== 'pendiente_proyecto' && reqActual.estado_aprobacion !== 'pendiente_area' && reqActual.estado_aprobacion !== 'enviada_area' && reqActual.estado_aprobacion !== 'rechazada') },
+                              { label: 'GERENTE GENERAL', name: reqActual.n_aprobacion_general, date: reqActual.f_aprobacion_general, icon: <Diamond size={20} />, completed: reqActual.aprobado_gerente_general || reqActual.estado_aprobacion === 'aprobado_final' },
+                              { label: 'COMPRA CULMINADA', date: reqActual.f_culminacion_compras, icon: <ShoppingCart size={20} />, completed: reqActual.status?.toUpperCase() === 'COMPLETADO' }
+                            ];
+
+                            return steps.map((step, idx) => (
+                              <div key={idx} className={`timeline-step ${step.completed ? 'completed' : ''}`}>
+                                <div className="timeline-icon-wrapper">
+                                  {step.completed ? <CheckCircle2 size={24} /> : step.icon}
+                                </div>
+                                <div className="timeline-info">
+                                  <span className="timeline-label">{step.label}</span>
+                                  {step.name && <span className="timeline-name" style={{ display: 'block', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{step.name}</span>}
+                                  {step.date && (
+                                    <span className="timeline-date">
+                                      {(() => {
+                                        try {
+                                          return format(new Date(step.date), 'dd/MM/yy HH:mm');
+                                        } catch (e) {
+                                          return step.date;
+                                        }
+                                      })()}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            ));
+                          })()}
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+              )}
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(140px, 160px) 1.5fr 1fr 1fr 180px 1fr', gap: '20px', marginBottom: '25px' }}>
                 <div>
-                  <label className="stat-label">FECHA REQUERIDA</label>
-                  <input className="input-tc" type="date" value={fechaRequerida} onChange={(e) => setFechaRequerida(e.target.value)} disabled={!!editandoId} />
+                  <label className="stat-label" style={{ color: '#1e293b' }}>FECHA REQUERIDA <span style={{ color: 'var(--danger)' }}>*</span></label>
+                  <div style={{ position: 'relative' }}>
+                    <Clock size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
+                    <input
+                      className="input-tc"
+                      type="date"
+                      value={fechaRequerida}
+                      onChange={(e) => setFechaRequerida(e.target.value)}
+                      disabled={!!editandoId}
+                      style={{ width: '100%', paddingLeft: '38px' }}
+                      required
+                    />
+                  </div>
                 </div>
                 <div>
-                  <label className="stat-label">SOLICITANTE</label>
+                  <label className="stat-label" style={{ color: '#1e293b' }}>SOLICITANTE</label>
                   <div className="input-tc" style={{ display: 'flex', alignItems: 'center', gap: '10px', backgroundColor: '#f8fafc', height: '42px', boxSizing: 'border-box' }}>
                     <div style={{
                       width: '28px', height: '28px', borderRadius: '50%',
@@ -1822,7 +2190,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                   </div>
                 </div>
                 <div>
-                  <label className="stat-label">CENTRO DE COSTOS</label>
+                  <label className="stat-label" style={{ color: '#1e293b' }}>CENTRO DE COSTOS</label>
                   <select
                     className="input-tc"
                     value={centroCosto}
@@ -1838,115 +2206,193 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                   </select>
                 </div>
                 <div>
-                  <label className="stat-label">GERENCIA</label>
+                  <label className="stat-label" style={{ color: '#1e293b' }}>GERENCIA</label>
                   <select className="input-tc" value={departamento} onChange={(e) => setDepartamento(e.target.value)} disabled={!!editandoId}>
                     {listaGerencias.map(g => <option key={g} value={g}>{g}</option>)}
                   </select>
                 </div>
                 <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '5px' }}>
-                    <label className="stat-label" style={{ marginBottom: 0 }}>ID REF. PROYECTO / CONTRATO</label>
-                    {editandoId && !editandoObs && (
-                      <button
-                        onClick={() => {
-                          setObsTemporal(observaciones);
-                          setEditandoObs(true);
-                        }}
-                        style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '1rem', padding: 0 }}
-                        title="Editar Metadata"
-                      >
-                        ✏️
-                      </button>
-                    )}
+                  <label className="stat-label" style={{ color: '#1e293b' }}>PRIORIDAD</label>
+                  <div style={{
+                    display: 'flex',
+                    background: '#f1f5f9',
+                    padding: '3px',
+                    borderRadius: '12px',
+                    height: '42px',
+                    border: '1px solid #e2e8f0',
+                    gap: '3px'
+                  }}>
+                    <button
+                      onClick={() => setPrioridad('Normal')}
+                      disabled={editandoId && !modoEdicion}
+                      style={{
+                        flex: 1,
+                        border: 'none',
+                        borderRadius: '9px',
+                        background: prioridad === 'Normal' ? 'white' : 'transparent',
+                        boxShadow: prioridad === 'Normal' ? '0 2px 4px rgba(0,0,0,0.05)' : 'none',
+                        color: prioridad === 'Normal' ? '#0ea5e9' : '#64748b',
+                        fontSize: '0.65rem',
+                        fontWeight: '900',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '4px'
+                      }}
+                    >
+                      {prioridad === 'Normal' && <CheckCircle2 size={12} />}
+                      NORMAL
+                    </button>
+                    <button
+                      onClick={() => setPrioridad('Emergencia')}
+                      disabled={editandoId && !modoEdicion}
+                      style={{
+                        flex: 1,
+                        border: 'none',
+                        borderRadius: '9px',
+                        background: prioridad === 'Emergencia' ? 'white' : 'transparent',
+                        boxShadow: prioridad === 'Emergencia' ? '0 2px 4px rgba(0,0,0,0.05)' : 'none',
+                        color: prioridad === 'Emergencia' ? '#ef4444' : '#64748b',
+                        fontSize: '0.65rem',
+                        fontWeight: '900',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '4px'
+                      }}
+                    >
+                      {prioridad === 'Emergencia' && <CheckCircle2 size={12} color="#ef4444" />}
+                      EMERGENCIA
+                    </button>
                   </div>
-                  <input
-                    className="input-tc"
-                    list="ids-proyecto-previos"
-                    value={idReferenciaProyecto}
-                    onChange={manejarCambioIdProyecto}
-                    placeholder="XXX-0000-0000"
-                    disabled={editandoId && !editandoObs}
-                  />
-                  <datalist id="ids-proyecto-previos">
-                    {idsReferenciaPrevios.map(id => <option key={id} value={id} />)}
-                  </datalist>
+                </div>
+                <div>
+                  <label className="stat-label" style={{ color: '#1e293b' }}>ID REF. PROYECTO / CONTRATO</label>
+                  <div style={{ position: 'relative', height: '42px' }}>
+                    <Building2 size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
+                    <input
+                      className="input-tc"
+                      style={{ paddingLeft: '38px', width: '100%', height: '100%' }}
+                      list="ids-proyecto-previos"
+                      value={idReferenciaProyecto}
+                      onChange={manejarCambioIdProyecto}
+                      placeholder="XXX-0000-0000"
+                      disabled={editandoId && !modoEdicion}
+                    />
+                    <datalist id="ids-proyecto-previos">
+                      {idsReferenciaPrevios.map(id => <option key={id} value={id} />)}
+                    </datalist>
+                  </div>
                 </div>
               </div>
 
               <div style={{ marginBottom: '15px' }}>
-                <label className="stat-label">JUSTIFICACIÓN DE LA SOLICITUD <span style={{ color: 'var(--danger)' }}>*</span></label>
-                <input
-                  className="input-tc"
-                  type="text"
-                  value={justificacion}
-                  onChange={(e) => setJustificacion(e.target.value)}
-                  placeholder="Explique el motivo de la requisición (Obligatorio)"
-                  required
-                  disabled={!!editandoId}
-                />
-              </div>
-
-              {/* CAMPO DE OBSERVACIONES */}
-              <div style={{ marginBottom: '25px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '5px' }}>
-                  <label className="stat-label" style={{ marginBottom: 0 }}>OBSERVACIONES</label>
-                  {editandoId && !editandoObs && (
-                    <button
-                      onClick={() => {
-                        setObsTemporal(observaciones);
-                        setEditandoObs(true);
-                      }}
-                      style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '1rem', padding: 0 }}
-                      title="Editar Observaciones"
-                    >
-                      ✏️
-                    </button>
-                  )}
-                </div>
-
-                {editandoObs ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    <textarea
-                      className="input-tc"
-                      style={{ minHeight: '80px', paddingTop: '10px' }}
-                      value={obsTemporal}
-                      onChange={(e) => setObsTemporal(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && !e.shiftKey) {
-                          e.preventDefault();
-                          guardarObservacionesDirecto();
-                        }
-                      }}
-                      placeholder="Actualice las observaciones aquí..."
-                    />
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      <button
-                        className="btn-tc btn-tc-success"
-                        style={{ padding: '4px 12px', fontSize: '0.7rem' }}
-                        onClick={guardarObservacionesDirecto}
-                      >
-                        ✓ GUARDAR
-                      </button>
-                      <button
-                        className="btn-tc btn-tc-secondary"
-                        style={{ padding: '4px 12px', fontSize: '0.7rem' }}
-                        onClick={() => setEditandoObs(false)}
-                      >
-                        CANCELAR
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <textarea
+                <label className="stat-label" style={{ color: '#1e293b' }}>JUSTIFICACIÓN DE LA SOLICITUD <span style={{ color: 'var(--danger)' }}>*</span></label>
+                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                  <input
                     className="input-tc"
-                    style={{ minHeight: '60px', paddingTop: '10px' }}
-                    value={observaciones}
-                    onChange={(e) => setObservaciones(e.target.value)}
-                    placeholder="Notas adicionales sobre la entrega, especificaciones técnicas, etc."
-                    disabled={editandoId && !editandoObs}
+                    type="text"
+                    value={justificacion}
+                    onChange={(e) => setJustificacion(e.target.value)}
+                    placeholder="Explique el motivo de la requisición (Obligatorio)"
+                    required
+                    disabled={!!editandoId}
+                    style={{ flex: 1 }}
                   />
-                )}
+                  <button
+                    onClick={() => setMostrarObservaciones(!mostrarObservaciones)}
+                    style={{
+                      width: '42px', height: '42px', borderRadius: '12px',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      cursor: 'pointer', transition: 'all 0.2s',
+                      backgroundColor: mostrarObservaciones ? '#8b5cf6' : 'white',
+                      color: mostrarObservaciones ? 'white' : '#64748b',
+                      boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
+                      border: '1px solid #e2e8f0'
+                    }}
+                    title="Ver Observaciones"
+                  >
+                    <MessageSquare size={20} />
+                  </button>
+                </div>
               </div>
+
+              {/* --- SECCIÓN DE OBSERVACIONES COLAPSABLE --- */}
+              <AnimatePresence>
+                {mostrarObservaciones && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: 'auto', opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    style={{ overflow: 'hidden', marginBottom: '20px' }}
+                  >
+                    <div style={{ padding: '15px', backgroundColor: '#f8fafc', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
+                        <label className="stat-label" style={{ marginBottom: 0, color: '#1e293b', fontSize: '0.75rem' }}>OBSERVACIONES Y NOTAS</label>
+                        {editandoId && !editandoObs && (
+                          <button
+                            onClick={() => {
+                              setObsTemporal(observaciones);
+                              setEditandoObs(true);
+                            }}
+                            style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '0.9rem', padding: 0 }}
+                            title="Editar Observaciones"
+                          >
+                            ✏️
+                          </button>
+                        )}
+                      </div>
+
+                      {editandoObs ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                          <textarea
+                            className="input-tc"
+                            style={{ minHeight: '80px', paddingTop: '10px', fontSize: '0.85rem' }}
+                            value={obsTemporal}
+                            onChange={(e) => setObsTemporal(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' && !e.shiftKey) {
+                                e.preventDefault();
+                                guardarObservacionesDirecto();
+                              }
+                            }}
+                            placeholder="Actualice las observaciones aquí..."
+                          />
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <button
+                              className="btn-tc btn-tc-success"
+                              style={{ padding: '4px 12px', fontSize: '0.7rem' }}
+                              onClick={guardarObservacionesDirecto}
+                            >
+                              ✓ GUARDAR
+                            </button>
+                            <button
+                              className="btn-tc btn-tc-secondary"
+                              style={{ padding: '4px 12px', fontSize: '0.7rem' }}
+                              onClick={() => setEditandoObs(false)}
+                            >
+                              CANCELAR
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <textarea
+                          className="input-tc"
+                          style={{ minHeight: '60px', paddingTop: '10px', fontSize: '0.85rem' }}
+                          value={observaciones}
+                          onChange={(e) => setObservaciones(e.target.value)}
+                          placeholder="Notas adicionales sobre la entrega, especificaciones técnicas, etc."
+                          disabled={editandoId && !editandoObs}
+                        />
+                      )}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
               {editandoId && historial.find(h => h.id === editandoId)?.estado_aprobacion === 'rechazada' && (
                 <div style={{ marginBottom: '25px', padding: '15px', backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '12px' }}>
@@ -1959,19 +2405,21 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                 </div>
               )}
 
+
+
               <table className="tc-table" style={{ fontSize: '0.85rem' }}>
                 <thead>
                   <tr style={{ backgroundColor: 'var(--slate-50)' }}>
-                    <th style={{ width: '10px' }}>RENGLÓN</th>
-                    <th style={{ width: '200px' }}>CLASIFICACIÓN</th>
-                    <th style={{ width: '200px' }}>CATEGORÍA</th>
-                    <th style={{ width: '70px' }}>CANT.</th>
-                    <th style={{ width: '110px' }}>UNI.</th>
-                    <th style={{ width: '500px' }}>DESCRIPCIÓN</th>
-                    <th style={{ width: '300px' }}>BENEFICIARIO</th>
-                    <th style={{ width: '60px', textAlign: 'right' }}>P.U.</th>
-                    <th style={{ width: '60px', textAlign: 'right' }}>TOTAL</th>
-                    <th style={{ width: '10px', textAlign: 'center' }}>TRAZAB.</th>
+                    <th style={{ width: '5px', fontSize: '0.65rem', color: '#1e293b' }}>#</th>
+                    <th style={{ width: '250px', color: '#1e293b' }}>CLASIFICACIÓN</th>
+                    <th style={{ width: '350px', color: '#1e293b' }}>CATEGORÍA</th>
+                    <th style={{ width: '70px', color: '#1e293b' }}>CANT.</th>
+                    <th style={{ width: '90px', color: '#1e293b' }}>UNI.</th>
+                    <th style={{ width: '450px', color: '#1e293b' }}>DESCRIPCIÓN</th>
+                    <th style={{ width: '250px', color: '#1e293b' }}>BENEFICIARIO</th>
+                    <th style={{ width: '60px', textAlign: 'right', color: '#1e293b' }}>P.U.</th>
+                    <th style={{ width: '60px', textAlign: 'right', color: '#1e293b' }}>TOTAL</th>
+                    <th style={{ width: '10px', textAlign: 'center', color: '#1e293b' }}>TR.</th>
                     <th style={{ width: '5px' }}></th>
                   </tr>
                 </thead>
@@ -1985,21 +2433,22 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                           animate={{ opacity: 1, height: 'auto', scaleY: 1 }}
                           exit={{ opacity: 0, height: 0, scaleY: 0.8, overflow: 'hidden' }}
                           transition={{ duration: 0.3 }}
+                          style={{ minHeight: '60px' }}
                         >
-                          <td style={{ textAlign: 'center' }}>{index + 1}</td>
-                          <td><input className="input-tc" value={f.clasificacion} onChange={(e) => actualizarFila(f.id, 'clasificacion', e.target.value)} /></td>
-                          <td><input className="input-tc" value={f.categoria} onChange={(e) => actualizarFila(f.id, 'categoria', e.target.value)} /></td>
-                          <td><input className="input-tc" type="number" value={f.cant === '' ? '' : Number(f.cant)} onChange={(e) => actualizarFila(f.id, 'cant', e.target.value)} /></td>
-                          <td>
-                            <select className="input-tc" value={f.uni} onChange={(e) => actualizarFila(f.id, 'uni', e.target.value)}>
+                          <td style={{ textAlign: 'center', fontSize: '0.75rem', fontWeight: 'bold', color: '#64748b', padding: '12px 4px' }}>{index + 1}</td>
+                          <td style={{ padding: '12px 4px' }}><input className="input-tc" value={f.clasificacion} onChange={(e) => actualizarFila(f.id, 'clasificacion', e.target.value)} disabled={!!editandoId} /></td>
+                          <td style={{ padding: '12px 4px' }}><input className="input-tc" value={f.categoria} onChange={(e) => actualizarFila(f.id, 'categoria', e.target.value)} disabled={!!editandoId} /></td>
+                          <td style={{ padding: '12px 4px' }}><input className="input-tc" type="number" value={f.cant === '' ? '' : Number(f.cant)} onChange={(e) => actualizarFila(f.id, 'cant', e.target.value)} disabled={editandoId && !modoEdicion} /></td>
+                          <td style={{ padding: '12px 4px' }}>
+                            <select className="input-tc" value={f.uni} onChange={(e) => actualizarFila(f.id, 'uni', e.target.value)} disabled={editandoId && !modoEdicion}>
                               {unidades.map(u => <option key={u} value={u}>{u}</option>)}
                             </select>
                           </td>
-                          <td><textarea className="input-tc" value={f.descripcion} onChange={(e) => actualizarFila(f.id, 'descripcion', e.target.value)} style={{ resize: 'vertical', minHeight: '38px', paddingTop: '8px', width: '100%', boxSizing: 'border-box' }} rows="1" /></td>
-                          <td><input className="input-tc" value={f.beneficiario} onChange={(e) => actualizarFila(f.id, 'beneficiario', e.target.value)} placeholder="Beneficiario" /></td>
-                          <td><input className="input-tc" type="number" value={f.pu === '' ? '' : Number(f.pu)} style={{ textAlign: 'right' }} onChange={(e) => actualizarFila(f.id, 'pu', e.target.value)} /></td>
-                          <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{f.total.toLocaleString('de-DE')}</td>
-                          <td style={{ textAlign: 'center' }}>
+                          <td style={{ padding: '12px 4px' }}><textarea className="input-tc" value={f.descripcion} onChange={(e) => actualizarFila(f.id, 'descripcion', e.target.value)} style={{ resize: 'vertical', minHeight: '48px', paddingTop: '10px', width: '100%', boxSizing: 'border-box', lineHeight: '1.4' }} rows="1" disabled={editandoId && !modoEdicion} /></td>
+                          <td style={{ padding: '12px 4px' }}><input className="input-tc" value={f.beneficiario} onChange={(e) => actualizarFila(f.id, 'beneficiario', e.target.value)} placeholder="Beneficiario" disabled={editandoId && !modoEdicion} /></td>
+                          <td style={{ padding: '12px 4px' }}><input className="input-tc" type="number" value={f.pu === '' ? '' : Number(f.pu)} style={{ textAlign: 'right' }} onChange={(e) => actualizarFila(f.id, 'pu', e.target.value)} disabled={!!editandoId} /></td>
+                          <td style={{ textAlign: 'right', fontWeight: 'bold', padding: '12px 4px' }}>{f.total.toLocaleString('de-DE')}</td>
+                          <td style={{ textAlign: 'center', padding: '12px 4px' }}>
                             <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', alignItems: 'center' }}>
                               <button
                                 onClick={() => setExpandirHistorial(prev => ({ ...prev, [f.id]: !prev[f.id] }))}
@@ -2007,31 +2456,23 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                                 title="Ver Trazabilidad"
                                 disabled={!f.historial_compras?.length}
                               >
-                                {expandirHistorial[f.id] ? '🔼' : '🕒'}
+                                {expandirHistorial[f.id] ? '🔼' : '📜'}
                               </button>
                             </div>
                           </td>
-                          <td style={{ textAlign: 'center' }}>
-                            <button
-                              onClick={() => duplicarRenglon(f.id)}
-                              style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '1rem' }}
-                              title="Duplicar Renglón"
-                            >
-                              👯
-                            </button>
-                          </td>
+                          <td style={{ textAlign: 'center', padding: '12px 4px' }}></td>
                         </motion.tr>
                         {expandirHistorial[f.id] && Array.isArray(f.historial_compras) && f.historial_compras.length > 0 && (
                           <tr>
                             <td colSpan="11" style={{ padding: '0 0 15px 40px' }}>
                               <div style={{ backgroundColor: 'white', borderRadius: '8px', border: '1px solid #e2e8f0', overflow: 'hidden', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
-                                <div style={{ padding: '8px 12px', backgroundColor: '#f8fafc', fontSize: '0.7rem', fontWeight: '900', color: '#475569', display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #e2e8f0' }}>
+                                <div style={{ padding: '8px 12px', backgroundColor: '#f8fafc', fontSize: '0.7rem', fontWeight: '900', color: '#334155', display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #e2e8f0' }}>
                                   <span>TRAZABILIDAD Y JUSTIFICACIONES DEL ÍTEM</span>
                                   <span style={{ color: 'var(--primary)' }}>{f.historial_compras.length} EVENTOS</span>
                                 </div>
                                 <table style={{ width: '100%', fontSize: '0.75rem', borderCollapse: 'collapse' }}>
                                   <thead>
-                                    <tr style={{ backgroundColor: '#f1f5f9', color: '#64748b', fontSize: '0.65rem' }}>
+                                    <tr style={{ backgroundColor: '#f1f5f9', color: '#334155', fontSize: '0.65rem' }}>
                                       <th style={{ padding: '8px', textAlign: 'left' }}>FECHA</th>
                                       <th style={{ padding: '8px', textAlign: 'left' }}>EVENTO</th>
                                       <th style={{ padding: '8px', textAlign: 'left' }}>PROVEEDOR</th>
@@ -2084,88 +2525,126 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                 </tbody>
               </table>
 
-              <div style={{ display: 'flex', gap: '30px', marginTop: '30px', alignItems: 'flex-start' }}>
-                <div style={{ flex: 1 }}>
-                  {/* SECCIÓN DE DOCUMENTOS DE SOPORTE (IMÁGENES DE COMPRA) */}
+
+
+              <div style={{ display: 'flex', gap: '20px', marginTop: '20px', alignItems: 'stretch' }}>
+                {/* IZQUIERDA: SOPORTES COMPACTOS */}
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
                   {editandoId && (
-                    <div style={{ padding: '20px', backgroundColor: '#f8fafc', borderRadius: '15px', border: '1px solid #e2e8f0' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
-                        <h4 style={{ margin: 0, fontSize: '0.9rem', color: '#1e293b', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <FileText size={18} /> DOCUMENTOS Y SOPORTES
-                        </h4>
+                    <>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
+                        <button
+                          onClick={() => setMostrarSoportes(!mostrarSoportes)}
+                          style={{
+                            padding: '6px 14px', borderRadius: '8px',
+                            display: 'flex', alignItems: 'center', gap: '8px',
+                            cursor: 'pointer', transition: 'all 0.2s',
+                            backgroundColor: mostrarSoportes ? '#10b981' : '#f8fafc',
+                            color: mostrarSoportes ? 'white' : '#64748b',
+                            border: '1px solid #e2e8f0',
+                            fontSize: '0.7rem',
+                            fontWeight: '900'
+                          }}
+                        >
+                          <Camera size={14} /> {mostrarSoportes ? 'OCULTAR SOPORTES' : 'VER SOPORTES'}
+                        </button>
 
-                        {/* Restricción de Adjuntos: Solo creación, aprobada/finalizada o modo compras. No en aprobación. */}
-                        {(() => {
-                          const reqActual = historial.find(h => String(h.id) === String(editandoId));
-                          const estado = reqActual?.estado_aprobacion;
-                          const esProcesoAprobacion = estado === 'pendiente_area' || estado === 'enviada_general';
-                          const esFinalizada = estado === 'aprobada' || estado === 'completado' || reqActual?.status_compra === 'Completado';
-
-                          // Solo permitir si: No se está editando (Creación), o está finalizada, o NO está en proceso de aprobación
-                          if (!editandoId || (!esProcesoAprobacion || esFinalizada)) {
-                            return (
-                              <label className="btn-tc btn-tc-primary" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.75rem' }}>
-                                {uploading ? <Loader2 className="animate-spin" size={14} /> : <Upload size={14} />}
-                                {uploading ? 'SUBIENDO...' : 'ADJUNTAR SOPORTE'}
-                                <input
-                                  type="file"
-                                  multiple
-                                  style={{ display: 'none' }}
-                                  onChange={subirFactura}
-                                  disabled={uploading}
-                                  accept="image/*,application/pdf"
-                                  capture="environment"
-                                />
-                              </label>
-                            );
-                          }
-                          return null;
-                        })()}
+                        {mostrarSoportes && (!editandoId || modoEdicion) && (
+                          <label
+                            style={{
+                              padding: '6px 14px', borderRadius: '8px',
+                              display: 'flex', alignItems: 'center', gap: '8px',
+                              cursor: uploading ? 'not-allowed' : 'pointer',
+                              backgroundColor: '#0ea5e9',
+                              color: 'white',
+                              border: 'none',
+                              fontSize: '0.7rem',
+                              fontWeight: '900',
+                              boxShadow: '0 2px 4px rgba(14, 165, 233, 0.2)'
+                            }}
+                          >
+                            {uploading ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                            {uploading ? 'SUBIENDO...' : 'AÑADIR'}
+                            <input type="file" multiple style={{ display: 'none' }} onChange={subirFactura} disabled={uploading || (editandoId && !modoEdicion)} accept="image/*,application/pdf" />
+                          </label>
+                        )}
                       </div>
 
-                      <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap' }}>
-                        {(facturasUrls || []).map((item, idx) => {
-                          const url = typeof item === 'string' ? item : item?.url;
-                          const etiqueta = typeof item === 'string' ? 'Archivo' : (item?.etiqueta || 'Sin etiqueta');
-                          if (!url || url.length < 5) return null;
-
-                          const isImg = /\.(jpg|jpeg|png|webp|avif|gif)$/i.test(url.split('?')[0]);
-                          return (
-                            <div key={idx} style={{ position: 'relative', display: 'flex', flexDirection: 'column', gap: '5px', width: '90px' }}>
-                              <a href={url} target="_blank" rel="noreferrer" style={{
-                                display: 'block',
-                                width: '90px', height: '90px',
-                                borderRadius: '16px',
-                                overflow: 'hidden',
-                                border: '2px solid #e2e8f0',
-                                backgroundColor: 'white',
-                                boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)',
-                                transition: 'transform 0.2s'
-                              }} onMouseOver={(e) => e.currentTarget.style.transform = 'scale(1.05)'} onMouseOut={(e) => e.currentTarget.style.transform = 'scale(1)'}>
-                                {isImg ? (
-                                  <img src={url} alt={`Soporte ${idx}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                                ) : (
-                                  <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backgroundColor: '#fef2f2', color: '#ef4444' }}>
-                                    <FileText size={28} />
-                                    <span style={{ fontSize: '0.6rem', fontWeight: '900', marginTop: '4px' }}>PDF</span>
-                                  </div>
-                                )}
-                              </a>
-                              <div style={{ fontSize: '0.65rem', fontWeight: '700', textAlign: 'center', color: '#475569', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                {etiqueta}
-                              </div>
-                              <button
-                                onClick={() => eliminarSoporteDefinitivo(idx)}
-                                style={{ position: 'absolute', top: '-8px', right: '-8px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '50%', width: '22px', height: '22px', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 4px rgba(0,0,0,0.2)', fontWeight: 'bold', zIndex: 10 }}
-                                title="Eliminar Soporte"
-                              >
-                                X
-                              </button>
+                      <AnimatePresence>
+                        {mostrarSoportes && (
+                          <motion.div
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: 'auto', opacity: 1 }}
+                            exit={{ height: 0, opacity: 0 }}
+                            style={{ overflow: 'hidden' }}
+                          >
+                            <div 
+                              onDragOver={(e) => e.preventDefault()}
+                              onDrop={(e) => {
+                                if (editandoId && !modoEdicion) {
+                                  toast.error("Debe activar el modo edición para subir archivos.");
+                                  return;
+                                }
+                                handleDrop(e);
+                              }}
+                              style={{ 
+                                padding: '15px', 
+                                backgroundColor: '#f8fafc', 
+                                borderRadius: '12px', 
+                                border: '1px dashed #cbd5e1',
+                                minHeight: '135px',
+                                flex: 1
+                              }}
+                            >
+                              {facturasUrls.length === 0 ? (
+                                <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: '0.75rem', padding: '20px' }}>
+                                  No hay archivos. Arrastre aquí para subir.
+                                </div>
+                              ) : (
+                                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                                  {facturasUrls.map((item, idx) => {
+                                    const url = (() => {
+                                        if (typeof item === 'string') {
+                                          if (item.trim().startsWith('{')) {
+                                            try { return JSON.parse(item).url; } catch (e) { return item; }
+                                          }
+                                          return item;
+                                        }
+                                        return item?.url;
+                                      })();
+                                    if (!url) return null;
+                                    const isImg = /\.(jpg|jpeg|png|webp|avif|gif)$/i.test(url.split('?')[0]);
+                                    return (
+                                      <div key={idx} style={{ position: 'relative', width: '70px', height: '70px' }}>
+                                        <a href={url} target="_blank" rel="noreferrer" style={{
+                                          display: 'block', width: '100%', height: '100%',
+                                          borderRadius: '8px', overflow: 'hidden', border: '1px solid #e2e8f0',
+                                          backgroundColor: 'white'
+                                        }}>
+                                          {isImg ? (
+                                            <img src={url} alt={`Soporte ${idx}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                          ) : (
+                                            <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#fef2f2', color: '#ef4444' }}>
+                                              <FileText size={18} />
+                                            </div>
+                                          )}
+                                        </a>
+                                        <button
+                                          onClick={() => eliminarSoporteDefinitivo(idx)}
+                                          style={{ position: 'absolute', top: '-5px', right: '-5px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '50%', width: '18px', height: '18px', fontSize: '9px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}
+                                        >
+                                          ✕
+                                        </button>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
                             </div>
-                          );
-                        })}
-                      </div>
-                    </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </>
                   )}
                 </div>
 
@@ -2224,14 +2703,20 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
 
               <div style={{ marginTop: '30px', display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
                 <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
-                  <button className="btn-tc btn-tc-secondary" onClick={() => { setShowModal(false); onClose?.(); resetearFormulario(); }}>Cerrar</button>
+                  <button className="btn-tc btn-tc-secondary" onClick={intentarCerrarModal}>Cerrar</button>
                   <button className="btn-tc btn-tc-dark" onClick={exportarPDF}>📥 PDF</button>
 
                   {editandoId ? (
                     <>
-                      <button className="btn-tc btn-tc-primary" style={{ backgroundColor: '#0284c7' }} onClick={manejarGenerarOActualizar} disabled={loading}>
-                        {loading ? <Loader2 className="animate-spin" size={16} /> : '💾 GUARDAR CAMBIOS'}
-                      </button>
+                      {!modoEdicion ? (
+                        <button className="btn-tc btn-tc-primary" style={{ backgroundColor: '#0ea5e9' }} onClick={() => setModoEdicion(true)}>
+                          ✏️ EDITAR
+                        </button>
+                      ) : (
+                        <button className="btn-tc btn-tc-primary" style={{ backgroundColor: '#0284c7' }} onClick={manejarGenerarOActualizar} disabled={loading}>
+                          {loading ? <Loader2 className="animate-spin" size={16} /> : '💾 GUARDAR CAMBIOS'}
+                        </button>
+                      )}
                       {/* ACCIONES PARA ANALISTA / COORDINADOR (Re-enviar si está rechazada) */}
                       {(currentUser?.rol === 'Analista' || currentUser?.rol === 'Coordinador') &&
                         historial.find(h => String(h.id) === String(editandoId))?.estado_aprobacion === 'rechazada' && (
@@ -2242,7 +2727,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
 
                       {/* BOTONES PARA GERENTE DE PROYECTO */}
                       {currentUser?.rol?.toLowerCase()?.includes('proyecto') &&
-                        historial.find(h => String(h.id) === String(editandoId))?.estado_aprobacion === 'pendiente_proyecto' && (
+                        reqActual?.estado_aprobacion === 'pendiente_proyecto' && 
+                        reqActual?.solicitante !== `${currentUser.nombre} ${currentUser.apellido}` && (
                           <>
                             <button className="btn-tc btn-tc-danger" onClick={manejarRechazarGerenteProyecto} disabled={loading}>
                               {loading ? <Loader2 className="animate-spin" size={16} /> : 'RECHAZAR'}
@@ -2253,9 +2739,10 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                           </>
                         )}
 
-                      {/* BOTONES PARA GERENTE DE ÁREA (Nivel 1) */}
+                      {/* BOTONES PARA GERENTE DE ÁREA (Nivel 1 o 2 si se saltó proyecto) */}
                       {currentUser?.rol?.toLowerCase()?.includes('gerente') && !currentUser?.rol?.toLowerCase()?.includes('general') &&
-                        historial.find(h => String(h.id) === String(editandoId))?.estado_aprobacion === 'pendiente_area' && (
+                        (reqActual?.estado_aprobacion === 'pendiente_area' || reqActual?.estado_aprobacion === 'pendiente_proyecto') && 
+                        reqActual?.solicitante !== `${currentUser.nombre} ${currentUser.apellido}` && (
                           <>
                             <button className="btn-tc btn-tc-danger" onClick={manejarRechazarGerenteArea} disabled={loading}>
                               {loading ? <Loader2 className="animate-spin" size={16} /> : 'RECHAZAR'}
@@ -2269,15 +2756,14 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                       {(() => {
                         const rolUpper = (currentUser?.rol || '').toUpperCase();
                         const emailLower = (currentUser?.correo || '').toLowerCase();
-
-                        const esGG = currentUser?.esAdminReal ||
-                          rolUpper.includes('GERENTE') ||
-                          rolUpper.includes('ADMIN') ||
-                          emailLower.includes('cvega');
-
                         const reqActual = historial.find(h => String(h.id) === String(editandoId));
 
-                        if (esGG && reqActual?.estado_aprobacion === 'enviada_general') {
+                        const esGG = currentUser?.esAdminReal || 
+                                     rolUpper === 'GERENTE GENERAL' || 
+                                     rolUpper === 'ADMIN' ||
+                                     emailLower.includes('cvega');
+
+                        if (esGG && reqActual?.estado_aprobacion === 'enviada_general' && reqActual?.solicitante !== `${currentUser.nombre} ${currentUser.apellido}`) {
                           return (
                             <>
                               <button className="btn-tc btn-tc-danger" onClick={manejarRechazarGeneral} disabled={loading}>
@@ -2308,8 +2794,9 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
               </div>
             </div>
           </div>
-        </div>
-      )}
+          </div>
+        );
+      })() )}
 
       {/* --- MODAL DE RECHAZO PERSONALIZADO --- */}
       <AnimatePresence>

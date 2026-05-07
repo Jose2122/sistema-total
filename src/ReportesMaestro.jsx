@@ -45,7 +45,7 @@ const COLORS = ['#0ea5e9', '#6366f1', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981'
 const ReportesMaestro = () => {
     const [activeTab, setActiveTab] = useState('costos');
     const [loading, setLoading] = useState(true);
-    const [data, setData] = useState({ tickets: [], requisiciones: [] });
+    const [data, setData] = useState({ tickets: [], requisiciones: [], solicitudes: [], partidas: [] });
     const [bancos, setBancos] = useState([]);
 
     // Filtros
@@ -102,7 +102,7 @@ const ReportesMaestro = () => {
         if (!inicio) return { duracion: '-', alerta: false };
 
         const fin = req.f_finalizado ? new Date(req.f_finalizado) : ahora;
-        
+
         const diffMs = Math.max(0, fin - inicio);
         const dias = Math.floor(diffMs / (1000 * 60 * 60 * 24));
         const horas = Math.floor((diffMs / (1000 * 60 * 60)) % 24);
@@ -111,10 +111,10 @@ const ReportesMaestro = () => {
         let alerta = false;
         if (!req.f_finalizado) {
             const t1 = req.f_inicio_compras ? new Date(req.f_inicio_compras) :
-                       req.f_aprobacion_general ? new Date(req.f_aprobacion_general) :
-                       req.f_aprobacion_area ? new Date(req.f_aprobacion_area) :
-                       req.f_aprobacion_proyecto ? new Date(req.f_aprobacion_proyecto) :
-                       inicio;
+                req.f_aprobacion_general ? new Date(req.f_aprobacion_general) :
+                    req.f_aprobacion_area ? new Date(req.f_aprobacion_area) :
+                        req.f_aprobacion_proyecto ? new Date(req.f_aprobacion_proyecto) :
+                            inicio;
             const diffUltimo = ahora - t1;
             const horasEstancado = diffUltimo / (1000 * 60 * 60);
             if (horasEstancado > 48) alerta = true;
@@ -141,9 +141,23 @@ const ReportesMaestro = () => {
                 .select('*')
                 .eq('activo', true);
 
-            if (errT || errR || errB) throw new Error("Error en la descarga de datos");
+            const { data: sols, error: errS } = await supabase
+                .from('solicitudes_fondos')
+                .select('*')
+                .order('fecha_operativa', { ascending: false });
 
-            setData({ tickets: tickets || [], requisiciones: reqs || [] });
+            const { data: parts, error: errP } = await supabase
+                .from('partidas_fondos')
+                .select('*');
+
+            if (errT || errR || errB || errS || errP) throw new Error("Error en la descarga de datos");
+
+            setData({
+                tickets: tickets || [],
+                requisiciones: reqs || [],
+                solicitudes: sols || [],
+                partidas: parts || []
+            });
             setBancos(bData || []);
         } catch (error) {
             console.error(error);
@@ -343,7 +357,6 @@ const ReportesMaestro = () => {
         });
     }, [data.tickets, busqueda, filtroEstadoTick, filtroGerencia, filtroCC_Tab, filtroCategoria, fechaDesde, fechaHasta]);
 
-    // --- PROCESAMIENTO: VISTA 5 - CONSUMO POR GERENCIA (ANALÍTICO) ---
     const consumoGerencial = useMemo(() => {
         const stats = {};
         const meses = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
@@ -351,7 +364,7 @@ const ReportesMaestro = () => {
         // Función helper para procesar registros
         const procesar = (registros, esTicket) => {
             registros.forEach(r => {
-                const fechaStr = r.fecha_emision || r.created_at;
+                const fechaStr = r.fecha_emision || r.created_at || r.fecha_operativa;
                 if (!fechaStr) return;
                 const date = parseISO(fechaStr);
                 const mIndex = date.getMonth();
@@ -364,7 +377,7 @@ const ReportesMaestro = () => {
 
                 const gName = (esTicket ? r.departamento : r.gerencia) || 'S/G';
                 if (!stats[gName]) {
-                    stats[gName] = { name: gName, cant: 0, solicitado: 0, ejecutado: 0, items: [] };
+                    stats[gName] = { name: gName, cant: 0, solicitado: 0, ejecutado: 0, items: [], categories: {} };
                 }
 
                 const items = Array.isArray(r.items) ? r.items : [];
@@ -374,6 +387,11 @@ const ReportesMaestro = () => {
                     const monto = Number(r.total_usd || 0);
                     stats[gName].solicitado += monto;
                     stats[gName].ejecutado += (r.status?.toUpperCase() === 'PAGADO' ? monto : 0);
+
+                    const cat = r.clasificacion_admin || 'Directo';
+                    if (!stats[gName].categories[cat]) stats[gName].categories[cat] = 0;
+                    stats[gName].categories[cat] += (r.status?.toUpperCase() === 'PAGADO' ? monto : 0);
+
                     items.forEach(it => {
                         stats[gName].items.push({
                             desc: it.descripcion || it.desc,
@@ -390,9 +408,14 @@ const ReportesMaestro = () => {
                     }, 0);
                     stats[gName].solicitado += est;
                     stats[gName].ejecutado += ejec;
+
                     items.forEach(it => {
+                        const cat = it.categoria || 'S/C';
+                        if (!stats[gName].categories[cat]) stats[gName].categories[cat] = 0;
                         const h = Array.isArray(it.historial_compras) ? it.historial_compras : [];
                         const itEjec = h.reduce((acc, comp) => acc + (Number(comp.cant) * (Number(comp.pu) || 0)), 0);
+                        stats[gName].categories[cat] += itEjec;
+
                         stats[gName].items.push({
                             desc: it.descripcion,
                             costo: itEjec || (Number(it.cant) * (Number(it.pu) || 0)),
@@ -407,12 +430,21 @@ const ReportesMaestro = () => {
         if (incluirReqs) procesar(data.requisiciones, false);
         if (incluirTickets) procesar(data.tickets, true);
 
-        return Object.values(stats).map(g => ({
-            ...g,
-            porcentaje: g.solicitado > 0 ? ((g.ejecutado / g.solicitado) * 100).toFixed(1) : 0,
-            items: g.items.sort((a, b) => b.costo - a.costo)
-        })).sort((a, b) => b.ejecutado - a.ejecutado);
+        return Object.values(stats).map(g => {
+            const topCategories = Object.entries(g.categories)
+                .map(([name, total]) => ({ name, total }))
+                .sort((a, b) => b.total - a.total)
+                .slice(0, 5);
+
+            return {
+                ...g,
+                porcentaje: g.solicitado > 0 ? ((g.ejecutado / g.solicitado) * 100).toFixed(1) : 0,
+                items: g.items.sort((a, b) => b.costo - a.costo),
+                topCategories
+            };
+        }).sort((a, b) => b.ejecutado - a.ejecutado);
     }, [data, filtroMes, filtroSemana, incluirReqs, incluirTickets]);
+
 
     // --- PROCESAMIENTO: DASHBOARD AVANZADO (RESTAURADO) ---
     const kpis = useMemo(() => {
@@ -549,6 +581,85 @@ const ReportesMaestro = () => {
             return nA - nB;
         });
     }, [requisicionesControl, ticketsControl, filtroGerenciaDash]);
+
+    // --- NUEVAS MÉTRICAS BI DE ALTO IMPACTO ---
+
+    const metricsBI = useMemo(() => {
+        const reqs = data.requisiciones || [];
+
+        // 1. EFICIENCIA OPERATIVA (TIEMPOS PROMEDIO)
+        let sumProj = 0, countProj = 0;
+        let sumArea = 0, countArea = 0;
+        let sumGen = 0, countGen = 0;
+        let sumCom = 0, countCom = 0;
+
+        reqs.forEach(r => {
+            const t0 = new Date(r.created_at || r.fecha_emision);
+            if (r.f_aprobacion_proyecto) {
+                sumProj += (new Date(r.f_aprobacion_proyecto) - t0);
+                countProj++;
+            }
+            if (r.f_aprobacion_area && r.f_aprobacion_proyecto) {
+                sumArea += (new Date(r.f_aprobacion_area) - new Date(r.f_aprobacion_proyecto));
+                countArea++;
+            }
+            if (r.f_aprobacion_general && r.f_aprobacion_area) {
+                sumGen += (new Date(r.f_aprobacion_general) - new Date(r.f_aprobacion_area));
+                countGen++;
+            }
+            if (r.f_finalizado && r.f_inicio_compras) {
+                sumCom += (new Date(r.f_finalizado) - new Date(r.f_inicio_compras));
+                countCom++;
+            }
+        });
+
+        const msToDays = (ms) => (ms / (1000 * 60 * 60 * 24)).toFixed(1);
+
+        const funnelData = [
+            { stage: 'PROYECTO', dias: Number(msToDays(sumProj / countProj || 0)), color: '#0ea5e9' },
+            { stage: 'ÁREA', dias: Number(msToDays(sumArea / countArea || 0)), color: '#8b5cf6' },
+            { stage: 'GENERAL', dias: Number(msToDays(sumGen / countGen || 0)), color: '#ec4899' },
+            { stage: 'COMPRAS', dias: Number(msToDays(sumCom / countCom || 0)), color: '#10b981' },
+        ];
+
+        // 2. SALUD FINANCIERA (AHORRO POR CC)
+        const budgetByCC = {};
+        reqs.filter(r => r.estado_aprobacion === 'aprobado_final').forEach(r => {
+            const cc = r.centro_costo || 'N/A';
+            if (!budgetByCC[cc]) budgetByCC[cc] = { name: cc.split('(')[0], presupuesto: 0, real: 0, ahorro: 0 };
+
+            const items = r.items || [];
+            const est = items.reduce((s, i) => s + (Number(i.cant) * (Number(i.pu) || 0)), 0);
+            const real = items.reduce((s, i) => {
+                const h = i.historial_compras || [];
+                return s + h.reduce((acc, comp) => acc + (Number(comp.cant) * (Number(comp.pu) || 0)), 0);
+            }, 0);
+
+            budgetByCC[cc].presupuesto += est;
+            budgetByCC[cc].real += real;
+            budgetByCC[cc].ahorro += (est - real);
+        });
+
+        const financialData = Object.values(budgetByCC)
+            .sort((a, b) => b.presupuesto - a.presupuesto)
+            .slice(0, 8);
+
+        const ahorroTotal = financialData.reduce((s, c) => s + c.ahorro, 0);
+
+        // 3. AUDITORÍA (RECIENTES)
+        const auditLog = reqs
+            .filter(r => r.f_aprobacion_general || r.f_aprobacion_area)
+            .sort((a, b) => new Date(b.f_aprobacion_general || b.f_aprobacion_area) - new Date(a.f_aprobacion_general || a.f_aprobacion_area))
+            .slice(0, 5)
+            .map(r => ({
+                id: r.correlativo_req || r.id,
+                fecha: r.f_aprobacion_general || r.f_aprobacion_area,
+                accion: 'Aprobación Final',
+                usuario: r.n_aprobacion_general || r.n_aprobacion_area
+            }));
+
+        return { funnelData, financialData, ahorroTotal, auditLog };
+    }, [data.requisiciones]);
 
     // --- EXPORTACIÓN ---
     const exportExcel = async () => {
@@ -717,7 +828,6 @@ const ReportesMaestro = () => {
                 <button className={`rm-tab ${activeTab === 'reqs' ? 'active' : ''}`} onClick={() => setActiveTab('reqs')}>CONTROL DE REQUISICIONES</button>
                 <button className={`rm-tab ${activeTab === 'tickets_ctrl' ? 'active' : ''}`} onClick={() => setActiveTab('tickets_ctrl')}>CONTROL DE TICKETS</button>
                 <button className={`rm-tab ${activeTab === 'operaciones' ? 'active' : ''}`} onClick={() => { setActiveTab('operaciones'); setFiltroGerencia('Operaciones'); }}>REPORTE OPERACIONES</button>
-                <button className={`rm-tab ${activeTab === 'consumo' ? 'active' : ''}`} onClick={() => setActiveTab('consumo')}>CONSUMO POR GERENCIA</button>
                 <button className={`rm-tab ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>DASHBOARD</button>
             </div>
 
@@ -779,23 +889,6 @@ const ReportesMaestro = () => {
                     </div>
                 )}
 
-                {activeTab === 'consumo' && (
-                    <div className="rm-metric-banner">
-                        <div className="rm-metric-item">
-                            <PieChartIcon size={20} />
-                            <span>Gerencias Activas: <strong>{consumoGerencial.length}</strong></span>
-                        </div>
-                        <div className="rm-metric-filters">
-                            <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '0.8rem', cursor: 'pointer' }}>
-                                <input type="checkbox" checked={incluirReqs} onChange={e => setIncluirReqs(e.target.checked)} /> Requisiciones
-                            </label>
-                            <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '0.8rem', cursor: 'pointer' }}>
-                                <input type="checkbox" checked={incluirTickets} onChange={e => setIncluirTickets(e.target.checked)} /> Tickets
-                            </label>
-                        </div>
-                    </div>
-                )}
-
                 {loading ? (
                     <div className="rm-loader"><motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1 }}><DollarSign size={40} color="#0ea5e9" /></motion.div></div>
                 ) : (
@@ -822,105 +915,43 @@ const ReportesMaestro = () => {
                                             {requisicionesControl.map((r) => {
                                                 const sla = calcularSLA(r);
                                                 return (
-                                                <tr key={r.id} style={sla.alerta ? { backgroundColor: '#fff7ed', borderLeft: '4px solid #f97316' } : {}}>
-                                                    <td>
-                                                        <button onClick={() => setReqSeleccionada(r)} className="rm-link-btn">
-                                                            {r.correlativo_req || `REQ-${r.id}`}
-                                                        </button>
-                                                    </td>
-                                                    <td>{safeFormatDate(r.fecha_emision)}</td>
-                                                    <td className="rm-td-cc">{r.centro_costo?.split('(')[0]}</td>
-                                                    <td className="rm-td-justif">{r.justificacion}</td>
-                                                    
-                                                    <td style={{ textAlign: 'center', fontSize: '0.65rem' }}>
-                                                        <div style={{ fontWeight: 'bold' }}>{safeFormatDate(r.f_aprobacion_proyecto, 'dd/MM HH:mm')}</div>
-                                                        <div style={{ color: '#64748b' }}>{r.n_aprobacion_proyecto?.split(' ')[0] || '-'}</div>
-                                                    </td>
-                                                    <td style={{ textAlign: 'center', fontSize: '0.65rem' }}>
-                                                        <div style={{ fontWeight: 'bold' }}>{safeFormatDate(r.f_aprobacion_area, 'dd/MM HH:mm')}</div>
-                                                        <div style={{ color: '#64748b' }}>{r.n_aprobacion_area?.split(' ')[0] || '-'}</div>
-                                                    </td>
-                                                    <td style={{ textAlign: 'center', fontSize: '0.65rem' }}>
-                                                        <div style={{ fontWeight: 'bold' }}>{safeFormatDate(r.f_aprobacion_general, 'dd/MM HH:mm')}</div>
-                                                        <div style={{ color: '#64748b' }}>{r.n_aprobacion_general?.split(' ')[0] || '-'}</div>
-                                                    </td>
-                                                    <td style={{ textAlign: 'center', fontSize: '0.65rem', fontWeight: 'bold', color: r.f_inicio_compras ? '#0ea5e9' : '#94a3b8' }}>
-                                                        {safeFormatDate(r.f_inicio_compras, 'dd/MM HH:mm')}
-                                                    </td>
-                                                    <td style={{ textAlign: 'center', fontSize: '0.75rem', fontWeight: 'bold', color: sla.alerta ? '#ef4444' : '#10b981' }}>
-                                                        {sla.duracion}
-                                                    </td>
+                                                    <tr key={r.id} style={sla.alerta ? { backgroundColor: '#fff7ed', borderLeft: '4px solid #f97316' } : {}}>
+                                                        <td>
+                                                            <button onClick={() => setReqSeleccionada(r)} className="rm-link-btn">
+                                                                {r.correlativo_req || `REQ-${r.id}`}
+                                                            </button>
+                                                        </td>
+                                                        <td>{safeFormatDate(r.fecha_emision)}</td>
+                                                        <td className="rm-td-cc">{r.centro_costo?.split('(')[0]}</td>
+                                                        <td className="rm-td-justif">{r.justificacion}</td>
 
-                                                    <td style={{ textAlign: 'center' }}>
-                                                        <span className={`rm-badge-status ${r.statusDisplay.toLowerCase()}`}>
-                                                            {r.statusDisplay}
-                                                        </span>
-                                                    </td>
-                                                </tr>
-                                            )})}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </motion.div>
-                        )}
+                                                        <td style={{ textAlign: 'center', fontSize: '0.65rem' }}>
+                                                            <div style={{ fontWeight: 'bold' }}>{safeFormatDate(r.f_aprobacion_proyecto, 'dd/MM HH:mm')}</div>
+                                                            <div style={{ color: '#64748b' }}>{r.n_aprobacion_proyecto?.split(' ')[0] || '-'}</div>
+                                                        </td>
+                                                        <td style={{ textAlign: 'center', fontSize: '0.65rem' }}>
+                                                            <div style={{ fontWeight: 'bold' }}>{safeFormatDate(r.f_aprobacion_area, 'dd/MM HH:mm')}</div>
+                                                            <div style={{ color: '#64748b' }}>{r.n_aprobacion_area?.split(' ')[0] || '-'}</div>
+                                                        </td>
+                                                        <td style={{ textAlign: 'center', fontSize: '0.65rem' }}>
+                                                            <div style={{ fontWeight: 'bold' }}>{safeFormatDate(r.f_aprobacion_general, 'dd/MM HH:mm')}</div>
+                                                            <div style={{ color: '#64748b' }}>{r.n_aprobacion_general?.split(' ')[0] || '-'}</div>
+                                                        </td>
+                                                        <td style={{ textAlign: 'center', fontSize: '0.65rem', fontWeight: 'bold', color: r.f_inicio_compras ? '#0ea5e9' : '#94a3b8' }}>
+                                                            {safeFormatDate(r.f_inicio_compras, 'dd/MM HH:mm')}
+                                                        </td>
+                                                        <td style={{ textAlign: 'center', fontSize: '0.75rem', fontWeight: 'bold', color: sla.alerta ? '#ef4444' : '#10b981' }}>
+                                                            {sla.duracion}
+                                                        </td>
 
-                        {activeTab === 'consumo' && (
-                            <motion.div key="consumo" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="rm-view-wrapper">
-                                <div className="rm-dashboard-layout" style={{ marginBottom: '30px', gridTemplateColumns: '1fr 1fr' }}>
-                                    <div className="rm-chart-box">
-                                        <h3>Gastos por Gerencia (Ejecutado)</h3>
-                                        <ResponsiveContainer width="100%" height={250}>
-                                            <BarChart data={consumoGerencial}>
-                                                <XAxis dataKey="name" hide />
-                                                <YAxis hide />
-                                                <Tooltip formatter={(v) => `$ ${Number(v).toLocaleString('de-DE')}`} />
-                                                <Bar dataKey="ejecutado" fill="#0ea5e9" radius={[4, 4, 0, 0]} />
-                                            </BarChart>
-                                        </ResponsiveContainer>
-                                    </div>
-                                    <div className="rm-chart-box">
-                                        <h3>Distribución de Consumo</h3>
-                                        <ResponsiveContainer width="100%" height={250}>
-                                            <PieChart>
-                                                <Pie data={consumoGerencial} innerRadius={50} outerRadius={80} dataKey="ejecutado" nameKey="name">
-                                                    {consumoGerencial.map((e, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                                                </Pie>
-                                                <Tooltip />
-                                            </PieChart>
-                                        </ResponsiveContainer>
-                                    </div>
-                                </div>
-
-                                <div className="rm-table-card">
-                                    <table className="rm-table">
-                                        <thead>
-                                            <tr>
-                                                <th>GERENCIA</th>
-                                                <th style={{ textAlign: 'center' }}>CANT. REQUISICIONES</th>
-                                                <th style={{ textAlign: 'right' }}>TOTAL SOLICITADO ($)</th>
-                                                <th style={{ textAlign: 'right' }}>TOTAL EJECUTADO ($)</th>
-                                                <th style={{ textAlign: 'center' }}>% EJECUCIÓN</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {consumoGerencial.map((g) => (
-                                                <tr key={g.name}>
-                                                    <td>
-                                                        <button onClick={() => setGerenciaDetalle(g)} className="rm-link-btn primary-link">
-                                                            {g.name}
-                                                        </button>
-                                                    </td>
-                                                    <td style={{ textAlign: 'center', fontWeight: 'bold' }}>{g.cant}</td>
-                                                    <td style={{ textAlign: 'right' }}>$ {(g.solicitado || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
-                                                    <td style={{ textAlign: 'right', fontWeight: '900', color: '#16a34a' }}>$ {(g.ejecutado || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
-                                                    <td style={{ textAlign: 'center' }}>
-                                                        <div className="rm-progress-bar">
-                                                            <div className="rm-progress-fill" style={{ width: `${Math.min(g.porcentaje || 0, 100)}%` }}></div>
-                                                            <span>{g.porcentaje || 0}%</span>
-                                                        </div>
-                                                    </td>
-                                                </tr>
-                                            ))}
+                                                        <td style={{ textAlign: 'center' }}>
+                                                            <span className={`rm-badge-status ${r.statusDisplay.toLowerCase()}`}>
+                                                                {r.statusDisplay}
+                                                            </span>
+                                                        </td>
+                                                    </tr>
+                                                )
+                                            })}
                                         </tbody>
                                     </table>
                                 </div>
@@ -1068,90 +1099,113 @@ const ReportesMaestro = () => {
 
                         {activeTab === 'dashboard' && (
                             <motion.div key="dashboard" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="rm-view-wrapper">
-                                {/* --- DASHBOARD UNIFICADO PREMIUM (RESTAURADO) --- */}
-                                <div className="rm-stats-grid" style={{ marginBottom: '32px' }}>
-                                    <div className="rm-stat-card secondary">
-                                        <div className="rm-stat-info">
-                                            <label>Dólares pagaderos en Bolívares</label>
-                                            <h3 style={{ color: '#0ea5e9' }}>$ {(kpis.totBs || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</h3>
+                                {/* --- SECCIÓN 1: EFICIENCIA OPERATIVA (TRAZABILIDAD) --- */}
+                                <div style={{ marginBottom: '40px' }}>
+                                    <div className="rm-section-header-bi">
+                                        <div className="rm-bi-title-box">
+                                            <Clock className="rm-bi-icon-blue" />
+                                            <div>
+                                                <h3>Eficiencia Operativa</h3>
+                                                <p>Tiempos de respuesta y trazabilidad por nivel de aprobación</p>
+                                            </div>
                                         </div>
-                                        <div className="rm-stat-icon"><Clock size={22} /></div>
                                     </div>
-
-                                    <div className="rm-stat-card highlight">
-                                        <div className="rm-stat-info">
-                                            <label>Dólares pagaderos en divisas</label>
-                                            <h3 style={{ color: '#8b5cf6' }}>$ {(kpis.totUsd || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</h3>
+                                    <div className="rm-bi-grid">
+                                        <div className="rm-bi-card-main">
+                                            <h4 className="rm-chart-title">Embudo de Aprobación (SLA Promedio)</h4>
+                                            <ResponsiveContainer width="100%" height={300}>
+                                                <BarChart data={metricsBI.funnelData} layout="vertical">
+                                                    <XAxis type="number" hide />
+                                                    <YAxis dataKey="stage" type="category" axisLine={false} tickLine={false} tick={{ fontSize: 11, fontWeight: 700 }} />
+                                                    <Tooltip cursor={{ fill: 'transparent' }} formatter={(v) => `${v} Días`} />
+                                                    <Bar dataKey="dias" radius={[0, 4, 4, 0]} barSize={25}>
+                                                        {metricsBI.funnelData.map((entry, index) => (
+                                                            <Cell key={`cell-${index}`} fill={entry.color} />
+                                                        ))}
+                                                    </Bar>
+                                                </BarChart>
+                                            </ResponsiveContainer>
+                                            <div className="rm-bi-footer-info">
+                                                <span>* Tiempo promedio desde la creación hasta el cierre final.</span>
+                                            </div>
                                         </div>
-                                        <div className="rm-stat-icon"><BarChart3 size={22} /></div>
-                                    </div>
-
-                                    <div className="rm-stat-card primary">
-                                        <div className="rm-stat-info">
-                                            <label>Total General ($)</label>
-                                            <h3 style={{ fontSize: '1.8rem' }}>$ {(kpis.totalGeneral || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</h3>
+                                        <div className="rm-bi-card-side">
+                                            <h4>KPIs de Eficiencia</h4>
+                                            <div className="rm-kpi-small">
+                                                <label>Lead Time Total</label>
+                                                <div className="val">{tiempoPromedioCierre} <small>Días</small></div>
+                                            </div>
+                                            <div className="rm-kpi-small">
+                                                <label>Respuesta Gerencial</label>
+                                                <div className="val">{tiempoRespuestaGerencial} <small>Días</small></div>
+                                            </div>
+                                            <div className="rm-kpi-small alert">
+                                                <label>Reqs Estancadas (>48h)</label>
+                                                <div className="val">{requisicionesControl.filter(r => !r.f_finalizado && calcularSLA(r).alerta).length}</div>
+                                            </div>
                                         </div>
-                                        <div className="rm-stat-icon"><DollarSign size={22} /></div>
                                     </div>
                                 </div>
 
-                                <div className="rm-dashboard-layout">
-                                    <div className="rm-chart-box full">
-                                        <div className="rm-chart-header">
-                                            <h3>Consumo Total por Gerencia ($)</h3>
+                                {/* --- SECCIÓN 2: SALUD FINANCIERA (BUDGET VS REAL) --- */}
+                                <div style={{ marginBottom: '40px' }}>
+                                    <div className="rm-section-header-bi">
+                                        <div className="rm-bi-title-box">
+                                            <DollarSign className="rm-bi-icon-green" />
+                                            <div>
+                                                <h3>Salud Financiera</h3>
+                                                <p>Análisis de varianza: Presupuesto vs Gasto Real</p>
+                                            </div>
                                         </div>
-                                        <ResponsiveContainer width="100%" height={350}>
-                                            <BarChart data={dashBarGerenciaData}>
-                                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                                                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 600, fill: '#64748b' }} />
-                                                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#94a3b8' }} tickFormatter={(v) => `$${v}`} />
-                                                <Tooltip
-                                                    cursor={{ fill: '#f8fafc' }}
-                                                    formatter={(v) => `$ ${Number(v).toLocaleString('de-DE')}`}
-                                                />
-                                                <Bar dataKey="value" name="Consumo Real" fill="#0ea5e9" radius={[4, 4, 0, 0]} barSize={40} />
-                                            </BarChart>
-                                        </ResponsiveContainer>
+                                        <div className="rm-saving-badge">
+                                            <label>Ahorro Total</label>
+                                            <span>$ {metricsBI.ahorroTotal.toLocaleString('de-DE')}</span>
+                                        </div>
                                     </div>
+                                    <div className="rm-bi-grid-alt">
+                                        <div className="rm-bi-card-main full">
+                                            <h4 className="rm-chart-title">Presupuesto vs Real por Centro de Costo</h4>
+                                            <ResponsiveContainer width="100%" height={350}>
+                                                <BarChart data={metricsBI.financialData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                                                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10 }} />
+                                                    <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10 }} tickFormatter={(v) => `$${v / 1000}k`} />
+                                                    <Tooltip formatter={(v) => `$ ${Number(v).toLocaleString('de-DE')}`} />
+                                                    <Legend />
+                                                    <Bar dataKey="presupuesto" name="Presupuesto" fill="#94a3b8" radius={[4, 4, 0, 0]} barSize={20} />
+                                                    <Bar dataKey="real" name="Gasto Real" fill="#10b981" radius={[4, 4, 0, 0]} barSize={20} />
+                                                </BarChart>
+                                            </ResponsiveContainer>
+                                        </div>
+                                    </div>
+                                </div>
 
-                                    <div className="rm-chart-box">
-                                        <h3>Distribución por Gerencia</h3>
-                                        <ResponsiveContainer width="100%" height={350}>
-                                            <PieChart>
-                                                <Pie
-                                                    data={dashPieData}
-                                                    innerRadius={80}
-                                                    outerRadius={110}
-                                                    paddingAngle={5}
-                                                    dataKey="value"
-                                                    onClick={(data) => setFiltroGerenciaDash(data.name)}
-                                                    style={{ cursor: 'pointer' }}
-                                                >
-                                                    {dashPieData.map((entry, index) => (
-                                                        <Cell
-                                                            key={`cell-${index}`}
-                                                            fill={COLORS[index % COLORS.length]}
-                                                            stroke={filtroGerenciaDash === entry.name ? '#0f172a' : 'none'}
-                                                            strokeWidth={3}
-                                                        />
-                                                    ))}
-                                                </Pie>
-                                                <Tooltip formatter={(v) => `$ ${Number(v).toLocaleString('de-DE')}`} />
-                                                <Legend layout="vertical" align="right" verticalAlign="middle"
-                                                    content={({ payload }) => (
-                                                        <ul className="rm-pie-legend">
-                                                            {payload && payload.map((entry, index) => (
-                                                                <li key={`item-${index}`} onClick={() => setFiltroGerenciaDash(entry.value)}>
-                                                                    <span className="dot" style={{ backgroundColor: entry.color }}></span>
-                                                                    <span className="name">{entry.value}</span>
-                                                                    <span className="val">{dashPieData[index]?.percentage || 0}%</span>
-                                                                </li>
-                                                            ))}
-                                                        </ul>
-                                                    )}
-                                                />
-                                            </PieChart>
-                                        </ResponsiveContainer>
+                                {/* --- SECCIÓN 3: AUDITORÍA (LOG DE EVENTOS) --- */}
+                                <div>
+                                    <div className="rm-section-header-bi">
+                                        <div className="rm-bi-title-box">
+                                            <CheckCircle2 className="rm-bi-icon-purple" />
+                                            <div>
+                                                <h3>Auditoría y Trazabilidad</h3>
+                                                <p>Registro cronológico de aprobaciones recientes</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="rm-audit-timeline">
+                                        {metricsBI.auditLog.map((log, idx) => (
+                                            <div key={idx} className="rm-audit-item">
+                                                <div className="rm-audit-dot"></div>
+                                                <div className="rm-audit-content">
+                                                    <div className="rm-audit-meta">
+                                                        <span className="id">{log.id}</span>
+                                                        <span className="date">{safeFormatDate(log.fecha, 'dd/MM/yyyy HH:mm')}</span>
+                                                    </div>
+                                                    <div className="rm-audit-text">
+                                                        <strong>{log.accion}</strong> por {log.usuario}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))}
                                     </div>
                                 </div>
                             </motion.div>

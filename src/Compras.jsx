@@ -4,7 +4,7 @@ import html2canvas from 'html2canvas';
 import { supabase } from './supabaseClient';
 import toast from 'react-hot-toast';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Loader2, Upload, FileText, MessageSquare, Paperclip, Clock, CheckCircle2, AlertCircle, ShoppingBag } from 'lucide-react';
+import { Loader2, Upload, FileText, MessageSquare, Paperclip, Clock, CheckCircle2, AlertCircle, ShoppingBag, ChevronDown } from 'lucide-react';
 import './Requisiciones.css';
 import './ReportesMaestro.css';
 
@@ -54,7 +54,14 @@ const Compras = () => {
   const [itemParaJustificar, setItemParaJustificar] = useState(null);
   const [motivoRetraso, setMotivoRetraso] = useState('');
   const [comentarioRetraso, setComentarioRetraso] = useState('');
+  const [expandirSoportes, setExpandirSoportes] = useState(false);
   const [preciosReferencia, setPreciosReferencia] = useState({}); // { descripcion: ultimoPrecio }
+  
+  // --- SLA & POSTERGACIÓN ---
+  const [showPostergarModal, setShowPostergarModal] = useState(false);
+  const [motivoPostergacion, setMotivoPostergacion] = useState('');
+  const [motivoCategoria, setMotivoCategoria] = useState('');
+  const [comentarioPostergacion, setComentarioPostergacion] = useState('');
 
   const obtenerSesionUsuario = useCallback(async () => {
     const { data: { session } } = await supabase.auth.getSession();
@@ -184,7 +191,9 @@ const Compras = () => {
     });
 
     setRenglones(renglonesIniciados);
-    setFacturasUrls(req.facturas_url || []);
+    const fUrl = req.facturas_url || req.factura_url || [];
+    setFacturasUrls(Array.isArray(fUrl) ? fUrl : [fUrl].filter(Boolean));
+    setExpandirSoportes((Array.isArray(fUrl) ? fUrl : [fUrl].filter(Boolean)).length > 0);
     setShowModal(true);
     setExpandirHistorial({});
     obtenerPreciosReferencia(renglonesIniciados);
@@ -242,6 +251,52 @@ const Compras = () => {
         </div>
       </div>
     ), { duration: 5000, position: 'top-center' });
+  };
+
+  const manejarPostergacion = async (req) => {
+    if (!req.is_pausada) {
+      // Abrir modal para pedir comentario
+      setShowPostergarModal(true);
+    } else {
+      // Reanudar directamente
+      ejecutarCambioPausa(req, false, 'Reanudación de tiempos');
+    }
+  };
+
+  const ejecutarCambioPausa = async (req, nuevaPausa, comentario) => {
+    try {
+      setLoading(true);
+      const fullComentario = nuevaPausa ? `[${motivoCategoria}] ${comentario}` : comentario;
+      const { error } = await supabase
+        .from('requisiciones')
+        .update({ 
+          is_pausada: nuevaPausa,
+          motivo_postergacion: nuevaPausa ? fullComentario : req.motivo_postergacion
+        })
+        .eq('id', req.id);
+
+      if (error) throw error;
+
+      // Registrar en logs de auditoría
+      await supabase.from('requisicion_logs').insert({
+        requisicion_id: req.id,
+        usuario_id: currentUser?.id,
+        usuario_nombre: currentUser?.nombre,
+        accion: nuevaPausa ? 'PAUSA' : 'REANUDACIÓN',
+        comentario: fullComentario
+      });
+
+      toast.success(nuevaPausa ? 'Tiempos pausados correctamente' : 'Tiempos reanudados');
+      setRequisicionActiva({ ...req, is_pausada: nuevaPausa, motivo_postergacion: nuevaPausa ? fullComentario : req.motivo_postergacion });
+      cargarRequisicionesAprobadas();
+      setShowPostergarModal(false);
+      setMotivoCategoria('');
+      setComentarioPostergacion('');
+    } catch (err) {
+      toast.error("Error al cambiar estado de pausa: " + err.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const ejecutarLiquidacionNC = async (idRenglon, indexHistorial) => {
@@ -1232,10 +1287,10 @@ const Compras = () => {
             <tr>
               <th style={{ width: '150px', padding: '12px 15px' }}>ID REQ</th>
               <th style={{ padding: '12px 15px' }}>CATEGORÍA</th>
-              <th style={{ padding: '12px 15px' }}>SOLICITANTE</th>
+              <th style={{ padding: '12px 15px' }}>SOLICITANTE / GERENCIA</th>
               <th style={{ padding: '12px 15px' }}>C. COSTOS</th>
-              <th style={{ padding: '12px 15px' }}>GERENCIA</th>
               <th style={{ textAlign: 'center', width: '120px', padding: '12px 15px' }}>PRIORIDAD</th>
+              <th style={{ textAlign: 'center', width: '130px', padding: '12px 15px' }}>SLA / TIEMPO</th>
               <th style={{ textAlign: 'right', padding: '12px 15px' }}>TOTAL $</th>
               <th style={{ textAlign: 'center', width: '140px', padding: '12px 15px' }}>ESTATUS</th>
             </tr>
@@ -1246,11 +1301,25 @@ const Compras = () => {
             ) : historialFiltrado.map(req => (
               <tr key={req.id} className="hover:bg-slate-50 transition-colors" style={{ borderBottom: '1px solid #f1f5f9' }}>
                 <td
-                  style={{ fontWeight: 'bold', color: 'var(--primary)', cursor: 'pointer', padding: '8px 15px' }}
+                  style={{ padding: '8px 15px' }}
                   onClick={() => abrirProcesamiento(req)}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span style={{ textDecoration: 'underline' }}>{req.correlativo}</span>
+                    <motion.span
+                      whileHover={{ scale: 1.05, color: '#0ea5e9' }}
+                      whileTap={{ scale: 0.95 }}
+                      style={{
+                        fontSize: '12px',
+                        fontWeight: '800',
+                        color: 'var(--primary)',
+                        cursor: 'pointer',
+                        textDecoration: 'underline',
+                        textUnderlineOffset: '3px',
+                        textDecorationColor: 'rgba(14, 165, 233, 0.3)'
+                      }}
+                    >
+                      {req.correlativo}
+                    </motion.span>
                     {req.observaciones && (
                       <MessageSquare
                         size={14}
@@ -1260,7 +1329,7 @@ const Compras = () => {
                         }}
                       />
                     )}
-                    {(req.facturas_url || []).length > 0 && (
+                    {(req.facturas_url || req.factura_url || []).length > 0 && (
                       <Paperclip size={14} style={{ color: '#0ea5e9' }} />
                     )}
                   </div>
@@ -1274,15 +1343,58 @@ const Compras = () => {
                     {req.items?.[0]?.categoria || 'N/A'} {req.items?.length > 1 ? <span style={{ color: '#0ea5e9' }}>(+{req.items.length - 1} más)</span> : ''}
                   </div>
                 </td>
-                <td style={{ padding: '8px 15px', color: '#475569', fontSize: '0.9rem' }}>{req.solicitante}</td>
-                <td style={{ padding: '8px 15px', color: '#475569', fontSize: '0.85rem' }}>{req.centro_costo}</td>
-                <td style={{ padding: '8px 15px', color: '#475569', fontSize: '0.85rem' }}>{req.gerencia}</td>
+                <td style={{ padding: '8px 15px' }}>
+                  <div style={{ fontSize: '0.85rem', fontWeight: '700', color: '#1e293b', lineHeight: '1.2' }}>{req.solicitante}</div>
+                  <div style={{ fontSize: '0.7rem', fontWeight: '500', color: '#64748b', marginTop: '1px', lineHeight: '1.2' }}>{req.gerencia}</div>
+                </td>
+                <td style={{ padding: '8px 15px', color: '#475569', fontSize: '0.85rem', fontWeight: '500' }}>{req.centro_costo}</td>
                 <td style={{ textAlign: 'center', padding: '8px 15px' }}>
-                  {req.prioridad === 'Alta' ? (
-                    <span style={{ color: '#ef4444', fontSize: '0.65rem', fontWeight: '900' }}>⚠️ ALTA</span>
+                  {req.prioridad === 'Emergencia' ? (
+                    <span style={{ color: '#ef4444', fontSize: '0.65rem', fontWeight: '900' }}>🔥 EMERGENCIA</span>
                   ) : (
                     <span style={{ color: '#94a3b8', fontSize: '0.65rem', fontWeight: '700' }}>NORMAL</span>
                   )}
+                </td>
+                <td style={{ textAlign: 'center', padding: '8px 15px' }}>
+                  {(() => {
+                    let deadline = req.fecha_limite_compra;
+                    if (!deadline && req.fecha_emision) {
+                      const base = new Date(req.fecha_emision);
+                      const dias = req.prioridad === 'Emergencia' ? 1 : 5;
+                      deadline = new Date(base.getTime() + (dias * 24 * 60 * 60 * 1000)).toISOString();
+                    }
+
+                    if (deadline && req.status_compra !== 'Completado') {
+                      const limite = new Date(deadline);
+                      const hoy = new Date();
+                      const diff = limite.getTime() - hoy.getTime();
+                      const isPausada = req.is_pausada;
+                      
+                      if (isPausada) return <span style={{ color: '#f59e0b', fontSize: '0.7rem', fontWeight: '900' }}>⏸️ PAUSADO</span>;
+                      
+                      const horasTotales = Math.floor(diff / (1000 * 60 * 60));
+                      const color = horasTotales < 0 ? '#ef4444' : (horasTotales < 24 ? '#f59e0b' : '#16a34a');
+                      
+                      const dias = Math.floor(horasTotales / 24);
+                      const horasRestantes = horasTotales % 24;
+                      const label = horasTotales < 0 ? 'VENCIDO' : (dias > 0 ? `${dias}d ${horasRestantes}h` : `${horasRestantes}h`);
+
+                      return (
+                        <div style={{ 
+                           fontSize: '0.75rem', 
+                           fontWeight: '800', 
+                           backgroundColor: `${color}15`, 
+                           color: color,
+                           padding: '4px 8px',
+                           borderRadius: '6px',
+                           display: 'inline-block'
+                         }}>
+                           {label}
+                        </div>
+                      );
+                    }
+                    return <span style={{ color: '#94a3b8', fontSize: '0.7rem' }}>-</span>;
+                  })()}
                 </td>
                 <td style={{ textAlign: 'right', fontWeight: 'bold', color: '#1e293b', padding: '8px 15px' }}>
                   $ {(req.total || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
@@ -1327,7 +1439,26 @@ const Compras = () => {
           <div className="modal-card animate-modal" style={{ maxWidth: '1450px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
-                <h2 style={{ margin: 0 }}>Gestión de Compra: {requisicionActiva?.correlativo}</h2>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <h2 style={{ margin: 0 }}>Gestión de Compra: {requisicionActiva?.correlativo}</h2>
+                  {requisicionActiva?.observaciones && (
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      backgroundColor: '#fef3c7',
+                      color: '#d97706',
+                      padding: '4px 10px',
+                      borderRadius: '8px',
+                      fontSize: '0.75rem',
+                      fontWeight: 'bold',
+                      border: '1px solid #fde68a'
+                    }}>
+                      <MessageSquare size={14} fill="#fef3c7" />
+                      REQUISICIÓN CON OBSERVACIÓN
+                    </div>
+                  )}
+                </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '20px', marginTop: '12px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <div style={{
@@ -1353,10 +1484,85 @@ const Compras = () => {
                   </div>
                 </div>
               </div>
-              <div style={{ textAlign: 'right' }}>
-                <div style={{ fontSize: '0.65rem', fontWeight: 'bold', color: '#94a3b8', textTransform: 'uppercase' }}>Status de Compra</div>
-                <div style={{ fontSize: '1.1rem', fontWeight: '900', color: requisicionActiva?.status_compra === 'Completado' ? '#15803d' : '#854d0e' }}>
-                  {requisicionActiva?.status_compra || 'EN ESPERA'}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+                 {/* SLA TIMER PANEL */}
+                 {(() => {
+                   if (!requisicionActiva || requisicionActiva.status_compra === 'Completado') return null;
+
+                   let limiteDate = requisicionActiva.fecha_limite_compra;
+                   if (!limiteDate && requisicionActiva.fecha_emision) {
+                      const base = new Date(requisicionActiva.fecha_emision);
+                      const dias = requisicionActiva.prioridad === 'Emergencia' ? 1 : 5;
+                      limiteDate = new Date(base.getTime() + (dias * 24 * 60 * 60 * 1000));
+                   } else if (limiteDate) {
+                      limiteDate = new Date(limiteDate);
+                   }
+
+                   if (!limiteDate) return null;
+                   
+                   const hoy = new Date();
+                   const diff = limiteDate.getTime() - hoy.getTime();
+                   const isPausada = requisicionActiva.is_pausada;
+
+                   return (
+                     <div style={{
+                       display: 'flex',
+                       alignItems: 'center',
+                       gap: '12px',
+                       backgroundColor: isPausada ? '#fffbeb' : '#f8fafc',
+                       padding: '8px 15px',
+                       borderRadius: '10px',
+                       border: '1px solid',
+                       borderColor: isPausada ? '#fde68a' : '#e2e8f0'
+                     }}>
+                       {isPausada ? <AlertCircle size={16} color="#d97706" /> : <Clock size={16} color="#64748b" />}
+                       <div style={{ display: 'flex', flexDirection: 'column' }}>
+                         <span style={{ fontSize: '0.65rem', fontWeight: '900', color: '#64748b', textTransform: 'uppercase' }}>
+                           {isPausada ? 'SLA PAUSADO' : 'Tiempo Límite'}
+                         </span>
+                         <span style={{ 
+                           fontSize: '0.9rem', 
+                           fontWeight: '1000', 
+                           color: (() => {
+                             if (isPausada) return '#d97706';
+                             return diff < 0 ? '#ef4444' : (diff < 86400000 ? '#f59e0b' : '#16a34a');
+                           })()
+                         }}>
+                           {(() => {
+                             if (diff < 0 && !isPausada) return 'PLAZO VENCIDO';
+                             if (isPausada) return 'EN PAUSA';
+                             const d = Math.floor(diff / (1000 * 60 * 60 * 24));
+                             const h = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+                             return `${d}d ${h}h restantes`;
+                           })()}
+                         </span>
+                       </div>
+                       
+                       <button
+                         onClick={() => manejarPostergacion(requisicionActiva)}
+                         style={{
+                           marginLeft: '10px',
+                           padding: '6px 12px',
+                           borderRadius: '8px',
+                           border: '1px solid #cbd5e1',
+                           backgroundColor: isPausada ? '#fef3c7' : 'white',
+                           color: isPausada ? '#d97706' : '#64748b',
+                           fontSize: '0.7rem',
+                           fontWeight: 'bold',
+                           cursor: 'pointer'
+                         }}
+                       >
+                         {isPausada ? '▶️ REANUDAR' : '⏸️ POSTERGAR'}
+                       </button>
+                     </div>
+                   );
+                 })()}
+
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: '0.65rem', fontWeight: 'bold', color: '#94a3b8', textTransform: 'uppercase' }}>Status de Compra</div>
+                  <div style={{ fontSize: '1.1rem', fontWeight: '900', color: requisicionActiva?.status_compra === 'Completado' ? '#15803d' : '#854d0e' }}>
+                    {requisicionActiva?.status_compra || 'EN ESPERA'}
+                  </div>
                 </div>
               </div>
             </div>
@@ -1677,71 +1883,76 @@ const Compras = () => {
                     </tr>
                     {expandirHistorial[f.id] && f.historial_compras?.length > 0 && (
                       <tr>
-                        <td colSpan="10" style={{ padding: '0 0 15px 50px' }}>
-                          <div style={{ backgroundColor: 'white', borderRadius: '8px', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
-                            <div style={{ padding: '8px 12px', backgroundColor: '#f1f5f9', fontSize: '0.7rem', fontWeight: 'bold', color: '#475569', display: 'flex', justifyContent: 'space-between' }}>
-                              <span>HISTORIAL DE COMPRAS REALIZADAS</span>
-                              <span>{f.historial_compras.length} transacciones</span>
+                        <td colSpan="11" style={{ padding: '0 0 15px 50px' }}>
+                          <div style={{ backgroundColor: 'white', borderRadius: '12px', border: '1px solid #e2e8f0', overflow: 'hidden', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)' }}>
+                            <div style={{ padding: '10px 15px', backgroundColor: '#f8fafc', fontSize: '0.75rem', fontWeight: '900', color: '#334155', display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #e2e8f0' }}>
+                              <span style={{ letterSpacing: '0.05em' }}>TRAZABILIDAD Y REGISTROS DE COMPRA</span>
+                              <span style={{ color: '#0ea5e9', backgroundColor: '#e0f2fe', padding: '2px 8px', borderRadius: '10px' }}>{f.historial_compras.length} EVENTOS</span>
                             </div>
                             <table style={{ width: '100%', fontSize: '0.75rem', borderCollapse: 'collapse' }}>
                               <thead>
-                                <tr style={{ borderBottom: '1px solid #e2e8f0', color: '#64748b' }}>
-                                  <th style={{ padding: '8px', textAlign: 'left' }}>FECHA</th><th style={{ padding: '8px', textAlign: 'left' }}>TIPO</th><th style={{ padding: '8px', textAlign: 'left' }}>PROVEEDOR</th>
-                                  <th style={{ padding: '8px', textAlign: 'left' }}>DETALLE / MOTIVO</th>
-                                  <th style={{ padding: '8px', textAlign: 'center' }}>CANT.</th>
-                                  <th style={{ padding: '8px', textAlign: 'right' }}>P.U. REAL</th>
-                                  <th style={{ padding: '8px', textAlign: 'right' }}>TOTAL / COMENTARIO</th>
-                                  <th style={{ padding: '8px', textAlign: 'right' }}>COMPRADOR</th>
-                                  <th style={{ padding: '8px', textAlign: 'center' }}></th>
+                                <tr style={{ backgroundColor: '#f1f5f9', color: '#475569', fontSize: '0.65rem', borderBottom: '1px solid #e2e8f0' }}>
+                                  <th style={{ padding: '10px 12px', textAlign: 'left' }}>FECHA</th>
+                                  <th style={{ padding: '10px 12px', textAlign: 'left' }}>EVENTO</th>
+                                  <th style={{ padding: '10px 12px', textAlign: 'left' }}>PROVEEDOR</th>
+                                  <th style={{ padding: '10px 12px', textAlign: 'left' }}>DETALLE / DOCUMENTO</th>
+                                  <th style={{ padding: '10px 12px', textAlign: 'center' }}>CANT.</th>
+                                  <th style={{ padding: '10px 12px', textAlign: 'right' }}>P.U. REAL</th>
+                                  <th style={{ padding: '10px 12px', textAlign: 'right' }}>TOTAL / COMENTARIO</th>
+                                  <th style={{ padding: '10px 12px', textAlign: 'right' }}>USUARIO</th>
+                                  <th style={{ padding: '10px 12px', textAlign: 'center' }}></th>
                                 </tr>
                               </thead>
                               <tbody>
                                 {f.historial_compras.map((h, idx) => (
                                   <tr key={idx} style={{
                                     borderBottom: idx < f.historial_compras.length - 1 ? '1px solid #f1f5f9' : 'none',
-                                    backgroundColor: h.tipo === 'JUSTIFICACION' ? '#fffbeb' : 'transparent'
+                                    backgroundColor: h.tipo === 'JUSTIFICACION' ? '#fffbeb' : 'transparent',
+                                    transition: 'background-color 0.2s'
                                   }}>
-                                    <td style={{ padding: '8px' }}>{new Date(h.fecha).toLocaleDateString()}</td>
-                                    <td style={{ padding: '8px', fontWeight: 'bold', color: h.tipo === 'JUSTIFICACION' ? '#d97706' : (h.doc_tipo === 'NC' ? '#f59e0b' : '#1e293b') }}>
+                                    <td style={{ padding: '10px 12px', color: '#64748b', fontWeight: '600' }}>{new Date(h.fecha).toLocaleDateString()}</td>
+                                    <td style={{ padding: '10px 12px', fontWeight: '800', color: h.tipo === 'JUSTIFICACION' ? '#d97706' : (h.doc_tipo === 'NC' ? '#f59e0b' : '#1e293b') }}>
                                       {h.tipo === 'JUSTIFICACION' ? '⚠️ JUSTIFICACIÓN' : (h.doc_tipo === 'NC' ? '💳 A CRÉDITO' : '✅ COMPRADO')}
                                     </td>
-                                    <td style={{ padding: '8px', fontSize: '0.65rem', fontWeight: 'bold', color: '#64748b' }}>
+                                    <td style={{ padding: '10px 12px', fontSize: '0.7rem', fontWeight: '700', color: '#334155' }}>
                                       {h.tipo !== 'JUSTIFICACION' ? (h.proveedor_nombre || 'No asignado') : '-'}
                                     </td>
-                                    <td style={{ padding: '8px' }}>
+                                    <td style={{ padding: '10px 12px' }}>
                                       {h.tipo === 'JUSTIFICACION' ? (
-                                        <div style={{ fontStyle: 'italic', color: '#92400e' }}>Motivo: {h.motivo}</div>
+                                        <div style={{ fontStyle: 'italic', color: '#92400e', fontWeight: '600', fontSize: '0.7rem' }}>{h.motivo}</div>
                                       ) : (
-                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                                          <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                                            <span style={{ fontSize: '0.65rem', backgroundColor: '#e2e8f0', padding: '2px 5px', borderRadius: '4px', fontWeight: 'bold' }}>{h.metodo_pago}</span>
-                                            <span style={{ fontSize: '0.7rem', fontWeight: '800', color: '#475569' }}>{h.doc_tipo}: {h.doc_numero}</span>
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                            <span style={{ fontSize: '0.6rem', backgroundColor: '#e2e8f0', color: '#475569', padding: '2px 6px', borderRadius: '4px', fontWeight: '900' }}>{h.metodo_pago}</span>
+                                            <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#1e293b' }}>{h.doc_tipo}: {h.doc_numero}</span>
                                           </div>
                                           {h.fecha_pago && (
-                                            <div style={{ fontSize: '10px', color: '#16a34a', fontWeight: '700' }}>
-                                              📅 PAGADO EL: {new Date(h.fecha_pago).toLocaleDateString()}
+                                            <div style={{ fontSize: '9px', color: '#16a34a', fontWeight: '800', textTransform: 'uppercase' }}>
+                                              📅 PAGADO: {new Date(h.fecha_pago).toLocaleDateString()}
                                             </div>
                                           )}
                                         </div>
                                       )}
                                     </td>
-                                    <td style={{ padding: '8px', textAlign: 'center', fontWeight: 'bold' }}>{h.cant || '-'}</td>
-                                    <td style={{ padding: '8px', textAlign: 'right' }}>{h.pu ? `$ ${h.pu.toLocaleString('de-DE')}` : '-'}</td>
-                                    <td style={{ padding: '8px', textAlign: 'right', fontWeight: 'bold' }}>
+                                    <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: '800', color: '#1e293b' }}>{h.cant || '-'}</td>
+                                    <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: '700', color: '#1e293b' }}>{h.pu ? `$ ${h.pu.toLocaleString('de-DE')}` : '-'}</td>
+                                    <td style={{ padding: '10px 12px', textAlign: 'right' }}>
                                       {h.tipo === 'JUSTIFICACION' ? (
-                                        <div style={{ fontSize: '0.7rem', color: '#64748b', whiteSpace: 'pre-wrap', textAlign: 'left' }}>
+                                        <div style={{ fontSize: '0.7rem', color: '#475569', whiteSpace: 'pre-wrap', textAlign: 'left', backgroundColor: '#fef3c7', padding: '8px', borderRadius: '6px', border: '1px solid #fde68a' }}>
                                           {h.comentario}
                                         </div>
-                                      ) : `$ ${(h.cant * h.pu).toLocaleString('de-DE')}`}
+                                      ) : <span style={{ fontWeight: '900', color: '#0ea5e9', fontSize: '0.85rem' }}>$ {(h.cant * h.pu).toLocaleString('de-DE')}</span>}
                                     </td>
-                                    <td style={{ padding: '8px', textAlign: 'right', color: '#64748b' }}>{h.usuario_nombre}</td>
-                                    <td style={{ padding: '8px', textAlign: 'center' }}>
+                                    <td style={{ padding: '10px 12px', textAlign: 'right', color: '#64748b', fontSize: '0.65rem', fontWeight: '600' }}>{h.usuario_nombre}</td>
+                                    <td style={{ padding: '10px 12px', textAlign: 'center' }}>
                                       {(deptoUpperFinal.includes('COMPRAS') || currentUser?.esAdminReal || rolUpperFinal === 'ADMIN' || rolUpperFinal === 'GERENTE GENERAL') && (
                                         <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
                                           {(h.doc_tipo === 'NC' || h.metodo_pago?.includes('CRÉDITO')) && h.metodo_pago !== 'PAGADO (NC)' && (
                                             <button
                                               onClick={() => liquidarNC(f.id, idx)}
-                                              style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#0ea5e9' }}
+                                              style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#0ea5e9', fontSize: '1rem', transition: 'transform 0.2s' }}
+                                              onMouseOver={(e) => e.currentTarget.style.transform = 'scale(1.2)'}
+                                              onMouseOut={(e) => e.currentTarget.style.transform = 'scale(1)'}
                                               title="Confirmar Pago NC"
                                             >
                                               💸
@@ -1749,7 +1960,9 @@ const Compras = () => {
                                           )}
                                           <button
                                             onClick={() => eliminarEntradaHistorial(f.id, idx)}
-                                            style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#ef4444' }}
+                                            style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#ef4444', fontSize: '1rem', transition: 'transform 0.2s' }}
+                                            onMouseOver={(e) => e.currentTarget.style.transform = 'scale(1.2)'}
+                                            onMouseOut={(e) => e.currentTarget.style.transform = 'scale(1)'}
                                             title="Eliminar Registro"
                                           >
                                             🗑️
@@ -1772,11 +1985,43 @@ const Compras = () => {
 
             <div style={{ marginTop: '30px', display: 'grid', gridTemplateColumns: 'minmax(0, 1.5fr) minmax(0, 1fr)', gap: '40px' }}>
               <div style={{ backgroundColor: '#f8fafc', padding: '20px', borderRadius: '15px', border: '1px solid #e2e8f0' }}>
-                <h4 style={{ margin: '0 0 15px 0', fontSize: '0.9rem', color: '#1e293b' }}>🧾 Soporte de Documentos</h4>
-                <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap', marginBottom: '20px' }}>
+                <div 
+                  onClick={() => setExpandirSoportes(!expandirSoportes)}
+                  style={{ 
+                    display: 'flex', 
+                    justifyContent: 'space-between', 
+                    alignItems: 'center', 
+                    cursor: 'pointer',
+                    marginBottom: '15px'
+                  }}
+                >
+                  <h4 style={{ margin: 0, fontSize: '0.9rem', color: '#1e293b', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    🧾 Soporte de Documentos 
+                    <span style={{ fontSize: '0.7rem', color: '#64748b', backgroundColor: '#f1f5f9', padding: '2px 8px', borderRadius: '10px' }}>
+                      {facturasUrls.length} archivos
+                    </span>
+                  </h4>
+                  <ChevronDown size={18} style={{ transform: expandirSoportes ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
+                </div>
+
+                {expandirSoportes && (
+                  <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap', marginBottom: '20px' }}>
                   {facturasUrls.map((item, idx) => {
-                    const url = typeof item === 'string' ? item : item?.url;
-                    const etiqueta = typeof item === 'string' ? 'Archivo' : (item?.etiqueta || 'Sin etiqueta');
+                    const url = (() => {
+                      if (typeof item === 'string') {
+                        if (item.trim().startsWith('{')) {
+                          try { return JSON.parse(item).url; } catch (e) { return item; }
+                        }
+                        return item;
+                      }
+                      return item?.url;
+                    })();
+                    const etiqueta = (() => {
+                      if (typeof item === 'string' && item.trim().startsWith('{')) {
+                        try { return JSON.parse(item).etiqueta || 'Archivo'; } catch (e) { return 'Archivo'; }
+                      }
+                      return typeof item === 'string' ? 'Archivo' : (item?.etiqueta || 'Sin etiqueta');
+                    })();
                     if (!url || url.length < 5) return null;
                     
                     const isImg = /\.(jpg|jpeg|png|webp|avif|gif)$/i.test(url.split('?')[0]);
@@ -1832,6 +2077,7 @@ const Compras = () => {
                     );
                   })}
                 </div>
+                )}
                 <label className="btn-tc btn-tc-secondary" style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '10px 20px' }}>
                   {uploading ? <Loader2 className="animate-spin" size={16} /> : <Upload size={16} />}
                   <span>{uploading ? 'Subiendo...' : 'Adjuntar Documento'}</span>
@@ -1943,6 +2189,64 @@ const Compras = () => {
                 disabled={loading}
               >
                 {loading ? <Loader2 className="animate-spin" size={16} /> : 'Guardar Justificación'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {showPostergarModal && (
+        <div className="modal-overlay" style={{ zIndex: 10000 }}>
+          <div className="modal-card animate-modal" style={{ maxWidth: '500px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
+              <div style={{ backgroundColor: '#fffbeb', padding: '10px', borderRadius: '50%' }}>
+                <Clock size={24} color="#d97706" />
+              </div>
+              <h2 style={{ margin: 0 }}>Postergar Gestión de Compra</h2>
+            </div>
+            
+            <p style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '20px' }}>
+              Está a punto de <strong>pausar el tiempo de SLA</strong> para esta requisición. Esto se verá reflejado en los reportes de auditoría.
+            </p>
+
+            <div style={{ marginBottom: '15px' }}>
+              <label style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#64748b', display: 'block', marginBottom: '5px' }}>
+                MOTIVO PRINCIPAL DE LA PAUSA (OBLIGATORIO)
+              </label>
+              <select
+                className="input-tc"
+                style={{ width: '100%', marginBottom: '10px' }}
+                value={motivoCategoria}
+                onChange={(e) => setMotivoCategoria(e.target.value)}
+              >
+                <option value="">Seleccione una categoría...</option>
+                <option value="Espera de Proveedor">Espera de Proveedor (Cotización/Stock)</option>
+                <option value="Presupuesto">Falta de Disponibilidad Presupuestaria</option>
+                <option value="Definición Técnica">Aclaratoria Técnica Pendiente (Usuario)</option>
+                <option value="Logística">Retraso en Logística / Importación</option>
+                <option value="Otro">Otro (Especificar en comentario)</option>
+              </select>
+
+              <label style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#64748b', display: 'block', marginBottom: '5px' }}>
+                DETALLE ADICIONAL
+              </label>
+              <textarea
+                className="input-tc"
+                style={{ width: '100%', minHeight: '80px', paddingTop: '10px' }}
+                placeholder="Escriba detalles específicos sobre la causa de la pausa..."
+                value={comentarioPostergacion}
+                onChange={(e) => setComentarioPostergacion(e.target.value)}
+              />
+            </div>
+
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+              <button className="btn-tc btn-tc-secondary" onClick={() => setShowPostergarModal(false)}>CANCELAR</button>
+              <button
+                className="btn-tc"
+                style={{ backgroundColor: '#d97706', color: 'white', border: 'none' }}
+                onClick={() => ejecutarCambioPausa(requisicionActiva, true, comentarioPostergacion)}
+                disabled={loading || !motivoCategoria || !comentarioPostergacion.trim()}
+              >
+                {loading ? <Loader2 className="animate-spin" size={16} /> : 'PAUSAR TIEMPOS'}
               </button>
             </div>
           </div>

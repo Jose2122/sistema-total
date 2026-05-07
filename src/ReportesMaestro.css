@@ -733,3 +733,232 @@
     font-weight: 800;
     color: #64748b;
 }
+
+/* --- BI DASHBOARD PREMIUM STYLES --- */
+
+.rm-section-header-bi {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 25px;
+    padding-bottom: 15px;
+    border-bottom: 2px solid #f1f5f9;
+}
+
+.rm-bi-title-box {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
+.rm-bi-title-box h3 {
+    margin: 0;
+    font-size: 1.25rem;
+    font-weight: 850;
+    color: #0f172a;
+    letter-spacing: -0.5px;
+}
+
+.rm-bi-title-box p {
+    margin: 2px 0 0 0;
+    font-size: 0.85rem;
+    color: #64748b;
+    font-weight: 500;
+}
+
+.rm-bi-icon-blue { color: #0ea5e9; width: 28px; height: 28px; }
+.rm-bi-icon-green { color: #10b981; width: 28px; height: 28px; }
+.rm-bi-icon-purple { color: #8b5cf6; width: 28px; height: 28px; }
+
+.rm-bi-grid {
+    display: grid;
+    grid-template-columns: 1fr 300px;
+    gap: 25px;
+}
+
+.rm-bi-grid-alt {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 25px;
+}
+
+.rm-bi-card-main {
+    background: white;
+    padding: 30px;
+    border-radius: 24px;
+    border: 1px solid #e2e8f0;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.02);
+}
+
+.rm-bi-card-side {
+    background: #f8fafc;
+    padding: 25px;
+    border-radius: 24px;
+    border: 1px solid #e2e8f0;
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.rm-bi-card-side h4 {
+    margin: 0 0 10px 0;
+    font-size: 0.9rem;
+    font-weight: 800;
+    color: #475569;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.rm-chart-title {
+    margin: 0 0 25px 0;
+    font-size: 1rem;
+    font-weight: 700;
+    color: #1e293b;
+}
+
+.rm-kpi-small {
+    background: white;
+    padding: 15px;
+    border-radius: 16px;
+    border: 1px solid #e2e8f0;
+}
+
+.rm-kpi-small label {
+    display: block;
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: #94a3b8;
+    margin-bottom: 5px;
+    text-transform: uppercase;
+}
+
+.rm-kpi-small .val {
+    font-size: 1.5rem;
+    font-weight: 900;
+    color: #0f172a;
+}
+
+.rm-kpi-small .val small {
+    font-size: 0.8rem;
+    color: #64748b;
+    font-weight: 600;
+}
+
+.rm-kpi-small.alert {
+    background: #fff7ed;
+    border-color: #ffedd5;
+}
+
+.rm-kpi-small.alert .val { color: #f97316; }
+
+.rm-saving-badge {
+    background: linear-gradient(135deg, #065f46 0%, #064e3b 100%);
+    padding: 12px 20px;
+    border-radius: 16px;
+    text-align: right;
+    box-shadow: 0 10px 15px -3px rgba(6, 78, 59, 0.2);
+}
+
+.rm-saving-badge label {
+    display: block;
+    font-size: 0.65rem;
+    font-weight: 800;
+    color: #a7f3d0;
+    text-transform: uppercase;
+    margin-bottom: 2px;
+}
+
+.rm-saving-badge span {
+    color: white;
+    font-size: 1.4rem;
+    font-weight: 900;
+}
+
+.rm-bi-footer-info {
+    margin-top: 20px;
+    padding-top: 15px;
+    border-top: 1px solid #f1f5f9;
+    font-size: 0.75rem;
+    color: #94a3b8;
+    font-style: italic;
+}
+
+/* Timeline Auditoría */
+.rm-audit-timeline {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    padding-left: 20px;
+}
+
+.rm-audit-item {
+    display: flex;
+    gap: 25px;
+    position: relative;
+    padding-bottom: 30px;
+}
+
+.rm-audit-item::before {
+    content: '';
+    position: absolute;
+    left: 4px;
+    top: 10px;
+    width: 2px;
+    height: 100%;
+    background: #e2e8f0;
+}
+
+.rm-audit-item:last-child::before { display: none; }
+
+.rm-audit-dot {
+    width: 10px;
+    height: 10px;
+    background: #8b5cf6;
+    border-radius: 50%;
+    margin-top: 6px;
+    position: relative;
+    z-index: 1;
+    box-shadow: 0 0 0 4px #f5f3ff;
+}
+
+.rm-audit-content {
+    background: white;
+    padding: 15px 20px;
+    border-radius: 16px;
+    border: 1px solid #e2e8f0;
+    flex: 1;
+    transition: transform 0.2s;
+}
+
+.rm-audit-content:hover {
+    transform: translateX(5px);
+    border-color: #8b5cf6;
+}
+
+.rm-audit-meta {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+
+.rm-audit-meta .id {
+    font-weight: 900;
+    color: #8b5cf6;
+    font-size: 0.85rem;
+}
+
+.rm-audit-meta .date {
+    font-size: 0.75rem;
+    color: #94a3b8;
+    font-weight: 600;
+}
+
+.rm-audit-text {
+    font-size: 0.9rem;
+    color: #1e293b;
+}
+
+.rm-audit-text strong {
+    color: #0f172a;
+}
+

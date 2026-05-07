@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from './supabaseClient';
+import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -32,6 +33,7 @@ import './ModuloTicketsPago.css';
 const ModuloTicketsPago = () => {
   const [vistaActual, setVistaActual] = useState('historial'); // 'historial' | 'nuevo' | 'detalle'
   const [ticketSeleccionado, setTicketSeleccionado] = useState(null);
+  const [modoEdicion, setModoEdicion] = useState(false);
 
   // ==========================================
   // ESTADOS DEL HISTORIAL
@@ -213,6 +215,7 @@ const ModuloTicketsPago = () => {
       setRefPago(ticket.codigo_control || '');
       setImagenUrlpreview(ticket.factura_url || '');
       setVistaActual('detalle');
+      setModoEdicion(false);
       setExpandirHistorial({});
       await obtenerPreciosReferencia(renglonesIniciados);
     } catch (err) {
@@ -679,67 +682,125 @@ const ModuloTicketsPago = () => {
             <table className="tc-table">
               <thead>
                 <tr>
-                  <th style={{ width: '150px' }}>ID</th>
-                  <th>REFERENCIA</th>
-                  <th>BENEFICIARIO</th>
-                  <th>FECHA</th>
-                  <th>CLASIFICACIÓN</th>
-                  <th>BANCO</th>
-                  <th>TOTAL ($)</th>
+                  <th style={{ width: '150px' }}>ID / FECHA</th>
+                  <th>SOLICITANTE / GERENCIA</th>
+                  <th>JUSTIFICACIÓN / CATEGORÍA</th>
+                  <th>CENTRO DE COSTO</th>
+                  <th style={{ textAlign: 'right' }}>TOTAL ($)</th>
                   <th style={{ textAlign: 'center', width: '140px' }}>ESTATUS</th>
                   <th style={{ textAlign: 'center' }}>ACCIONES</th>
                 </tr>
               </thead>
               <tbody>
-                {filtrados.map(ticket => (
-                  <tr key={ticket.id}>
-                    <td
-                      style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: 'bold', cursor: 'pointer' }}
-                      className="clickable-cell"
-                      onClick={() => abrirDetalleTicket(ticket)}
-                    >
-                      {ticket.codigo_control}
-                    </td>
-                    <td
-                      style={{ fontWeight: '700', color: '#0ea5e9', cursor: 'pointer' }}
-                      className="clickable-cell"
-                      onClick={() => abrirDetalleTicket(ticket)}
-                    >
-                      {ticket.solicitud_ref || 'TR-Directo'}
-                    </td>
-                    <td style={{ fontWeight: '600' }}>{ticket.gerente_nombre || 'Varios Beneficiarios'}</td>
-                    <td>{ticket.fecha_emision ? new Date(ticket.fecha_emision).toLocaleDateString() : 'N/A'}</td>
-                    <td>{ticket.clasificacion_admin}</td>
-                    <td>{ticket.banco_origen || 'Por Definir'}</td>
-                    <td style={{ fontWeight: 'bold', color: '#0f172a', textAlign: 'right' }}>$ {(Number(ticket.total_usd) || 0).toLocaleString('de-DE')}</td>
-                    <td style={{ textAlign: 'center' }}>
-                      <div className={`badge-status ${ticket.status?.toLowerCase() || 'emitido'}`}>
-                        {ticket.status === 'Pagado' && <span style={{ marginRight: '4px' }}>✓</span>}
-                        {ticket.status || 'Emitido'}
-                      </div>
-                    </td>
-                    <td style={{ textAlign: 'center' }}>
-                      <div style={{ display: 'flex', justifyContent: 'center', gap: '8px' }}>
-                        <button
-                          onClick={() => abrirDetalleTicket(ticket)}
-                          className="btn-tc btn-tc-secondary"
-                          style={{ padding: '6px 12px' }}
-                          title="Ver Detalle"
-                        >
-                          <Eye size={16} />
-                        </button>
-                        <button
-                          onClick={() => manejarEliminarTicket(ticket.id)}
-                          className="btn-tc btn-tc-secondary"
-                          style={{ padding: '6px 12px', color: '#ef4444' }}
-                          title="Eliminar Ticket"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {filtrados.map(ticket => {
+                  const justif = ticket.justificacion || ticket.items?.[0]?.justificacion_detallada || ticket.items?.[0]?.justificacion || 'Sin justificación';
+                  const cc = ticket.centro_costo || ticket.items?.[0]?.cc || ticket.items?.[0]?.centro_costo || '---';
+                  const categ = ticket.items?.[0]?.clasificacion || 'Sin categoría';
+                  
+                  let fechaStr = 'N/A';
+                  try {
+                    if (ticket.fecha_emision) {
+                      fechaStr = format(new Date(ticket.fecha_emision + 'T12:00:00'), 'dd/MM/yyyy');
+                    }
+                  } catch (e) {
+                    console.error("Error formatting date:", e);
+                  }
+
+                  return (
+                    <tr key={ticket.id}>
+                      <td
+                        style={{ cursor: 'pointer', padding: '12px 15px' }}
+                        onClick={() => abrirDetalleTicket(ticket)}
+                      >
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <div style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#0ea5e9', flexShrink: 0 }} />
+                            <motion.span
+                              whileHover={{ 
+                                scale: 1.1, 
+                                x: 5,
+                                color: '#2563eb',
+                                textShadow: '0 0 8px rgba(37, 99, 235, 0.2)'
+                              }}
+                              whileTap={{ scale: 0.95 }}
+                              transition={{ type: "spring", stiffness: 400, damping: 10 }}
+                              style={{ 
+                                fontSize: '12px', 
+                                fontWeight: '900', 
+                                color: '#1e40af', 
+                                textDecoration: 'underline', 
+                                textUnderlineOffset: '3px', 
+                                textDecorationColor: 'rgba(30, 64, 175, 0.4)',
+                                cursor: 'pointer',
+                                display: 'inline-block'
+                              }}
+                            >
+                              {ticket.codigo_control || `TX-${String(ticket.id).padStart(4, '0')}`}
+                            </motion.span>
+                          </div>
+                          <div style={{ fontSize: '10px', color: '#94a3b8', marginLeft: '14px', fontWeight: '600' }}>
+                            {fechaStr}
+                          </div>
+                        </div>
+                      </td>
+                      <td style={{ padding: '12px 15px' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                          <span style={{ fontWeight: '800', color: '#1e293b', fontSize: '0.85rem' }}>{ticket.gerente_nombre || 'Varios'}</span>
+                          <span style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '600', textTransform: 'uppercase' }}>{ticket.departamento || 'No especificado'}</span>
+                        </div>
+                      </td>
+                      <td style={{ padding: '12px 15px' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', maxWidth: '300px' }}>
+                          <span 
+                            title={justif}
+                            style={{ fontWeight: '700', color: '#334155', fontSize: '0.8rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                          >
+                            {justif}
+                          </span>
+                          <span style={{ fontSize: '0.7rem', color: '#94a3b8', fontWeight: '600' }}>
+                            {categ} {ticket.items?.length > 1 ? `(+${ticket.items.length - 1} más)` : ''}
+                          </span>
+                        </div>
+                      </td>
+                      <td style={{ padding: '12px 15px' }}>
+                        <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569', backgroundColor: '#f1f5f9', padding: '4px 8px', borderRadius: '6px' }}>
+                          {cc}
+                        </span>
+                      </td>
+                      <td style={{ fontWeight: '1000', color: '#0f172a', textAlign: 'right', fontSize: '0.9rem', padding: '12px 15px' }}>
+                        $ {(Number(ticket.total_usd) || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                      </td>
+                      <td style={{ textAlign: 'center', padding: '12px 15px' }}>
+                        <div className={`badge-status ${ticket.status?.toLowerCase() || 'emitido'}`}>
+                          {ticket.status === 'Pagado' && <span style={{ marginRight: '4px' }}>✓</span>}
+                          {ticket.status || 'Emitido'}
+                        </div>
+                      </td>
+                      <td style={{ textAlign: 'center', padding: '12px 15px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'center', gap: '8px' }}>
+                          <button
+                            onClick={() => abrirDetalleTicket(ticket)}
+                            className="btn-tc btn-tc-secondary"
+                            style={{ padding: '8px', borderRadius: '10px' }}
+                            title="Ver Detalle"
+                          >
+                            <Eye size={18} />
+                          </button>
+                          {esPrivilegiado && (
+                            <button
+                              onClick={() => manejarEliminarTicket(ticket.id)}
+                              className="btn-tc btn-tc-secondary"
+                              style={{ padding: '8px', borderRadius: '10px', color: '#ef4444' }}
+                              title="Eliminar Ticket"
+                            >
+                              <Trash2 size={18} />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

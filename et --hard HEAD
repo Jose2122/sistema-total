@@ -1,0 +1,24 @@
+[33m3185606[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m Implementación de trazabilidad completa y columnas de tiempo en Requisiciones
+[33m51eeaf4[m Módulo de Almacén, sincronización de requisiciones y ajustes de UI
+[33mca72e12[m Ajuste de ver
+[33m5f1f041[m Corrigiendo error de estilos y agregando xlsx
+[33mab3cc24[m Forzando actualización de interfaz y encabezado
+[33meca9e9c[m Mejora de interfaz, encabezado slim y corrección de notificaciones
+[33m1b7ae20[m Fix: Visibilidad de Seguridad/SIAHO, Normalizacion de Usuarios y Bypass RLS en listados
+[33mf065e32[m Seguridad: Cambiando variable de entorno reservada por ADMIN_SERVICE_KEY en Edge Function
+[33m9185b37[m Seguridad: Migración de gestión de usuarios a Edge Functions y eliminación de Service Role Key del frontend
+[33m455fae2[m Producción: Optimización de build, vercel config y corrección de URLs
+[33mb694ca9[m Preparando para despliegue
+[33m10edf88[m feat: implement core UI components, styling modules, and database migration scripts for the purchasing system
+[33meea14f0[m feat: implement procurement management module with requisition processing, real-time updates, and PDF reporting functionality
+[33m9b7f719[m checkout: temporary commit for worktree checkout
+[33m7beaaec[m Ajuste de formulas de efectividad y resumen 2026
+[33me520982[m Respaldo: Estructura de BDD lista para fotos y corrección de sintaxis en Requisiciones
+[33mb6e0a94[m Primer respaldo de Total Clean
+[33ma7301f5[m Fix: Borrado de tickets y estructura de solicitudes de fondos
+[33medd6343[m Respaldo de todas las mejoras estéticas
+[33mb96fa9e[m Mejoras visuales Anti-Gravity en Login
+[33m157cac8[m Uso de variables de entorno VITE
+[33m9c12549[m Instalando librerías para generación de PDF
+[33m3005743[m Añadida librería de Supabase que faltaba
+[33ma51741d[m Estructura inicial de sistema-total

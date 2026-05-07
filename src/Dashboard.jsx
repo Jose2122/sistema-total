@@ -13,11 +13,14 @@ import Proveedores from './Proveedores';
 import Administracion from './Administracion';
 import Atributos from './Atributos';
 import Almacen from './Almacen';
-import { Menu, X as CloseIcon, Search, Cloud, Sun, ChevronDown, Power } from 'lucide-react';
+import ResumenSesion from './ResumenSesion';
+import ResumenEjecutivo from './ResumenEjecutivo';
+import AnalyticsCompras from './AnalyticsCompras';
+import { Menu, X as CloseIcon, Search, Cloud, Sun, ChevronDown, Power, LayoutDashboard, BarChartBig, Gauge } from 'lucide-react';
 
 function Dashboard() {
   const navigate = useNavigate();
-  const [seccionActiva, setSeccionActiva] = useState('requisiciones');
+  const [seccionActiva, setSeccionActiva] = useState('dashboard');
   const [sidebarAbierto, setSidebarAbierto] = useState(window.innerWidth > 768);
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
   const [usuario, setUsuario] = useState({ nombre: '', apellido: '', rol: '', departamento: '' });
@@ -357,6 +360,9 @@ function Dashboard() {
     if (seccionActiva === 'administracion') return <Administracion />;
     if (seccionActiva === 'atributos') return <Atributos />;
     if (seccionActiva === 'almacen') return <Almacen />;
+    if (seccionActiva === 'dashboard') return <ResumenSesion currentUser={usuario} setActiveSeccion={setSeccionActiva} />;
+    if (seccionActiva === 'ejecutivo') return <ResumenEjecutivo />;
+    if (seccionActiva === 'analytics_compras') return <AnalyticsCompras />;
 
     return (
       <div className="animate-fade">
@@ -400,12 +406,12 @@ function Dashboard() {
       supabase.from('notificaciones').update({ leido: true }).eq('id', notif.id).then();
       setNotificacionesLog(prev => prev.map(n => n.id === notif.id ? { ...n, nuevo: false } : n));
     }
-    
+
     // 2. Deep Linking
     if (notif.requisicion_id) {
       setActiveNode('requisiciones');
       setVerNotificaciones(false); // Cerrar panel
-      
+
       // Emitir evento global para que Requisiciones.jsx abra el modal
       setTimeout(() => {
         const event = new CustomEvent('abrirRequisicionDeepLink', { detail: notif.requisicion_id });
@@ -443,22 +449,22 @@ function Dashboard() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', overflow: 'hidden', backgroundColor: '#f1f5f9', fontFamily: '"Inter", sans-serif' }}>
-      
+
       {/* BARRA SUPERIOR FULL WIDTH (DASHBOARD PROFESIONAL) */}
       <div style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          backgroundColor: 'rgba(15, 23, 42, 0.85)', /* Glassmorphism Base */
-          backdropFilter: 'blur(12px)',
-          WebkitBackdropFilter: 'blur(12px)',
-          padding: '8px 24px',
-          boxShadow: '0 4px 15px rgba(0, 0, 0, 0.1)',
-          color: 'white',
-          position: 'relative',
-          minHeight: '55px',
-          zIndex: 900,
-          borderBottom: '1px solid rgba(255, 255, 255, 0.05)'
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        backgroundColor: 'rgba(15, 23, 42, 0.85)', /* Glassmorphism Base */
+        backdropFilter: 'blur(12px)',
+        WebkitBackdropFilter: 'blur(12px)',
+        padding: '8px 24px',
+        boxShadow: '0 4px 15px rgba(0, 0, 0, 0.1)',
+        color: 'white',
+        position: 'relative',
+        minHeight: '55px',
+        zIndex: 900,
+        borderBottom: '1px solid rgba(255, 255, 255, 0.05)'
       }}>
         {/* LADO IZQUIERDO: Toggle y Logo */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
@@ -472,7 +478,7 @@ function Dashboard() {
           >
             <Menu size={22} />
           </div>
-          
+
           <h2 style={{ fontSize: '1.25rem', fontWeight: '900', letterSpacing: '3px', margin: 0, color: 'white' }}>
             SITC<span style={{ color: '#0ea5e9' }}>.</span>
           </h2>
@@ -480,137 +486,137 @@ function Dashboard() {
 
         {/* LADO DERECHO: Utilidades */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-            {/* Indicador de Nube/Sincronización */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.65rem', fontWeight: '700', color: '#60a5fa', letterSpacing: '0.5px' }} title="Conectado a Supabase">
-              <Cloud size={14} />
-              {!isMobile && <span>ONLINE</span>}
-            </div>
+          {/* Indicador de Nube/Sincronización */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.65rem', fontWeight: '700', color: '#60a5fa', letterSpacing: '0.5px' }} title="Conectado a Supabase">
+            <Cloud size={14} />
+            {!isMobile && <span>ONLINE</span>}
+          </div>
 
-            <div style={{ width: '1px', height: '20px', backgroundColor: 'rgba(255,255,255,0.08)' }}></div>
+          <div style={{ width: '1px', height: '20px', backgroundColor: 'rgba(255,255,255,0.08)' }}></div>
 
-            {/* Modo Oscuro/Claro */}
-            <button style={{ background: 'none', border: 'none', color: '#cbd5e1', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: '4px' }} title="Cambiar Tema">
-              <Sun size={16} />
-            </button>
+          {/* Modo Oscuro/Claro */}
+          <button style={{ background: 'none', border: 'none', color: '#cbd5e1', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: '4px' }} title="Cambiar Tema">
+            <Sun size={16} />
+          </button>
 
-            <div style={{ width: '1px', height: '20px', backgroundColor: 'rgba(255,255,255,0.08)' }}></div>
+          <div style={{ width: '1px', height: '20px', backgroundColor: 'rgba(255,255,255,0.08)' }}></div>
 
-            {/* Centro de Notificaciones */}
-            <div
-              style={{ position: 'relative', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center' }}
-              onClick={toggleNotificaciones}
-            >
-              <i className="fa-solid fa-bell" style={{ fontSize: '1.1rem', color: notificacionesLog.some(n => n.nuevo) ? '#38bdf8' : '#64748b', transition: 'all 0.3s' }}></i>
-              {notificacionesLog.some(n => n.nuevo) && (
-                <div style={{
-                  position: 'absolute', top: '2px', right: '2px', width: '8px', height: '8px', backgroundColor: '#ef4444', 
-                  borderRadius: '50%', border: '2px solid #0f172a', boxShadow: '0 0 10px rgba(239, 68, 68, 0.5)'
-                }}></div>
-              )}
-
-              {/* DROPDOWN DE NOTIFICACIONES */}
-              {verNotificaciones && (
-                <div className="animate-fade" style={{ position: 'absolute', top: '35px', right: 0, width: '320px', backgroundColor: 'white', borderRadius: '20px', boxShadow: '0 15px 35px rgba(0,0,0,0.15)', zIndex: 1000, overflow: 'hidden', border: '1px solid #f1f5f9' }}>
-                  <div style={{ padding: '15px 20px', background: '#f8fafc', borderBottom: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontSize: '0.75rem', fontWeight: '900', color: '#1e293b', letterSpacing: '0.5px' }}>NOTIFICACIONES</span>
-                    <span style={{ fontSize: '0.65rem', color: '#64748b', fontWeight: '600' }}>{notificacionesLog.length} totales</span>
-                  </div>
-                  <div style={{ maxHeight: '350px', overflowY: 'auto', padding: '10px' }}>
-                    {notificacionesLog.length === 0 ? (
-                      <div style={{ padding: '40px 20px', textAlign: 'center' }}>
-                        <i className="fa-solid fa-bell-slash" style={{ fontSize: '1.5rem', color: '#e2e8f0', marginBottom: '10px', display: 'block' }}></i>
-                        <span style={{ color: '#94a3b8', fontSize: '0.75rem', fontWeight: '500' }}>No hay alertas recientes</span>
-                      </div>
-                    ) : (
-                      notificacionesLog.map((n, idx) => (
-                        <div 
-                          key={n.id || idx} 
-                          className="notificacion-card-item"
-                          onClick={() => manejarClicNotificacion(n)}
-                          style={{
-                            padding: '12px 15px',
-                            borderRadius: '12px',
-                            marginBottom: '6px',
-                            backgroundColor: n.nuevo ? '#f0f9ff' : 'transparent',
-                            transition: 'all 0.2s',
-                            borderLeft: n.nuevo ? '3px solid #0ea5e9' : '3px solid transparent',
-                            cursor: 'pointer' // Hover manejado por clase global
-                          }}>
-                          <div style={{ fontSize: '0.75rem', color: '#1e293b', fontWeight: n.nuevo ? '700' : '500', lineHeight: '1.4' }}>{n.msg}</div>
-                          <div style={{ fontSize: '0.6rem', color: '#94a3b8', marginTop: '6px', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                            <i className="fa-regular fa-clock"></i> {n.hora}
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                  <div style={{ padding: '10px', borderTop: '1px solid #f1f5f9', textAlign: 'center' }}>
-                    <button style={{ background: 'none', border: 'none', color: '#0ea5e9', fontSize: '0.7rem', fontWeight: '800', cursor: 'pointer' }}>VER TODO EL HISTORIAL</button>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div style={{ width: '1px', height: '20px', backgroundColor: 'rgba(255,255,255,0.08)' }}></div>
-
-            {/* Perfil de Usuario Compacto */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', padding: '2px 6px', borderRadius: '8px', transition: 'background 0.2s' }}>
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '2px' }}>
-                <span style={{ fontSize: '0.8rem', fontWeight: '800', color: 'white', letterSpacing: '0.3px' }}>{usuario.nombre || 'Usuario'}</span>
-                <span style={{ 
-                  fontSize: '0.55rem', 
-                  fontWeight: '900', 
-                  color: '#38bdf8', 
-                  textTransform: 'uppercase', 
-                  backgroundColor: 'rgba(56, 189, 248, 0.12)', 
-                  padding: '2px 8px', 
-                  borderRadius: '100px',
-                  letterSpacing: '0.8px',
-                  border: '1px solid rgba(56, 189, 248, 0.2)'
-                }}>
-                  {usuario.rol || 'Rol'}
-                </span>
-              </div>
+          {/* Centro de Notificaciones */}
+          <div
+            style={{ position: 'relative', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center' }}
+            onClick={toggleNotificaciones}
+          >
+            <i className="fa-solid fa-bell" style={{ fontSize: '1.1rem', color: notificacionesLog.some(n => n.nuevo) ? '#38bdf8' : '#64748b', transition: 'all 0.3s' }}></i>
+            {notificacionesLog.some(n => n.nuevo) && (
               <div style={{
-                width: '32px', height: '32px', borderRadius: '50%', backgroundColor: '#3b82f6',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.8rem', fontWeight: 'bold', color: 'white',
-                border: '2px solid rgba(255,255,255,0.2)'
-              }}>
-                {getInitials(usuario.nombre, usuario.apellido)}
+                position: 'absolute', top: '2px', right: '2px', width: '8px', height: '8px', backgroundColor: '#ef4444',
+                borderRadius: '50%', border: '2px solid #0f172a', boxShadow: '0 0 10px rgba(239, 68, 68, 0.5)'
+              }}></div>
+            )}
+
+            {/* DROPDOWN DE NOTIFICACIONES */}
+            {verNotificaciones && (
+              <div className="animate-fade" style={{ position: 'absolute', top: '35px', right: 0, width: '320px', backgroundColor: 'white', borderRadius: '20px', boxShadow: '0 15px 35px rgba(0,0,0,0.15)', zIndex: 1000, overflow: 'hidden', border: '1px solid #f1f5f9' }}>
+                <div style={{ padding: '15px 20px', background: '#f8fafc', borderBottom: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '0.75rem', fontWeight: '900', color: '#1e293b', letterSpacing: '0.5px' }}>NOTIFICACIONES</span>
+                  <span style={{ fontSize: '0.65rem', color: '#64748b', fontWeight: '600' }}>{notificacionesLog.length} totales</span>
+                </div>
+                <div style={{ maxHeight: '350px', overflowY: 'auto', padding: '10px' }}>
+                  {notificacionesLog.length === 0 ? (
+                    <div style={{ padding: '40px 20px', textAlign: 'center' }}>
+                      <i className="fa-solid fa-bell-slash" style={{ fontSize: '1.5rem', color: '#e2e8f0', marginBottom: '10px', display: 'block' }}></i>
+                      <span style={{ color: '#94a3b8', fontSize: '0.75rem', fontWeight: '500' }}>No hay alertas recientes</span>
+                    </div>
+                  ) : (
+                    notificacionesLog.map((n, idx) => (
+                      <div
+                        key={n.id || idx}
+                        className="notificacion-card-item"
+                        onClick={() => manejarClicNotificacion(n)}
+                        style={{
+                          padding: '12px 15px',
+                          borderRadius: '12px',
+                          marginBottom: '6px',
+                          backgroundColor: n.nuevo ? '#f0f9ff' : 'transparent',
+                          transition: 'all 0.2s',
+                          borderLeft: n.nuevo ? '3px solid #0ea5e9' : '3px solid transparent',
+                          cursor: 'pointer' // Hover manejado por clase global
+                        }}>
+                        <div style={{ fontSize: '0.75rem', color: '#1e293b', fontWeight: n.nuevo ? '700' : '500', lineHeight: '1.4' }}>{n.msg}</div>
+                        <div style={{ fontSize: '0.6rem', color: '#94a3b8', marginTop: '6px', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                          <i className="fa-regular fa-clock"></i> {n.hora}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+                <div style={{ padding: '10px', borderTop: '1px solid #f1f5f9', textAlign: 'center' }}>
+                  <button style={{ background: 'none', border: 'none', color: '#0ea5e9', fontSize: '0.7rem', fontWeight: '800', cursor: 'pointer' }}>VER TODO EL HISTORIAL</button>
+                </div>
               </div>
-              <ChevronDown size={14} style={{ color: '#94a3b8', marginLeft: '2px' }} title="Opciones" />
+            )}
+          </div>
+
+          <div style={{ width: '1px', height: '20px', backgroundColor: 'rgba(255,255,255,0.08)' }}></div>
+
+          {/* Perfil de Usuario Compacto */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', padding: '2px 6px', borderRadius: '8px', transition: 'background 0.2s' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '2px' }}>
+              <span style={{ fontSize: '0.8rem', fontWeight: '800', color: 'white', letterSpacing: '0.3px' }}>{usuario.nombre || 'Usuario'}</span>
+              <span style={{
+                fontSize: '0.55rem',
+                fontWeight: '900',
+                color: '#38bdf8',
+                textTransform: 'uppercase',
+                backgroundColor: 'rgba(56, 189, 248, 0.12)',
+                padding: '2px 8px',
+                borderRadius: '100px',
+                letterSpacing: '0.8px',
+                border: '1px solid rgba(56, 189, 248, 0.2)'
+              }}>
+                {usuario.rol || 'Rol'}
+              </span>
             </div>
+            <div style={{
+              width: '32px', height: '32px', borderRadius: '50%', backgroundColor: '#3b82f6',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.8rem', fontWeight: 'bold', color: 'white',
+              border: '2px solid rgba(255,255,255,0.2)'
+            }}>
+              {getInitials(usuario.nombre, usuario.apellido)}
+            </div>
+            <ChevronDown size={14} style={{ color: '#94a3b8', marginLeft: '2px' }} title="Opciones" />
+          </div>
 
-            <div style={{ width: '1px', height: '20px', backgroundColor: 'rgba(255,255,255,0.08)' }}></div>
+          <div style={{ width: '1px', height: '20px', backgroundColor: 'rgba(255,255,255,0.08)' }}></div>
 
-            {/* Botón de Apagar / Salir */}
-            <button
-              onClick={cerrarSesion}
-              style={{
-                background: 'rgba(239, 68, 68, 0.15)',
-                border: '1px solid rgba(239, 68, 68, 0.3)',
-                color: '#f87171',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                padding: '8px',
-                borderRadius: '10px',
-                transition: 'all 0.2s',
-                marginLeft: '5px'
-              }}
-              title="Cerrar Sesión (Apagar Sistema)"
-              onMouseEnter={(e) => { e.currentTarget.style.background = '#ef4444'; e.currentTarget.style.color = 'white'; e.currentTarget.style.boxShadow = '0 0 10px rgba(239, 68, 68, 0.5)'; }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(239, 68, 68, 0.15)'; e.currentTarget.style.color = '#f87171'; e.currentTarget.style.boxShadow = 'none'; }}
-            >
-              <Power size={16} strokeWidth={2.5} />
-            </button>
+          {/* Botón de Apagar / Salir */}
+          <button
+            onClick={cerrarSesion}
+            style={{
+              background: 'rgba(239, 68, 68, 0.15)',
+              border: '1px solid rgba(239, 68, 68, 0.3)',
+              color: '#f87171',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '8px',
+              borderRadius: '10px',
+              transition: 'all 0.2s',
+              marginLeft: '5px'
+            }}
+            title="Cerrar Sesión (Apagar Sistema)"
+            onMouseEnter={(e) => { e.currentTarget.style.background = '#ef4444'; e.currentTarget.style.color = 'white'; e.currentTarget.style.boxShadow = '0 0 10px rgba(239, 68, 68, 0.5)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(239, 68, 68, 0.15)'; e.currentTarget.style.color = '#f87171'; e.currentTarget.style.boxShadow = 'none'; }}
+          >
+            <Power size={16} strokeWidth={2.5} />
+          </button>
         </div>
       </div>
 
       {/* ÁREA DE CONTENIDO (SIDEBAR + PRINCIPAL) */}
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        
+
         {/* OVERLAY PARA MÓVIL */}
         {isMobile && sidebarAbierto && (
           <div className="sidebar-overlay" onClick={() => setSidebarAbierto(false)}></div>
@@ -621,6 +627,8 @@ function Dashboard() {
           <div className="sidebar-scrollable">
             {[
               { id: 'compras', icon: 'fa-cart-plus', label: 'Compras', cat: 'COMPRAS' },
+              { id: 'analytics_compras', icon: 'fa-gauge-high', label: 'Analytics Procura', cat: 'COMPRAS' },
+              { id: 'ejecutivo', icon: 'fa-chess-king', label: 'Resumen Ejecutivo', cat: 'COMPRAS' },
               { id: 'reportesmaestro', icon: 'fa-chart-line', label: 'Reportes Maestro', cat: 'COMPRAS' },
               { id: 'reportes', icon: 'fa-file-contract', label: 'Reporte de Compras', cat: 'COMPRAS' },
               { id: 'proveedores', icon: 'fa-address-book', label: 'Proveedores', cat: 'COMPRAS' },
@@ -648,7 +656,9 @@ function Dashboard() {
                 acc.push({ ...item, type: 'item' });
               }
               return acc;
-            }, []).map((node, index) => (
+            }, [
+              { id: 'dashboard', icon: 'fa-house-chimney', label: 'Resumen', cat: 'PRINCIPAL' }
+            ]).map((node, index) => (
               node.type === 'header' ? (
                 sidebarAbierto && (
                   <div key={`header-${index}`} style={{ fontSize: '0.6rem', fontWeight: '900', color: '#475569', margin: '20px 0 10px 0', letterSpacing: '0.5px', textAlign: 'center' }}>

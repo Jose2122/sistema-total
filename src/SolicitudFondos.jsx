@@ -4,7 +4,7 @@ import Requisiciones from './Requisiciones';
 import TicketExpress from './TicketExpress';
 import { format, getWeek } from 'date-fns';
 import toast from 'react-hot-toast';
-import { Loader2, Upload, FileText, Printer, FileSpreadsheet, BarChart3, Clock, Activity, CheckCircle2, DollarSign, Copy } from 'lucide-react';
+import { Loader2, Upload, FileText, Printer, FileSpreadsheet, BarChart3, Clock, Activity, CheckCircle2, DollarSign, Copy, AlertCircle } from 'lucide-react';
 import './SolicitudFondos.css';
 
 const StockSmartTotalClean = ({ currentUserProp }) => {
@@ -22,6 +22,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
 
   // --- ESTADO PARA GASTOS IMPREVISTOS ---
   const [mostrarImprevistos, setMostrarImprevistos] = useState(false);
+  const [mostrarDesglose, setMostrarDesglose] = useState(false);
   const [currentUser, setCurrentUser] = useState(currentUserProp || null);
   const [loading, setLoading] = useState(false);
 
@@ -1079,6 +1080,30 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
     };
   }, [form.partidas, form.imprevistos, sumas]);
 
+  const categoriasEjecucion = useMemo(() => {
+    const categoriesMap = {};
+    const todas = [...form.partidas, ...form.imprevistos];
+    todas.forEach(p => {
+      const cat = p.cat || 'S/C';
+      if (!categoriesMap[cat]) {
+        categoriesMap[cat] = { estimado: 0, ejecutado: 0 };
+      }
+      const p_est = (parseFloat(p.puBs) || parseFloat(p.puUsd) || 0) * (parseFloat(p.cant) || 1);
+      categoriesMap[cat].estimado += p_est;
+      categoriesMap[cat].ejecutado += (p.montoReal || 0);
+    });
+    return Object.entries(categoriesMap)
+      .map(([name, data]) => ({
+        name,
+        estimado: data.estimado,
+        ejecutado: data.ejecutado,
+        porcentaje: data.estimado > 0 ? Math.min(100, (data.ejecutado / data.estimado) * 100) : 0
+      }))
+      .filter(c => c.estimado > 0)
+      .sort((a, b) => b.estimado - a.estimado)
+      .slice(0, 5);
+  }, [form.partidas, form.imprevistos]);
+
   const registrarOActualizar = async (keepOpen = false) => {
     try {
       let finalCodigoControl = idDinamico;
@@ -1663,6 +1688,23 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                   Período: <span style={{ fontWeight: '800' }}>{periodoSemana}</span>
                 </span>
               </div>
+
+              {/* SALUD PRESUPUESTARIA CENTRALIZADA */}
+              <div style={{ flex: 1, maxWidth: '300px', margin: '0 40px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                  <span style={{ fontSize: '9px', fontWeight: '900', color: '#64748b' }}>SALUD PRESUPUESTARIA</span>
+                  <span style={{ fontSize: '10px', fontWeight: '900', color: '#10b981' }}>{dashEjecucion.estimado > 0 ? Math.round((dashEjecucion.ejecutado / dashEjecucion.estimado) * 100) : 0}%</span>
+                </div>
+                <div style={{ height: '6px', backgroundColor: '#e2e8f0', borderRadius: '10px', overflow: 'hidden' }}>
+                  <div style={{ 
+                    height: '100%', 
+                    width: `${Math.min(100, (dashEjecucion.ejecutado / (dashEjecucion.estimado || 1)) * 100)}%`, 
+                    backgroundColor: '#10b981',
+                    borderRadius: '10px'
+                  }}></div>
+                </div>
+              </div>
+
               <div style={{ fontSize: '12px', color: isExpired ? '#ef4444' : '#64748b', fontWeight: 'bold' }}>
                 {isExpired ? (
                   <span>🛑 Plazo vencido. No se pueden añadir nuevos registros.</span>
@@ -1672,54 +1714,53 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
               </div>
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '15px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '15px', position: 'relative' }}>
               <div>
-                <h2 style={{ margin: 0, fontWeight: '900' }}>{isEditing ? 'Detalles de Ejecución' : 'Registro de Fondos'}</h2>
+                <h2 style={{ margin: 0, fontWeight: '900', color: '#0f172a' }}>{isEditing ? 'Solicitud de Fondos' : 'Registro de Fondos'}</h2>
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginTop: '8px' }}>
-                  <div style={{ background: '#0f172a', color: 'white', padding: '4px 12px', borderRadius: '6px', fontSize: '10px', fontWeight: 'bold' }}>ID: {idDinamico}</div>
-                  <div style={{ background: '#0ea5e9', color: 'white', padding: '4px 12px', borderRadius: '6px', fontSize: '10px', fontWeight: 'bold' }}>📅 {isEditing ? extractPeriodoFromId(form.id) : periodoSemana}</div>
+                  <div style={{ background: '#0f172a', color: 'white', padding: '4px 12px', borderRadius: '6px', fontSize: '10px', fontWeight: 'bold' }}>ID CONTROL: {idDinamico}</div>
                 </div>
               </div>
 
-              {/* DASHBOARD DE CONTROL DE EJECUCIÓN PREMIUM */}
+              {/* DASHBOARD DE CONTROL DE EJECUCIÓN PREMIUM (RESTAURADO) */}
               <div style={{ display: 'flex', gap: '12px' }}>
-                <div className="rm-stat-card primary" style={{ padding: '12px 20px', minWidth: '160px', borderRadius: '14px' }}>
+                <div className="rm-stat-card primary" style={{ padding: '12px 20px', minWidth: '150px', borderRadius: '14px' }}>
                   <div className="rm-stat-info">
-                    <label style={{ fontSize: '10px' }}>Estimado</label>
-                    <h3 style={{ fontSize: '1.2rem' }}>$ {dashEjecucion.estimado.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</h3>
+                    <label style={{ fontSize: '10px' }}>ESTIMADO</label>
+                    <h3 style={{ fontSize: '1.2rem' }}>$ {dashEjecucion.estimado.toLocaleString('de-DE', { minimumFractionDigits: 0 })}</h3>
                   </div>
                   <div className="rm-stat-icon" style={{ width: '32px', height: '32px' }}><DollarSign size={16} /></div>
                 </div>
 
-                <div className="rm-stat-card success" style={{ padding: '12px 20px', minWidth: '160px', borderRadius: '14px' }}>
+                <div className="rm-stat-card success" style={{ padding: '12px 20px', minWidth: '150px', borderRadius: '14px' }}>
                   <div className="rm-stat-info">
-                    <label style={{ fontSize: '10px' }}>Comprado</label>
-                    <h3 style={{ fontSize: '1.2rem', color: '#10b981' }}>$ {dashEjecucion.ejecutado.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</h3>
+                    <label style={{ fontSize: '10px' }}>COMPRADO</label>
+                    <h3 style={{ fontSize: '1.2rem', color: '#10b981' }}>$ {dashEjecucion.ejecutado.toLocaleString('de-DE', { minimumFractionDigits: 0 })}</h3>
                   </div>
                   <div className="rm-stat-icon" style={{ width: '32px', height: '32px' }}><CheckCircle2 size={16} color="#10b981" /></div>
                 </div>
 
-                <div className="rm-stat-card highlight" style={{ padding: '12px 20px', minWidth: '160px', borderRadius: '14px' }}>
+                <div className="rm-stat-card highlight" style={{ padding: '12px 20px', minWidth: '150px', borderRadius: '14px' }}>
                   <div className="rm-stat-info">
-                    <label style={{ fontSize: '10px' }}>Pendiente</label>
-                    <h3 style={{ fontSize: '1.2rem', color: '#f59e0b' }}>$ {dashEjecucion.pendiente.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</h3>
+                    <label style={{ fontSize: '10px' }}>PENDIENTE</label>
+                    <h3 style={{ fontSize: '1.2rem', color: '#f59e0b' }}>$ {dashEjecucion.pendiente.toLocaleString('de-DE', { minimumFractionDigits: 0 })}</h3>
                   </div>
                   <div className="rm-stat-icon" style={{ width: '32px', height: '32px' }}><Clock size={16} color="#f59e0b" /></div>
                 </div>
 
                 <div className={`rm-stat-card ${dashEjecucion.diferencia < 0 ? 'danger' : 'info'}`} style={{
                   padding: '12px 20px',
-                  minWidth: '160px',
+                  minWidth: '150px',
                   borderRadius: '14px',
                   backgroundColor: dashEjecucion.diferencia < 0 ? '#fff1f2' : '#f0f9ff',
                   borderColor: dashEjecucion.diferencia < 0 ? '#fecaca' : '#bae6fd'
                 }}>
                   <div className="rm-stat-info">
                     <label style={{ fontSize: '10px', color: dashEjecucion.diferencia < 0 ? '#e11d48' : '#0369a1' }}>
-                      {dashEjecucion.diferencia < 0 ? 'Exceso' : 'Ahorro'}
+                      {dashEjecucion.diferencia < 0 ? 'DIF. EXCESO' : 'DIF. DISPONIBLE'}
                     </label>
                     <h3 style={{ fontSize: '1.2rem', color: dashEjecucion.diferencia < 0 ? '#be123c' : '#0ea5e9' }}>
-                      $ {Math.abs(dashEjecucion.diferencia).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                      $ {Math.abs(dashEjecucion.diferencia).toLocaleString('de-DE', { minimumFractionDigits: 0 })}
                     </h3>
                   </div>
                   <div className="rm-stat-icon" style={{
@@ -1734,17 +1775,80 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
 
               <div style={{ display: 'flex', gap: '40px', textAlign: 'right', alignItems: 'center' }}>
                 <div style={{ borderLeft: '2px solid #e2e8f0', paddingLeft: '30px' }}>
-                  <label style={{ fontSize: '10px', fontWeight: '900', color: '#64748b' }}>TOTAL SOLICITADO</label>
-                  <div style={{ fontSize: '1.8rem', fontWeight: '950', color: '#0f172a' }}>$ {(sumas.bs + sumas.usd + sumas.imprevistosBs + sumas.imprevistosUsd).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                  <label style={{ fontSize: '10px', fontWeight: '900', color: '#64748b' }}>TOTAL ESTIMADO</label>
+                  <div style={{ fontSize: '1.8rem', fontWeight: '950', color: '#0f172a' }}>$ {dashEjecucion.estimado.toLocaleString('de-DE', { minimumFractionDigits: 0 })}</div>
+                  
+                  {/* BOTÓN DESGLOSE MOVIDO Y MÁS SUTIL */}
+                  <button 
+                    onClick={() => setMostrarDesglose(!mostrarDesglose)}
+                    style={{ 
+                      background: 'none', 
+                      border: 'none', 
+                      color: '#0ea5e9', 
+                      fontSize: '9px', 
+                      fontWeight: '800', 
+                      cursor: 'pointer', 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      gap: '4px',
+                      padding: 0,
+                      marginTop: '2px',
+                      width: '100%',
+                      justifyContent: 'flex-end',
+                      textTransform: 'uppercase',
+                      textDecoration: 'underline'
+                    }}
+                  >
+                    <BarChart3 size={10} /> {mostrarDesglose ? 'Ocultar Desglose' : 'Ver Desglose'}
+                  </button>
                 </div>
               </div>
+
+              {/* PANEL DESPLEGABLE DE CATEGORÍAS */}
+              {mostrarDesglose && (
+                <div style={{ 
+                  position: 'absolute', 
+                  top: '100%', 
+                  right: '0', 
+                  zIndex: 100, 
+                  backgroundColor: 'white', 
+                  border: '1px solid #e2e8f0', 
+                  borderRadius: '20px', 
+                  padding: '18px', 
+                  width: '300px', 
+                  boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1), 0 10px 10px -5px rgba(0,0,0,0.04)',
+                  marginTop: '10px'
+                }}>
+                  <label style={{ fontSize: '9px', fontWeight: '900', color: '#94a3b8', display: 'block', marginBottom: '10px', borderBottom: '1px solid #f1f5f9', paddingBottom: '4px' }}>DESGLOSE POR CATEGORÍA</label>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    {categoriasEjecucion.length > 0 ? categoriasEjecucion.map((cat, ci) => (
+                      <div key={ci}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', fontWeight: '700', marginBottom: '3px' }}>
+                          <span style={{ color: '#475569', maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cat.name}</span>
+                          <span style={{ color: '#1e293b' }}>$ {cat.ejecutado.toLocaleString('de-DE', { minimumFractionDigits: 0 })}</span>
+                        </div>
+                        <div style={{ height: '4px', backgroundColor: '#f8fafc', borderRadius: '4px', overflow: 'hidden' }}>
+                          <div style={{ 
+                            height: '100%', 
+                            width: `${cat.porcentaje}%`, 
+                            backgroundColor: '#0ea5e9',
+                            borderRadius: '4px'
+                          }}></div>
+                        </div>
+                      </div>
+                    )) : (
+                      <div style={{ fontSize: '10px', color: '#94a3b8', fontStyle: 'italic', textAlign: 'center', marginTop: '10px' }}>Sin datos de ejecución</div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* FORM CABECERA */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px', background: 'white', padding: '20px', borderRadius: '15px', border: '1px solid #e2e8f0', marginBottom: '20px' }}>
               <div style={{ display: 'flex', flexDirection: 'column' }}>
                 <label style={{ fontSize: '10px', fontWeight: 'bold', color: '#363636', marginBottom: '5px' }}>FECHA OPERATIVA</label>
-                <input type="date" className="sf-input" value={form.fecha} onChange={(e) => setForm({ ...form, fecha: e.target.value })} />
+                <input type="date" className="sf-input" value={form.fecha} readOnly style={{ backgroundColor: '#f8fafc', color: '#64748b', cursor: 'not-allowed' }} />
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column' }}>
@@ -1864,7 +1968,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                     <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puUsd === 0 ? '' : p.puUsd} onChange={(e) => manejarCambioPartida(i, 'puUsd', e.target.value)} style={{ textAlign: 'right' }} disabled={p.puBs > 0 || !!p.codigo_ticket} /></div>
                     <div style={{ width: '120px', padding: '6px', textAlign: 'right', fontWeight: 'bold' }}>{((parseFloat(p.puBs) || parseFloat(p.puUsd) || 0) * (p.cant || 0)).toLocaleString('de-DE')}</div>
                     <div style={{ width: '80px', display: 'flex', gap: '5px', justifyContent: 'center' }}>
-                      <button onClick={() => duplicarPartida(i)} style={{ background: 'none', border: 'none', color: '#0ea5e9', cursor: (p.codigo_ticket || p.requisicion_id) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (p.codigo_ticket || p.requisicion_id) ? 0.3 : 1 }} disabled={!!p.codigo_ticket || !!p.requisicion_id} title="Duplicar renglón">👯</button>
+                      <button onClick={() => duplicarPartida(i)} style={{ background: 'none', border: 'none', color: '#0ea5e9', cursor: (p.codigo_ticket || p.requisicion_id) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (p.codigo_ticket || p.requisicion_id) ? 0.3 : 1 }} disabled={!!p.codigo_ticket || !!p.requisicion_id} title="Duplicar renglón"><Copy size={16} /></button>
                       <button onClick={() => setForm({ ...form, partidas: form.partidas.filter((_, idx) => idx !== i) })} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: (p.codigo_ticket || p.requisicion_id) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (p.codigo_ticket || p.requisicion_id) ? 0.3 : 1 }} disabled={!!p.codigo_ticket || !!p.requisicion_id} title="Eliminar renglón">🗑️</button>
                     </div>
                   </div>
@@ -1964,7 +2068,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                         <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.puUsd} onChange={(e) => manejarCambioImprevisto(i, 'puUsd', e.target.value)} style={{ textAlign: 'right' }} disabled={imp.puBs > 0} /></div>
                         <div style={{ width: '120px', padding: '6px', textAlign: 'right', fontWeight: 'bold' }}>{((parseFloat(imp.puBs) || parseFloat(imp.puUsd) || 0) * (imp.cant || 1)).toLocaleString('de-DE')}</div>
                         <div style={{ width: '80px', display: 'flex', gap: '5px', justifyContent: 'center' }}>
-                          <button onClick={() => duplicarImprevisto(i)} style={{ background: 'none', border: 'none', color: '#f59e0b', cursor: (imp.requisicion_id || imp.status === 'Bloqueado') ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (imp.requisicion_id || imp.status === 'Bloqueado') ? 0.3 : 1 }} disabled={!!imp.requisicion_id || imp.status === 'Bloqueado'} title="Duplicar imprevisto">👯</button>
+                          <button onClick={() => duplicarImprevisto(i)} style={{ background: 'none', border: 'none', color: '#f59e0b', cursor: (imp.requisicion_id || imp.status === 'Bloqueado') ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (imp.requisicion_id || imp.status === 'Bloqueado') ? 0.3 : 1 }} disabled={!!imp.requisicion_id || imp.status === 'Bloqueado'} title="Duplicar imprevisto"><Copy size={16} /></button>
                           <button onClick={() => setForm({ ...form, imprevistos: form.imprevistos.filter((_, idx) => idx !== i) })} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: (imp.requisicion_id || imp.status === 'Bloqueado') ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (imp.requisicion_id || imp.status === 'Bloqueado') ? 0.3 : 1 }} disabled={!!imp.requisicion_id || imp.status === 'Bloqueado'} title="Eliminar imprevisto">🗑️</button>
                         </div>
                       </div>
