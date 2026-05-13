@@ -899,7 +899,7 @@ const ReportesMaestro = () => {
                                     <table className="rm-table">
                                         <thead>
                                             <tr>
-                                                <th>ID REQUISICIÓN</th>
+                                                <th style={{ width: '220px' }}>ID REQUISICIÓN</th>
                                                 <th>FECHA SOLICITUD</th>
                                                 <th>PROYECTO (CC)</th>
                                                 <th>JUSTIFICACIÓN</th>
@@ -917,13 +917,43 @@ const ReportesMaestro = () => {
                                                 return (
                                                     <tr key={r.id} style={sla.alerta ? { backgroundColor: '#fff7ed', borderLeft: '4px solid #f97316' } : {}}>
                                                         <td>
-                                                            <button onClick={() => setReqSeleccionada(r)} className="rm-link-btn">
-                                                                {r.correlativo_req || `REQ-${r.id}`}
-                                                            </button>
+                                                            <motion.span
+                                                              whileHover={{ 
+                                                                scale: 1.1, 
+                                                                x: 5,
+                                                                color: '#2563eb',
+                                                                textShadow: '0 0 8px rgba(37, 99, 235, 0.2)'
+                                                              }}
+                                                              whileTap={{ scale: 0.95 }}
+                                                              transition={{ type: "spring", stiffness: 400, damping: 10 }}
+                                                              onClick={() => setReqSeleccionada(r)}
+                                                              style={{
+                                                                fontSize: '12px',
+                                                                fontWeight: '900',
+                                                                color: '#1e40af',
+                                                                textDecoration: 'underline',
+                                                                textUnderlineOffset: '3px',
+                                                                textDecorationColor: 'rgba(30, 64, 175, 0.4)',
+                                                                cursor: 'pointer',
+                                                                display: 'inline-block'
+                                                              }}
+                                                            >
+                                                              {r.correlativo_req || `REQ-${r.id}`}
+                                                            </motion.span>
                                                         </td>
                                                         <td>{safeFormatDate(r.fecha_emision)}</td>
                                                         <td className="rm-td-cc">{r.centro_costo?.split('(')[0]}</td>
-                                                        <td className="rm-td-justif">{r.justificacion}</td>
+                                                        <td className="rm-td-justif">
+                                                          <div style={{ fontWeight: '700', color: '#334155' }}>{r.justificacion}</div>
+                                                          {r.items?.length > 1 && (
+                                                            <div 
+                                                              style={{ fontSize: '10px', color: '#0ea5e9', fontWeight: 'bold', cursor: 'help', marginTop: '2px' }}
+                                                              title={r.items.slice(1).map(it => `- ${it.descripcion}`).join('\n')}
+                                                            >
+                                                              (+ {r.items.length - 1} más)
+                                                            </div>
+                                                          )}
+                                                        </td>
 
                                                         <td style={{ textAlign: 'center', fontSize: '0.65rem' }}>
                                                             <div style={{ fontWeight: 'bold' }}>{safeFormatDate(r.f_aprobacion_proyecto, 'dd/MM HH:mm')}</div>
@@ -964,7 +994,7 @@ const ReportesMaestro = () => {
                                     <table className="rm-table">
                                         <thead>
                                             <tr>
-                                                <th>REFERENCIA</th>
+                                                <th style={{ width: '180px' }}>REFERENCIA</th>
                                                 <th>FECHA</th>
                                                 <th>CENTRO DE COSTO</th>
                                                 <th>RESPONSABLE / CONCEPTO</th>
@@ -976,13 +1006,43 @@ const ReportesMaestro = () => {
                                             {ticketsControl.map((t) => (
                                                 <tr key={t.id}>
                                                     <td>
-                                                        <button onClick={() => setTickSeleccionado(t)} className="rm-link-btn">
-                                                            {t.codigo_control}
-                                                        </button>
+                                                        <motion.span
+                                                          whileHover={{ 
+                                                            scale: 1.1, 
+                                                            x: 5,
+                                                            color: '#2563eb',
+                                                            textShadow: '0 0 8px rgba(37, 99, 235, 0.2)'
+                                                          }}
+                                                          whileTap={{ scale: 0.95 }}
+                                                          transition={{ type: "spring", stiffness: 400, damping: 10 }}
+                                                          onClick={() => setTickSeleccionado(t)}
+                                                          style={{
+                                                            fontSize: '12px',
+                                                            fontWeight: '900',
+                                                            color: '#1e40af',
+                                                            textDecoration: 'underline',
+                                                            textUnderlineOffset: '3px',
+                                                            textDecorationColor: 'rgba(30, 64, 175, 0.4)',
+                                                            cursor: 'pointer',
+                                                            display: 'inline-block'
+                                                          }}
+                                                        >
+                                                          {t.codigo_control}
+                                                        </motion.span>
                                                     </td>
                                                     <td>{safeFormatDate(t.fecha_emision)}</td>
                                                     <td className="rm-td-cc">{t.centro_costo?.split('(')[0]}</td>
-                                                    <td className="rm-td-justif">{t.responsable_nombre} - {t.clasificacion_admin}</td>
+                                                    <td className="rm-td-justif">
+                                                         <div style={{ fontWeight: '700', color: '#334155' }}>{t.responsable_nombre} - {t.clasificacion_admin}</div>
+                                                         {t.itemsCount > 1 && (
+                                                             <div 
+                                                                 style={{ fontSize: '10px', color: '#0ea5e9', fontWeight: 'bold', cursor: 'help', marginTop: '2px' }}
+                                                                 title={t.items?.slice(1).map(it => `- ${it.descripcion || it.desc}`).join('\n')}
+                                                             >
+                                                                 (+ {t.itemsCount - 1} más)
+                                                             </div>
+                                                         )}
+                                                     </td>
                                                     <td className="rm-td-amount">$ {(t.montoTotal || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
                                                     <td style={{ textAlign: 'center' }}>
                                                         <span className={`rm-badge-status ${t.statusDisplay.toLowerCase()}`}>

@@ -11,7 +11,7 @@ const Auth = () => {
   const navigate = useNavigate();
 
   const [loginData, setLoginData] = useState({
-    email: 'jcontreras.totalclean@gmail.com',
+    email: '',
     password: ''
   });
 

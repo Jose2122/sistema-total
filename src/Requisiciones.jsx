@@ -9,7 +9,7 @@ import {
   Loader2, MessageSquare, FileText, Upload, Paperclip,
   ChevronDown, ChevronUp, Settings, Building2, Diamond,
   ShoppingCart, CheckCircle2, Eye, EyeOff, ChevronRight,
-  Clock, User, Ban, Trash2, Camera, Plus
+  Clock, User, Ban, Trash2, Camera, Plus, X, ArrowLeft
 } from 'lucide-react';
 import './Requisiciones.css';
 
@@ -21,6 +21,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
   const [loading, setLoading] = useState(false);
   const [currentUser, setCurrentUser] = useState(currentUserProp || null);
   const [modoEdicion, setModoEdicion] = useState(false);
+  const [hasChanges, setHasChanges] = useState(false);
 
   const getRank = (rol) => {
     const r = (rol || '').toLowerCase();
@@ -49,6 +50,18 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     } catch (err) {
       console.error("Error al enviar notificación:", err.message);
     }
+  };
+
+  const formatName = (fullName) => {
+    if (!fullName) return '';
+    const parts = fullName.trim().split(/\s+/);
+    if (parts.length <= 1) return fullName;
+    const firstName = parts[0];
+    // Buscamos el primer apellido. Si hay más de 2 partes, intentamos ser inteligentes,
+    // pero la petición es "Primer nombre y primer apellido", así que tomamos parts[1]
+    // a menos que parts[1] sea una partícula como "de", "la", etc. (simplificamos por ahora)
+    const firstLastName = parts[1];
+    return `${firstName} ${firstLastName}`;
   };
 
   const getInitials = (name) => {
@@ -305,7 +318,10 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
         req.correlativo.toLowerCase().includes(busqueda.toLowerCase());
 
       const matchDepto = filtroDepto === 'Todos' || req.gerencia === filtroDepto;
-      const matchStatus = filtroAprobacion === 'Todos' || req.estado_aprobacion === filtroAprobacion;
+      const matchStatus = filtroAprobacion === 'Todos' || 
+        (filtroAprobacion === 'pendientes_especiales' 
+          ? ['pendiente_proyecto', 'pendiente_area', 'enviada_general', 'rechazada', 'ANULADA'].includes(req.estado_aprobacion)
+          : req.estado_aprobacion === filtroAprobacion);
       const matchCategoria = filtroCategoria === 'Todos' || (req.detalles && req.detalles.some(d => d.categoria === filtroCategoria));
       const matchCC = filtroCC === 'Todos' || req.centroCosto.includes(filtroCC);
       const matchStatusCompra = filtroStatusCompra === 'Todos' || req.status.toUpperCase() === filtroStatusCompra.toUpperCase();
@@ -365,6 +381,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       valor = prefix + rest;
     }
 
+    setHasChanges(true);
     setIdReferenciaProyecto(valor);
   };
 
@@ -440,7 +457,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
   useEffect(() => {
     if (isOpen) {
       if (currentUser) {
-        setSolicitante(`${currentUser.nombre} ${currentUser.apellido}`);
+        const full = `${currentUser.nombre || ''} ${currentUser.apellido || ''}`.trim();
+        setSolicitante(full);
       }
 
       if (datosPredefinidos) {
@@ -503,6 +521,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
 
   // --- MANEJADORES DE ACCIÓN ---
   const actualizarFila = (id, campo, valor) => {
+    setHasChanges(true);
     setRenglones(prev => prev.map(f => {
       if (f.id === id) {
         let v = valor;
@@ -536,6 +555,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     const index = renglones.findIndex(r => r.id === id);
     const nuevosRenglones = [...renglones];
     nuevosRenglones.splice(index + 1, 0, nuevo);
+    setHasChanges(true);
     setRenglones(nuevosRenglones);
   };
 
@@ -632,6 +652,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     setPrioridad('');
     setRenglones([{ id: Date.now(), clasificacion: '', categoria: '', cant: 1, uni: 'UNID', descripcion: '', beneficiario: '', pu: 0, total: 0, status: 'En Espera' }]);
     setModoEdicion(false);
+    setHasChanges(false);
     setMostrarSoportes(false);
   };
 
@@ -665,6 +686,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     setCentroCosto(req.centroCosto);
     setSolicitante(req.solicitante || `${req.solicitante_nombre || ''} ${req.solicitante_apellido || ''}`);
     setModoEdicion(false);
+    setHasChanges(false);
     setMostrarSoportes(detallesSeguros.length > 0 && (req.facturas_url?.length > 0));
     setShowModal(true);
   };
@@ -1085,7 +1107,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       }
 
       // DETERMINAR SI TIENE GERENTE DE PROYECTO ASIGNADO (Solo si el solicitante es Analista/Coordinador)
-      if (rangoSolicitante < 2.5) {
+      if (rangoSolicitante < 2.5 && departamento !== 'Mantenimiento') {
         try {
           const { data: gProyectos } = await supabase
             .from('perfiles')
@@ -1264,27 +1286,6 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
         }).eq('id', editandoId);
         if (error) throw error;
 
-        // ALERTA DE CATEGORÍAS DIFERENTES
-        const catsUnicas = [...new Set((Array.isArray(renglones) ? renglones : []).map(r => r.categoria).filter(c => c))];
-        if (catsUnicas.length > 1) {
-          toast((t) => (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: '500' }}>Se han detectado diferentes categorías en los renglones. ¿Está seguro de que desea guardar la requisición así?</p>
-              <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-                <button
-                  onClick={() => { toast.dismiss(t.id); ejecutarGuardarUpdate(editandoId); }}
-                  style={{ padding: '4px 12px', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}
-                >
-                  SÍ, GUARDAR
-                </button>
-                <button onClick={() => toast.dismiss(t.id)} style={{ padding: '4px 12px', backgroundColor: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}>CANCELAR</button>
-              </div>
-            </div>
-          ), { duration: 6000, position: 'top-center' });
-          setLoading(false);
-          return;
-        }
-
         await ejecutarGuardarUpdate(editandoId);
       } catch (err) { toast.error(err.message); } finally { setLoading(false); }
       return;
@@ -1414,7 +1415,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
         .contains('obras_asignadas', [centroCosto])
         .ilike('rol', '%proyecto%');
 
-      if (gProyectos && gProyectos.length > 0) {
+      // Solo verificamos Gerente de Proyecto si NO es del departamento de Mantenimiento (donde no existen)
+      if (departamento !== 'Mantenimiento' && gProyectos && gProyectos.length > 0) {
         nuevaReqBD.estado_aprobacion = 'pendiente_proyecto';
         nuevaReqBD.aprobacion_nombre = 'Pendiente por Proyecto';
       }
@@ -1427,18 +1429,18 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
 
   const intentarCerrarModal = () => {
     // Si estamos editando activamente una requisición existente y hay cambios, preguntamos
-    if (editandoId && modoEdicion) {
+    if (editandoId && modoEdicion && hasChanges) {
       toast((t) => (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
           <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: 'bold', color: '#1e293b' }}>⚠️ Tienes cambios sin guardar</p>
           <p style={{ margin: 0, fontSize: '0.8rem', color: '#64748b' }}>¿Estás seguro de que deseas cerrar? Se perderán los cambios realizados.</p>
           <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '5px' }}>
             <button
-              onClick={() => { 
-                toast.dismiss(t.id); 
+              onClick={() => {
+                toast.dismiss(t.id);
                 setShowModal(false);
                 if (onClose) onClose();
-                resetearFormulario(); 
+                resetearFormulario();
               }}
               style={{ padding: '6px 12px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 'bold' }}
             >CERRAR SIN GUARDAR</button>
@@ -1477,7 +1479,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
           .from('partidas_fondos')
           .update({
             requisicion_id: nuevaReq.id,
-            codigo_req: nuevaReq.correlativo_req, // GUARDAR EL CORRELATIVO PARA TRAZABILIDAD
+            codigo_ticket: nuevaReq.correlativo_req, // GUARDAR EL CORRELATIVO PARA TRAZABILIDAD
             status: 'Bloqueado'
           })
           .in('id', idsPartidas);
@@ -1524,7 +1526,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       }
 
       await cargarHistorialDesdeBD();
-      onSuccess?.(nuevaReq.id, idsPartidas);
+      onSuccess?.(nuevaReq.id, idsPartidas, nuevaReq.correlativo_req);
       setShowModal(false); if (onClose) onClose();
       onClose?.();
       resetearFormulario();
@@ -1551,25 +1553,42 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
 
       {/* --- DASHBOARD SUPERIOR (STATS CARDS INTERACTIVAS) --- */}
       <div className="dashboard-container" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '15px', marginBottom: '25px' }}>
-        {[
-          { label: 'TOTAL REQUISICIONES', val: historial.length, col: '#030712', filter: 'Todos' },
-          { label: 'GERENTE PROYECTO', val: historial.filter(r => r.estado_aprobacion === 'pendiente_proyecto').length, col: '#030712', filter: 'pendiente_proyecto' },
-          { label: 'GERENTE ÁREA', val: historial.filter(r => r.estado_aprobacion === 'pendiente_area').length, col: '#030712', filter: 'pendiente_area' },
-          { label: 'POR APROBAR', val: historial.filter(r => r.estado_aprobacion === 'enviada_general').length, col: '#030712', filter: 'enviada_general' },
-          { label: 'APROBADA GLOBAL', val: historial.filter(r => r.estado_aprobacion === 'aprobado_final').length, col: '#030712', filter: 'aprobado_final' },
-          { label: 'RECHAZADA', val: historial.filter(r => r.estado_aprobacion === 'rechazada').length, col: '#030712', filter: 'rechazada' },
-          { label: 'ANULADA', val: historial.filter(r => r.estado_aprobacion === 'ANULADA').length, col: '#030712', filter: 'ANULADA' }
-        ].filter(x => {
+        {(() => {
           const rolUser = (currentUser?.rol || '').toLowerCase();
-          if (rolUser.includes('proyecto')) {
-            return !(x.filter === 'pendiente_area' || x.filter === 'enviada_general');
-          } else if (rolUser.includes('gerente') && !rolUser.includes('general')) {
-            return !(x.filter === 'pendiente_proyecto' || x.filter === 'enviada_general');
-          } else if (rolUser.includes('general')) {
-            return !(x.filter === 'pendiente_proyecto' || x.filter === 'pendiente_area');
+          const baseStats = [
+            { label: 'TOTAL REQUISICIONES', val: historial.length, col: '#030712', filter: 'Todos' },
+            { label: 'GERENTE PROYECTO', val: historial.filter(r => r.estado_aprobacion === 'pendiente_proyecto').length, col: '#030712', filter: 'pendiente_proyecto' },
+            { label: 'GERENTE ÁREA', val: historial.filter(r => r.estado_aprobacion === 'pendiente_area').length, col: '#030712', filter: 'pendiente_area' },
+            { label: 'POR APROBAR', val: historial.filter(r => r.estado_aprobacion === 'enviada_general').length, col: '#030712', filter: 'enviada_general' },
+            { label: 'APROBADA GLOBAL', val: historial.filter(r => r.estado_aprobacion === 'aprobado_final').length, col: '#030712', filter: 'aprobado_final' },
+            { label: 'RECHAZADA', val: historial.filter(r => r.estado_aprobacion === 'rechazada').length, col: '#030712', filter: 'rechazada' },
+            { label: 'ANULADA', val: historial.filter(r => r.estado_aprobacion === 'ANULADA').length, col: '#030712', filter: 'ANULADA' }
+          ];
+
+          if (rolUser.includes('analista')) {
+            return [
+              baseStats[0], // TOTAL REQUISICIONES
+              baseStats[4], // APROBADA GLOBAL
+              {
+                label: 'PENDIENTES, RECHAZADAS Y ANULADAS',
+                val: historial.filter(r => ['pendiente_proyecto', 'pendiente_area', 'enviada_general', 'rechazada', 'ANULADA'].includes(r.estado_aprobacion)).length,
+                col: '#ef4444',
+                filter: 'pendientes_especiales'
+              }
+            ];
           }
-          return true; // Admins, Analistas, Coordinadores ven todo
-        }).map((x, i) => {
+
+          return baseStats.filter(x => {
+            if (rolUser.includes('proyecto')) {
+              return !(x.filter === 'pendiente_area' || x.filter === 'enviada_general');
+            } else if (rolUser.includes('gerente') && !rolUser.includes('general')) {
+              return !(x.filter === 'pendiente_proyecto' || x.filter === 'enviada_general');
+            } else if (rolUser.includes('general')) {
+              return !(x.filter === 'pendiente_proyecto' || x.filter === 'pendiente_area');
+            }
+            return true;
+          });
+        })().map((x, i) => {
           const colorBorde = x.col; // El color del estatus solo para el borde
           const colorTexto = '#1e293b'; // Azul oscuro/Gris carbón profesional para todo el texto
           return (
@@ -1730,15 +1749,23 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                         }}
                       />
                       <motion.span
-                        whileHover={{ scale: 1.05, x: 2 }}
+                        whileHover={{
+                          scale: 1.1,
+                          x: 5,
+                          color: '#2563eb',
+                          textShadow: '0 0 8px rgba(37, 99, 235, 0.2)'
+                        }}
                         whileTap={{ scale: 0.95 }}
+                        transition={{ type: "spring", stiffness: 400, damping: 10 }}
                         style={{
                           fontSize: '12px',
-                          fontWeight: '700',
-                          color: '#007BFF',
+                          fontWeight: '900',
+                          color: '#1e40af',
                           textDecoration: 'underline',
                           textUnderlineOffset: '3px',
-                          textDecorationColor: 'rgba(0, 123, 255, 0.3)'
+                          textDecorationColor: 'rgba(30, 64, 175, 0.4)',
+                          cursor: 'pointer',
+                          display: 'inline-block'
                         }}
                       >
                         {req.correlativo}
@@ -1751,7 +1778,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                 </td>
 
                 <td data-label="SOLICITANTE" style={{ verticalAlign: 'middle' }}>
-                  <div style={{ fontSize: '12px', fontWeight: '600', color: '#2D2D2D', lineHeight: '1.2' }}>{req.solicitante}</div>
+                  <div style={{ fontSize: '12px', fontWeight: '600', color: '#2D2D2D', lineHeight: '1.2' }}>{formatName(req.solicitante)}</div>
                   <div style={{ fontSize: '11px', fontWeight: '400', color: '#757575', marginTop: '1px', lineHeight: '1.2' }}>{req.gerencia}</div>
                 </td>
 
@@ -1850,27 +1877,27 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                       const limite = new Date(deadline);
                       const hoy = new Date();
                       const diff = limite.getTime() - hoy.getTime();
-                      
+
                       if (req.is_pausada) return <span style={{ color: '#f59e0b', fontSize: '0.7rem', fontWeight: '900' }}>⏸️ PAUSADO</span>;
-                      
+
                       const horasTotales = Math.floor(diff / (1000 * 60 * 60));
                       const color = horasTotales < 0 ? '#ef4444' : (horasTotales < 24 ? '#f59e0b' : '#16a34a');
-                      
+
                       const d = Math.floor(horasTotales / 24);
                       const h = horasTotales % 24;
                       const label = horasTotales < 0 ? 'VENCIDO' : (d > 0 ? `${d}d ${h}h` : `${h}h`);
 
                       return (
-                        <div style={{ 
-                           fontSize: '0.75rem', 
-                           fontWeight: '800', 
-                           backgroundColor: `${color}15`, 
-                           color: color,
-                           padding: '4px 8px',
-                           borderRadius: '6px',
-                           display: 'inline-block'
-                         }}>
-                           {label}
+                        <div style={{
+                          fontSize: '0.75rem',
+                          fontWeight: '800',
+                          backgroundColor: `${color}15`,
+                          color: color,
+                          padding: '4px 8px',
+                          borderRadius: '6px',
+                          display: 'inline-block'
+                        }}>
+                          {label}
                         </div>
                       );
                     }
@@ -1932,678 +1959,716 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       </div>
 
       {/* --- MODAL DE FORMULARIO (NUEVA / EDITAR) --- */}
-      {(isOpen || showModal) && ( (() => {
+      {(isOpen || showModal) && ((() => {
         const reqActual = editandoId ? historial.find(h => String(h.id) === String(editandoId)) : null;
         return (
           <div className="modal-overlay">
-            <div className="modal-card animate-modal" style={{ maxWidth: '95%', width: '1300px' }}>
-              <div id="area-pdf">
-              {/* --- ENCABEZADO REFINADO EMPRESARIAL (STICKY) --- */}
-              <div style={{
-                position: 'sticky',
-                top: '-35px',
-                zIndex: 1000,
-                background: 'rgba(235, 245, 255, 0.95)',
-                backdropFilter: 'blur(12px)',
-                padding: '20px 40px',
-                borderRadius: '20px 20px 0 0',
-                margin: '-35px -40px 20px -40px',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)',
-                borderBottom: '1px solid rgba(0,0,0,0.05)'
-              }}>
-                {/* IZQUIERDA: TÍTULO Y REF + TIMELINE ICON */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-                    <h1 style={{ 
-                      margin: 0, 
-                      fontSize: '1.4rem', 
-                      fontWeight: '1000', 
-                      color: '#1e293b', 
-                      letterSpacing: '-0.02em',
-                      textTransform: 'uppercase'
-                    }}>
-                      REQUISICIÓN DE RECURSOS
-                    </h1>
-                    {observaciones && <MessageSquare size={20} style={{ color: '#8b5cf6' }} title="Esta requisición tiene observaciones" />}
-                    
-                    {editandoId && (
-                      <button
-                        onClick={() => setMostrarTimeline(!mostrarTimeline)}
-                        style={{
-                          width: '32px', height: '32px', borderRadius: '50%',
-                          display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          cursor: 'pointer', transition: 'all 0.2s',
-                          backgroundColor: mostrarTimeline ? '#0ea5e9' : 'white',
-                          color: mostrarTimeline ? 'white' : '#64748b',
-                          boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
-                          border: '1px solid #e2e8f0'
-                        }}
-                        title="Ver Línea de Tiempo"
-                      >
-                        <Clock size={16} />
-                      </button>
-                    )}
-                  </div>
-
-
-                  {(() => {
-                    const reqActual = editandoId ? historial.find(h => h.id === editandoId) : null;
-                    const ref = datosPredefinidos?.id_control ? `REF: ${datosPredefinidos.id_control}` : (reqActual?.origen || '');
-                    if (!ref) return null;
-                    return (
-                      <div style={{
-                        background: 'white',
-                        color: '#475569',
-                        padding: '2px 10px',
-                        borderRadius: '6px',
-                        fontSize: '0.65rem',
-                        fontWeight: '900',
-                        border: '1px solid #cbd5e1',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '5px',
-                        width: 'fit-content',
-                        boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
-                      }}>
-                        <Diamond size={12} /> {ref}
-                      </div>
-                    );
-                  })()}
-                </div>
-
-                {/* DERECHA: ID (AL TOPE) + SLA TIMER */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
-                  {(() => {
-                    const reqActual = editandoId ? historial.find(h => h.id === editandoId) : null;
-                    if (!reqActual || reqActual.status?.toUpperCase() === 'COMPLETADO') return null;
-                    
-                    if (reqActual.estado_aprobacion !== 'aprobado_final' && reqActual.estado_aprobacion !== 'finalizado') return null;
-
-                    let limiteDate = reqActual.fecha_limite_compra;
-                    if (!limiteDate && reqActual.fecha_emision) {
-                       const base = new Date(reqActual.fecha_emision);
-                       const dias = reqActual.prioridad === 'Emergencia' ? 1 : 5;
-                       limiteDate = new Date(base.getTime() + (dias * 24 * 60 * 60 * 1000));
-                    } else if (limiteDate) {
-                       limiteDate = new Date(limiteDate);
-                    }
-
-                    if (!limiteDate) return null;
-                    
-                    const hoy = new Date();
-                    const diff = limiteDate.getTime() - hoy.getTime();
-                    const isPausada = reqActual.is_pausada;
-                    
-                    return (
-                      <div style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '12px',
-                        backgroundColor: isPausada ? '#fffbeb' : '#f8fafc',
-                        padding: '8px 15px',
-                        borderRadius: '10px',
-                        border: '1px solid',
-                        borderColor: isPausada ? '#fde68a' : '#e2e8f0'
-                      }}>
-                        {isPausada ? <Ban size={16} color="#d97706" /> : <Clock size={16} color="#64748b" />}
-                        <div style={{ display: 'flex', flexDirection: 'column' }}>
-                          <span style={{ fontSize: '0.65rem', fontWeight: '900', color: '#64748b', textTransform: 'uppercase' }}>
-                            {isPausada ? 'SLA PAUSADO' : 'Tiempo Límite'}
-                          </span>
-                          <span style={{ 
-                            fontSize: '0.9rem', 
-                            fontWeight: '1000', 
-                            color: (() => {
-                              if (isPausada) return '#d97706';
-                              return diff < 0 ? '#ef4444' : (diff < 86400000 ? '#f59e0b' : '#16a34a');
-                            })()
-                          }}>
-                            {(() => {
-                              if (diff < 0 && !isPausada) return 'PLAZO VENCIDO';
-                              if (isPausada) return 'EN PAUSA';
-                              const d = Math.floor(diff / (1000 * 60 * 60 * 24));
-                              const h = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-                              return `${d}d ${h}h restantes`;
-                            })()}
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })()}
-
-                  <div style={{ textAlign: 'right' }}>
-                    <div style={{
-                      fontSize: '1.8rem',
-                      fontWeight: '1000',
-                      color: '#1e3a8a',
-                      lineHeight: '1',
-                      letterSpacing: '0.05em'
-                    }}>
-                      {editandoId ? (historial.find(h => h.id === editandoId)?.correlativo) : previewCorrelativo}
-                    </div>
-                    <div style={{
-                      fontSize: '0.6rem',
-                      fontWeight: '900',
-                      color: '#64748b',
-                      marginTop: '3px',
-                      letterSpacing: '0.1em',
-                      opacity: 0.8
-                    }}>
-                      ID REQ
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-
-
-              {/* --- LÍNEA DE TIEMPO COLAPSABLE --- */}
-              {editandoId && (
-                <div style={{ width: '100%' }}>
-                  <AnimatePresence>
-                    {mostrarTimeline && (
-                      <motion.div
-                        initial={{ height: 0, opacity: 0 }}
-                        animate={{ height: 'auto', opacity: 1 }}
-                        exit={{ height: 0, opacity: 0 }}
-                        style={{ overflow: 'hidden' }}
-                      >
-                        <div className="timeline-container-premium">
-                          <div className="timeline-line"></div>
-                          {(() => {
-                            const reqActual = historial.find(h => String(h.id) === String(editandoId));
-                            if (!reqActual) return null;
-
-                            const tieneProyecto = reqActual.aprobado_gerente_proyecto || reqActual.f_aprobacion_proyecto || reqActual.firma_gerente_proyecto;
-                            
-                            const steps = [
-                              { label: 'SOLICITADO', name: reqActual.solicitante, date: reqActual.fecha_emision, icon: <User size={20} />, completed: true },
-                              ...(tieneProyecto ? [{ label: 'GERENTE PROYECTO', name: reqActual.n_aprobacion_proyecto, date: reqActual.f_aprobacion_proyecto, icon: <Settings size={20} />, completed: true }] : []),
-                              { label: 'GERENTE ÁREA', name: reqActual.n_aprobacion_area, date: reqActual.f_aprobacion_area, icon: <Building2 size={20} />, completed: reqActual.aprobado_gerente_area || (reqActual.estado_aprobacion !== 'pendiente_proyecto' && reqActual.estado_aprobacion !== 'pendiente_area' && reqActual.estado_aprobacion !== 'enviada_area' && reqActual.estado_aprobacion !== 'rechazada') },
-                              { label: 'GERENTE GENERAL', name: reqActual.n_aprobacion_general, date: reqActual.f_aprobacion_general, icon: <Diamond size={20} />, completed: reqActual.aprobado_gerente_general || reqActual.estado_aprobacion === 'aprobado_final' },
-                              { label: 'COMPRA CULMINADA', date: reqActual.f_culminacion_compras, icon: <ShoppingCart size={20} />, completed: reqActual.status?.toUpperCase() === 'COMPLETADO' }
-                            ];
-
-                            return steps.map((step, idx) => (
-                              <div key={idx} className={`timeline-step ${step.completed ? 'completed' : ''}`}>
-                                <div className="timeline-icon-wrapper">
-                                  {step.completed ? <CheckCircle2 size={24} /> : step.icon}
-                                </div>
-                                <div className="timeline-info">
-                                  <span className="timeline-label">{step.label}</span>
-                                  {step.name && <span className="timeline-name" style={{ display: 'block', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{step.name}</span>}
-                                  {step.date && (
-                                    <span className="timeline-date">
-                                      {(() => {
-                                        try {
-                                          return format(new Date(step.date), 'dd/MM/yy HH:mm');
-                                        } catch (e) {
-                                          return step.date;
-                                        }
-                                      })()}
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-                            ));
-                          })()}
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
-              )}
-
-              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(140px, 160px) 1.5fr 1fr 1fr 180px 1fr', gap: '20px', marginBottom: '25px' }}>
-                <div>
-                  <label className="stat-label" style={{ color: '#1e293b' }}>FECHA REQUERIDA <span style={{ color: 'var(--danger)' }}>*</span></label>
-                  <div style={{ position: 'relative' }}>
-                    <Clock size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
-                    <input
-                      className="input-tc"
-                      type="date"
-                      value={fechaRequerida}
-                      onChange={(e) => setFechaRequerida(e.target.value)}
-                      disabled={!!editandoId}
-                      style={{ width: '100%', paddingLeft: '38px' }}
-                      required
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className="stat-label" style={{ color: '#1e293b' }}>SOLICITANTE</label>
-                  <div className="input-tc" style={{ display: 'flex', alignItems: 'center', gap: '10px', backgroundColor: '#f8fafc', height: '42px', boxSizing: 'border-box' }}>
-                    <div style={{
-                      width: '28px', height: '28px', borderRadius: '50%',
-                      backgroundColor: 'var(--primary)', color: 'white',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      fontSize: '0.7rem', fontWeight: 'bold'
-                    }}>
-                      {getInitials(solicitante)}
-                    </div>
-                    <span style={{ fontSize: '0.9rem', fontWeight: '600', color: 'var(--slate-800)' }}>
-                      {solicitante}
-                    </span>
-                  </div>
-                </div>
-                <div>
-                  <label className="stat-label" style={{ color: '#1e293b' }}>CENTRO DE COSTOS</label>
-                  <select
-                    className="input-tc"
-                    value={centroCosto}
-                    disabled={!!editandoId}
-                    onChange={(e) => {
-                      setCentroCosto(e.target.value);
-                      // Resetear clasificaciones y categorías de todos los renglones al cambiar CC
-                      setRenglones(prev => (Array.isArray(prev) ? prev : []).map(r => ({ ...r, clasificacion: '', categoria: '' })));
-                    }}
+            <div className="modal-card animate-modal" style={{ maxWidth: '95%', width: '1300px', height: '95vh', display: 'flex', flexDirection: 'column', padding: 0, overflow: 'hidden' }}>
+              <div id="area-pdf" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                {/* --- ENCABEZADO FIJO --- */}
+                <div style={{
+                  flexShrink: 0,
+                  background: 'rgba(235, 245, 255, 0.95)',
+                  backdropFilter: 'blur(12px)',
+                  padding: '20px 40px',
+                  borderBottom: '1px solid rgba(0,0,0,0.05)',
+                  position: 'relative'
+                }}>
+                  <button 
+                    onClick={intentarCerrarModal}
+                    style={{ position: 'absolute', top: '15px', right: '15px', border: 'none', background: 'rgba(255,255,255,0.8)', borderRadius: '50%', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#64748b', transition: 'all 0.2s', zIndex: 100 }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = '#white'; e.currentTarget.style.color = '#0f172a'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.8)'; e.currentTarget.style.color = '#64748b'; }}
                   >
-                    <option value="">Seleccione Centro de Costo...</option>
-                    {centrosCosto.map(cc => <option key={cc.id} value={cc.nombre}>{cc.nombre}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="stat-label" style={{ color: '#1e293b' }}>GERENCIA</label>
-                  <select className="input-tc" value={departamento} onChange={(e) => setDepartamento(e.target.value)} disabled={!!editandoId}>
-                    {listaGerencias.map(g => <option key={g} value={g}>{g}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="stat-label" style={{ color: '#1e293b' }}>PRIORIDAD</label>
-                  <div style={{
-                    display: 'flex',
-                    background: '#f1f5f9',
-                    padding: '3px',
-                    borderRadius: '12px',
-                    height: '42px',
-                    border: '1px solid #e2e8f0',
-                    gap: '3px'
-                  }}>
-                    <button
-                      onClick={() => setPrioridad('Normal')}
-                      disabled={editandoId && !modoEdicion}
-                      style={{
-                        flex: 1,
-                        border: 'none',
-                        borderRadius: '9px',
-                        background: prioridad === 'Normal' ? 'white' : 'transparent',
-                        boxShadow: prioridad === 'Normal' ? '0 2px 4px rgba(0,0,0,0.05)' : 'none',
-                        color: prioridad === 'Normal' ? '#0ea5e9' : '#64748b',
-                        fontSize: '0.65rem',
-                        fontWeight: '900',
-                        cursor: 'pointer',
-                        transition: 'all 0.2s',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: '4px'
-                      }}
-                    >
-                      {prioridad === 'Normal' && <CheckCircle2 size={12} />}
-                      NORMAL
-                    </button>
-                    <button
-                      onClick={() => setPrioridad('Emergencia')}
-                      disabled={editandoId && !modoEdicion}
-                      style={{
-                        flex: 1,
-                        border: 'none',
-                        borderRadius: '9px',
-                        background: prioridad === 'Emergencia' ? 'white' : 'transparent',
-                        boxShadow: prioridad === 'Emergencia' ? '0 2px 4px rgba(0,0,0,0.05)' : 'none',
-                        color: prioridad === 'Emergencia' ? '#ef4444' : '#64748b',
-                        fontSize: '0.65rem',
-                        fontWeight: '900',
-                        cursor: 'pointer',
-                        transition: 'all 0.2s',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: '4px'
-                      }}
-                    >
-                      {prioridad === 'Emergencia' && <CheckCircle2 size={12} color="#ef4444" />}
-                      EMERGENCIA
-                    </button>
-                  </div>
-                </div>
-                <div>
-                  <label className="stat-label" style={{ color: '#1e293b' }}>ID REF. PROYECTO / CONTRATO</label>
-                  <div style={{ position: 'relative', height: '42px' }}>
-                    <Building2 size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
-                    <input
-                      className="input-tc"
-                      style={{ paddingLeft: '38px', width: '100%', height: '100%' }}
-                      list="ids-proyecto-previos"
-                      value={idReferenciaProyecto}
-                      onChange={manejarCambioIdProyecto}
-                      placeholder="XXX-0000-0000"
-                      disabled={editandoId && !modoEdicion}
-                    />
-                    <datalist id="ids-proyecto-previos">
-                      {idsReferenciaPrevios.map(id => <option key={id} value={id} />)}
-                    </datalist>
-                  </div>
-                </div>
-              </div>
-
-              <div style={{ marginBottom: '15px' }}>
-                <label className="stat-label" style={{ color: '#1e293b' }}>JUSTIFICACIÓN DE LA SOLICITUD <span style={{ color: 'var(--danger)' }}>*</span></label>
-                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                  <input
-                    className="input-tc"
-                    type="text"
-                    value={justificacion}
-                    onChange={(e) => setJustificacion(e.target.value)}
-                    placeholder="Explique el motivo de la requisición (Obligatorio)"
-                    required
-                    disabled={!!editandoId}
-                    style={{ flex: 1 }}
-                  />
-                  <button
-                    onClick={() => setMostrarObservaciones(!mostrarObservaciones)}
-                    style={{
-                      width: '42px', height: '42px', borderRadius: '12px',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      cursor: 'pointer', transition: 'all 0.2s',
-                      backgroundColor: mostrarObservaciones ? '#8b5cf6' : 'white',
-                      color: mostrarObservaciones ? 'white' : '#64748b',
-                      boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
-                      border: '1px solid #e2e8f0'
-                    }}
-                    title="Ver Observaciones"
-                  >
-                    <MessageSquare size={20} />
+                    <X size={18} />
                   </button>
-                </div>
-              </div>
 
-              {/* --- SECCIÓN DE OBSERVACIONES COLAPSABLE --- */}
-              <AnimatePresence>
-                {mostrarObservaciones && (
-                  <motion.div
-                    initial={{ height: 0, opacity: 0 }}
-                    animate={{ height: 'auto', opacity: 1 }}
-                    exit={{ height: 0, opacity: 0 }}
-                    style={{ overflow: 'hidden', marginBottom: '20px' }}
-                  >
-                    <div style={{ padding: '15px', backgroundColor: '#f8fafc', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
-                        <label className="stat-label" style={{ marginBottom: 0, color: '#1e293b', fontSize: '0.75rem' }}>OBSERVACIONES Y NOTAS</label>
-                        {editandoId && !editandoObs && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    {/* IZQUIERDA: TÍTULO Y REF + TIMELINE ICON */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+                        <h1 style={{
+                          margin: 0,
+                          fontSize: '1.4rem',
+                          fontWeight: '1000',
+                          color: '#1e293b',
+                          letterSpacing: '-0.02em',
+                          textTransform: 'uppercase'
+                        }}>
+                          REQUISICIÓN DE RECURSOS
+                        </h1>
+                        {observaciones && <MessageSquare size={20} style={{ color: '#8b5cf6' }} title="Esta requisición tiene observaciones" />}
+
+                        {editandoId && (
                           <button
-                            onClick={() => {
-                              setObsTemporal(observaciones);
-                              setEditandoObs(true);
+                            onClick={() => setMostrarTimeline(!mostrarTimeline)}
+                            style={{
+                              width: '32px', height: '32px', borderRadius: '50%',
+                              display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              cursor: 'pointer', transition: 'all 0.2s',
+                              backgroundColor: mostrarTimeline ? '#0ea5e9' : 'white',
+                              color: mostrarTimeline ? 'white' : '#64748b',
+                              boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
+                              border: '1px solid #e2e8f0'
                             }}
-                            style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '0.9rem', padding: 0 }}
-                            title="Editar Observaciones"
+                            title="Ver Línea de Tiempo"
                           >
-                            ✏️
+                            <Clock size={16} />
                           </button>
                         )}
                       </div>
 
-                      {editandoObs ? (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                          <textarea
-                            className="input-tc"
-                            style={{ minHeight: '80px', paddingTop: '10px', fontSize: '0.85rem' }}
-                            value={obsTemporal}
-                            onChange={(e) => setObsTemporal(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter' && !e.shiftKey) {
-                                e.preventDefault();
-                                guardarObservacionesDirecto();
-                              }
-                            }}
-                            placeholder="Actualice las observaciones aquí..."
-                          />
-                          <div style={{ display: 'flex', gap: '8px' }}>
-                            <button
-                              className="btn-tc btn-tc-success"
-                              style={{ padding: '4px 12px', fontSize: '0.7rem' }}
-                              onClick={guardarObservacionesDirecto}
-                            >
-                              ✓ GUARDAR
-                            </button>
-                            <button
-                              className="btn-tc btn-tc-secondary"
-                              style={{ padding: '4px 12px', fontSize: '0.7rem' }}
-                              onClick={() => setEditandoObs(false)}
-                            >
-                              CANCELAR
-                            </button>
+
+                      {(() => {
+                        const reqActual = editandoId ? historial.find(h => h.id === editandoId) : null;
+                        const ref = datosPredefinidos?.id_control ? `REF: ${datosPredefinidos.id_control}` : (reqActual?.origen || '');
+                        if (!ref) return null;
+                        return (
+                          <div style={{
+                            background: 'white',
+                            color: '#475569',
+                            padding: '2px 10px',
+                            borderRadius: '6px',
+                            fontSize: '0.65rem',
+                            fontWeight: '900',
+                            border: '1px solid #cbd5e1',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '5px',
+                            width: 'fit-content',
+                            boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
+                          }}>
+                            <Diamond size={12} /> {ref}
                           </div>
-                        </div>
-                      ) : (
-                        <textarea
-                          className="input-tc"
-                          style={{ minHeight: '60px', paddingTop: '10px', fontSize: '0.85rem' }}
-                          value={observaciones}
-                          onChange={(e) => setObservaciones(e.target.value)}
-                          placeholder="Notas adicionales sobre la entrega, especificaciones técnicas, etc."
-                          disabled={editandoId && !editandoObs}
-                        />
-                      )}
+                        );
+                      })()}
                     </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
 
-              {editandoId && historial.find(h => h.id === editandoId)?.estado_aprobacion === 'rechazada' && (
-                <div style={{ marginBottom: '25px', padding: '15px', backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '12px' }}>
-                  <label style={{ fontSize: '0.65rem', fontWeight: '900', color: '#991b1b', textTransform: 'uppercase', marginBottom: '5px', display: 'block' }}>
-                    ⚠️ MOTIVO DE RECHAZO
-                  </label>
-                  <p style={{ margin: 0, color: '#b91c1c', fontSize: '0.9rem', fontWeight: '500' }}>
-                    {historial.find(h => h.id === editandoId)?.motivo_rechazo || 'No especificado'}
-                  </p>
-                </div>
-              )}
+                    {/* DERECHA: ID (AL TOPE) + SLA TIMER */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '20px', marginRight: '40px' }}>
+                      {(() => {
+                        const reqActual = editandoId ? historial.find(h => h.id === editandoId) : null;
+                        if (!reqActual || reqActual.status?.toUpperCase() === 'COMPLETADO') return null;
 
+                        if (reqActual.estado_aprobacion !== 'aprobado_final' && reqActual.estado_aprobacion !== 'finalizado') return null;
 
+                        let limiteDate = reqActual.fecha_limite_compra;
+                        if (!limiteDate && reqActual.fecha_emision) {
+                          const base = new Date(reqActual.fecha_emision);
+                          const dias = reqActual.prioridad === 'Emergencia' ? 1 : 5;
+                          limiteDate = new Date(base.getTime() + (dias * 24 * 60 * 60 * 1000));
+                        } else if (limiteDate) {
+                          limiteDate = new Date(limiteDate);
+                        }
 
-              <table className="tc-table" style={{ fontSize: '0.85rem' }}>
-                <thead>
-                  <tr style={{ backgroundColor: 'var(--slate-50)' }}>
-                    <th style={{ width: '5px', fontSize: '0.65rem', color: '#1e293b' }}>#</th>
-                    <th style={{ width: '250px', color: '#1e293b' }}>CLASIFICACIÓN</th>
-                    <th style={{ width: '350px', color: '#1e293b' }}>CATEGORÍA</th>
-                    <th style={{ width: '70px', color: '#1e293b' }}>CANT.</th>
-                    <th style={{ width: '90px', color: '#1e293b' }}>UNI.</th>
-                    <th style={{ width: '450px', color: '#1e293b' }}>DESCRIPCIÓN</th>
-                    <th style={{ width: '250px', color: '#1e293b' }}>BENEFICIARIO</th>
-                    <th style={{ width: '60px', textAlign: 'right', color: '#1e293b' }}>P.U.</th>
-                    <th style={{ width: '60px', textAlign: 'right', color: '#1e293b' }}>TOTAL</th>
-                    <th style={{ width: '10px', textAlign: 'center', color: '#1e293b' }}>TR.</th>
-                    <th style={{ width: '5px' }}></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <AnimatePresence>
-                    {(Array.isArray(renglones) ? renglones : []).map((f, index) => (
-                      <React.Fragment key={f.id}>
-                        <motion.tr
-                          className="renglon-row"
-                          initial={{ opacity: 0, height: 0, scaleY: 0.8 }}
-                          animate={{ opacity: 1, height: 'auto', scaleY: 1 }}
-                          exit={{ opacity: 0, height: 0, scaleY: 0.8, overflow: 'hidden' }}
-                          transition={{ duration: 0.3 }}
-                          style={{ minHeight: '60px' }}
-                        >
-                          <td style={{ textAlign: 'center', fontSize: '0.75rem', fontWeight: 'bold', color: '#64748b', padding: '12px 4px' }}>{index + 1}</td>
-                          <td style={{ padding: '12px 4px' }}><input className="input-tc" value={f.clasificacion} onChange={(e) => actualizarFila(f.id, 'clasificacion', e.target.value)} disabled={!!editandoId} /></td>
-                          <td style={{ padding: '12px 4px' }}><input className="input-tc" value={f.categoria} onChange={(e) => actualizarFila(f.id, 'categoria', e.target.value)} disabled={!!editandoId} /></td>
-                          <td style={{ padding: '12px 4px' }}><input className="input-tc" type="number" value={f.cant === '' ? '' : Number(f.cant)} onChange={(e) => actualizarFila(f.id, 'cant', e.target.value)} disabled={editandoId && !modoEdicion} /></td>
-                          <td style={{ padding: '12px 4px' }}>
-                            <select className="input-tc" value={f.uni} onChange={(e) => actualizarFila(f.id, 'uni', e.target.value)} disabled={editandoId && !modoEdicion}>
-                              {unidades.map(u => <option key={u} value={u}>{u}</option>)}
-                            </select>
-                          </td>
-                          <td style={{ padding: '12px 4px' }}><textarea className="input-tc" value={f.descripcion} onChange={(e) => actualizarFila(f.id, 'descripcion', e.target.value)} style={{ resize: 'vertical', minHeight: '48px', paddingTop: '10px', width: '100%', boxSizing: 'border-box', lineHeight: '1.4' }} rows="1" disabled={editandoId && !modoEdicion} /></td>
-                          <td style={{ padding: '12px 4px' }}><input className="input-tc" value={f.beneficiario} onChange={(e) => actualizarFila(f.id, 'beneficiario', e.target.value)} placeholder="Beneficiario" disabled={editandoId && !modoEdicion} /></td>
-                          <td style={{ padding: '12px 4px' }}><input className="input-tc" type="number" value={f.pu === '' ? '' : Number(f.pu)} style={{ textAlign: 'right' }} onChange={(e) => actualizarFila(f.id, 'pu', e.target.value)} disabled={!!editandoId} /></td>
-                          <td style={{ textAlign: 'right', fontWeight: 'bold', padding: '12px 4px' }}>{f.total.toLocaleString('de-DE')}</td>
-                          <td style={{ textAlign: 'center', padding: '12px 4px' }}>
-                            <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', alignItems: 'center' }}>
-                              <button
-                                onClick={() => setExpandirHistorial(prev => ({ ...prev, [f.id]: !prev[f.id] }))}
-                                style={{ border: 'none', background: 'none', cursor: 'pointer', opacity: (f.historial_compras?.length > 0) ? 1 : 0.3 }}
-                                title="Ver Trazabilidad"
-                                disabled={!f.historial_compras?.length}
-                              >
-                                {expandirHistorial[f.id] ? '🔼' : '📜'}
-                              </button>
+                        if (!limiteDate) return null;
+
+                        const hoy = new Date();
+                        const diff = limiteDate.getTime() - hoy.getTime();
+                        const isPausada = reqActual.is_pausada;
+
+                        return (
+                          <div style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '12px',
+                            backgroundColor: isPausada ? '#fffbeb' : '#f8fafc',
+                            padding: '8px 15px',
+                            borderRadius: '10px',
+                            border: '1px solid',
+                            borderColor: isPausada ? '#fde68a' : '#e2e8f0'
+                          }}>
+                            {isPausada ? <Ban size={16} color="#d97706" /> : <Clock size={16} color="#64748b" />}
+                            <div style={{ display: 'flex', flexDirection: 'column' }}>
+                              <span style={{ fontSize: '0.65rem', fontWeight: '900', color: '#64748b', textTransform: 'uppercase' }}>
+                                {isPausada ? 'SLA PAUSADO' : 'Tiempo Límite'}
+                              </span>
+                              <span style={{
+                                fontSize: '0.9rem',
+                                fontWeight: '1000',
+                                color: (() => {
+                                  if (isPausada) return '#d97706';
+                                  return diff < 0 ? '#ef4444' : (diff < 86400000 ? '#f59e0b' : '#16a34a');
+                                })()
+                              }}>
+                                {(() => {
+                                  if (diff < 0 && !isPausada) return 'PLAZO VENCIDO';
+                                  if (isPausada) return 'EN PAUSA';
+                                  const d = Math.floor(diff / (1000 * 60 * 60 * 24));
+                                  const h = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+                                  return `${d}d ${h}h restantes`;
+                                })()}
+                              </span>
                             </div>
-                          </td>
-                          <td style={{ textAlign: 'center', padding: '12px 4px' }}></td>
-                        </motion.tr>
-                        {expandirHistorial[f.id] && Array.isArray(f.historial_compras) && f.historial_compras.length > 0 && (
-                          <tr>
-                            <td colSpan="11" style={{ padding: '0 0 15px 40px' }}>
-                              <div style={{ backgroundColor: 'white', borderRadius: '8px', border: '1px solid #e2e8f0', overflow: 'hidden', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
-                                <div style={{ padding: '8px 12px', backgroundColor: '#f8fafc', fontSize: '0.7rem', fontWeight: '900', color: '#334155', display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #e2e8f0' }}>
-                                  <span>TRAZABILIDAD Y JUSTIFICACIONES DEL ÍTEM</span>
-                                  <span style={{ color: 'var(--primary)' }}>{f.historial_compras.length} EVENTOS</span>
-                                </div>
-                                <table style={{ width: '100%', fontSize: '0.75rem', borderCollapse: 'collapse' }}>
-                                  <thead>
-                                    <tr style={{ backgroundColor: '#f1f5f9', color: '#334155', fontSize: '0.65rem' }}>
-                                      <th style={{ padding: '8px', textAlign: 'left' }}>FECHA</th>
-                                      <th style={{ padding: '8px', textAlign: 'left' }}>EVENTO</th>
-                                      <th style={{ padding: '8px', textAlign: 'left' }}>PROVEEDOR</th>
-                                      <th style={{ padding: '8px', textAlign: 'left' }}>DETALLE / MOTIVO</th>
-                                      <th style={{ padding: '8px', textAlign: 'center' }}>CANT.</th>
-                                      <th style={{ padding: '8px', textAlign: 'right' }}>P.U. REAL</th>
-                                      <th style={{ padding: '8px', textAlign: 'right' }}>TOTAL / COMENTARIO</th>
-                                      <th style={{ padding: '8px', textAlign: 'right' }}>USUARIO</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {(Array.isArray(f.historial_compras) ? f.historial_compras : []).map((h, idx) => (
-                                      <tr key={idx} style={{
-                                        borderBottom: idx < f.historial_compras.length - 1 ? '1px solid #f1f5f9' : 'none',
-                                        backgroundColor: h.tipo === 'JUSTIFICACION' ? '#fffbeb' : 'transparent'
-                                      }}>
-                                        <td style={{ padding: '8px', color: '#64748b' }}>{new Date(h.fecha).toLocaleDateString()}</td>
-                                        <td style={{ padding: '8px', fontWeight: 'bold', color: h.tipo === 'JUSTIFICACION' ? '#d97706' : '#16a34a' }}>
-                                          {h.tipo === 'JUSTIFICACION' ? '⚠️ JUSTIFICACIÓN' : '✅ COMPRA'}
-                                        </td>
-                                        <td style={{ padding: '8px', fontSize: '0.65rem', fontWeight: 'bold', color: '#64748b' }}>
-                                          {h.tipo !== 'JUSTIFICACION' ? (h.proveedor_nombre || 'No asignado') : '-'}
-                                        </td>
-                                        <td style={{ padding: '8px' }}>
-                                          {h.tipo === 'JUSTIFICACION' ? (
-                                            <span style={{ fontStyle: 'italic', color: '#92400e', fontWeight: '600' }}>{h.motivo}</span>
-                                          ) : 'Procesamiento de compra'}
-                                        </td>
-                                        <td style={{ padding: '8px', textAlign: 'center', fontWeight: '700' }}>{h.cant || '-'}</td>
-                                        <td style={{ padding: '8px', textAlign: 'right' }}>{h.pu ? `$ ${h.pu.toLocaleString('de-DE')}` : '-'}</td>
-                                        <td style={{ padding: '8px', textAlign: 'right' }}>
-                                          {h.tipo === 'JUSTIFICACION' ? (
-                                            <div style={{ fontSize: '0.7rem', color: '#475569', whiteSpace: 'pre-wrap', textAlign: 'left', backgroundColor: '#fef3c7', padding: '6px', borderRadius: '4px' }}>
-                                              {h.comentario}
-                                            </div>
-                                          ) : <span style={{ fontWeight: 'bold' }}>$ {(h.cant * h.pu).toLocaleString('de-DE')}</span>}
-                                        </td>
-                                        <td style={{ padding: '8px', textAlign: 'right', color: '#64748b', fontSize: '0.65rem' }}>{h.usuario_nombre}</td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              </div>
-                            </td>
-                          </tr>
-                        )}
-                      </React.Fragment>
-                    ))}
-                  </AnimatePresence>
-                </tbody>
-              </table>
+                          </div>
+                        );
+                      })()}
 
-
-
-              <div style={{ display: 'flex', gap: '20px', marginTop: '20px', alignItems: 'stretch' }}>
-                {/* IZQUIERDA: SOPORTES COMPACTOS */}
-                <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-                  {editandoId && (
-                    <>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
-                        <button
-                          onClick={() => setMostrarSoportes(!mostrarSoportes)}
-                          style={{
-                            padding: '6px 14px', borderRadius: '8px',
-                            display: 'flex', alignItems: 'center', gap: '8px',
-                            cursor: 'pointer', transition: 'all 0.2s',
-                            backgroundColor: mostrarSoportes ? '#10b981' : '#f8fafc',
-                            color: mostrarSoportes ? 'white' : '#64748b',
-                            border: '1px solid #e2e8f0',
-                            fontSize: '0.7rem',
-                            fontWeight: '900'
-                          }}
-                        >
-                          <Camera size={14} /> {mostrarSoportes ? 'OCULTAR SOPORTES' : 'VER SOPORTES'}
-                        </button>
-
-                        {mostrarSoportes && (!editandoId || modoEdicion) && (
-                          <label
-                            style={{
-                              padding: '6px 14px', borderRadius: '8px',
-                              display: 'flex', alignItems: 'center', gap: '8px',
-                              cursor: uploading ? 'not-allowed' : 'pointer',
-                              backgroundColor: '#0ea5e9',
-                              color: 'white',
-                              border: 'none',
-                              fontSize: '0.7rem',
-                              fontWeight: '900',
-                              boxShadow: '0 2px 4px rgba(14, 165, 233, 0.2)'
-                            }}
-                          >
-                            {uploading ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
-                            {uploading ? 'SUBIENDO...' : 'AÑADIR'}
-                            <input type="file" multiple style={{ display: 'none' }} onChange={subirFactura} disabled={uploading || (editandoId && !modoEdicion)} accept="image/*,application/pdf" />
-                          </label>
-                        )}
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{
+                          fontSize: '1.8rem',
+                          fontWeight: '1000',
+                          color: '#1e3a8a',
+                          lineHeight: '1',
+                          letterSpacing: '0.05em'
+                        }}>
+                          {editandoId ? (historial.find(h => h.id === editandoId)?.correlativo) : previewCorrelativo}
+                        </div>
+                        <div style={{
+                          fontSize: '0.6rem',
+                          fontWeight: '900',
+                          color: '#64748b',
+                          marginTop: '3px',
+                          letterSpacing: '0.1em',
+                          opacity: 0.8
+                        }}>
+                          ID REQ
+                        </div>
                       </div>
+                    </div>
+                  </div>
+                </div>
 
+                {/* --- CUERPO DESPLAZABLE --- */}
+                <div style={{ flexGrow: 1, overflowY: 'auto', padding: '20px 40px' }}>
+                  {/* --- LÍNEA DE TIEMPO COLAPSABLE --- */}
+                  {editandoId && (
+                    <div style={{ width: '100%' }}>
                       <AnimatePresence>
-                        {mostrarSoportes && (
+                        {mostrarTimeline && (
                           <motion.div
                             initial={{ height: 0, opacity: 0 }}
                             animate={{ height: 'auto', opacity: 1 }}
                             exit={{ height: 0, opacity: 0 }}
-                            style={{ overflow: 'hidden' }}
+                            style={{ overflow: 'hidden', marginBottom: '20px' }}
                           >
-                            <div 
-                              onDragOver={(e) => e.preventDefault()}
-                              onDrop={(e) => {
-                                if (editandoId && !modoEdicion) {
-                                  toast.error("Debe activar el modo edición para subir archivos.");
-                                  return;
-                                }
-                                handleDrop(e);
+                            <div className="timeline-container-premium">
+                              <div className="timeline-line"></div>
+                              {(() => {
+                                const reqActual = historial.find(h => String(h.id) === String(editandoId));
+                                if (!reqActual) return null;
+
+                                const tieneProyecto = reqActual.aprobado_gerente_proyecto || reqActual.f_aprobacion_proyecto || reqActual.firma_gerente_proyecto;
+
+                                const steps = [
+                                  { label: 'SOLICITADO', name: reqActual.solicitante, date: reqActual.fecha_emision, icon: <User size={20} />, completed: true },
+                                  ...(tieneProyecto ? [{ label: 'GERENTE PROYECTO', name: reqActual.n_aprobacion_proyecto, date: reqActual.f_aprobacion_proyecto, icon: <Settings size={20} />, completed: true }] : []),
+                                  { label: 'GERENTE ÁREA', name: reqActual.n_aprobacion_area, date: reqActual.f_aprobacion_area, icon: <Building2 size={20} />, completed: reqActual.aprobado_gerente_area || (reqActual.estado_aprobacion !== 'pendiente_proyecto' && reqActual.estado_aprobacion !== 'pendiente_area' && reqActual.estado_aprobacion !== 'enviada_area' && reqActual.estado_aprobacion !== 'rechazada') },
+                                  { label: 'GERENTE GENERAL', name: reqActual.n_aprobacion_general, date: reqActual.f_aprobacion_general, icon: <Diamond size={20} />, completed: reqActual.aprobado_gerente_general || reqActual.estado_aprobacion === 'aprobado_final' },
+                                  { label: 'COMPRA CULMINADA', date: reqActual.f_culminacion_compras, icon: <ShoppingCart size={20} />, completed: reqActual.status?.toUpperCase() === 'COMPLETADO' }
+                                ];
+
+                                return steps.map((step, idx) => (
+                                  <div key={idx} className={`timeline-step ${step.completed ? 'completed' : ''}`}>
+                                    <div className="timeline-icon-wrapper">
+                                      {step.completed ? <CheckCircle2 size={24} /> : step.icon}
+                                    </div>
+                                    <div className="timeline-info">
+                                      <span className="timeline-label">{step.label}</span>
+                                      {step.name && <span className="timeline-name" style={{ display: 'block', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{step.name}</span>}
+                                      {step.date && (
+                                        <span className="timeline-date">
+                                          {(() => {
+                                            try {
+                                              return format(new Date(step.date), 'dd/MM/yy HH:mm');
+                                            } catch (e) {
+                                              return step.date;
+                                            }
+                                          })()}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                ));
+                              })()}
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                  )}
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(140px, 160px) 1.5fr 1fr 1fr 180px 1fr', gap: '20px', marginBottom: '25px' }}>
+                  <div>
+                    <label className="stat-label" style={{ color: '#1e293b' }}>FECHA REQUERIDA <span style={{ color: 'var(--danger)' }}>*</span></label>
+                    <div style={{ position: 'relative' }}>
+                      <Clock size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
+                      <input
+                        className="input-tc"
+                        type="date"
+                        value={fechaRequerida}
+                        onChange={(e) => { setHasChanges(true); setFechaRequerida(e.target.value); }}
+                        disabled={!!editandoId}
+                        style={{ width: '100%', paddingLeft: '38px' }}
+                        required
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="stat-label" style={{ color: '#1e293b' }}>SOLICITANTE</label>
+                    <div className="input-tc" style={{ display: 'flex', alignItems: 'center', gap: '10px', backgroundColor: '#f8fafc', height: '42px', boxSizing: 'border-box' }}>
+                      <div style={{
+                        width: '28px', height: '28px', borderRadius: '50%',
+                        backgroundColor: 'var(--primary)', color: 'white',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: '0.7rem', fontWeight: 'bold'
+                      }}>
+                        {getInitials(solicitante)}
+                      </div>
+                      <span style={{ fontSize: '0.9rem', fontWeight: '600', color: 'var(--slate-800)' }}>
+                        {solicitante}
+                      </span>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="stat-label" style={{ color: '#1e293b' }}>CENTRO DE COSTOS</label>
+                    <div className="input-tc" style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      backgroundColor: '#f8fafc',
+                      height: '42px',
+                      boxSizing: 'border-box',
+                      border: '1px solid #e2e8f0'
+                    }}>
+                      <span style={{ fontSize: '0.9rem', fontWeight: '600', color: 'var(--slate-800)' }}>
+                        {centroCosto || 'Sin asignar'}
+                      </span>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="stat-label" style={{ color: '#1e293b' }}>GERENCIA</label>
+                    <div className="input-tc" style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      backgroundColor: '#f8fafc',
+                      height: '42px',
+                      boxSizing: 'border-box',
+                      border: '1px solid #e2e8f0'
+                    }}>
+                      <span style={{ fontSize: '0.9rem', fontWeight: '600', color: 'var(--slate-800)' }}>
+                        {departamento || 'Sin asignar'}
+                      </span>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="stat-label" style={{ color: '#1e293b' }}>
+                      PRIORIDAD <span style={{ color: 'var(--danger)', fontWeight: 'bold' }}>*</span>
+                    </label>
+                    <div style={{
+                      display: 'flex',
+                      background: '#f1f5f9',
+                      padding: '3px',
+                      borderRadius: '12px',
+                      height: '42px',
+                      border: '1px solid',
+                      borderColor: !prioridad ? 'rgba(14, 165, 233, 0.4)' : '#e2e8f0',
+                      boxShadow: !prioridad ? '0 0 0 2px rgba(14, 165, 233, 0.1)' : 'none',
+                      gap: '3px',
+                      transition: 'all 0.3s ease'
+                    }}>
+                      <button
+                        onClick={() => { setHasChanges(true); setPrioridad('Normal'); }}
+                        disabled={editandoId && !modoEdicion}
+                        style={{
+                          flex: 1,
+                          border: 'none',
+                          borderRadius: '9px',
+                          background: prioridad === 'Normal' ? 'white' : 'transparent',
+                          boxShadow: prioridad === 'Normal' ? '0 2px 4px rgba(0,0,0,0.05)' : 'none',
+                          color: prioridad === 'Normal' ? '#0ea5e9' : '#64748b',
+                          fontSize: '0.65rem',
+                          fontWeight: '900',
+                          cursor: 'pointer',
+                          transition: 'all 0.2s',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '4px'
+                        }}
+                      >
+                        {prioridad === 'Normal' && <CheckCircle2 size={12} />}
+                        NORMAL
+                      </button>
+                      <button
+                        onClick={() => { setHasChanges(true); setPrioridad('Emergencia'); }}
+                        disabled={editandoId && !modoEdicion}
+                        style={{
+                          flex: 1,
+                          border: 'none',
+                          borderRadius: '9px',
+                          background: prioridad === 'Emergencia' ? 'white' : 'transparent',
+                          boxShadow: prioridad === 'Emergencia' ? '0 2px 4px rgba(0,0,0,0.05)' : 'none',
+                          color: prioridad === 'Emergencia' ? '#ef4444' : '#64748b',
+                          fontSize: '0.65rem',
+                          fontWeight: '900',
+                          cursor: 'pointer',
+                          transition: 'all 0.2s',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '4px'
+                        }}
+                      >
+                        {prioridad === 'Emergencia' && <CheckCircle2 size={12} color="#ef4444" />}
+                        EMERGENCIA
+                      </button>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="stat-label" style={{ color: '#1e293b' }}>ID REF. PROYECTO / CONTRATO</label>
+                    <div style={{ position: 'relative', height: '42px' }}>
+                      <Building2 size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
+                      <input
+                        className="input-tc"
+                        style={{ paddingLeft: '38px', width: '100%', height: '100%' }}
+                        list="ids-proyecto-previos"
+                        value={idReferenciaProyecto}
+                        onChange={manejarCambioIdProyecto}
+                        placeholder="XXX-0000-0000"
+                        disabled={editandoId && !modoEdicion}
+                      />
+                      <datalist id="ids-proyecto-previos">
+                        {idsReferenciaPrevios.map(id => <option key={id} value={id} />)}
+                      </datalist>
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ marginBottom: '15px' }}>
+                  <label className="stat-label" style={{
+                    color: '#1e293b',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    background: 'linear-gradient(90deg, #f1f5f9 0%, transparent 100%)',
+                    padding: '6px 12px',
+                    borderRadius: '8px',
+                    borderLeft: '4px solid var(--primary)',
+                    width: 'fit-content',
+                    marginBottom: '10px',
+                    boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
+                  }}>
+                    <FileText size={16} color="var(--primary)" />
+                    Descripción de la solicitud <span style={{ color: 'var(--danger)', fontWeight: 'bold' }}>*</span>
+                  </label>
+                  <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                    <input
+                      className="input-tc"
+                      type="text"
+                      value={justificacion}
+                      onChange={(e) => { setHasChanges(true); setJustificacion(e.target.value); }}
+                      placeholder="Explique el motivo de la requisición (Obligatorio)"
+                      required
+                      disabled={!!editandoId}
+                      style={{
+                        flex: 1,
+                        border: '1px solid',
+                        borderColor: !justificacion ? 'rgba(14, 165, 233, 0.4)' : '#e2e8f0',
+                        boxShadow: !justificacion ? '0 0 0 2px rgba(14, 165, 233, 0.1)' : 'none',
+                        transition: 'all 0.3s ease'
+                      }}
+                    />
+                    <button
+                      onClick={() => setMostrarObservaciones(!mostrarObservaciones)}
+                      style={{
+                        width: '42px', height: '42px', borderRadius: '12px',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        cursor: 'pointer', transition: 'all 0.2s',
+                        backgroundColor: mostrarObservaciones ? '#8b5cf6' : 'white',
+                        color: mostrarObservaciones ? 'white' : '#64748b',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
+                        border: '1px solid #e2e8f0'
+                      }}
+                      title="Ver Observaciones"
+                    >
+                      <MessageSquare size={20} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* --- SECCIÓN DE OBSERVACIONES COLAPSABLE --- */}
+                <AnimatePresence>
+                  {mostrarObservaciones && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      style={{ overflow: 'hidden', marginBottom: '20px' }}
+                    >
+                      <div style={{ padding: '15px', backgroundColor: '#f8fafc', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
+                          <label className="stat-label" style={{ marginBottom: 0, color: '#1e293b', fontSize: '0.75rem' }}>OBSERVACIONES Y NOTAS</label>
+                          {editandoId && !editandoObs && (
+                            <button
+                              onClick={() => {
+                                setObsTemporal(observaciones);
+                                setEditandoObs(true);
                               }}
-                              style={{ 
-                                padding: '15px', 
-                                backgroundColor: '#f8fafc', 
-                                borderRadius: '12px', 
-                                border: '1px dashed #cbd5e1',
-                                minHeight: '135px',
-                                flex: 1
+                              style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '0.9rem', padding: 0 }}
+                              title="Editar Observaciones"
+                            >
+                              ✏️
+                            </button>
+                          )}
+                        </div>
+
+                        {editandoObs ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            <textarea
+                              className="input-tc"
+                              style={{ minHeight: '80px', paddingTop: '10px', fontSize: '0.85rem' }}
+                              value={obsTemporal}
+                              onChange={(e) => setObsTemporal(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' && !e.shiftKey) {
+                                  e.preventDefault();
+                                  guardarObservacionesDirecto();
+                                }
+                              }}
+                              placeholder="Actualice las observaciones aquí..."
+                            />
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                              <button
+                                className="btn-tc btn-tc-success"
+                                style={{ padding: '4px 12px', fontSize: '0.7rem' }}
+                                onClick={guardarObservacionesDirecto}
+                              >
+                                ✓ GUARDAR
+                              </button>
+                              <button
+                                className="btn-tc btn-tc-secondary"
+                                style={{ padding: '4px 12px', fontSize: '0.7rem' }}
+                                onClick={() => setEditandoObs(false)}
+                              >
+                                CANCELAR
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <textarea
+                            className="input-tc"
+                            style={{ minHeight: '60px', paddingTop: '10px', fontSize: '0.85rem' }}
+                            value={observaciones}
+                            onChange={(e) => { setHasChanges(true); setObservaciones(e.target.value); }}
+                            placeholder="Notas adicionales sobre la entrega, especificaciones técnicas, etc."
+                            disabled={editandoId && !editandoObs}
+                          />
+                        )}
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                {editandoId && historial.find(h => h.id === editandoId)?.estado_aprobacion === 'rechazada' && (
+                  <div style={{ marginBottom: '25px', padding: '15px', backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '12px' }}>
+                    <label style={{ fontSize: '0.65rem', fontWeight: '900', color: '#991b1b', textTransform: 'uppercase', marginBottom: '5px', display: 'block' }}>
+                      ⚠️ MOTIVO DE RECHAZO
+                    </label>
+                    <p style={{ margin: 0, color: '#b91c1c', fontSize: '0.9rem', fontWeight: '500' }}>
+                      {historial.find(h => h.id === editandoId)?.motivo_rechazo || 'No especificado'}
+                    </p>
+                  </div>
+                )}
+
+
+
+                <table className="tc-table" style={{ fontSize: '0.85rem' }}>
+                  <thead>
+                    <tr style={{ backgroundColor: 'var(--slate-50)' }}>
+                      <th style={{ width: '5px', fontSize: '0.65rem', color: '#1e293b' }}>#</th>
+                      <th style={{ width: '250px', color: '#1e293b' }}>CLASIFICACIÓN</th>
+                      <th style={{ width: '350px', color: '#1e293b' }}>CATEGORÍA</th>
+                      <th style={{ width: '70px', color: '#1e293b' }}>CANT.</th>
+                      <th style={{ width: '90px', color: '#1e293b' }}>UNI.</th>
+                      <th style={{ width: '450px', color: '#1e293b' }}>DESCRIPCIÓN</th>
+                      <th style={{ width: '250px', color: '#1e293b' }}>BENEFICIARIO</th>
+                      <th style={{ width: '60px', textAlign: 'right', color: '#1e293b' }}>P.U.</th>
+                      <th style={{ width: '60px', textAlign: 'right', color: '#1e293b' }}>TOTAL</th>
+                      <th style={{ width: '10px', textAlign: 'center', color: '#1e293b' }}>TR.</th>
+                      <th style={{ width: '5px' }}></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <AnimatePresence>
+                      {(Array.isArray(renglones) ? renglones : []).map((f, index) => (
+                        <React.Fragment key={f.id}>
+                          <motion.tr
+                            className="renglon-row"
+                            initial={{ opacity: 0, height: 0, scaleY: 0.8 }}
+                            animate={{ opacity: 1, height: 'auto', scaleY: 1 }}
+                            exit={{ opacity: 0, height: 0, scaleY: 0.8, overflow: 'hidden' }}
+                            transition={{ duration: 0.3 }}
+                            style={{ minHeight: '60px' }}
+                          >
+                            <td style={{ textAlign: 'center', fontSize: '0.75rem', fontWeight: 'bold', color: '#64748b', padding: '12px 4px' }}>{index + 1}</td>
+                            <td style={{ padding: '12px 4px' }}><input className="input-tc" value={f.clasificacion} onChange={(e) => actualizarFila(f.id, 'clasificacion', e.target.value)} disabled={!!editandoId} /></td>
+                            <td style={{ padding: '12px 4px' }}><input className="input-tc" value={f.categoria} onChange={(e) => actualizarFila(f.id, 'categoria', e.target.value)} disabled={!!editandoId} /></td>
+                            <td style={{ padding: '12px 4px' }}><input className="input-tc" type="number" value={f.cant === '' ? '' : Number(f.cant)} onChange={(e) => actualizarFila(f.id, 'cant', e.target.value)} disabled={editandoId && !modoEdicion} /></td>
+                            <td style={{ padding: '12px 4px' }}>
+                              <select className="input-tc" value={f.uni} onChange={(e) => actualizarFila(f.id, 'uni', e.target.value)} disabled={editandoId && !modoEdicion}>
+                                {unidades.map(u => <option key={u} value={u}>{u}</option>)}
+                              </select>
+                            </td>
+                            <td style={{ padding: '12px 4px' }}><textarea className="input-tc" value={f.descripcion} onChange={(e) => actualizarFila(f.id, 'descripcion', e.target.value)} style={{ resize: 'vertical', minHeight: '48px', paddingTop: '10px', width: '100%', boxSizing: 'border-box', lineHeight: '1.4' }} rows="1" disabled={editandoId && !modoEdicion} /></td>
+                            <td style={{ padding: '12px 4px' }}><input className="input-tc" value={f.beneficiario} onChange={(e) => actualizarFila(f.id, 'beneficiario', e.target.value)} placeholder="Beneficiario" disabled={editandoId && !modoEdicion} /></td>
+                            <td style={{ padding: '12px 4px' }}><input className="input-tc" type="number" value={f.pu === '' ? '' : Number(f.pu)} style={{ textAlign: 'right' }} onChange={(e) => actualizarFila(f.id, 'pu', e.target.value)} disabled={!!editandoId} /></td>
+                            <td style={{ textAlign: 'right', fontWeight: 'bold', padding: '12px 4px' }}>{f.total.toLocaleString('de-DE')}</td>
+                            <td style={{ textAlign: 'center', padding: '12px 4px' }}>
+                              <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', alignItems: 'center' }}>
+                                <button
+                                  onClick={() => setExpandirHistorial(prev => ({ ...prev, [f.id]: !prev[f.id] }))}
+                                  style={{ border: 'none', background: 'none', cursor: 'pointer', opacity: (f.historial_compras?.length > 0) ? 1 : 0.3 }}
+                                  title="Ver Trazabilidad"
+                                  disabled={!f.historial_compras?.length}
+                                >
+                                  {expandirHistorial[f.id] ? '🔼' : '📜'}
+                                </button>
+                              </div>
+                            </td>
+                            <td style={{ textAlign: 'center', padding: '12px 4px' }}></td>
+                          </motion.tr>
+                          {expandirHistorial[f.id] && Array.isArray(f.historial_compras) && f.historial_compras.length > 0 && (
+                            <tr>
+                              <td colSpan="11" style={{ padding: '0 0 15px 40px' }}>
+                                <div style={{ backgroundColor: 'white', borderRadius: '8px', border: '1px solid #e2e8f0', overflow: 'hidden', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
+                                  <div style={{ padding: '8px 12px', backgroundColor: '#f8fafc', fontSize: '0.7rem', fontWeight: '900', color: '#334155', display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #e2e8f0' }}>
+                                    <span>TRAZABILIDAD Y JUSTIFICACIONES DEL ÍTEM</span>
+                                    <span style={{ color: 'var(--primary)' }}>{f.historial_compras.length} EVENTOS</span>
+                                  </div>
+                                  <table style={{ width: '100%', fontSize: '0.75rem', borderCollapse: 'collapse' }}>
+                                    <thead>
+                                      <tr style={{ backgroundColor: '#f1f5f9', color: '#334155', fontSize: '0.65rem' }}>
+                                        <th style={{ padding: '8px', textAlign: 'left' }}>FECHA</th>
+                                        <th style={{ padding: '8px', textAlign: 'left' }}>EVENTO</th>
+                                        <th style={{ padding: '8px', textAlign: 'left' }}>PROVEEDOR</th>
+                                        <th style={{ padding: '8px', textAlign: 'left' }}>DETALLE / MOTIVO</th>
+                                        <th style={{ padding: '8px', textAlign: 'center' }}>CANT.</th>
+                                        <th style={{ padding: '8px', textAlign: 'right' }}>P.U. REAL</th>
+                                        <th style={{ padding: '8px', textAlign: 'right' }}>TOTAL / COMENTARIO</th>
+                                        <th style={{ padding: '8px', textAlign: 'right' }}>USUARIO</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {(Array.isArray(f.historial_compras) ? f.historial_compras : []).map((h, idx) => (
+                                        <tr key={idx} style={{
+                                          borderBottom: idx < f.historial_compras.length - 1 ? '1px solid #f1f5f9' : 'none',
+                                          backgroundColor: h.tipo === 'JUSTIFICACION' ? '#fffbeb' : 'transparent'
+                                        }}>
+                                          <td style={{ padding: '8px', color: '#64748b' }}>{new Date(h.fecha).toLocaleDateString()}</td>
+                                          <td style={{ padding: '8px', fontWeight: 'bold', color: h.tipo === 'JUSTIFICACION' ? '#d97706' : '#16a34a' }}>
+                                            {h.tipo === 'JUSTIFICACION' ? '⚠️ JUSTIFICACIÓN' : '✅ COMPRA'}
+                                          </td>
+                                          <td style={{ padding: '8px', fontSize: '0.65rem', fontWeight: 'bold', color: '#64748b' }}>
+                                            {h.tipo !== 'JUSTIFICACION' ? (h.proveedor_nombre || 'No asignado') : '-'}
+                                          </td>
+                                          <td style={{ padding: '8px' }}>
+                                            {h.tipo === 'JUSTIFICACION' ? (
+                                              <span style={{ fontStyle: 'italic', color: '#92400e', fontWeight: '600' }}>{h.motivo}</span>
+                                            ) : 'Procesamiento de compra'}
+                                          </td>
+                                          <td style={{ padding: '8px', textAlign: 'center', fontWeight: '700' }}>{h.cant || '-'}</td>
+                                          <td style={{ padding: '8px', textAlign: 'right' }}>{h.pu ? `$ ${h.pu.toLocaleString('de-DE')}` : '-'}</td>
+                                          <td style={{ padding: '8px', textAlign: 'right' }}>
+                                            {h.tipo === 'JUSTIFICACION' ? (
+                                              <div style={{ fontSize: '0.7rem', color: '#475569', whiteSpace: 'pre-wrap', textAlign: 'left', backgroundColor: '#fef3c7', padding: '6px', borderRadius: '4px' }}>
+                                                {h.comentario}
+                                              </div>
+                                            ) : <span style={{ fontWeight: 'bold' }}>$ {(h.cant * h.pu).toLocaleString('de-DE')}</span>}
+                                          </td>
+                                          <td style={{ padding: '8px', textAlign: 'right', color: '#64748b', fontSize: '0.65rem' }}>{h.usuario_nombre}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      ))}
+                    </AnimatePresence>
+                  </tbody>
+                </table>
+
+
+
+                <div style={{ display: 'flex', gap: '20px', marginTop: '20px', alignItems: 'stretch' }}>
+                  {/* IZQUIERDA: SOPORTES COMPACTOS */}
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+                    {editandoId && (
+                      <>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
+                          <button
+                            onClick={() => setMostrarSoportes(!mostrarSoportes)}
+                            style={{
+                              padding: '6px 14px', borderRadius: '8px',
+                              display: 'flex', alignItems: 'center', gap: '8px',
+                              cursor: 'pointer', transition: 'all 0.2s',
+                              backgroundColor: mostrarSoportes ? '#10b981' : '#f8fafc',
+                              color: mostrarSoportes ? 'white' : '#64748b',
+                              border: '1px solid #e2e8f0',
+                              fontSize: '0.7rem',
+                              fontWeight: '900'
+                            }}
+                          >
+                            <Camera size={14} /> {mostrarSoportes ? 'OCULTAR SOPORTES' : 'VER SOPORTES'}
+                          </button>
+
+                          {mostrarSoportes && (!editandoId || modoEdicion) && (
+                            <label
+                              style={{
+                                padding: '6px 14px', borderRadius: '8px',
+                                display: 'flex', alignItems: 'center', gap: '8px',
+                                cursor: uploading ? 'not-allowed' : 'pointer',
+                                backgroundColor: '#0ea5e9',
+                                color: 'white',
+                                border: 'none',
+                                fontSize: '0.7rem',
+                                fontWeight: '900',
+                                boxShadow: '0 2px 4px rgba(14, 165, 233, 0.2)'
                               }}
                             >
-                              {facturasUrls.length === 0 ? (
-                                <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: '0.75rem', padding: '20px' }}>
-                                  No hay archivos. Arrastre aquí para subir.
-                                </div>
-                              ) : (
-                                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                                  {facturasUrls.map((item, idx) => {
-                                    const url = (() => {
+                              {uploading ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                              {uploading ? 'SUBIENDO...' : 'AÑADIR'}
+                              <input type="file" multiple style={{ display: 'none' }} onChange={subirFactura} disabled={uploading || (editandoId && !modoEdicion)} accept="image/*,application/pdf" />
+                            </label>
+                          )}
+                        </div>
+
+                        <AnimatePresence>
+                          {mostrarSoportes && (
+                            <motion.div
+                              initial={{ height: 0, opacity: 0 }}
+                              animate={{ height: 'auto', opacity: 1 }}
+                              exit={{ height: 0, opacity: 0 }}
+                              style={{ overflow: 'hidden' }}
+                            >
+                              <div
+                                onDragOver={(e) => e.preventDefault()}
+                                onDrop={(e) => {
+                                  if (editandoId && !modoEdicion) {
+                                    toast.error("Debe activar el modo edición para subir archivos.");
+                                    return;
+                                  }
+                                  handleDrop(e);
+                                }}
+                                style={{
+                                  padding: '15px',
+                                  backgroundColor: '#f8fafc',
+                                  borderRadius: '12px',
+                                  border: '1px dashed #cbd5e1',
+                                  minHeight: '135px',
+                                  flex: 1
+                                }}
+                              >
+                                {facturasUrls.length === 0 ? (
+                                  <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: '0.75rem', padding: '20px' }}>
+                                    No hay archivos. Arrastre aquí para subir.
+                                  </div>
+                                ) : (
+                                  <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                                    {facturasUrls.map((item, idx) => {
+                                      const url = (() => {
                                         if (typeof item === 'string') {
                                           if (item.trim().startsWith('{')) {
                                             try { return JSON.parse(item).url; } catch (e) { return item; }
@@ -2612,191 +2677,212 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                                         }
                                         return item?.url;
                                       })();
-                                    if (!url) return null;
-                                    const isImg = /\.(jpg|jpeg|png|webp|avif|gif)$/i.test(url.split('?')[0]);
-                                    return (
-                                      <div key={idx} style={{ position: 'relative', width: '70px', height: '70px' }}>
-                                        <a href={url} target="_blank" rel="noreferrer" style={{
-                                          display: 'block', width: '100%', height: '100%',
-                                          borderRadius: '8px', overflow: 'hidden', border: '1px solid #e2e8f0',
-                                          backgroundColor: 'white'
-                                        }}>
-                                          {isImg ? (
-                                            <img src={url} alt={`Soporte ${idx}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                                          ) : (
-                                            <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#fef2f2', color: '#ef4444' }}>
-                                              <FileText size={18} />
-                                            </div>
-                                          )}
-                                        </a>
-                                        <button
-                                          onClick={() => eliminarSoporteDefinitivo(idx)}
-                                          style={{ position: 'absolute', top: '-5px', right: '-5px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '50%', width: '18px', height: '18px', fontSize: '9px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}
-                                        >
-                                          ✕
-                                        </button>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              )}
-                            </div>
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-                    </>
-                  )}
-                </div>
-
-                <div className="totals-container" style={{ width: '100%', maxWidth: '350px', minWidth: '350px', marginTop: 0 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', color: '#64748b' }}>
-                    <span className="stat-label" style={{ color: 'inherit' }}>SUB-TOTAL ESTIMADO:</span>
-                    <span style={{ fontWeight: 'bold' }}>$ {subTotalEstimado.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span>
-                  </div>
-                  {subTotalEjecutado > 0 && (
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', color: '#16a34a' }}>
-                      <span className="stat-label" style={{ color: 'inherit' }}>SUB-TOTAL EJECUTADO:</span>
-                      <span style={{ fontWeight: 'bold' }}>$ {subTotalEjecutado.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span>
-                    </div>
-                  )}
-
-                  <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '2px solid var(--slate-200)', paddingTop: '10px', color: '#64748b' }}>
-                    <span style={{ fontWeight: '900', fontSize: '1rem' }}>TOTAL ESTIMADO (C/IVA):</span>
-                    <span style={{ fontSize: '1.2rem', fontWeight: '900' }}>$ {totalEstimado.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span>
+                                      if (!url) return null;
+                                      const isImg = /\.(jpg|jpeg|png|webp|avif|gif)$/i.test(url.split('?')[0]);
+                                      return (
+                                        <div key={idx} style={{ position: 'relative', width: '70px', height: '70px' }}>
+                                          <a href={url} target="_blank" rel="noreferrer" style={{
+                                            display: 'block', width: '100%', height: '100%',
+                                            borderRadius: '8px', overflow: 'hidden', border: '1px solid #e2e8f0',
+                                            backgroundColor: 'white'
+                                          }}>
+                                            {isImg ? (
+                                              <img src={url} alt={`Soporte ${idx}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                            ) : (
+                                              <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#fef2f2', color: '#ef4444' }}>
+                                                <FileText size={18} />
+                                              </div>
+                                            )}
+                                          </a>
+                                          <button
+                                            onClick={() => eliminarSoporteDefinitivo(idx)}
+                                            style={{ position: 'absolute', top: '-5px', right: '-5px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '50%', width: '18px', height: '18px', fontSize: '9px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}
+                                          >
+                                            ✕
+                                          </button>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </>
+                    )}
                   </div>
 
-                  {subTotalEjecutado > 0 && (
-                    <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: '10px', color: '#16a34a' }}>
-                      <span style={{ fontWeight: '900', fontSize: '1rem' }}>TOTAL EJECUTADO (C/IVA):</span>
-                      <span style={{ fontSize: '1.2rem', fontWeight: '900' }}>$ {totalEjecutado.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span>
+                  <div className="totals-container" style={{ width: '100%', maxWidth: '350px', minWidth: '350px', marginTop: 0 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', color: '#64748b' }}>
+                      <span className="stat-label" style={{ color: 'inherit' }}>SUB-TOTAL ESTIMADO:</span>
+                      <span style={{ fontWeight: 'bold' }}>$ {subTotalEstimado.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span>
                     </div>
-                  )}
+                    {subTotalEjecutado > 0 && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', color: '#16a34a' }}>
+                        <span className="stat-label" style={{ color: 'inherit' }}>SUB-TOTAL EJECUTADO:</span>
+                        <span style={{ fontWeight: 'bold' }}>$ {subTotalEjecutado.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span>
+                      </div>
+                    )}
 
-                  {/* Diferencia */}
-                  {subTotalEjecutado > 0 && (
-                    <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: '10px', marginTop: '10px', borderTop: '1px dashed #cbd5e1' }}>
-                      <span style={{ fontWeight: '600', fontSize: '0.9rem', color: '#475569' }}>DIFERENCIA:</span>
-                      {(() => {
-                        if (totalEstimado === 0) {
-                          return <span style={{ fontSize: '0.9rem', fontWeight: 'bold', color: '#64748b' }}>+ $ {totalEjecutado.toLocaleString('de-DE', { minimumFractionDigits: 2 })} (Sin Est. Previa)</span>;
-                        }
-                        const diff = totalEjecutado - totalEstimado;
-                        const pje = (diff / totalEstimado) * 100;
-                        const isRed = diff > 0;
-                        const isGreen = diff < 0;
-                        const color = isRed ? '#ef4444' : isGreen ? '#16a34a' : '#64748b';
-                        const sign = diff > 0 ? '+' : '';
-
-                        // Prevent NaN or extreme values if close to 0
-                        const pjeStr = isFinite(pje) ? `${pje > 0 ? '+' : ''}${pje.toFixed(1)}%` : 'N/A';
-
-                        return (
-                          <span style={{ fontSize: '0.9rem', fontWeight: 'bold', color }}>
-                            {sign} $ {diff.toLocaleString('de-DE', { minimumFractionDigits: 2 })} ({pjeStr})
-                          </span>
-                        );
-                      })()}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '2px solid var(--slate-200)', paddingTop: '10px', color: '#64748b' }}>
+                      <span style={{ fontWeight: '900', fontSize: '1rem' }}>TOTAL ESTIMADO (C/IVA):</span>
+                      <span style={{ fontSize: '1.2rem', fontWeight: '900' }}>$ {totalEstimado.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span>
                     </div>
-                  )}
+
+                    {subTotalEjecutado > 0 && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: '10px', color: '#16a34a' }}>
+                        <span style={{ fontWeight: '900', fontSize: '1rem' }}>TOTAL EJECUTADO (C/IVA):</span>
+                        <span style={{ fontSize: '1.2rem', fontWeight: '900' }}>$ {totalEjecutado.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span>
+                      </div>
+                    )}
+
+                    {/* Diferencia */}
+                    {subTotalEjecutado > 0 && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: '10px', marginTop: '10px', borderTop: '1px dashed #cbd5e1' }}>
+                        <span style={{ fontWeight: '600', fontSize: '0.9rem', color: '#475569' }}>DIFERENCIA:</span>
+                        {(() => {
+                          if (totalEstimado === 0) {
+                            return <span style={{ fontSize: '0.9rem', fontWeight: 'bold', color: '#64748b' }}>+ $ {totalEjecutado.toLocaleString('de-DE', { minimumFractionDigits: 2 })} (Sin Est. Previa)</span>;
+                          }
+                          const diff = totalEjecutado - totalEstimado;
+                          const pje = (diff / totalEstimado) * 100;
+                          const isRed = diff > 0;
+                          const isGreen = diff < 0;
+                          const color = isRed ? '#ef4444' : isGreen ? '#16a34a' : '#64748b';
+                          const sign = diff > 0 ? '+' : '';
+
+                          // Prevent NaN or extreme values if close to 0
+                          const pjeStr = isFinite(pje) ? `${pje > 0 ? '+' : ''}${pje.toFixed(1)}%` : 'N/A';
+
+                          return (
+                            <span style={{ fontSize: '0.9rem', fontWeight: 'bold', color }}>
+                              {sign} $ {diff.toLocaleString('de-DE', { minimumFractionDigits: 2 })} ({pjeStr})
+                            </span>
+                          );
+                        })()}
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
+                </div>
 
-              <div style={{ marginTop: '30px', display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
-                <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
-                  <button className="btn-tc btn-tc-secondary" onClick={intentarCerrarModal}>Cerrar</button>
-                  <button className="btn-tc btn-tc-dark" onClick={exportarPDF}>📥 PDF</button>
-
-                  {editandoId ? (
-                    <>
-                      {!modoEdicion ? (
-                        <button className="btn-tc btn-tc-primary" style={{ backgroundColor: '#0ea5e9' }} onClick={() => setModoEdicion(true)}>
-                          ✏️ EDITAR
-                        </button>
-                      ) : (
-                        <button className="btn-tc btn-tc-primary" style={{ backgroundColor: '#0284c7' }} onClick={manejarGenerarOActualizar} disabled={loading}>
-                          {loading ? <Loader2 className="animate-spin" size={16} /> : '💾 ACTUALIZAR Y FINALIZAR'}
+                  {/* --- PIE DE PÁGINA FIJO --- */}
+                  <div style={{
+                    flexShrink: 0,
+                    padding: '20px 40px',
+                    background: 'white',
+                    borderTop: '1px solid #e2e8f0',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: '20px'
+                  }}>
+                    <div style={{ display: 'flex', gap: '20px' }}>
+                      <button className="btn-tc btn-tc-secondary" onClick={intentarCerrarModal}>
+                        <ArrowLeft size={16} /> VOLVER
+                      </button>
+                      {editandoId && (
+                        <button className="btn-tc btn-tc-dark" onClick={exportarPDF} title="Descargar como PDF">
+                          <FileText size={18} /> PDF
                         </button>
                       )}
-                      {/* ACCIONES PARA ANALISTA / COORDINADOR (Re-enviar si está rechazada) */}
-                      {(currentUser?.rol === 'Analista' || currentUser?.rol === 'Coordinador') &&
-                        historial.find(h => String(h.id) === String(editandoId))?.estado_aprobacion === 'rechazada' && (
-                          <button className="btn-tc btn-tc-primary" onClick={manejarReenviar} disabled={loading}>
-                            {loading ? <Loader2 className="animate-spin" size={16} /> : 'ACTUALIZAR Y FINALIZAR (RE-ENVIAR)'}
-                          </button>
-                        )}
+                    </div>
 
-                      {/* BOTONES PARA GERENTE DE PROYECTO */}
-                      {currentUser?.rol?.toLowerCase()?.includes('proyecto') &&
-                        reqActual?.estado_aprobacion === 'pendiente_proyecto' && 
-                        reqActual?.solicitante !== `${currentUser.nombre} ${currentUser.apellido}` && (
-                          <>
-                            <button className="btn-tc btn-tc-danger" onClick={manejarRechazarGerenteProyecto} disabled={loading}>
-                              {loading ? <Loader2 className="animate-spin" size={16} /> : 'RECHAZAR'}
+                    <div style={{ display: 'flex', gap: '12px' }}>
+                      {editandoId ? (
+                        <>
+                          {modoEdicion ? (
+                            <button className="btn-tc btn-tc-primary" onClick={manejarGenerarOActualizar} disabled={loading}>
+                              {loading ? <Loader2 className="animate-spin" size={16} /> : 'GUARDAR CAMBIOS'}
                             </button>
-                            <button className="btn-tc btn-tc-success" onClick={manejarAprobarGerenteProyecto} disabled={loading}>
-                              {loading ? <Loader2 className="animate-spin" size={16} /> : '✓ APROBAR PROYECTO'}
+                          ) : (
+                            <button
+                              className="btn-tc btn-tc-secondary"
+                              onClick={() => {
+                                const reqActual = historial.find(h => String(h.id) === String(editandoId));
+                                if (reqActual?.estado_aprobacion !== 'aprobado_final' && reqActual?.estado_aprobacion !== 'rechazada') {
+                                  setModoEdicion(true);
+                                } else if (reqActual?.estado_aprobacion === 'rechazada') {
+                                  // Si está rechazada, permitimos editar para re-enviar
+                                  setModoEdicion(true);
+                                } else {
+                                  toast.error("No se puede editar una requisición ya aprobada.");
+                                }
+                              }}
+                            >
+                              HABILITAR EDICIÓN
                             </button>
-                          </>
-                        )}
+                          )}
 
-                      {/* BOTONES PARA GERENTE DE ÁREA (Nivel 1 o 2 si se saltó proyecto) */}
-                      {currentUser?.rol?.toLowerCase()?.includes('gerente') && !currentUser?.rol?.toLowerCase()?.includes('general') &&
-                        (reqActual?.estado_aprobacion === 'pendiente_area' || reqActual?.estado_aprobacion === 'pendiente_proyecto') && 
-                        reqActual?.solicitante !== `${currentUser.nombre} ${currentUser.apellido}` && (
-                          <>
-                            <button className="btn-tc btn-tc-danger" onClick={manejarRechazarGerenteArea} disabled={loading}>
-                              {loading ? <Loader2 className="animate-spin" size={16} /> : 'RECHAZAR'}
-                            </button>
-                            <button className="btn-tc btn-tc-success" onClick={manejarAprobarGerenteArea} disabled={loading}>
-                              {loading ? <Loader2 className="animate-spin" size={16} /> : '✓ APROBAR ÁREA'}
-                            </button>
-                          </>
-                        )}
-
-                      {(() => {
-                        const rolUpper = (currentUser?.rol || '').toUpperCase();
-                        const emailLower = (currentUser?.correo || '').toLowerCase();
-                        const reqActual = historial.find(h => String(h.id) === String(editandoId));
-
-                        const esGG = currentUser?.esAdminReal || 
-                                     rolUpper === 'GERENTE GENERAL' || 
-                                     rolUpper === 'ADMIN' ||
-                                     emailLower.includes('cvega');
-
-                        if (esGG && reqActual?.estado_aprobacion === 'enviada_general' && reqActual?.solicitante !== `${currentUser.nombre} ${currentUser.apellido}`) {
-                          return (
-                            <>
-                              <button className="btn-tc btn-tc-danger" onClick={manejarRechazarGeneral} disabled={loading}>
-                                {loading ? <Loader2 className="animate-spin" size={16} /> : 'RECHAZAR'}
+                          {/* ACCIONES PARA ANALISTA / COORDINADOR (Re-enviar si está rechazada) */}
+                          {((currentUser?.rol || '').toLowerCase().includes('analista') || (currentUser?.rol || '').toLowerCase().includes('coordinador')) &&
+                            historial.find(h => String(h.id) === String(editandoId))?.estado_aprobacion === 'rechazada' && modoEdicion && (
+                              <button className="btn-tc btn-tc-primary" onClick={manejarGenerarOActualizar} disabled={loading}>
+                                {loading ? <Loader2 className="animate-spin" size={16} /> : 'ACTUALIZAR Y FINALIZAR (RE-ENVIAR)'}
                               </button>
-                              <button
-                                className="btn-tc btn-tc-success"
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  manejarAprobarGeneral();
-                                }}
-                                disabled={loading}
-                              >
-                                {loading ? <Loader2 className="animate-spin" size={16} /> : '✓ APROBACIÓN FINAL'}
-                              </button>
-                            </>
-                          );
-                        }
-                        return null;
-                      })()}
-                    </>
-                  ) : (
-                    <button className="btn-tc btn-tc-primary" onClick={manejarGenerarOActualizar} disabled={loading}>
-                      {loading ? <Loader2 className="animate-spin" size={16} /> : 'GENERAR Y FINALIZAR REQUISICIÓN'}
-                    </button>
-                  )}
-                </div>
+                            )}
+
+                          {(() => {
+                            const rolUser = (currentUser?.rol || '').toLowerCase();
+                            const reqActual = historial.find(h => String(h.id) === String(editandoId));
+
+                            if (reqActual?.estado_aprobacion === 'pendiente_proyecto' && (rolUser.includes('proyecto') || (rolUser.includes('gerente') && currentUser?.departamento === reqActual?.gerencia))) {
+                              return (
+                                <>
+                                  <button className="btn-tc btn-tc-danger" onClick={manejarRechazarGerenteProyecto} disabled={loading}>
+                                    {loading ? <Loader2 className="animate-spin" size={16} /> : 'RECHAZAR'}
+                                  </button>
+                                  <button className="btn-tc btn-tc-success" onClick={manejarAprobarGerenteProyecto} disabled={loading}>
+                                    {loading ? <Loader2 className="animate-spin" size={16} /> : '✓ APROBAR PROYECTO'}
+                                  </button>
+                                </>
+                              );
+                            }
+                            if (reqActual?.estado_aprobacion === 'pendiente_area' && currentUser?.rol?.toLowerCase()?.includes('gerente') && !currentUser?.rol?.toLowerCase()?.includes('general')) {
+                              return (
+                                <>
+                                  <button className="btn-tc btn-tc-danger" onClick={manejarRechazarGerenteArea} disabled={loading}>
+                                    {loading ? <Loader2 className="animate-spin" size={16} /> : 'RECHAZAR'}
+                                  </button>
+                                  <button className="btn-tc btn-tc-success" onClick={manejarAprobarGerenteArea} disabled={loading}>
+                                    {loading ? <Loader2 className="animate-spin" size={16} /> : '✓ APROBAR ÁREA'}
+                                  </button>
+                                </>
+                              );
+                            }
+
+                            const rolUpper = (currentUser?.rol || '').toUpperCase();
+                            const emailLower = (currentUser?.correo || '').toLowerCase();
+                            const esGG = currentUser?.esAdminReal || rolUpper === 'GERENTE GENERAL' || rolUpper === 'ADMIN' || emailLower.includes('cvega');
+
+                            if (esGG && reqActual?.estado_aprobacion === 'enviada_general' && reqActual?.solicitante !== `${currentUser.nombre} ${currentUser.apellido}`) {
+                              return (
+                                <>
+                                  <button className="btn-tc btn-tc-danger" onClick={manejarRechazarGeneral} disabled={loading}>
+                                    {loading ? <Loader2 className="animate-spin" size={16} /> : 'RECHAZAR'}
+                                  </button>
+                                  <button className="btn-tc btn-tc-success" onClick={manejarAprobarGeneral} disabled={loading}>
+                                    {loading ? <Loader2 className="animate-spin" size={16} /> : '✓ APROBACIÓN FINAL'}
+                                  </button>
+                                </>
+                              );
+                            }
+                            return null;
+                          })()}
+                        </>
+                      ) : (
+                        <button className="btn-tc btn-tc-primary" onClick={manejarGenerarOActualizar} disabled={loading}>
+                          {loading ? <Loader2 className="animate-spin" size={16} /> : 'GENERAR Y FINALIZAR REQUISICIÓN'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
               </div>
             </div>
           </div>
-          </div>
         );
-      })() )}
+      })())}
 
       {/* --- MODAL DE RECHAZO PERSONALIZADO --- */}
       <AnimatePresence>

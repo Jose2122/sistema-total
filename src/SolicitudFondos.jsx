@@ -4,7 +4,8 @@ import Requisiciones from './Requisiciones';
 import TicketExpress from './TicketExpress';
 import { format, getWeek } from 'date-fns';
 import toast from 'react-hot-toast';
-import { Loader2, Upload, FileText, Printer, FileSpreadsheet, BarChart3, Clock, Activity, CheckCircle2, DollarSign, Copy, AlertCircle } from 'lucide-react';
+import { motion } from 'framer-motion';
+import { Loader2, Upload, FileText, Printer, FileSpreadsheet, BarChart3, Clock, Activity, CheckCircle2, DollarSign, Copy, AlertCircle, X } from 'lucide-react';
 import './SolicitudFondos.css';
 
 const StockSmartTotalClean = ({ currentUserProp }) => {
@@ -25,6 +26,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
   const [mostrarDesglose, setMostrarDesglose] = useState(false);
   const [currentUser, setCurrentUser] = useState(currentUserProp || null);
   const [loading, setLoading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
   // --- ESTADOS PARA VALIDACIÓN PREVIA Y CIERRE SEMANAL ---
   const [showPreVal, setShowPreVal] = useState(false);
@@ -92,15 +94,26 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
     sede: 'MARACAIBO',
     gerencia: '',
     responsable: '',
-    partidas: [{ id: Date.now(), selected: false, cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '', pago_realizado: false }],
-    imprevistos: [{ id: Date.now() + 1, selected: false, cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '', pago_realizado: false }]
+    partidas: [{ id: Date.now(), selected: false, cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '', pago_realizado: false, emisor: '' }],
+    imprevistos: [{ id: Date.now() + 1, selected: false, cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '', pago_realizado: false, emisor: '' }]
   });
 
+
+  const formatName = (fullName) => {
+    if (!fullName) return '';
+    const parts = fullName.trim().split(/\s+/);
+    if (parts.length <= 1) return fullName;
+    const firstName = parts[0];
+    const firstLastName = parts[1];
+    return `${firstName} ${firstLastName}`;
+  };
 
   // --- ESTADO PARA FILTROS ---
   const [busqueda, setBusqueda] = useState("");
   const [filtroGerencia, setFiltroGerencia] = useState("Todos");
   const [filtroSemana, setFiltroSemana] = useState("");
+  const [filtroStatus, setFiltroStatus] = useState("Todos");
+  const [hasChanges, setHasChanges] = useState(false);
 
   // --- FUNCIÓN PARA ELIMINAR ---
   const eliminarSolicitud = (id_db) => {
@@ -158,6 +171,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
     };
     const nuevasPartidas = [...form.partidas];
     nuevasPartidas.splice(index + 1, 0, nueva);
+    setHasChanges(true);
     setForm({ ...form, partidas: nuevasPartidas });
   };
 
@@ -176,12 +190,12 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
     };
     const nuevosImprevistos = [...form.imprevistos];
     nuevosImprevistos.splice(index + 1, 0, nueva);
+    setHasChanges(true);
     setForm({ ...form, imprevistos: nuevosImprevistos });
   };
 
   const intentarCerrarModal = () => {
-    const hayContenido = form.partidas.some(p => p.desc?.trim() || p.cc);
-    if (hayContenido && !isEditing) {
+    if (hasChanges) {
       toast((t) => (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
           <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: 'bold', color: '#1e293b' }}>⚠️ Tienes datos sin guardar</p>
@@ -232,7 +246,12 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       h.id.includes(`SEMANA ${filtroSemana}`) ||
       getWeek(new Date(h.fecha_operativa + 'T12:00:00'), { weekStartsOn: 1 }) === parseInt(filtroSemana);
 
-    return matchTexto && matchGerencia && matchSemana;
+    const isPagado = h.total_pagado >= h.total && h.total > 0;
+    const matchStatus = filtroStatus === "Todos" ||
+      (filtroStatus === "Pagados" && isPagado) ||
+      (filtroStatus === "Pendientes" && !isPagado);
+
+    return matchTexto && matchGerencia && matchSemana && matchStatus;
   });
 
   const obtenerSesionUsuario = async () => {
@@ -396,14 +415,27 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
     const { data: dataHist } = await query.order('created_at', { ascending: false });
 
     if (dataHist) {
-      setHistorial(dataHist.map(h => ({
-        ...h,
-        id_db: h.id,
-        id: h.codigo_control,
-        total: parseFloat(h.total_usd || 0) + parseFloat(h.total_bs || 0),
-        responsable: h.responsable_nombre,
-        gerencia: h.gerencia_nombre
-      })));
+      // Obtenemos un resumen de pagos por solicitud para los stats
+      const { data: pagosData } = await supabase
+        .from('partidas_fondos')
+        .select('solicitud_id, pu_bs, pu_usd, cantidad, pago_realizado')
+        .in('solicitud_id', dataHist.map(h => h.id));
+
+      setHistorial(dataHist.map(h => {
+        const misPartidas = (pagosData || []).filter(p => p.solicitud_id === h.id);
+        const totalPagado = misPartidas.reduce((acc, p) => acc + (p.pago_realizado ? (parseFloat(p.pu_bs) || parseFloat(p.pu_usd) || 0) * (p.cantidad || 1) : 0), 0);
+        const total = parseFloat(h.total_usd || 0) + parseFloat(h.total_bs || 0);
+
+        return {
+          ...h,
+          id_db: h.id,
+          id: h.codigo_control,
+          total,
+          total_pagado: totalPagado,
+          responsable: h.responsable_nombre,
+          gerencia: h.gerencia_nombre
+        };
+      }));
     }
 
     const { data: dataCC } = await supabase.from('maestros_centros_costo').select('id, nombre').eq('activo', true).order('nombre');
@@ -450,12 +482,8 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
 
       setForm(prev => ({
         ...prev,
-        responsable: (['Gerente', 'Coordinador', 'Analista', 'Admin'].includes(currentUser.rol) || currentUser.esAdminReal)
-          ? (gerenteNombre || `${currentUser.nombre} ${currentUser.apellido}`)
-          : prev.responsable,
-        gerencia: (['Gerente', 'Coordinador', 'Analista', 'Admin'].includes(currentUser.rol) || currentUser.esAdminReal)
-          ? currentUser.departamento
-          : prev.gerencia
+        responsable: `${currentUser.nombre} ${currentUser.apellido}`,
+        gerencia: currentUser.departamento
       }));
     }
   }, [showModal, isEditing, currentUser]);
@@ -522,10 +550,11 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
             puBs: p.pu_bs,
             puUsd: p.pu_usd,
             pago_realizado: p.pago_realizado || false,
+            emisor: p.emisor_nombre || 'S/E',
             requisicion_id: p.requisicion_id || null,
-            codigo_req: p.requisiciones?.correlativo_req || null,
             ticket_id: p.ticket_id || null,
             codigo_ticket: p.codigo_ticket || null,
+            codigo_ref: p.codigo_ticket || p.requisiciones?.correlativo_req || null,
             status: p.status || 'Disponible',
             selected: false,
             montoReal,
@@ -547,10 +576,11 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
               puBs: p.pu_bs,
               puUsd: p.pu_usd,
               pago_realizado: p.pago_realizado || false,
+              emisor: p.emisor_nombre || 'S/E',
               requisicion_id: p.requisicion_id || null,
-              codigo_req: p.requisiciones?.correlativo_req || null,
               ticket_id: p.ticket_id || null,
               codigo_ticket: p.codigo_ticket || null,
+              codigo_ref: p.codigo_ticket || p.requisiciones?.correlativo_req || null,
               status: p.status || 'Disponible',
               selected: false,
               montoReal,
@@ -583,6 +613,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
     if (campo === 'clasif') { nuevas[index].cat = ''; }
     if (campo === 'puBs' && valorFinal > 0) nuevas[index].puUsd = '';
     if (campo === 'puUsd' && valorFinal > 0) nuevas[index].puBs = '';
+    setHasChanges(true);
     setForm({ ...form, partidas: nuevas });
   };
 
@@ -612,6 +643,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
     if (campo === 'clasif') { nuevos[index].cat = ''; }
     if (campo === 'puBs' && valorFinal > 0) nuevos[index].puUsd = '';
     if (campo === 'puUsd' && valorFinal > 0) nuevos[index].puBs = '';
+    setHasChanges(true);
     setForm({ ...form, imprevistos: nuevos });
   };
 
@@ -728,11 +760,19 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
   // --- CÁLCULO DE TOTALES PARA PANEL DE INDICADORES ---
   const totalesVisibles = useMemo(() => {
     return historialFiltrado.reduce((acc, h) => {
+      const isPagado = h.total_pagado >= h.total && h.total > 0;
+      if (isPagado) {
+        acc.pagadoCount++;
+        acc.pagadoMonto += h.total;
+      } else {
+        acc.pendienteCount++;
+        acc.pendienteMonto += h.total;
+      }
       acc.bs += parseFloat(h.total_bs || 0);
       acc.usd += parseFloat(h.total_usd || 0);
-      acc.general += (parseFloat(h.total_bs || 0) + parseFloat(h.total_usd || 0));
+      acc.general += h.total;
       return acc;
-    }, { bs: 0, usd: 0, general: 0 });
+    }, { bs: 0, usd: 0, general: 0, pagadoCount: 0, pagadoMonto: 0, pendienteCount: 0, pendienteMonto: 0 });
   }, [historialFiltrado]);
 
   // --- FUNCIÓN DE EXPORTACIÓN A EXCEL PREMIUM ---
@@ -1066,11 +1106,9 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
   }, [form.partidas, form.imprevistos]);
 
   const dashEjecucion = useMemo(() => {
-    const estimado = (sumas.bs + sumas.usd) + (sumas.imprevistosBs + sumas.imprevistosUsd);
-    const ejecutado = form.partidas.reduce((acc, p) => acc + (p.montoReal || 0), 0) +
-      form.imprevistos.reduce((acc, p) => acc + (p.montoReal || 0), 0);
-    const pendiente = form.partidas.reduce((acc, p) => acc + (p.montoPendiente || 0), 0) +
-      form.imprevistos.reduce((acc, p) => acc + (p.montoPendiente || 0), 0);
+    const estimado = (sumas.bs + sumas.usd);
+    const ejecutado = form.partidas.reduce((acc, p) => acc + (p.montoReal || 0), 0);
+    const pendiente = form.partidas.reduce((acc, p) => acc + (p.montoPendiente || 0), 0);
 
     return {
       estimado,
@@ -1082,7 +1120,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
 
   const categoriasEjecucion = useMemo(() => {
     const categoriesMap = {};
-    const todas = [...form.partidas, ...form.imprevistos];
+    const todas = [...form.partidas];
     todas.forEach(p => {
       const cat = p.cat || 'S/C';
       if (!categoriesMap[cat]) {
@@ -1104,9 +1142,21 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       .slice(0, 5);
   }, [form.partidas, form.imprevistos]);
 
-  const registrarOActualizar = async (keepOpen = false) => {
+  const registrarOActualizar = async (keepOpen = false, overrideForm = null) => {
+    if (isSaving) return;
+    setIsSaving(true);
     try {
       let finalCodigoControl = idDinamico;
+      const targetForm = overrideForm || form;
+
+      // --- CÁLCULO MANUAL DE TOTALES PARA EVITAR DESFASE POR ASINCRONÍA ---
+      const pFiltradas = targetForm.partidas.filter(p => p.desc && p.desc.trim() !== '');
+      const iFiltradas = (mostrarImprevistos || targetForm.imprevistos?.length > 0)
+        ? targetForm.imprevistos.filter(p => p.desc && p.desc.trim() !== '')
+        : [];
+
+      const totalBsCalc = [...pFiltradas, ...iFiltradas].reduce((acc, p) => acc + (parseFloat(p.puBs) || 0) * (parseFloat(p.cant) || 1), 0);
+      const totalUsdCalc = [...pFiltradas, ...iFiltradas].reduce((acc, p) => acc + (parseFloat(p.puUsd) || 0) * (parseFloat(p.cant) || 1), 0);
 
       // --- VALIDACIÓN DE UNICIDAD SEMANAL (NO DUPLICADOS) ---
       if (!isEditing) {
@@ -1116,6 +1166,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
           .eq('codigo_control', idDinamico);
 
         if (checkData && checkData.length > 0) {
+          setIsSaving(false);
           return toast.error("Ya existe una Solicitud de Fondo para esta semana. Por favor, edite la existente para evitar redundancias.");
         }
         finalCodigoControl = idDinamico;
@@ -1123,61 +1174,79 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
 
       const cabecera = {
         codigo_control: finalCodigoControl,
-        fecha_operativa: form.fecha,
-        sede: form.sede,
-        gerencia_nombre: form.gerencia,
-        responsable_nombre: form.responsable,
-        total_bs: sumas.bs + sumas.imprevistosBs,
-        total_usd: sumas.usd + sumas.imprevistosUsd
+        fecha_operativa: targetForm.fecha,
+        sede: targetForm.sede,
+        gerencia_nombre: targetForm.gerencia,
+        responsable_nombre: targetForm.responsable,
+        total_bs: totalBsCalc,
+        total_usd: totalUsdCalc
       };
 
       let cabeceraId;
       if (isEditing) {
-        const { error: errorUpdate } = await supabase.from('solicitudes_fondos').update(cabecera).eq('id', form.id_db);
+        const { error: errorUpdate } = await supabase.from('solicitudes_fondos').update(cabecera).eq('id', targetForm.id_db);
         if (errorUpdate) throw errorUpdate;
-        cabeceraId = form.id_db;
+        cabeceraId = targetForm.id_db;
         await supabase.from('partidas_fondos').delete().eq('solicitud_id', cabeceraId);
       } else {
         const { data: newCab, error: errorInsert } = await supabase.from('solicitudes_fondos').insert([cabecera]).select().single();
         if (errorInsert) throw errorInsert;
         cabeceraId = newCab.id;
+        // Actualizamos id_db en el formulario para evitar duplicados en guardados silenciosos posteriores
+        setForm(prev => ({ ...prev, id_db: newCab.id }));
       }
 
-      // --- CORRECCIÓN AQUÍ: Aseguramos que se envíen 'centro_costo', 'clasificacion' y 'categoria' correctamente ---
-      const renglones = form.partidas.map((p, i) => ({
-        solicitud_id: cabeceraId,
-        n_renglon: i + 1,
-        centro_costo: p.cc,
-        clasificacion: p.clasif, // Cambiado de p.clasificacion a p.clasif para que coincida con el estado 'form'
-        categoria: p.cat,       // Cambiado de p.categoria a p.cat para que coincida con el estado 'form'
-        cantidad: parseFloat(p.cant) || 0,
-        unidad: p.uni,
-        descripcion: p.desc,
-        beneficiario: p.ben,
-        pu_bs: parseFloat(p.puBs) || 0,
-        pu_usd: parseFloat(p.puUsd) || 0,
-        pago_realizado: p.pago_realizado || false,
-        requisicion_id: p.requisicion_id || null,
-        status: p.status || 'Disponible'
-      }));
+      // --- CORRECCIÓN: Filtramos filas vacías para evitar que falle el insert y se pierda la data ---
+      const renglones = targetForm.partidas
+        .filter(p => p.desc && p.desc.trim() !== '') // Solo filas con descripción
+        .map((p, i) => {
+          const codRef = p.codigo_ref || '';
+          return {
+            solicitud_id: cabeceraId,
+            n_renglon: i + 1,
+            centro_costo: p.cc,
+            clasificacion: p.clasif,
+            categoria: p.cat,
+            cantidad: parseFloat(p.cant) || 0,
+            unidad: p.uni,
+            descripcion: p.desc,
+            beneficiario: p.ben,
+            pu_bs: parseFloat(p.puBs) || 0,
+            pu_usd: parseFloat(p.puUsd) || 0,
+            pago_realizado: p.pago_realizado || false,
+            // emisor_nombre: p.emisor || `${currentUser?.nombre} ${currentUser?.apellido}` || 'Sistema', // Removido hasta que la columna exista en DB
+            requisicion_id: p.requisicion_id || null,
+            ticket_id: p.ticket_id || null,
+            codigo_ticket: codRef || p.codigo_ticket || null,
+            status: p.status || 'Disponible'
+          };
+        });
 
-      if (mostrarImprevistos) {
-        const renglonesImprevistos = form.imprevistos.map((imp, i) => ({
-          solicitud_id: cabeceraId,
-          n_renglon: renglones.length + i + 1,
-          centro_costo: imp.cc || 'No Aplica',
-          clasificacion: (imp.clasif || 'Solicitud de ticket') + ' [*]',
-          categoria: imp.cat || 'Ticket',
-          cantidad: parseFloat(imp.cant) || 1,
-          unidad: imp.uni || 'UND',
-          descripcion: imp.desc,
-          beneficiario: imp.ben,
-          pu_bs: parseFloat(imp.puBs) || 0,
-          pu_usd: parseFloat(imp.puUsd) || 0,
-          pago_realizado: imp.pago_realizado || false,
-          requisicion_id: imp.requisicion_id || null,
-          status: imp.status || 'Disponible'
-        }));
+      if (mostrarImprevistos || targetForm.imprevistos?.length > 0) {
+        const renglonesImprevistos = targetForm.imprevistos
+          .filter(imp => imp.desc && imp.desc.trim() !== '')
+          .map((imp, i) => {
+            const codRef = imp.codigo_ref || '';
+            return {
+              solicitud_id: cabeceraId,
+              n_renglon: renglones.length + i + 1,
+              centro_costo: imp.cc || 'No Aplica',
+              clasificacion: (imp.clasif || 'Solicitud de ticket') + ' [*]',
+              categoria: imp.cat || 'Ticket',
+              cantidad: parseFloat(imp.cant) || 1,
+              unidad: imp.uni || 'UND',
+              descripcion: imp.desc,
+              beneficiario: imp.ben,
+              pu_bs: parseFloat(imp.puBs) || 0,
+              pu_usd: parseFloat(imp.puUsd) || 0,
+              pago_realizado: imp.pago_realizado || false,
+              // emisor_nombre: imp.emisor || `${currentUser?.nombre} ${currentUser?.apellido}` || 'Sistema', // Removido hasta que la columna exista en DB
+              requisicion_id: imp.requisicion_id || null,
+              ticket_id: imp.ticket_id || null,
+              codigo_ticket: codRef || imp.codigo_ticket || null,
+              status: imp.status || 'Disponible'
+            };
+          });
         renglones.push(...renglonesImprevistos);
       }
 
@@ -1186,28 +1255,47 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
 
       toast.success("¡Guardado con éxito!");
       await cargarTodo();
+      setHasChanges(false);
       if (!keepOpen) setShowModal(false);
     } catch (err) {
-      toast.error("Error al guardar: " + err.message);
+      toast.error("Error al registrar: " + err.message);
+    } finally {
+      setIsSaving(false);
     }
   };
 
-  const handleRequisicionFinalizada = (nuevaReqId, idsPartidas) => {
+  const handleRequisicionFinalizada = (nuevaReqId, idsPartidas, codigoControl) => {
     // Actualizar estado local para evitar recarga
     const actualizarLista = (lista) => lista.map(p =>
-      idsPartidas.includes(p.id) ? { ...p, status: 'Bloqueado', requisicion_id: nuevaReqId, selected: false } : p
+      idsPartidas.includes(p.id) ? { ...p, status: 'Bloqueado', requisicion_id: nuevaReqId, codigo_ref: codigoControl, selected: false } : p
     );
 
-    setForm(prev => ({
-      ...prev,
-      partidas: actualizarLista(prev.partidas),
-      imprevistos: actualizarLista(prev.imprevistos)
-    }));
+    const nextState = {
+      ...form,
+      partidas: actualizarLista(form.partidas),
+      imprevistos: actualizarLista(form.imprevistos)
+    };
 
-    // GUARDADO AUTOMÁTICO AL CREAR REQUISICIÓN sin cerrar modal
-    registrarOActualizar(true);
+    setForm(nextState);
 
-    // Si queremos que desaparezcan del modal de selección, ya están filtrados por requisicion_id
+    // GUARDADO AUTOMÁTICO AL CREAR REQUISICIÓN sin cerrar modal (Usando el estado fresco)
+    registrarOActualizar(true, nextState);
+  };
+
+  const handleTicketFinalizado = (nuevoTicketId, idsPartidas, codigoControl) => {
+    const actualizarLista = (lista) => lista.map(p =>
+      idsPartidas.includes(p.id) ? { ...p, status: 'Bloqueado', ticket_id: nuevoTicketId, codigo_ref: codigoControl, selected: false } : p
+    );
+
+    const nextState = {
+      ...form,
+      partidas: actualizarLista(form.partidas),
+      imprevistos: actualizarLista(form.imprevistos)
+    };
+
+    setForm(nextState);
+
+    registrarOActualizar(true, nextState);
   };
 
   const handleCrearRequisicion = () => {
@@ -1221,6 +1309,12 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
     if (centros.length > 1 || clases.length > 1) {
       toast.error("Error: Las filas deben tener el mismo Centro de Costo y Clasificación para generar una requisición.");
       return;
+    }
+
+    // VALIDACIÓN DE CAMPOS OBLIGATORIOS
+    const incompletas = seleccionadas.some(p => !p.cc || !p.clasif || !p.cat || !p.cant || !p.uni || !p.desc);
+    if (incompletas) {
+      return toast.error("Error: Las filas seleccionadas deben tener Centro de Costo, Clasificación, Categoría, Cantidad, Unidad y Descripción.");
     }
 
     // ADVERTENCIA DE CATEGORÍAS
@@ -1268,6 +1362,12 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       return toast.error("No se pueden mezclar Centros de Costos en un mismo Ticket de Pago. Por favor, genere un ticket por separado.");
     }
 
+    // VALIDACIÓN DE CAMPOS OBLIGATORIOS
+    const incompletos = seleccionados.some(imp => !imp.cc || !imp.clasif || !imp.cat || !imp.cant || !imp.uni || !imp.desc);
+    if (incompletos) {
+      return toast.error("Error: Las filas seleccionadas deben tener Centro de Costo, Clasificación, Categoría, Cantidad, Unidad y Descripción.");
+    }
+
     setDataParaTicket({
       fecha: form.fecha,
       gerencia: form.gerencia,
@@ -1281,7 +1381,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         cantidad: (imp.cant !== undefined && imp.cant !== '') ? Number(imp.cant) : 1,
         unidad: imp.uni || 'UNID',
         descripcion: imp.desc || '',
-        beneficiario: imp.ben || form.responsable || '', // Fallback al responsable de la solicitud
+        beneficiario: imp.ben || `${currentUser?.nombre} ${currentUser?.apellido}` || '', // Fallback al usuario actual, no al responsable (que puede ser el gerente)
         puUsd: Number(imp.puUsd) || 0,
         puBs: Number(imp.puBs) || 0
       }))
@@ -1295,9 +1395,9 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       {/* --- DASHBOARD UNIFICADO PREMIUM --- */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '20px', marginBottom: '32px' }}>
         {[
-          { label: 'Dólares pagaderos en Bolívares', val: `$ ${totalesVisibles.bs.toLocaleString('de-DE', { minimumFractionDigits: 2 })}`, col: '#030712' },
-          { label: 'Dólares pagaderos en divisas', val: `$ ${totalesVisibles.usd.toLocaleString('de-DE', { minimumFractionDigits: 2 })}`, col: '#030712' },
-          { label: 'Total General ($)', val: `$ ${totalesVisibles.general.toLocaleString('de-DE', { minimumFractionDigits: 2 })}`, col: '#030712' },
+          { label: 'Pendientes por procesar', val: `${totalesVisibles.pendienteCount} Sols ($ ${totalesVisibles.pendienteMonto.toLocaleString('de-DE', { minimumFractionDigits: 2 })})`, col: '#f59e0b' },
+          { label: 'Solicitudes Pagadas', val: `${totalesVisibles.pagadoCount} Sols ($ ${totalesVisibles.pagadoMonto.toLocaleString('de-DE', { minimumFractionDigits: 2 })})`, col: '#10b981' },
+          { label: 'Gasto Total Acumulado', val: `$ ${totalesVisibles.general.toLocaleString('de-DE', { minimumFractionDigits: 2 })}`, col: '#0ea5e9' },
         ].map((x, i) => (
           <div
             key={i}
@@ -1326,34 +1426,43 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '25px', alignItems: 'center' }}>
           <h2 style={{ fontSize: '1.3rem', color: '#1e293b', margin: 0 }}>Gestión de Solicitudes </h2>
 
-          <div style={{ display: 'flex', gap: '12px' }}>
-            <button
-              onClick={exportarExcel}
-              style={{ padding: '12px 20px', backgroundColor: '#166534', color: 'white', border: 'none', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
-            >
-              <FileSpreadsheet size={18} /> Exportar Excel
-            </button>
-            <button
-              onClick={async () => {
-                try {
-                  setLoading(true);
-                  const solicitudesIds = historialFiltrado.map(h => h.id_db);
-                  if (solicitudesIds.length === 0) return toast.error("No hay solicitudes para reportar.");
+          <select
+            className="report-input small"
+            value={filtroStatus}
+            onChange={e => setFiltroStatus(e.target.value)}
+            style={{ padding: '8px 12px', borderRadius: '10px', border: '1px solid #e2e8f0', fontSize: '0.85rem' }}
+          >
+            <option value="Todos">Todos los Estados</option>
+            <option value="Pendientes">Pendientes</option>
+            <option value="Pagados">Pagados</option>
+          </select>
+          <button
+            onClick={exportarExcel}
+            style={{ padding: '12px 20px', backgroundColor: '#166534', color: 'white', border: 'none', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
+          >
+            <FileSpreadsheet size={18} /> Exportar Excel
+          </button>
+          <button
+            onClick={async () => {
+              try {
+                setLoading(true);
+                const solicitudesIds = historialFiltrado.map(h => h.id_db);
+                if (solicitudesIds.length === 0) return toast.error("No hay solicitudes para reportar.");
 
-                  const { data: todasPartidas, error } = await supabase
-                    .from('partidas_fondos')
-                    .select('*')
-                    .in('solicitud_id', solicitudesIds)
-                    .order('n_renglon', { ascending: true });
+                const { data: todasPartidas, error } = await supabase
+                  .from('partidas_fondos')
+                  .select('*')
+                  .in('solicitud_id', solicitudesIds)
+                  .order('n_renglon', { ascending: true });
 
-                  if (error) throw error;
+                if (error) throw error;
 
-                  const printWindow = window.open('', '_blank');
-                  const emitDate = new Date();
-                  const formatDate = emitDate.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' });
-                  const formatTime = emitDate.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', hour12: true });
+                const printWindow = window.open('', '_blank');
+                const emitDate = new Date();
+                const formatDate = emitDate.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' });
+                const formatTime = emitDate.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', hour12: true });
 
-                  let html = `
+                let html = `
                      <html>
                        <head>
                          <title>Reporte Global de Solicitudes</title>
@@ -1382,9 +1491,9 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                        <body>
                    `;
 
-                  historialFiltrado.forEach((sol, index) => {
-                    const partidas = todasPartidas.filter(p => p.solicitud_id === sol.id_db);
-                    html += `
+                historialFiltrado.forEach((sol, index) => {
+                  const partidas = todasPartidas.filter(p => p.solicitud_id === sol.id_db);
+                  html += `
                        <div class="${index < historialFiltrado.length - 1 ? 'page-break' : ''}">
                          <table class="header-table">
                            <tr>
@@ -1427,9 +1536,9 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                            </thead>
                            <tbody>
                              ${partidas.map(p => {
-                      const montoBs = (p.pu_bs || 0) * (p.cantidad || 1);
-                      const montoUsd = (p.pu_usd || 0) * (p.cantidad || 1);
-                      return `
+                    const montoBs = (p.pu_bs || 0) * (p.cantidad || 1);
+                    const montoUsd = (p.pu_usd || 0) * (p.cantidad || 1);
+                    return `
                                  <tr>
                                    <td style="font-size: 8px;">${p.centro_costo}</td>
                                    <td style="font-size: 8px;">${p.clasificacion}</td>
@@ -1446,7 +1555,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                                    </td>
                                  </tr>
                                `;
-                    }).join('')}
+                  }).join('')}
                            </tbody>
                          </table>
 
@@ -1468,35 +1577,34 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                          </div>
                        </div>
                      `;
-                  });
+                });
 
-                  html += `
+                html += `
                        <script>setTimeout(() => { window.print(); }, 1000);</script>
                      </body>
                    </html>
                    `;
 
-                  printWindow.document.write(html);
-                  printWindow.document.close();
-                } catch (err) {
-                  toast.error("Error: " + err.message);
-                } finally {
-                  setLoading(false);
-                }
-              }}
-              style={{ padding: '12px 20px', backgroundColor: '#0f172a', color: 'white', border: 'none', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
-            >
-              <Printer size={18} /> Reporte Global
-            </button>
-            <button onClick={() => {
-              setIsEditing(false);
-              setCcPreVal('');
-              setFechaPreVal(new Date().toISOString().split('T')[0]);
-              setErrorCheck('');
-              setSolCheckExitosa(false);
-              setShowPreVal(true);
-            }} style={{ padding: '12px 25px', backgroundColor: '#0ea5e9', color: 'white', border: 'none', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer' }}>+ Nueva Solicitud</button>
-          </div>
+                printWindow.document.write(html);
+                printWindow.document.close();
+              } catch (err) {
+                toast.error("Error: " + err.message);
+              } finally {
+                setLoading(false);
+              }
+            }}
+            style={{ padding: '12px 20px', backgroundColor: '#0f172a', color: 'white', border: 'none', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
+          >
+            <Printer size={18} /> Reporte Global
+          </button>
+          <button onClick={() => {
+            setIsEditing(false);
+            setCcPreVal('');
+            setFechaPreVal(new Date().toISOString().split('T')[0]);
+            setErrorCheck('');
+            setSolCheckExitosa(false);
+            setShowPreVal(true);
+          }} style={{ padding: '12px 25px', backgroundColor: '#0ea5e9', color: 'white', border: 'none', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer' }}>+ Nueva Solicitud</button>
         </div>
 
 
@@ -1563,34 +1671,36 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
             ) : historialFiltrado.map((h, i) => (
               <tr key={i} style={{ borderBottom: '1px solid #f8fafc', fontSize: '0.80rem', backgroundColor: i % 2 === 0 ? '#ffffff' : '#f8fafc' }}>
                 <td data-label="ID CONTROL" style={{ padding: '12px' }}>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      cargarDetallesYEditar(h);
+                  <motion.span
+                    whileHover={{
+                      scale: 1.1,
+                      x: 5,
+                      color: '#2563eb',
+                      textShadow: '0 0 8px rgba(37, 99, 235, 0.2)'
                     }}
+                    whileTap={{ scale: 0.95 }}
+                    transition={{ type: "spring", stiffness: 400, damping: 10 }}
+                    onClick={() => cargarDetallesYEditar(h)}
                     style={{
-                      background: 'none',
-                      border: 'none',
-                      padding: 0,
-                      fontWeight: 'bold',
-                      color: '#0ea5e9',
-                      cursor: 'pointer',
+                      fontSize: '12px',
+                      fontWeight: '900',
+                      color: '#1e40af',
                       textDecoration: 'underline',
-                      font: 'inherit',
-                      textAlign: 'left'
+                      textUnderlineOffset: '3px',
+                      textDecorationColor: 'rgba(30, 64, 175, 0.4)',
+                      cursor: 'pointer',
+                      display: 'inline-block'
                     }}
                   >
                     {h.id}
-                  </button>
+                  </motion.span>
                 </td>
                 <td data-label="SEMANA" style={{ fontWeight: 'bold', color: '#64748b' }}>
                   <div>SEM {getWeek(new Date(h.fecha_operativa + 'T12:00:00'), { weekStartsOn: 1 })}</div>
                   <div style={{ fontSize: '0.7rem', color: '#0ea5e9', marginTop: '3px' }}>{extractPeriodoFromId(h.id)}</div>
                 </td>
                 <td data-label="RESPONSABLE">
-                  <div style={{ fontWeight: '500' }}>{h.responsable}</div>
+                  <div style={{ fontWeight: '500' }}>{formatName(h.responsable)}</div>
                   <div style={{ fontSize: '0.7rem', color: '#64748b' }}>{h.gerencia}</div>
                 </td>
                 <td data-label="PAGO BS" style={{ color: '#b45309', fontWeight: '600' }}>
@@ -1661,467 +1771,596 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       {/* MODAL DE REGISTRO */}
       {showModal && (
         <div className="sf-modal-overlay">
-          <div className="sf-modal-container">
-            {/* BANNER DE FECHA TOPE */}
-            <div style={{
-              backgroundColor: isExpired ? '#fef2f2' : '#f0f9ff',
-              borderBottom: `1px solid ${isExpired ? '#fecaca' : '#bae6fd'}`,
-              padding: '10px 30px',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              margin: '-25px -25px 20px -25px',
-              borderRadius: '20px 20px 0 0'
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-                <div style={{
-                  backgroundColor: isExpired ? '#ef4444' : '#0ea5e9',
-                  color: 'white',
-                  padding: '4px 12px',
-                  borderRadius: '20px',
-                  fontSize: '11px',
-                  fontWeight: '800'
-                }}>
-                  {isExpired ? 'SEMANA CERRADA' : 'SEMANA ACTIVA'}
-                </div>
-                <span style={{ fontSize: '12px', color: isExpired ? '#991b1b' : '#0369a1', fontWeight: '600' }}>
-                  Período: <span style={{ fontWeight: '800' }}>{periodoSemana}</span>
-                </span>
-              </div>
+          <div className="sf-modal-container" style={{
+            width: '95vw',
+            maxWidth: '1600px',
+            height: '95vh',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+            padding: 0,
+            borderRadius: '24px',
+            backgroundColor: 'rgba(255, 255, 255, 0.7)',
+            backdropFilter: 'blur(30px) saturate(180%)',
+            border: '1px solid rgba(255, 255, 255, 0.4)',
+            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.3)'
+          }}>
+            {/* --- CABECERA FIJA --- */}
+            <div style={{ flexShrink: 0, padding: '25px 35px', borderBottom: '1px solid rgba(226, 232, 240, 0.5)', backgroundColor: 'rgba(255, 255, 255, 0.3)', position: 'relative' }}>
+              <button
+                onClick={intentarCerrarModal}
+                style={{
+                  position: 'absolute',
+                  top: '20px',
+                  right: '25px',
+                  background: '#f1f5f9',
+                  border: 'none',
+                  borderRadius: '12px',
+                  width: '36px',
+                  height: '36px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer',
+                  color: '#64748b',
+                  transition: 'all 0.2s',
+                  zIndex: 10
+                }}
+                onMouseOver={(e) => { e.currentTarget.style.backgroundColor = '#fee2e2'; e.currentTarget.style.color = '#ef4444'; }}
+                onMouseOut={(e) => { e.currentTarget.style.backgroundColor = '#f1f5f9'; e.currentTarget.style.color = '#64748b'; }}
+              >
+                <X size={20} />
+              </button>
 
-              {/* SALUD PRESUPUESTARIA CENTRALIZADA */}
-              <div style={{ flex: 1, maxWidth: '300px', margin: '0 40px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                  <span style={{ fontSize: '9px', fontWeight: '900', color: '#64748b' }}>SALUD PRESUPUESTARIA</span>
-                  <span style={{ fontSize: '10px', fontWeight: '900', color: '#10b981' }}>{dashEjecucion.estimado > 0 ? Math.round((dashEjecucion.ejecutado / dashEjecucion.estimado) * 100) : 0}%</span>
-                </div>
-                <div style={{ height: '6px', backgroundColor: '#e2e8f0', borderRadius: '10px', overflow: 'hidden' }}>
-                  <div style={{ 
-                    height: '100%', 
-                    width: `${Math.min(100, (dashEjecucion.ejecutado / (dashEjecucion.estimado || 1)) * 100)}%`, 
-                    backgroundColor: '#10b981',
-                    borderRadius: '10px'
-                  }}></div>
-                </div>
-              </div>
-
-              <div style={{ fontSize: '12px', color: isExpired ? '#ef4444' : '#64748b', fontWeight: 'bold' }}>
-                {isExpired ? (
-                  <span>🛑 Plazo vencido. No se pueden añadir nuevos registros.</span>
-                ) : (
-                  <span>⏰ Fecha Tope Requisciones: <span style={{ color: '#0f172a' }}>Domingo {format(deadlineDate, 'dd/MM')} - 11:59 PM</span></span>
-                )}
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '15px', position: 'relative' }}>
-              <div>
-                <h2 style={{ margin: 0, fontWeight: '900', color: '#0f172a' }}>{isEditing ? 'Solicitud de Fondos' : 'Registro de Fondos'}</h2>
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginTop: '8px' }}>
-                  <div style={{ background: '#0f172a', color: 'white', padding: '4px 12px', borderRadius: '6px', fontSize: '10px', fontWeight: 'bold' }}>ID CONTROL: {idDinamico}</div>
-                </div>
-              </div>
-
-              {/* DASHBOARD DE CONTROL DE EJECUCIÓN PREMIUM (RESTAURADO) */}
-              <div style={{ display: 'flex', gap: '12px' }}>
-                <div className="rm-stat-card primary" style={{ padding: '12px 20px', minWidth: '150px', borderRadius: '14px' }}>
-                  <div className="rm-stat-info">
-                    <label style={{ fontSize: '10px' }}>ESTIMADO</label>
-                    <h3 style={{ fontSize: '1.2rem' }}>$ {dashEjecucion.estimado.toLocaleString('de-DE', { minimumFractionDigits: 0 })}</h3>
-                  </div>
-                  <div className="rm-stat-icon" style={{ width: '32px', height: '32px' }}><DollarSign size={16} /></div>
-                </div>
-
-                <div className="rm-stat-card success" style={{ padding: '12px 20px', minWidth: '150px', borderRadius: '14px' }}>
-                  <div className="rm-stat-info">
-                    <label style={{ fontSize: '10px' }}>COMPRADO</label>
-                    <h3 style={{ fontSize: '1.2rem', color: '#10b981' }}>$ {dashEjecucion.ejecutado.toLocaleString('de-DE', { minimumFractionDigits: 0 })}</h3>
-                  </div>
-                  <div className="rm-stat-icon" style={{ width: '32px', height: '32px' }}><CheckCircle2 size={16} color="#10b981" /></div>
-                </div>
-
-                <div className="rm-stat-card highlight" style={{ padding: '12px 20px', minWidth: '150px', borderRadius: '14px' }}>
-                  <div className="rm-stat-info">
-                    <label style={{ fontSize: '10px' }}>PENDIENTE</label>
-                    <h3 style={{ fontSize: '1.2rem', color: '#f59e0b' }}>$ {dashEjecucion.pendiente.toLocaleString('de-DE', { minimumFractionDigits: 0 })}</h3>
-                  </div>
-                  <div className="rm-stat-icon" style={{ width: '32px', height: '32px' }}><Clock size={16} color="#f59e0b" /></div>
-                </div>
-
-                <div className={`rm-stat-card ${dashEjecucion.diferencia < 0 ? 'danger' : 'info'}`} style={{
-                  padding: '12px 20px',
-                  minWidth: '150px',
-                  borderRadius: '14px',
-                  backgroundColor: dashEjecucion.diferencia < 0 ? '#fff1f2' : '#f0f9ff',
-                  borderColor: dashEjecucion.diferencia < 0 ? '#fecaca' : '#bae6fd'
-                }}>
-                  <div className="rm-stat-info">
-                    <label style={{ fontSize: '10px', color: dashEjecucion.diferencia < 0 ? '#e11d48' : '#0369a1' }}>
-                      {dashEjecucion.diferencia < 0 ? 'DIF. EXCESO' : 'DIF. DISPONIBLE'}
-                    </label>
-                    <h3 style={{ fontSize: '1.2rem', color: dashEjecucion.diferencia < 0 ? '#be123c' : '#0ea5e9' }}>
-                      $ {Math.abs(dashEjecucion.diferencia).toLocaleString('de-DE', { minimumFractionDigits: 0 })}
-                    </h3>
-                  </div>
-                  <div className="rm-stat-icon" style={{
-                    width: '32px',
-                    height: '32px',
-                    backgroundColor: dashEjecucion.diferencia < 0 ? '#ffe4e6' : '#e0f2fe'
+              {/* BANNER DE FECHA TOPE INTEGRADO EN CABECERA */}
+              <div style={{
+                backgroundColor: isExpired ? '#fef2f2' : '#f0f9ff',
+                border: `1px solid ${isExpired ? '#fecaca' : '#bae6fd'}`,
+                padding: '8px 20px',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                borderRadius: '12px',
+                marginBottom: '15px'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+                  <div style={{
+                    backgroundColor: isExpired ? '#ef4444' : '#0ea5e9',
+                    color: 'white',
+                    padding: '4px 12px',
+                    borderRadius: '20px',
+                    fontSize: '10px',
+                    fontWeight: '800'
                   }}>
-                    {dashEjecucion.diferencia < 0 ? <AlertCircle size={16} color="#e11d48" /> : <Activity size={16} color="#0ea5e9" />}
+                    {isExpired ? 'SEMANA CERRADA' : 'SEMANA ACTIVA'}
+                  </div>
+                  <span style={{ fontSize: '11px', color: isExpired ? '#991b1b' : '#0369a1', fontWeight: '600' }}>
+                    Período: <span style={{ fontWeight: '800' }}>{periodoSemana}</span>
+                  </span>
+                </div>
+
+                {/* SALUD PRESUPUESTARIA CENTRALIZADA RESTAURADA */}
+                <div style={{ flex: 1, maxWidth: '300px', margin: '0 40px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                    <span style={{ fontSize: '9px', fontWeight: '900', color: '#64748b' }}>SALUD PRESUPUESTARIA</span>
+                    <span style={{ fontSize: '10px', fontWeight: '900', color: '#10b981' }}>{dashEjecucion.estimado > 0 ? Math.round((dashEjecucion.ejecutado / dashEjecucion.estimado) * 100) : 0}%</span>
+                  </div>
+                  <div style={{ height: '6px', backgroundColor: '#e2e8f0', borderRadius: '10px', overflow: 'hidden' }}>
+                    <div style={{
+                      height: '100%',
+                      width: `${Math.min(100, (dashEjecucion.ejecutado / (dashEjecucion.estimado || 1)) * 100)}%`,
+                      backgroundColor: '#10b981',
+                      borderRadius: '10px'
+                    }}></div>
                   </div>
                 </div>
-              </div>
 
-              <div style={{ display: 'flex', gap: '40px', textAlign: 'right', alignItems: 'center' }}>
-                <div style={{ borderLeft: '2px solid #e2e8f0', paddingLeft: '30px' }}>
-                  <label style={{ fontSize: '10px', fontWeight: '900', color: '#64748b' }}>TOTAL ESTIMADO</label>
-                  <div style={{ fontSize: '1.8rem', fontWeight: '950', color: '#0f172a' }}>$ {dashEjecucion.estimado.toLocaleString('de-DE', { minimumFractionDigits: 0 })}</div>
-                  
-                  {/* BOTÓN DESGLOSE MOVIDO Y MÁS SUTIL */}
-                  <button 
-                    onClick={() => setMostrarDesglose(!mostrarDesglose)}
-                    style={{ 
-                      background: 'none', 
-                      border: 'none', 
-                      color: '#0ea5e9', 
-                      fontSize: '9px', 
-                      fontWeight: '800', 
-                      cursor: 'pointer', 
-                      display: 'flex', 
-                      alignItems: 'center', 
-                      gap: '4px',
-                      padding: 0,
-                      marginTop: '2px',
-                      width: '100%',
-                      justifyContent: 'flex-end',
-                      textTransform: 'uppercase',
-                      textDecoration: 'underline'
-                    }}
-                  >
-                    <BarChart3 size={10} /> {mostrarDesglose ? 'Ocultar Desglose' : 'Ver Desglose'}
-                  </button>
+                <div style={{ fontSize: '11px', color: isExpired ? '#ef4444' : '#64748b', fontWeight: 'bold' }}>
+                  {isExpired ? (
+                    <span>🛑 Plazo vencido. No se pueden añadir nuevos registros.</span>
+                  ) : (
+                    <span>⏰ Fecha Tope Requisiciones: <span style={{ color: '#0f172a' }}>Domingo {format(deadlineDate, 'dd/MM')} - 11:59 PM</span></span>
+                  )}
                 </div>
               </div>
 
-              {/* PANEL DESPLEGABLE DE CATEGORÍAS */}
-              {mostrarDesglose && (
-                <div style={{ 
-                  position: 'absolute', 
-                  top: '100%', 
-                  right: '0', 
-                  zIndex: 100, 
-                  backgroundColor: 'white', 
-                  border: '1px solid #e2e8f0', 
-                  borderRadius: '20px', 
-                  padding: '18px', 
-                  width: '300px', 
-                  boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1), 0 10px 10px -5px rgba(0,0,0,0.04)',
-                  marginTop: '10px'
-                }}>
-                  <label style={{ fontSize: '9px', fontWeight: '900', color: '#94a3b8', display: 'block', marginBottom: '10px', borderBottom: '1px solid #f1f5f9', paddingBottom: '4px' }}>DESGLOSE POR CATEGORÍA</label>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    {categoriasEjecucion.length > 0 ? categoriasEjecucion.map((cat, ci) => (
-                      <div key={ci}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', fontWeight: '700', marginBottom: '3px' }}>
-                          <span style={{ color: '#475569', maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cat.name}</span>
-                          <span style={{ color: '#1e293b' }}>$ {cat.ejecutado.toLocaleString('de-DE', { minimumFractionDigits: 0 })}</span>
-                        </div>
-                        <div style={{ height: '4px', backgroundColor: '#f8fafc', borderRadius: '4px', overflow: 'hidden' }}>
-                          <div style={{ 
-                            height: '100%', 
-                            width: `${cat.porcentaje}%`, 
-                            backgroundColor: '#0ea5e9',
-                            borderRadius: '4px'
-                          }}></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <div>
+                  <h1 style={{ margin: 0, fontSize: '1.8rem', fontWeight: '950', color: '#0f172a', letterSpacing: '-0.5px' }}>
+                    {isEditing ? 'Solicitud de Fondos' : 'Registro de Fondos'}
+                  </h1>
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '5px' }}>
+                    <div style={{ background: '#0f172a', color: 'white', padding: '3px 10px', borderRadius: '6px', fontSize: '10px', fontWeight: 'bold' }}>ID CONTROL: {idDinamico}</div>
+                  </div>
+                </div>
+
+                {/* DASHBOARD DE CONTROL DE CABECERA (RESTAURADO) */}
+                <div style={{ display: 'flex', gap: '10px', marginLeft: '20px' }}>
+                  {[
+                    { label: 'ESTIMADO', val: dashEjecucion.estimado, col: '#0ea5e9', icon: <DollarSign size={14} /> },
+                    { label: 'COMPRADO', val: dashEjecucion.ejecutado, col: '#10b981', icon: <CheckCircle2 size={14} /> },
+                    { label: 'PENDIENTE', val: dashEjecucion.pendiente, col: '#f59e0b', icon: <Clock size={20} /> },
+                    { label: 'DIFERENCIA', val: Math.abs(dashEjecucion.diferencia), col: dashEjecucion.diferencia < 0 ? '#ef4444' : '#10b981', icon: <Activity size={20} /> }
+                  ].map((stat, idx) => (
+                    <div key={idx} style={{
+                      backgroundColor: 'white',
+                      border: '1px solid rgba(226, 232, 240, 0.8)',
+                      padding: '12px 20px',
+                      borderRadius: '16px',
+                      minWidth: '150px',
+                      boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      justifyContent: 'center'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                        <span style={{ color: stat.col }}>{stat.icon}</span>
+                        <span style={{ fontSize: '9px', fontWeight: '900', color: '#64748b', letterSpacing: '0.05em' }}>{stat.label}</span>
+                      </div>
+                      <div style={{ fontSize: '1.4rem', fontWeight: '1000', color: stat.col, letterSpacing: '-0.5px' }}>
+                        $ {stat.val.toLocaleString('de-DE', { minimumFractionDigits: 0 })}
+                      </div>
+                    </div>
+                  ))}
+
+                  {/* SALUD PRESUPUESTARIA */}
+                  <div style={{
+                    backgroundColor: 'rgba(255, 255, 255, 0.6)',
+                    border: '1px solid rgba(226, 232, 240, 0.8)',
+                    padding: '12px 20px',
+                    borderRadius: '16px',
+                    minWidth: '180px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'center'
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', alignItems: 'center' }}>
+                      <span style={{ fontSize: '9px', fontWeight: '900', color: '#64748b', textTransform: 'uppercase' }}>Salud Presupuestaria</span>
+                      <span style={{ fontSize: '10px', fontWeight: '1000', color: '#0ea5e9' }}>{Math.round((dashEjecucion.ejecutado / (dashEjecucion.estimado || 1)) * 100)}%</span>
+                    </div>
+                    <div style={{ height: '6px', backgroundColor: '#e2e8f0', borderRadius: '3px', overflow: 'hidden' }}>
+                      <div style={{
+                        height: '100%',
+                        width: `${Math.min((dashEjecucion.ejecutado / (dashEjecucion.estimado || 1)) * 100, 100)}%`,
+                        backgroundColor: '#0ea5e9',
+                        borderRadius: '3px',
+                        boxShadow: '0 0 10px rgba(14, 165, 233, 0.4)'
+                      }}></div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* AREA DE TOTAL Y DESGLOSE RESTAURADA */}
+                <div style={{ display: 'flex', gap: '40px', textAlign: 'right', alignItems: 'center' }}>
+                  <div style={{ borderLeft: '2px solid #e2e8f0', paddingLeft: '30px', position: 'relative' }}>
+                    <label style={{ fontSize: '10px', fontWeight: '900', color: '#64748b' }}>TOTAL ESTIMADO</label>
+                    <div style={{ fontSize: '1.8rem', fontWeight: '950', color: '#0f172a' }}>$ {dashEjecucion.estimado.toLocaleString('de-DE', { minimumFractionDigits: 0 })}</div>
+
+                    <button
+                      onClick={() => setMostrarDesglose(!mostrarDesglose)}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        color: '#0ea5e9',
+                        fontSize: '9px',
+                        fontWeight: '800',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        padding: 0,
+                        marginTop: '2px',
+                        width: '100%',
+                        justifyContent: 'flex-end',
+                        textTransform: 'uppercase',
+                        textDecoration: 'underline'
+                      }}
+                    >
+                      <BarChart3 size={10} /> {mostrarDesglose ? 'Ocultar Desglose' : 'VER DESGLOSE'}
+                    </button>
+
+                    {/* PANEL DESPLEGABLE DE CATEGORÍAS (REPOSICIONADO) */}
+                    {mostrarDesglose && (
+                      <div style={{
+                        position: 'absolute',
+                        top: '100%',
+                        right: '0',
+                        zIndex: 100,
+                        backgroundColor: 'white',
+                        border: '1px solid #e2e8f0',
+                        borderRadius: '20px',
+                        padding: '18px',
+                        width: '300px',
+                        boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1), 0 10px 10px -5px rgba(0,0,0,0.04)',
+                        marginTop: '10px',
+                        textAlign: 'left'
+                      }}>
+                        <label style={{ fontSize: '9px', fontWeight: '900', color: '#94a3b8', display: 'block', marginBottom: '10px', borderBottom: '1px solid #f1f5f9', paddingBottom: '4px' }}>DESGLOSE POR CATEGORÍA</label>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                          {categoriasEjecucion.length > 0 ? categoriasEjecucion.map((cat, ci) => (
+                            <div key={ci}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', fontWeight: '700', marginBottom: '3px' }}>
+                                <span style={{ color: '#475569', maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cat.name}</span>
+                                <span style={{ color: '#1e293b' }}>$ {cat.ejecutado.toLocaleString('de-DE', { minimumFractionDigits: 0 })}</span>
+                              </div>
+                              <div style={{ height: '4px', backgroundColor: '#f8fafc', borderRadius: '4px', overflow: 'hidden' }}>
+                                <div style={{
+                                  height: '100%',
+                                  width: `${cat.porcentaje}%`,
+                                  backgroundColor: '#0ea5e9',
+                                  borderRadius: '4px'
+                                }}></div>
+                              </div>
+                            </div>
+                          )) : (
+                            <div style={{ fontSize: '10px', color: '#94a3b8', fontStyle: 'italic', textAlign: 'center', marginTop: '10px' }}>Sin datos de ejecución</div>
+                          )}
                         </div>
                       </div>
-                    )) : (
-                      <div style={{ fontSize: '10px', color: '#94a3b8', fontStyle: 'italic', textAlign: 'center', marginTop: '10px' }}>Sin datos de ejecución</div>
                     )}
                   </div>
                 </div>
-              )}
+              </div>
             </div>
 
-            {/* FORM CABECERA */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px', background: 'white', padding: '20px', borderRadius: '15px', border: '1px solid #e2e8f0', marginBottom: '20px' }}>
-              <div style={{ display: 'flex', flexDirection: 'column' }}>
-                <label style={{ fontSize: '10px', fontWeight: 'bold', color: '#363636', marginBottom: '5px' }}>FECHA OPERATIVA</label>
-                <input type="date" className="sf-input" value={form.fecha} readOnly style={{ backgroundColor: '#f8fafc', color: '#64748b', cursor: 'not-allowed' }} />
-              </div>
+            {/* --- CUERPO DESPLAZABLE --- */}
+            <div style={{ flexGrow: 1, overflowY: 'auto', padding: '30px', backgroundColor: 'rgba(241, 245, 249, 0.4)' }}>
 
-              <div style={{ display: 'flex', flexDirection: 'column' }}>
-                <label style={{ fontSize: '10px', fontWeight: 'bold', color: '#363636', marginBottom: '5px' }}>GERENCIA SOLICITANTE</label>
-                {(currentUser?.esAdminReal || currentUser?.rol === 'Gerente General' || currentUser?.rol === 'Admin') ? (
-                  <select
+              {/* FORM CABECERA */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px', background: 'white', padding: '20px', borderRadius: '15px', border: '1px solid #e2e8f0', marginBottom: '20px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                  <label style={{ fontSize: '10px', fontWeight: 'bold', color: '#363636', marginBottom: '5px' }}>FECHA OPERATIVA</label>
+                  <input type="date" className="sf-input" value={form.fecha} readOnly style={{ backgroundColor: '#f8fafc', color: '#64748b', cursor: 'not-allowed' }} />
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                  <label style={{ fontSize: '10px', fontWeight: 'bold', color: '#363636', marginBottom: '5px' }}>GERENCIA SOLICITANTE</label>
+                  {(currentUser?.esAdminReal || currentUser?.rol === 'Gerente General' || currentUser?.rol === 'Admin') ? (
+                    <select
+                      className="sf-input"
+                      value={form.gerencia}
+                      onChange={(e) => {
+                        const nuevaGerencia = e.target.value;
+                        const gerentesRel = gerenciasData[nuevaGerencia];
+                        const primerGerente = (gerentesRel && gerentesRel.length > 0) ? gerentesRel[0] : '';
+                        setForm({
+                          ...form,
+                          gerencia: nuevaGerencia,
+                          responsable: primerGerente
+                        });
+                      }}
+                    >
+                      <option value="">Seleccione Gerencia...</option>
+                      {[...new Set([...gerentesDisponibles.map(g => g.departamento), 'Contabilidad'])].sort().map(dep => (
+                        <option key={dep} value={dep}>{dep}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input className="sf-input" value={form.gerencia} readOnly style={{ backgroundColor: '#f8fafc', color: '#475569' }} />
+                  )}
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                  <label style={{ fontSize: '10px', fontWeight: 'bold', color: '#363636', marginBottom: '5px' }}>RESPONSABLE DE GASTO</label>
+                  <input
                     className="sf-input"
-                    value={form.gerencia}
-                    onChange={(e) => {
-                      const nuevaGerencia = e.target.value;
-                      const gerentesRel = gerenciasData[nuevaGerencia];
-                      const primerGerente = (gerentesRel && gerentesRel.length > 0) ? gerentesRel[0] : '';
-                      setForm({
-                        ...form,
-                        gerencia: nuevaGerencia,
-                        responsable: primerGerente
-                      });
-                    }}
-                  >
-                    <option value="">Seleccione Gerencia...</option>
-                    {[...new Set([...gerentesDisponibles.map(g => g.departamento), 'Contabilidad'])].sort().map(dep => (
-                      <option key={dep} value={dep}>{dep}</option>
-                    ))}
-                  </select>
-                ) : (
-                  <input className="sf-input" value={form.gerencia} readOnly style={{ backgroundColor: '#f8fafc', color: '#475569' }} />
-                )}
+                    value={form.responsable}
+                    readOnly
+                    style={{ backgroundColor: '#f8fafc', color: '#1e293b', fontWeight: '600' }}
+                  />
+                </div>
               </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column' }}>
-                <label style={{ fontSize: '10px', fontWeight: 'bold', color: '#363636', marginBottom: '5px' }}>RESPONSABLE DE GASTO</label>
-                <input
-                  className="sf-input"
-                  value={form.responsable}
-                  readOnly
-                  style={{ backgroundColor: '#f8fafc', color: '#1e293b', fontWeight: '600' }}
-                />
-              </div>
-            </div>
-
-            {/* TABLA DE RENGLONES */}
-            <div className="sf-table-wrapper">
-              <div className="sf-table-header">
-                <div style={{ width: '40px', padding: '12px', textAlign: 'center' }}>SEL</div>
-                <div style={{ width: '45px', padding: '12px' }}>N°</div>
-                <div style={{ width: '110px', padding: '12px' }}>REQ</div>
-                <div style={{ width: '200px', padding: '12px' }}>C. COSTO</div>
-                <div style={{ width: '215px', padding: '12px' }}>CLASIFICACIÓN</div>
-                <div style={{ width: '215px', padding: '12px' }}>CATEGORÍA</div>
-                <div style={{ width: '80px', padding: '12px' }}>CANT</div>
-                <div style={{ width: '90px', padding: '12px' }}>UNID</div>
-                <div style={{ width: '460px', padding: '12px' }}>DESCRIPCIÓN DEL GASTO</div>
-                <div style={{ width: '200px', padding: '12px' }}>BENEFICIARIO</div>
-                <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>P.U $/BS</div>
-                <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>P.U $/$</div>
-                <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>TOTAL $</div>
-              </div>
-
-              <div style={{ maxHeight: '40vh', overflowY: 'auto' }}>
-                {form.partidas.map((p, i) => (
-                  <div key={p.id} className="sf-table-row" style={{
-                    background: (p.requisicion_id || p.codigo_ticket || p.status === 'Bloqueado') ? '#f1f5f9' : (p.selected ? '#e0f2fe' : 'transparent'),
-                    opacity: 1
-                  }}>
-                    <div style={{ width: '40px', textAlign: 'center' }}>
-                      <input
-                        type="checkbox"
-                        checked={p.selected || false}
-                        onChange={(e) => manejarCambioPartida(i, 'selected', e.target.checked)}
-                        style={{ cursor: (p.requisicion_id || p.codigo_ticket || p.status === 'Bloqueado') ? 'not-allowed' : 'pointer', transform: 'scale(1.2)' }}
-                        disabled={!!p.requisicion_id || !!p.codigo_ticket || p.status === 'Bloqueado'}
-                        title={p.codigo_ticket ? `Ticket Emitido: ${p.codigo_ticket}` : (p.requisicion_id ? "Bloqueado por Requisición" : "")}
-                      />
-                    </div>
-                    <div style={{ width: '45px', textAlign: 'center', fontWeight: 'bold', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'center' }}>
-                      {i + 1}
-                      {p.codigo_ticket && <span title={`Ticket: ${p.codigo_ticket}`}>🎟️</span>}
-                      {p.pago_realizado && <span title="Pago Completado">✅</span>}
-                    </div>
-                    <div style={{ width: '110px', padding: '6px', fontSize: '10px', fontWeight: 'bold', color: '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      {p.codigo_req || '---'}
-                    </div>
-                    <div style={{ width: '200px', padding: '6px' }}>
-                      <select className="sf-table-input" value={p.cc} onChange={(e) => manejarCambioPartida(i, 'cc', e.target.value)} style={{ fontWeight: 'bold' }} disabled={!!p.codigo_ticket}>
-                        <option value="">Seleccione C.C...</option>
-                        {centrosCosto.map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>)}
-                      </select>
-                    </div>
-                    <div style={{ width: '215px', padding: '6px' }}>
-                      <select className="sf-table-input" value={p.clasif} onChange={(e) => manejarCambioPartida(i, 'clasif', e.target.value)} disabled={!p.cc}>
-                        <option value="">Clasificación...</option>
-                        {(() => {
-                          const ccObj = centrosCosto.find(c => c.nombre === p.cc);
-                          return todasClasificaciones
-                            .filter(cl => cl.padreId === ccObj?.id)
-                            .map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>);
-                        })()}
-                      </select>
-                    </div>
-                    <div style={{ width: '215px', padding: '6px' }}>
-                      <select className="sf-table-input" value={p.cat} onChange={(e) => manejarCambioPartida(i, 'cat', e.target.value)} disabled={!p.clasif}>
-                        <option value="">Categoría...</option>
-                        {(() => {
-                          const ccObj = centrosCosto.find(c => c.nombre === p.cc);
-                          const clObj = todasClasificaciones.find(cl => cl.nombre === p.clasif && cl.padreId === ccObj?.id);
-                          return todasCategorias
-                            .filter(ct => ct.padreId === clObj?.id)
-                            .map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>);
-                        })()}
-                      </select>
-                    </div>
-                    <div style={{ width: '80px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.cant} onChange={(e) => manejarCambioPartida(i, 'cant', e.target.value)} style={{ textAlign: 'center' }} disabled={!!p.codigo_ticket} /></div>
-                    <div style={{ width: '90px', padding: '6px' }}><select className="sf-table-input" value={p.uni} onChange={(e) => manejarCambioPartida(i, 'uni', e.target.value)} disabled={!!p.codigo_ticket}>{unidades.map(u => <option key={u}>{u}</option>)}</select></div>
-                    <div style={{ width: '460px', padding: '10px' }}><textarea className="sf-table-input" value={p.desc} onChange={(e) => manejarCambioPartida(i, 'desc', e.target.value)} style={{ resize: 'none' }} rows="1" disabled={!!p.codigo_ticket} /></div>
-                    <div style={{ width: '200px', padding: '6px' }}><input className="sf-table-input" value={p.ben} onChange={(e) => manejarCambioPartida(i, 'ben', e.target.value)} disabled={!!p.codigo_ticket} /></div>
-                    <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puBs === 0 ? '' : p.puBs} onChange={(e) => manejarCambioPartida(i, 'puBs', e.target.value)} style={{ textAlign: 'right' }} disabled={p.puUsd > 0 || !!p.codigo_ticket} /></div>
-                    <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puUsd === 0 ? '' : p.puUsd} onChange={(e) => manejarCambioPartida(i, 'puUsd', e.target.value)} style={{ textAlign: 'right' }} disabled={p.puBs > 0 || !!p.codigo_ticket} /></div>
-                    <div style={{ width: '120px', padding: '6px', textAlign: 'right', fontWeight: 'bold' }}>{((parseFloat(p.puBs) || parseFloat(p.puUsd) || 0) * (p.cant || 0)).toLocaleString('de-DE')}</div>
-                    <div style={{ width: '80px', display: 'flex', gap: '5px', justifyContent: 'center' }}>
-                      <button onClick={() => duplicarPartida(i)} style={{ background: 'none', border: 'none', color: '#0ea5e9', cursor: (p.codigo_ticket || p.requisicion_id) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (p.codigo_ticket || p.requisicion_id) ? 0.3 : 1 }} disabled={!!p.codigo_ticket || !!p.requisicion_id} title="Duplicar renglón"><Copy size={16} /></button>
-                      <button onClick={() => setForm({ ...form, partidas: form.partidas.filter((_, idx) => idx !== i) })} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: (p.codigo_ticket || p.requisicion_id) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (p.codigo_ticket || p.requisicion_id) ? 0.3 : 1 }} disabled={!!p.codigo_ticket || !!p.requisicion_id} title="Eliminar renglón">🗑️</button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* SECCIÓN GASTOS IMPREVISTOS */}
-            {mostrarImprevistos && (
-              <div style={{ marginTop: '30px', animation: 'fadeIn 0.3s ease-in-out' }}>
-                <div style={{ display: 'flex', alignItems: 'center', marginBottom: '15px' }}>
-                  <div style={{ flex: 1, height: '2px', background: 'linear-gradient(90deg, transparent, #f59e0b, transparent)' }}></div>
-                  <h3 style={{ margin: '0 20px', color: '#b45309', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <i className="fa-solid fa-triangle-exclamation"></i>TICKET DE PAGO
-                  </h3>
-                  <div style={{ flex: 1, height: '2px', background: 'linear-gradient(90deg, transparent, #f59e0b, transparent)' }}></div>
+              {/* TABLA DE RENGLONES */}
+              <div className="sf-table-wrapper">
+                <div className="sf-table-header">
+                  <div style={{ width: '25px', padding: '12px', textAlign: 'center' }}>SEL</div>
+                  <div style={{ width: '15px', padding: '12px' }}>N°</div>
+                  <div style={{ width: '125px', padding: '12px' }}>ID REF</div>
+                  <div style={{ width: '170px', padding: '12px' }}>C. COSTO</div>
+                  <div style={{ width: '200px', padding: '12px' }}>CLASIFICACIÓN</div>
+                  <div style={{ width: '200px', padding: '12px' }}>CATEGORÍA</div>
+                  <div style={{ width: '80px', padding: '12px' }}>CANT</div>
+                  <div style={{ width: '90px', padding: '12px' }}>UNID</div>
+                  <div style={{ width: '460px', padding: '12px' }}>DESCRIPCIÓN DEL GASTO</div>
+                  <div style={{ width: '200px', padding: '12px' }}>BENEFICIARIO</div>
+                  <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>P.U $/BS</div>
+                  <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>P.U $/$</div>
+                  <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>TOTAL $</div>
+                  <div style={{ width: '130px', padding: '12px' }}>EMITIDO POR</div>
                 </div>
 
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '25px', marginBottom: '12px', padding: '0 10px' }}>
-                  <div style={{ background: '#fffbeb', border: '1px solid #fef3c7', padding: '5px 15px', borderRadius: '8px', display: 'flex', gap: '15px' }}>
-                    <span style={{ fontSize: '11px', fontWeight: 'bold', color: '#d97706' }}>BALANCE DE TICKET DE PAGO:</span>
-                    <span style={{ fontSize: '11px', fontWeight: '800', color: '#b45309' }}>$/Bs. {sumas.imprevistosBs.toLocaleString('de-DE')}</span>
-                    <span style={{ fontSize: '11px', fontWeight: '800', color: '#b45309' }}>$ {sumas.imprevistosUsd.toLocaleString('de-DE')}</span>
-                  </div>
-                </div>
-
-                <div className="sf-table-wrapper" style={{ border: '1px solid #fcd34d', boxShadow: '0 4px 15px rgba(245, 158, 11, 0.05)' }}>
-                  <div className="sf-table-header" style={{ background: '#fffcf0', borderBottom: '2px solid #fef3c7', color: '#b45309' }}>
-                    <div style={{ width: '45px', padding: '12px' }}>N°</div>
-                    <div style={{ width: '110px', padding: '12px' }}>REQ</div>
-                    <div style={{ width: '200px', padding: '12px' }}>C. COSTO</div>
-                    <div style={{ width: '215px', padding: '12px' }}>CLASIFICACIÓN</div>
-                    <div style={{ width: '215px', padding: '12px' }}>CATEGORÍA</div>
-                    <div style={{ width: '80px', padding: '12px' }}>CANT</div>
-                    <div style={{ width: '90px', padding: '12px' }}>UNID</div>
-                    <div style={{ width: '460px', padding: '12px' }}>DESCRIPCIÓN DEL GASTO</div>
-                    <div style={{ width: '200px', padding: '12px' }}>BENEFICIARIO</div>
-                    <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>P.U $/BS</div>
-                    <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>P.U $/$</div>
-                    <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>TOTAL $</div>
-                  </div>
-
-                  <div style={{ maxHeight: '30vh', overflowY: 'auto' }}>
-                    {form.imprevistos.map((imp, i) => (
-                      <div key={imp.id} className="sf-table-row" style={{
-                        background: (imp.requisicion_id || imp.status === 'Bloqueado') ? '#f1f5f9' : (imp.selected ? '#fffcf0' : 'transparent'),
-                        opacity: 1
-                      }}>
-                        <div style={{ width: '40px', textAlign: 'center' }}>
-                          <input
-                            type="checkbox"
-                            checked={imp.selected || false}
-                            onChange={(e) => manejarCambioImprevisto(i, 'selected', e.target.checked)}
-                            style={{ cursor: (imp.requisicion_id || imp.status === 'Bloqueado') ? 'not-allowed' : 'pointer', transform: 'scale(1.2)' }}
-                            disabled={!!imp.requisicion_id || imp.status === 'Bloqueado'}
-                            title={(imp.requisicion_id || imp.status === 'Bloqueado') ? "Esta partida está bloqueada por una requisición activa" : ""}
-                          />
-                        </div>
-                        <div style={{ width: '45px', textAlign: 'center', fontWeight: 'bold', color: '#d97706' }}>{i + 1}</div>
-                        <div style={{ width: '110px', padding: '6px', fontSize: '10px', fontWeight: 'bold', color: '#b45309', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                          {imp.codigo_req || '---'}
-                        </div>
-                        <div style={{ width: '200px', padding: '6px' }}>
-                          <select className="sf-table-input" value={imp.cc} onChange={(e) => manejarCambioImprevisto(i, 'cc', e.target.value)} style={{ fontWeight: 'bold' }}>
-                            <option value="">Seleccione C.C...</option>
-                            {centrosCosto.map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>)}
-                          </select>
-                        </div>
-                        <div style={{ width: '215px', padding: '6px' }}>
-                          <select className="sf-table-input" value={imp.clasif} onChange={(e) => manejarCambioImprevisto(i, 'clasif', e.target.value)} disabled={!imp.cc}>
-                            <option value="">Clasificación...</option>
-                            {(() => {
-                              const ccObj = centrosCosto.find(c => c.nombre === imp.cc);
-                              return todasClasificaciones
-                                .filter(cl => cl.padreId === ccObj?.id)
-                                .map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>);
-                            })()}
-                          </select>
-                        </div>
-                        <div style={{ width: '215px', padding: '6px' }}>
-                          <select className="sf-table-input" value={imp.cat} onChange={(e) => manejarCambioImprevisto(i, 'cat', e.target.value)} disabled={!imp.clasif}>
-                            <option value="">Categoría...</option>
-                            {(() => {
-                              const ccObj = centrosCosto.find(c => c.nombre === imp.cc);
-                              const clObj = todasClasificaciones.find(cl => cl.nombre === imp.clasif && cl.padreId === ccObj?.id);
-                              return todasCategorias
-                                .filter(ct => ct.padreId === clObj?.id)
-                                .map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>);
-                            })()}
-                          </select>
-                        </div>
-                        <div style={{ width: '80px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.cant} onChange={(e) => manejarCambioImprevisto(i, 'cant', e.target.value)} style={{ textAlign: 'center' }} /></div>
-                        <div style={{ width: '90px', padding: '6px' }}><select className="sf-table-input" value={imp.uni} onChange={(e) => manejarCambioImprevisto(i, 'uni', e.target.value)}>{unidades.map(u => <option key={u}>{u}</option>)}</select></div>
-                        <div style={{ width: '460px', padding: '10px' }}><textarea className="sf-table-input" value={imp.desc} onChange={(e) => manejarCambioImprevisto(i, 'desc', e.target.value)} style={{ resize: 'none' }} rows="1" /></div>
-                        <div style={{ width: '200px', padding: '6px' }}><input className="sf-table-input" value={imp.ben} onChange={(e) => manejarCambioImprevisto(i, 'ben', e.target.value)} /></div>
-                        <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.puBs} onChange={(e) => manejarCambioImprevisto(i, 'puBs', e.target.value)} style={{ textAlign: 'right' }} disabled={imp.puUsd > 0} /></div>
-                        <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.puUsd} onChange={(e) => manejarCambioImprevisto(i, 'puUsd', e.target.value)} style={{ textAlign: 'right' }} disabled={imp.puBs > 0} /></div>
-                        <div style={{ width: '120px', padding: '6px', textAlign: 'right', fontWeight: 'bold' }}>{((parseFloat(imp.puBs) || parseFloat(imp.puUsd) || 0) * (imp.cant || 1)).toLocaleString('de-DE')}</div>
-                        <div style={{ width: '80px', display: 'flex', gap: '5px', justifyContent: 'center' }}>
-                          <button onClick={() => duplicarImprevisto(i)} style={{ background: 'none', border: 'none', color: '#f59e0b', cursor: (imp.requisicion_id || imp.status === 'Bloqueado') ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (imp.requisicion_id || imp.status === 'Bloqueado') ? 0.3 : 1 }} disabled={!!imp.requisicion_id || imp.status === 'Bloqueado'} title="Duplicar imprevisto"><Copy size={16} /></button>
-                          <button onClick={() => setForm({ ...form, imprevistos: form.imprevistos.filter((_, idx) => idx !== i) })} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: (imp.requisicion_id || imp.status === 'Bloqueado') ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (imp.requisicion_id || imp.status === 'Bloqueado') ? 0.3 : 1 }} disabled={!!imp.requisicion_id || imp.status === 'Bloqueado'} title="Eliminar imprevisto">🗑️</button>
-                        </div>
+                <div style={{ maxHeight: '40vh', overflowY: 'auto' }}>
+                  {form.partidas.map((p, i) => (
+                    <div key={p.id} className="sf-table-row" style={{
+                      background: (p.requisicion_id || p.codigo_ticket || p.status === 'Bloqueado') ? '#f1f5f9' : (p.selected ? '#e0f2fe' : 'transparent'),
+                      opacity: 1
+                    }}>
+                      <div style={{ width: '40px', textAlign: 'center' }}>
+                        <input
+                          type="checkbox"
+                          checked={p.selected || false}
+                          onChange={(e) => manejarCambioPartida(i, 'selected', e.target.checked)}
+                          style={{ cursor: (p.requisicion_id || p.codigo_ticket || p.status === 'Bloqueado') ? 'not-allowed' : 'pointer', transform: 'scale(1.2)' }}
+                          disabled={!!p.requisicion_id || !!p.codigo_ticket || p.status === 'Bloqueado'}
+                          title={p.codigo_ticket ? `Ticket Emitido: ${p.codigo_ticket}` : (p.requisicion_id ? "Bloqueado por Requisición" : "")}
+                        />
                       </div>
-                    ))}
-                  </div>
-                  <div style={{ padding: '12px', background: '#fffcf0', borderTop: '1px solid #fef3c7', display: 'flex', justifyContent: 'center' }}>
-                    <button className="sf-btn" onClick={() => setForm({ ...form, imprevistos: [...form.imprevistos, { id: Date.now(), selected: false, cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '', pago_realizado: false }] })} style={{ color: '#d97706', border: '2px dashed #f59e0b', background: '#fffbeb', padding: '8px 40px', borderRadius: '10px', fontWeight: 'bold', cursor: 'pointer', transition: 'all 0.2s' }}>
-                      <i className="fa-solid fa-plus-circle"></i> AÑADIR OTRO TICKET DE PAGO
-                    </button>
-                  </div>
+                      <div style={{ width: '45px', textAlign: 'center', fontWeight: 'bold', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'center' }}>
+                        {i + 1}
+                        {p.codigo_ref?.startsWith('TP-') && <span title={`Ticket: ${p.codigo_ref}`}>🎟️</span>}
+                        {p.codigo_ref?.startsWith('RR-') && <span title={`Requisición: ${p.codigo_ref}`}>📝</span>}
+                        {p.pago_realizado && <span title="Pago Completado">✅</span>}
+                      </div>
+                      <div style={{ width: '130px', padding: '6px', fontSize: '10px', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        {p.codigo_ref ? (
+                          <div style={{ backgroundColor: '#0ea5e9', color: 'white', padding: '4px 8px', borderRadius: '6px', fontSize: '9px', boxShadow: '0 2px 4px rgba(14, 165, 233, 0.2)' }}>
+                            {p.codigo_ref}
+                          </div>
+                        ) : (
+                          <span style={{ color: '#cbd5e1' }}>---</span>
+                        )}
+                      </div>
+                      <div style={{ width: '180px', padding: '6px' }}>
+                        <select className="sf-table-input" value={p.cc} onChange={(e) => manejarCambioPartida(i, 'cc', e.target.value)} style={{ fontWeight: 'bold' }} disabled={!!p.codigo_ref}>
+                          <option value="">Seleccione C.C...</option>
+                          {centrosCosto.map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>)}
+                        </select>
+                      </div>
+                      <div style={{ width: '215px', padding: '6px' }}>
+                        <select className="sf-table-input" value={p.clasif} onChange={(e) => manejarCambioPartida(i, 'clasif', e.target.value)} disabled={!p.cc || !!p.codigo_ref}>
+                          <option value="">Clasificación...</option>
+                          {(() => {
+                            const ccObj = centrosCosto.find(c => c.nombre === p.cc);
+                            return todasClasificaciones
+                              .filter(cl => cl.padreId === ccObj?.id)
+                              .map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>);
+                          })()}
+                        </select>
+                      </div>
+                      <div style={{ width: '215px', padding: '6px' }}>
+                        <select className="sf-table-input" value={p.cat} onChange={(e) => manejarCambioPartida(i, 'cat', e.target.value)} disabled={!p.clasif || !!p.codigo_ref}>
+                          <option value="">Categoría...</option>
+                          {(() => {
+                            const ccObj = centrosCosto.find(c => c.nombre === p.cc);
+                            const clObj = todasClasificaciones.find(cl => cl.nombre === p.clasif && cl.padreId === ccObj?.id);
+                            return todasCategorias
+                              .filter(ct => ct.padreId === clObj?.id)
+                              .map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>);
+                          })()}
+                        </select>
+                      </div>
+                      <div style={{ width: '80px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.cant} onChange={(e) => manejarCambioPartida(i, 'cant', e.target.value)} style={{ textAlign: 'center' }} disabled={!!p.codigo_ref} /></div>
+                      <div style={{ width: '90px', padding: '6px' }}><select className="sf-table-input" value={p.uni} onChange={(e) => manejarCambioPartida(i, 'uni', e.target.value)} disabled={!!p.codigo_ref}>{unidades.map(u => <option key={u}>{u}</option>)}</select></div>
+                      <div style={{ width: '460px', padding: '10px' }}><textarea className="sf-table-input" value={p.desc} onChange={(e) => manejarCambioPartida(i, 'desc', e.target.value)} style={{ resize: 'none' }} rows="1" disabled={!!p.codigo_ref} /></div>
+                      <div style={{ width: '200px', padding: '6px' }}><input className="sf-table-input" value={p.ben} onChange={(e) => manejarCambioPartida(i, 'ben', e.target.value)} disabled={!!p.codigo_ref} /></div>
+                      <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puBs === 0 ? '' : p.puBs} onChange={(e) => manejarCambioPartida(i, 'puBs', e.target.value)} style={{ textAlign: 'right' }} disabled={p.puUsd > 0 || !!p.codigo_ref} /></div>
+                      <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puUsd === 0 ? '' : p.puUsd} onChange={(e) => manejarCambioPartida(i, 'puUsd', e.target.value)} style={{ textAlign: 'right' }} disabled={p.puBs > 0 || !!p.codigo_ref} /></div>
+                      <div style={{ width: '120px', padding: '6px', textAlign: 'right', fontWeight: 'bold' }}>{((parseFloat(p.puBs) || parseFloat(p.puUsd) || 0) * (p.cant || 0)).toLocaleString('de-DE')}</div>
+                      <div style={{ width: '130px', padding: '6px', fontSize: '9px', color: '#64748b', fontWeight: '600' }}>
+                        {p.emisor || '---'}
+                      </div>
+                      <div style={{ width: '80px', display: 'flex', gap: '5px', justifyContent: 'center' }}>
+                        <button onClick={() => duplicarPartida(i)} style={{ background: 'none', border: 'none', color: '#0ea5e9', cursor: (p.codigo_ticket || p.requisicion_id) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (p.codigo_ticket || p.requisicion_id) ? 0.3 : 1 }} disabled={!!p.codigo_ticket || !!p.requisicion_id} title="Duplicar renglón"><Copy size={16} /></button>
+                        <button onClick={() => { setHasChanges(true); setForm({ ...form, partidas: form.partidas.filter((_, idx) => idx !== i) }); }} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: (p.codigo_ticket || p.requisicion_id) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (p.codigo_ticket || p.requisicion_id) ? 0.3 : 1 }} disabled={!!p.codigo_ticket || !!p.requisicion_id} title="Eliminar renglón">🗑️</button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
-            )}
 
-            <div style={{ marginTop: '25px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+              {/* SECCIÓN GASTOS IMPREVISTOS */}
+              {mostrarImprevistos && (
+                <div style={{ marginTop: '30px', animation: 'fadeIn 0.3s ease-in-out' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', marginBottom: '15px' }}>
+                    <div style={{ flex: 1, height: '2px', background: 'linear-gradient(90deg, transparent, #f59e0b, transparent)' }}></div>
+                    <h3 style={{ margin: '0 20px', color: '#b45309', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <i className="fa-solid fa-triangle-exclamation"></i>TICKET DE PAGO
+                    </h3>
+                    <div style={{ flex: 1, height: '2px', background: 'linear-gradient(90deg, transparent, #f59e0b, transparent)' }}></div>
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '25px', marginBottom: '12px', padding: '0 10px' }}>
+                    <div style={{ background: '#fffbeb', border: '1px solid #fef3c7', padding: '5px 15px', borderRadius: '8px', display: 'flex', gap: '15px' }}>
+                      <span style={{ fontSize: '11px', fontWeight: 'bold', color: '#d97706' }}>BALANCE DE TICKET DE PAGO:</span>
+                      <span style={{ fontSize: '11px', fontWeight: '800', color: '#b45309' }}>$/Bs. {sumas.imprevistosBs.toLocaleString('de-DE')}</span>
+                      <span style={{ fontSize: '11px', fontWeight: '800', color: '#b45309' }}>$ {sumas.imprevistosUsd.toLocaleString('de-DE')}</span>
+                    </div>
+                  </div>
+
+                  <div className="sf-table-wrapper" style={{ border: '1px solid #fcd34d', boxShadow: '0 4px 15px rgba(245, 158, 11, 0.05)' }}>
+                    <div className="sf-table-header" style={{ background: '#fffcf0', borderBottom: '2px solid #fef3c7', color: '#b45309' }}>
+                      <div style={{ width: '45px', padding: '12px' }}>N°</div>
+                      <div style={{ width: '130px', padding: '12px' }}>ID REF</div>
+                      <div style={{ width: '180px', padding: '12px' }}>C. COSTO</div>
+                      <div style={{ width: '215px', padding: '12px' }}>CLASIFICACIÓN</div>
+                      <div style={{ width: '215px', padding: '12px' }}>CATEGORÍA</div>
+                      <div style={{ width: '80px', padding: '12px' }}>CANT</div>
+                      <div style={{ width: '90px', padding: '12px' }}>UNID</div>
+                      <div style={{ width: '460px', padding: '12px' }}>DESCRIPCIÓN DEL GASTO</div>
+                      <div style={{ width: '200px', padding: '12px' }}>BENEFICIARIO</div>
+                      <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>P.U $/BS</div>
+                      <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>P.U $/$</div>
+                      <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>TOTAL $</div>
+                      <div style={{ width: '130px', padding: '12px' }}>EMITIDO POR</div>
+                    </div>
+
+                    <div style={{ maxHeight: '30vh', overflowY: 'auto' }}>
+                      {form.imprevistos.map((imp, i) => (
+                        <div key={imp.id} className="sf-table-row" style={{
+                          background: (imp.requisicion_id || imp.status === 'Bloqueado') ? '#f1f5f9' : (imp.selected ? '#fffcf0' : 'transparent'),
+                          opacity: 1
+                        }}>
+                          <div style={{ width: '40px', textAlign: 'center' }}>
+                            <input
+                              type="checkbox"
+                              checked={imp.selected || false}
+                              onChange={(e) => manejarCambioImprevisto(i, 'selected', e.target.checked)}
+                              style={{ cursor: (imp.requisicion_id || imp.status === 'Bloqueado') ? 'not-allowed' : 'pointer', transform: 'scale(1.2)' }}
+                              disabled={!!imp.requisicion_id || imp.status === 'Bloqueado'}
+                              title={(imp.requisicion_id || imp.status === 'Bloqueado') ? "Esta partida está bloqueada por una requisición activa" : ""}
+                            />
+                          </div>
+                          <div style={{ width: '45px', textAlign: 'center', fontWeight: 'bold', color: '#d97706', display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'center' }}>
+                            {i + 1}
+                            {imp.codigo_ref?.startsWith('TP-') && <span title={`Ticket: ${imp.codigo_ref}`}>🎟️</span>}
+                            {imp.pago_realizado && <span title="Pago Completado">✅</span>}
+                          </div>
+                          <div style={{ width: '130px', padding: '6px', fontSize: '10px', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            {imp.codigo_ref ? (
+                              <div style={{ backgroundColor: '#f59e0b', color: 'white', padding: '4px 8px', borderRadius: '6px', fontSize: '9px', boxShadow: '0 2px 4px rgba(245, 158, 11, 0.2)' }}>
+                                {imp.codigo_ref}
+                              </div>
+                            ) : (
+                              <span style={{ color: '#cbd5e1' }}>---</span>
+                            )}
+                          </div>
+                          <div style={{ width: '180px', padding: '6px' }}>
+                            <select className="sf-table-input" value={imp.cc} onChange={(e) => manejarCambioImprevisto(i, 'cc', e.target.value)} style={{ fontWeight: 'bold' }} disabled={!!imp.codigo_ref}>
+                              <option value="">Seleccione C.C...</option>
+                              {centrosCosto.map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>)}
+                            </select>
+                          </div>
+                          <div style={{ width: '215px', padding: '6px' }}>
+                            <select className="sf-table-input" value={imp.clasif} onChange={(e) => manejarCambioImprevisto(i, 'clasif', e.target.value)} disabled={!imp.cc || !!imp.codigo_ref}>
+                              <option value="">Clasificación...</option>
+                              {(() => {
+                                const ccObj = centrosCosto.find(c => c.nombre === imp.cc);
+                                return todasClasificaciones
+                                  .filter(cl => cl.padreId === ccObj?.id)
+                                  .map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>);
+                              })()}
+                            </select>
+                          </div>
+                          <div style={{ width: '215px', padding: '6px' }}>
+                            <select className="sf-table-input" value={imp.cat} onChange={(e) => manejarCambioImprevisto(i, 'cat', e.target.value)} disabled={!imp.clasif || !!imp.codigo_ref}>
+                              <option value="">Categoría...</option>
+                              {(() => {
+                                const ccObj = centrosCosto.find(c => c.nombre === imp.cc);
+                                const clObj = todasClasificaciones.find(cl => cl.nombre === imp.clasif && cl.padreId === ccObj?.id);
+                                return todasCategorias
+                                  .filter(ct => ct.padreId === clObj?.id)
+                                  .map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>);
+                              })()}
+                            </select>
+                          </div>
+                          <div style={{ width: '80px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.cant} onChange={(e) => manejarCambioImprevisto(i, 'cant', e.target.value)} style={{ textAlign: 'center' }} disabled={!!imp.codigo_ref} /></div>
+                          <div style={{ width: '90px', padding: '6px' }}><select className="sf-table-input" value={imp.uni} onChange={(e) => manejarCambioImprevisto(i, 'uni', e.target.value)} disabled={!!imp.codigo_ref}>{unidades.map(u => <option key={u}>{u}</option>)}</select></div>
+                          <div style={{ width: '460px', padding: '10px' }}><textarea className="sf-table-input" value={imp.desc} onChange={(e) => manejarCambioImprevisto(i, 'desc', e.target.value)} style={{ resize: 'none' }} rows="1" disabled={!!imp.codigo_ref} /></div>
+                          <div style={{ width: '200px', padding: '6px' }}><input className="sf-table-input" value={imp.ben} onChange={(e) => manejarCambioImprevisto(i, 'ben', e.target.value)} disabled={!!imp.codigo_ref} /></div>
+                          <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.puBs === 0 ? '' : imp.puBs} onChange={(e) => manejarCambioImprevisto(i, 'puBs', e.target.value)} style={{ textAlign: 'right' }} disabled={imp.puUsd > 0 || !!imp.codigo_ref} /></div>
+                          <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.puUsd === 0 ? '' : imp.puUsd} onChange={(e) => manejarCambioImprevisto(i, 'puUsd', e.target.value)} style={{ textAlign: 'right' }} disabled={imp.puBs > 0 || !!imp.codigo_ref} /></div>
+                          <div style={{ width: '120px', padding: '6px', textAlign: 'right', fontWeight: 'bold' }}>{((parseFloat(imp.puBs) || parseFloat(imp.puUsd) || 0) * (imp.cant || 1)).toLocaleString('de-DE')}</div>
+                          <div style={{ width: '130px', padding: '6px', fontSize: '9px', color: '#64748b', fontWeight: '600' }}>
+                            {imp.emisor || '---'}
+                          </div>
+                          <div style={{ width: '80px', display: 'flex', gap: '5px', justifyContent: 'center' }}>
+                            <button onClick={() => duplicarImprevisto(i)} style={{ background: 'none', border: 'none', color: '#f59e0b', cursor: (imp.codigo_ref || imp.status === 'Bloqueado') ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (imp.codigo_ref || imp.status === 'Bloqueado') ? 0.3 : 1 }} disabled={!!imp.codigo_ref || imp.status === 'Bloqueado'} title="Duplicar imprevisto"><Copy size={16} /></button>
+                            <button onClick={() => { setHasChanges(true); setForm({ ...form, imprevistos: form.imprevistos.filter((_, idx) => idx !== i) }); }} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: (imp.codigo_ref || imp.status === 'Bloqueado') ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (imp.codigo_ref || imp.status === 'Bloqueado') ? 0.3 : 1 }} disabled={!!imp.codigo_ref || imp.status === 'Bloqueado'} title="Eliminar imprevisto">🗑️</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{ padding: '12px', background: '#fffcf0', borderTop: '1px solid #fef3c7', display: 'flex', justifyContent: 'center' }}>
+                      <button className="sf-btn" onClick={() => { setHasChanges(true); setForm({ ...form, imprevistos: [...form.imprevistos, { id: Date.now(), selected: false, cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '', pago_realizado: false, emisor: `${currentUser?.nombre} ${currentUser?.apellido}` }] }); }} style={{ color: '#d97706', border: '2px dashed #f59e0b', background: '#fffbeb', padding: '8px 40px', borderRadius: '10px', fontWeight: 'bold', cursor: 'pointer', transition: 'all 0.2s' }}>
+                        <i className="fa-solid fa-plus-circle"></i> AÑADIR OTRO TICKET DE PAGO
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+            </div>
+
+            {/* --- PIE DE PÁGINA FIJO --- */}
+            <div style={{
+              flexShrink: 0,
+              padding: '20px 30px',
+              borderTop: '1px solid #e2e8f0',
+              backgroundColor: 'rgba(248, 250, 252, 0.8)',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center'
+            }}>
               <div style={{ display: 'flex', gap: '10px' }}>
                 <button
                   className="sf-btn sf-btn-add"
-                  onClick={() => setForm({ ...form, partidas: [...form.partidas, { id: Date.now(), selected: false, cc: form.partidas[0]?.cc || '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '' }] })}
+                  onClick={() => {
+                    setHasChanges(true);
+                    setForm({ ...form, partidas: [...form.partidas, { id: Date.now(), selected: false, cc: form.partidas[0]?.cc || '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '', emisor: `${currentUser?.nombre} ${currentUser?.apellido}` }] });
+                  }}
                   disabled={isExpired}
                   style={{ opacity: isExpired ? 0.5 : 1, cursor: isExpired ? 'not-allowed' : 'pointer' }}
                 >
-                  + AÑADIR RENGLÓN PARA REQUISICIÓN
+                  + AÑADIR RENGLÓN
                 </button>
-                <button className="sf-btn" onClick={() => setMostrarImprevistos(!mostrarImprevistos)} style={{ border: '1px solid #f59e0b', color: '#d97706', background: mostrarImprevistos ? '#fffbeb' : 'white' }}>
-                  {mostrarImprevistos ? '- OCULTAR TICKET' : '+ MOSTRAR TICKET'}
+                <button className="sf-btn" onClick={() => setMostrarImprevistos(!mostrarImprevistos)} style={{
+                  border: '2px solid #f59e0b',
+                  color: '#d97706',
+                  background: 'white',
+                  padding: '10px 25px',
+                  borderRadius: '12px',
+                  fontWeight: '900'
+                }}>
+                  {mostrarImprevistos ? 'OCULTAR TICKET' : '+ MOSTRAR TICKET'}
                 </button>
-                <button className="sf-btn sf-btn-success" onClick={handleCrearRequisicion} disabled={isExpired} style={{ opacity: isExpired ? 0.5 : 1 }}>📝 CREAR REQUISICIÓN</button>
+                <button className="sf-btn sf-btn-success" onClick={handleCrearRequisicion} disabled={isExpired} style={{
+                  backgroundColor: '#10b981',
+                  color: 'white',
+                  padding: '10px 25px',
+                  borderRadius: '12px',
+                  fontWeight: '900',
+                  opacity: isExpired ? 0.5 : 1,
+                  boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)'
+                }}>
+                  <FileText size={18} /> CREAR REQUISICIÓN
+                </button>
                 {mostrarImprevistos && (
-                  <button className="sf-btn" style={{ background: '#f59e0b', color: 'white', border: 'none', opacity: isExpired ? 0.5 : 1 }} onClick={handleEmitirTicketFromImprevisto} disabled={isExpired}>🏟️ EMITIR TICKET DE PAGO</button>
+                  <button className="sf-btn" style={{
+                    background: '#f59e0b',
+                    color: 'white',
+                    border: 'none',
+                    padding: '10px 25px',
+                    borderRadius: '12px',
+                    fontWeight: '900',
+                    opacity: isExpired ? 0.5 : 1,
+                    boxShadow: '0 4px 12px rgba(245, 158, 11, 0.3)'
+                  }} onClick={handleEmitirTicketFromImprevisto} disabled={isExpired}>
+                    <Activity size={18} /> EMITIR TICKET DE PAGO
+                  </button>
                 )}
               </div>
 
-              {/* BOTONES */}
-              <div style={{ display: 'flex', gap: '10px', alignSelf: 'flex-end' }}>
-                <button className="sf-btn sf-btn-close" onClick={intentarCerrarModal}>CERRAR</button>
+              <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                {isSaving && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginRight: '10px' }}>
+                    <Loader2 className="animate-spin" size={18} color="#0ea5e9" />
+                    <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#0ea5e9' }}>Procesando...</span>
+                  </div>
+                )}
+                <button className="sf-btn sf-btn-close" onClick={intentarCerrarModal} disabled={isSaving} style={{ opacity: isSaving ? 0.6 : 1 }}>CANCELAR</button>
                 <button
                   className="sf-btn"
-                  style={{ background: '#f8fafc', border: '1px solid #cbd5e1', color: '#475569', padding: '12px 25px', opacity: isExpired ? 0.5 : 1 }}
+                  style={{ background: '#fff', border: '1px solid #cbd5e1', color: '#475569', opacity: (isExpired || isSaving) ? 0.5 : 1 }}
                   onClick={() => registrarOActualizar(true)}
-                  disabled={isExpired}
+                  disabled={isExpired || isSaving}
                 >
-                  GUARDAR
+                  GUARDAR BORRADOR
                 </button>
-                <button className="sf-btn sf-btn-primary" onClick={() => registrarOActualizar(false)} disabled={isExpired} style={{ opacity: isExpired ? 0.5 : 1 }}>
-                  {isEditing ? 'ACTUALIZAR Y FINALIZAR' : 'REGISTRAR Y FINALIZAR'}
+                <button
+                  className="sf-btn sf-btn-primary"
+                  onClick={() => registrarOActualizar(false)}
+                  disabled={isExpired || isSaving}
+                  style={{ opacity: (isExpired || isSaving) ? 0.5 : 1, minWidth: '180px' }}
+                >
+                  {isEditing ? 'ACTUALIZAR SOLICITUD' : 'FINALIZAR REGISTRO'}
                 </button>
               </div>
             </div>
           </div>
 
           {abrirReq && (
-            <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10000 }}>
+            <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(10px)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10000, padding: '20px' }}>
               <div style={{ width: '90%', maxWidth: '1200px' }}>
                 <Requisiciones
                   isOpen={abrirReq}
@@ -2140,6 +2379,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                   isOpen={abrirTicketModal}
                   onClose={() => setAbrirTicketModal(false)}
                   datosPredefinidos={dataParaTicket}
+                  onSuccess={handleTicketFinalizado}
                 />
               </div>
             </div>

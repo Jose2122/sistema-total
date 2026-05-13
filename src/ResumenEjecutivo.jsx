@@ -163,8 +163,9 @@ const ResumenEjecutivo = () => {
             if (status.includes('proyecto')) funnel.proyecto++;
             else if (status.includes('area')) funnel.area++;
             else if (status.includes('general')) funnel.general++;
-            else if (status === 'aprobado_final') {
-                if (r.status_compra === 'Entregado' || r.status_compra === 'Facturado') funnel.completado++;
+            if (status === 'aprobado_final' || status === 'aprobado_compras') {
+                const sComp = (r.status_compra || '').toLowerCase();
+                if (sComp === 'entregado' || sComp === 'facturado' || sComp === 'completado') funnel.completado++;
                 else funnel.compras++;
             }
 
@@ -177,13 +178,14 @@ const ResumenEjecutivo = () => {
             const cc = r.centro_costo?.split('(')[0]?.trim() || 'S/CC';
             if (!byCC[cc]) byCC[cc] = 0;
             const items = Array.isArray(r.items) ? r.items : [];
-            const ejec = items.reduce((s, i) => {
+            const ejec = Number(r.total_ejecutado) || items.reduce((s, i) => {
                 const h = Array.isArray(i.historial_compras) ? i.historial_compras : [];
                 return s + h.reduce((acc, comp) => acc + ((Number(comp.cant) || 0) * (Number(comp.pu) || 0)), 0);
-            }, 0);
+            }, 0) * 1.16;
+            
             byCC[cc] += ejec;
             totalEjecutadoGlobal += ejec;
-            totalEstimadoGlobal += items.reduce((s, i) => s + ((Number(i.cant) || 0) * (Number(i.pu) || 0)), 0);
+            totalEstimadoGlobal += Number(r.total_bs) || (items.reduce((s, i) => s + ((Number(i.cant) || 0) * (Number(i.pu) || 0)), 0) * 1.16);
         });
 
         const recentApprovals = filteredReqs
@@ -264,11 +266,27 @@ const ResumenEjecutivo = () => {
                         const rd = parseISO(r.created_at || r.fecha_emision);
                         return rd.getMonth() === mIdx && rd.getFullYear() === y;
                     });
+                    const pCount = reqsInMonth.filter(r => {
+                        const sComp = (r.status_compra || '').toLowerCase();
+                        const sAprob = (r.estado_aprobacion || '').toLowerCase();
+                        return sAprob !== 'aprobado_final' && sAprob !== 'anulada' && sAprob !== 'rechazada';
+                    }).length;
+
+                    const procCount = reqsInMonth.filter(r => {
+                        const sComp = (r.status_compra || '').toLowerCase();
+                        return sComp === 'parcial' || (r.estado_aprobacion === 'aprobado_final' && sComp !== 'completado');
+                    }).length;
+
+                    const compCount = reqsInMonth.filter(r => {
+                        const sComp = (r.status_compra || '').toLowerCase();
+                        return sComp === 'completado' || sComp === 'entregado' || sComp === 'facturado';
+                    }).length;
+
                     trend.push({
                         month: meses_n[mIdx].substring(0, 3),
-                        Pendientes: reqsInMonth.filter(r => !['completado', 'entregado', 'facturado', 'compra'].some(s => (r.estado || '').toLowerCase().includes(s))).length,
-                        Proceso: reqsInMonth.filter(r => (r.estado || '').toLowerCase().includes('compra')).length,
-                        Completas: reqsInMonth.filter(r => ['completado', 'entregado', 'facturado'].some(s => (r.estado || '').toLowerCase().includes(s))).length
+                        Pendientes: pCount,
+                        Proceso: procCount,
+                        Completas: compCount
                     });
                 }
                 return trend;

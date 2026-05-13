@@ -168,7 +168,9 @@ const Reportes = () => {
             statusCompra: doc.status_compra || 'En espera',
             historial_compras: historial,
             observaciones: doc.observaciones || '',
-            facturas_url: doc.facturas_url || []
+            facturas_url: doc.facturas_url || [],
+            solicitante: doc.solicitante || 'N/A',
+            nroFactura: compras.map(c => c.doc_numero).filter(Boolean).join(', ') || 'N/A'
           });
         });
       } else {
@@ -195,7 +197,9 @@ const Reportes = () => {
             statusCompra: 'Completado',
             historial_compras: [],
             observaciones: doc.observaciones || '',
-            facturas_url: doc.facturas_url || []
+            facturas_url: doc.facturas_url || [],
+            solicitante: doc.responsable_nombre || 'N/A',
+            nroFactura: doc.ref_pago || 'N/A'
           });
         });
       }
@@ -366,6 +370,68 @@ const Reportes = () => {
     saveAs(new Blob([buffer]), `Items_Pendientes_TC_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
+  const exportCompletedToExcel = async () => {
+    const completadas = rows.filter(r => r.cantComprada >= r.cantPedida && r.cantPedida > 0);
+    if (completadas.length === 0) return toast.error("No hay ítems completados en la selección actual.");
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Compras Completadas');
+
+    worksheet.mergeCells('A1:J1');
+    const titleCell = worksheet.getCell('A1');
+    titleCell.value = 'TOTAL CLEAN C.A. - REPORTE DE COMPRAS COMPLETADAS';
+    titleCell.font = { name: 'Arial Black', size: 14, color: { argb: 'FFFFFFFF' } };
+    titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF16A34A' } };
+    titleCell.alignment = { vertical: 'middle', horizontal: 'center' };
+    worksheet.getRow(1).height = 40;
+
+    const headers = [
+      'ID', 
+      'SOLICITANTE', 
+      'NRO DE FACTURA', 
+      'FECHA', 
+      'CATEGORÍA', 
+      'DESCRIPCIÓN', 
+      'CENTRO DE COSTO', 
+      'GERENCIA', 
+      'CANTIDAD COMPRADA', 
+      'TOTAL'
+    ];
+    worksheet.addRow(headers);
+    const headerRow = worksheet.getRow(2);
+    headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+    headerRow.alignment = { horizontal: 'center' };
+
+    completadas.forEach(r => {
+      const row = worksheet.addRow([
+        r.idReq,
+        r.solicitante,
+        r.nroFactura,
+        r.fechaPago !== 'Pendiente' && r.fechaPago !== 'N/A' ? new Date(r.fechaPago + 'T12:00:00') : r.fechaPago,
+        r.categoria,
+        r.descripcion,
+        r.centroCosto,
+        r.gerencia,
+        r.cantComprada,
+        r.total
+      ]);
+      if (r.fechaPago !== 'Pendiente' && r.fechaPago !== 'N/A') {
+        row.getCell(4).numFmt = 'dd/mm/yyyy';
+      }
+      row.getCell(1).numFmt = '@';
+      row.getCell(10).numFmt = '"$"#,##0.00';
+    });
+
+    worksheet.columns.forEach(col => { col.width = 18; });
+    worksheet.getColumn(6).width = 40; // Descripción
+    worksheet.getColumn(2).width = 25; // Solicitante
+    worksheet.getColumn(3).width = 20; // Nro Factura
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    saveAs(new Blob([buffer]), `Compras_Completadas_TC_${new Date().toISOString().split('T')[0]}.xlsx`);
+  };
+
   return (
     <motion.div
       className="reports-container"
@@ -411,11 +477,15 @@ const Reportes = () => {
         <div style={{ position: 'absolute', top: '15px', right: '20px', display: 'flex', gap: '10px', zIndex: 10 }}>
           <button className="btn-export" onClick={exportToExcel} style={{ height: '36px', fontSize: '0.7rem', padding: '0 15px' }}>
             <FileSpreadsheet size={14} />
-            EXPORTAR COMPRAS
+            EXPORTAR MOVIMIENTOS DE COMPRAS
           </button>
           <button className="btn-export" onClick={exportPendingToExcel} style={{ backgroundColor: '#f59e0b', borderColor: '#d97706', height: '36px', fontSize: '0.7rem', padding: '0 15px' }}>
             <TrendingDown size={14} />
             EXPORTAR FALTANTES
+          </button>
+          <button className="btn-export" onClick={exportCompletedToExcel} style={{ backgroundColor: '#16a34a', borderColor: '#15803d', height: '36px', fontSize: '0.7rem', padding: '0 15px' }}>
+            <FileSpreadsheet size={14} />
+            EXPORTAR COMPLETADAS
           </button>
         </div>
 

@@ -41,13 +41,14 @@ import {
   Ticket,
   Hash,
   MessageSquare,
-  FileDown
+  FileDown,
+  X
 } from 'lucide-react';
 import { format, getWeek } from 'date-fns';
 import toast from 'react-hot-toast';
 import './TicketExpress.css';
 
-const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = null }) => {
+const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = null, onSuccess = null }) => {
   // --- ESTADOS DE CONTROL ---
   const [showModal, setShowModal] = useState(isOpen);
   const [loading, setLoading] = useState(false);
@@ -57,6 +58,8 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
   const [verTodos, setVerTodos] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [verJustificacion, setVerJustificacion] = useState(false);
+  const [filtroStatus, setFiltroStatus] = useState('Todos');
+  const [filtroGerencia, setFiltroGerencia] = useState('Todos');
 
   // --- LÓGICA DE SIGLAS GERENCIA ---
   const obtenerSiglas = (nombreGerencia) => {
@@ -504,8 +507,8 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
 
   // --- EMITIR TICKET ---
   const emitirTicket = async () => {
-    if (!form.partidas.every(p => p.cc && p.clasificacion && p.descripcion)) {
-      return toast.error("Por favor complete los campos obligatorios de las partidas.");
+    if (!form.partidas.every(p => p.cc && p.clasificacion && p.categoria && p.cantidad && p.unidad && p.descripcion)) {
+      return toast.error("Error: Todas las filas deben tener Centro de Costo, Clasificación, Categoría, Cantidad, Unidad y Descripción.");
     }
 
     if (!form.justificacion_detallada) {
@@ -561,6 +564,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
 
       toast.success("Ticket EMITIDO Y FINALIZADO con éxito.");
       setShowModal(false);
+      if (onSuccess) onSuccess(newTicket.id, idsRelacionados, idControlAutomatico);
       cargarHistorial();
       // Reset form
       setForm({
@@ -705,21 +709,34 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
 
   // --- FILTRADO HISTORIAL ---
   const historialFiltrado = useMemo(() => {
-    if (!busqueda.trim()) return historial;
-    const b = busqueda.toLowerCase();
-    return historial.filter(t =>
-      t.codigo_control?.toLowerCase().includes(b) ||
-      t.gerente_nombre?.toLowerCase().includes(b) ||
-      t.departamento?.toLowerCase().includes(b) ||
-      t.solicitud_ref?.toLowerCase().includes(b)
-    );
-  }, [historial, busqueda]);
+    let result = historial;
+    
+    if (busqueda.trim()) {
+      const b = busqueda.toLowerCase();
+      result = result.filter(t =>
+        t.codigo_control?.toLowerCase().includes(b) ||
+        t.gerente_nombre?.toLowerCase().includes(b) ||
+        t.departamento?.toLowerCase().includes(b) ||
+        t.solicitud_ref?.toLowerCase().includes(b)
+      );
+    }
+    
+    if (filtroStatus !== 'Todos') {
+      result = result.filter(t => t.status === filtroStatus);
+    }
+    
+    if (filtroGerencia !== 'Todos') {
+      result = result.filter(t => t.departamento === filtroGerencia);
+    }
+    
+    return result;
+  }, [historial, busqueda, filtroStatus, filtroGerencia]);
 
   return (
     <div className="te-container animate-fade-in" style={datosPredefinidos ? { background: 'transparent', padding: 0, boxShadow: 'none', border: 'none' } : {}}>
 
-      {!datosPredefinidos && (
-        <>
+      {!datosPredefinidos ? (
+        <div className="te-content">
           {/* HEADER SECTION */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
             <div>
@@ -766,46 +783,76 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
           </div>
 
           {/* STATS CARDS */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '20px', marginBottom: '32px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '20px', marginBottom: '32px' }}>
             <div className="te-card te-card-premium">
-              <div className="te-label">Mis Tickets Emitidos</div>
-              <div style={{ fontSize: '1.75rem', fontWeight: '800', marginTop: '8px' }}>{historial.length}</div>
+              <div className="te-label">Total de Tickets</div>
+              <div style={{ fontSize: '1.5rem', fontWeight: '800', marginTop: '8px' }}>{historial.length}</div>
             </div>
             <div className="te-card" style={{ borderLeft: '6px solid #10b981' }}>
-              <div className="te-label">Total en Tickets ($)</div>
-              <div style={{ fontSize: '1.75rem', fontWeight: '800', marginTop: '8px', color: '#10b981' }}>
-                $ {historial.reduce((acc, t) => acc + (t.total_usd || 0), 0).toLocaleString('de-DE')}
+              <div className="te-label">Tickets Pagados</div>
+              <div style={{ fontSize: '1.5rem', fontWeight: '800', marginTop: '8px', color: '#10b981' }}>
+                {historial.filter(t => t.status === 'PAGADO').length}
+              </div>
+            </div>
+            <div className="te-card" style={{ borderLeft: '6px solid #f59e0b' }}>
+              <div className="te-label">Pendientes por Procesar</div>
+              <div style={{ fontSize: '1.5rem', fontWeight: '800', marginTop: '8px', color: '#f59e0b' }}>
+                {historial.filter(t => t.status === 'EMITIDO').length}
               </div>
             </div>
             <div className="te-card" style={{ borderLeft: '6px solid #6366f1' }}>
-              <div className="te-label">Usuario Activo</div>
-              <div style={{ fontSize: '1rem', fontWeight: '700', marginTop: '8px' }}>{currentUser?.nombre}</div>
-              <div className="te-badge te-badge-warn" style={{ marginTop: '8px', display: 'inline-block' }}>{currentUser?.rol}</div>
+              <div className="te-label">Monto Total ($)</div>
+              <div style={{ fontSize: '1.5rem', fontWeight: '800', marginTop: '8px', color: '#6366f1' }}>
+                $ {historial.reduce((acc, t) => acc + (t.total_usd || 0), 0).toLocaleString('de-DE')}
+              </div>
             </div>
           </div>
 
-          {/* SEARCH BAR */}
-          <div className="te-card" style={{ padding: '16px' }}>
-            <div style={{ position: 'relative' }}>
+          {/* FILTERS BAR */}
+          <div className="te-card" style={{ padding: '16px', display: 'flex', gap: '15px', alignItems: 'center' }}>
+            <div style={{ flex: 1.5, position: 'relative' }}>
               <Search size={18} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
               <input
                 className="te-input"
-                placeholder="Buscar por gerente o departamento..."
+                placeholder="Buscar por ID, Gerente o REF..."
                 style={{ width: '100%', paddingLeft: '40px' }}
                 value={busqueda}
                 onChange={(e) => setBusqueda(e.target.value)}
               />
             </div>
+            
+            <select 
+              className="te-input" 
+              value={filtroStatus} 
+              onChange={(e) => setFiltroStatus(e.target.value)}
+              style={{ flex: 0.8 }}
+            >
+              <option value="Todos">Todos los Status</option>
+              <option value="EMITIDO">EMITIDO</option>
+              <option value="PAGADO">PAGADO</option>
+              <option value="ANULADO">ANULADO</option>
+            </select>
+
+            <select 
+              className="te-input" 
+              value={filtroGerencia} 
+              onChange={(e) => setFiltroGerencia(e.target.value)}
+              style={{ flex: 1 }}
+            >
+              <option value="Todos">Todas las Gerencias</option>
+              {[...new Set(historial.map(t => t.departamento))].filter(Boolean).sort().map(d => (
+                <option key={d} value={d}>{d}</option>
+              ))}
+            </select>
+
             {currentUser?.esAdminGlobal && (
-              <div style={{ marginTop: '16px', display: 'flex', justifyContent: 'flex-end' }}>
-                <button
-                  className={`te-btn ${verTodos ? 'te-btn-primary' : 'te-btn-outline'}`}
-                  onClick={() => setVerTodos(!verTodos)}
-                  style={{ fontSize: '0.75rem' }}
-                >
-                  <Filter size={14} /> {verTodos ? 'Viendo Todos los Tickets' : 'Ver Todos los Tickets (Admin)'}
-                </button>
-              </div>
+              <button
+                className={`te-btn ${verTodos ? 'te-btn-primary' : 'te-btn-outline'}`}
+                onClick={() => setVerTodos(!verTodos)}
+                style={{ fontSize: '0.75rem', whiteSpace: 'nowrap' }}
+              >
+                <Filter size={14} /> {verTodos ? 'Global' : 'Mi Gerencia'}
+              </button>
             )}
           </div>
 
@@ -881,377 +928,156 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
               </tbody>
             </table>
           </div>
-        </>
-      )}
-
-      {/* MODAL EMISIÓN TICKET */}
-      {showModal && (
-        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15, 23, 42, 0.5)', backdropFilter: 'blur(8px)', zIndex: 9999, display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '20px' }}>
-          <div className="te-card animate-fade-in" style={{
-            width: '100%',
-            maxWidth: '1350px',
-            maxHeight: '95vh',
-            overflowY: 'auto',
-            background: 'rgba(241, 245, 249, 0.85)',
-            backdropFilter: 'blur(30px)',
-            borderRadius: '40px',
-            boxShadow: '0 40px 120px rgba(0,0,0,0.3)',
-            pointerEvents: 'auto',
-            padding: '30px',
-            position: 'relative',
-            border: '1px solid rgba(255,255,255,0.4)'
+        </div>
+      ) : (
+        <TicketErrorBoundary>
+          {/* MODAL VERSION (95vh Fixed Layout) */}
+          <div style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(15, 23, 42, 0.4)',
+            backdropFilter: 'blur(10px)',
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            zIndex: 10000,
+            padding: '20px'
           }}>
-
-            {/* HEADER AREA: TITLE AND ID (TRANSPARENT) */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '35px', padding: '0 10px' }}>
-              <div>
-                <h1 style={{ margin: 0, color: '#0f172a', fontSize: '1.7rem', fontWeight: '1000', letterSpacing: '-0.03em', textTransform: 'uppercase' }}>
-                  TICKET DE PAGO
-                </h1>
-                <div style={{
-                  display: 'inline-flex', alignItems: 'center', gap: '6px',
-                  background: 'white', padding: '4px 12px', borderRadius: '10px',
-                  marginTop: '10px', border: '1px solid #e2e8f0', boxShadow: '0 2px 5px rgba(0,0,0,0.02)'
-                }}>
-                  <div style={{ width: '10px', height: '10px', borderRadius: '3px', transform: 'rotate(45deg)', border: '2px solid #64748b' }}></div>
-                  <span style={{ fontSize: '0.65rem', fontWeight: '900', color: '#64748b', textTransform: 'uppercase' }}>
-                    REF: {form.solicitud_ref || 'TICKET-DIRECTO'}
-                  </span>
-                </div>
-              </div>
-              <div style={{ textAlign: 'right' }}>
-                <div style={{ fontSize: '2.5rem', fontWeight: '1000', color: '#1e3a8a', letterSpacing: '0.01em', lineHeight: 0.9 }}>
-                  {isEditing ? form.id_control : idControlAutomatico}
-                </div>
-                <span style={{ fontSize: '0.65rem', fontWeight: '900', color: '#64748b', letterSpacing: '0.15em', opacity: 0.8 }}>ID TICKET</span>
-              </div>
-            </div>
-
-            {/* METADATA FIELDS (TRANSPARENT) */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '20px', marginBottom: '30px' }}>
-              <div>
-                <label style={{ fontSize: '10px', fontWeight: '800', color: '#2d2d2d', marginBottom: '8px', display: 'block', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  Fecha Emisión <span style={{ color: '#e03131' }}>*</span>
-                </label>
-                <div style={{ position: 'relative' }}>
-                  <Calendar size={15} style={{ position: 'absolute', left: '15px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
-                  <input
-                    className="input-tc"
-                    type="date"
-                    value={form.fecha}
-                    onChange={(e) => setForm({ ...form, fecha: e.target.value })}
-                    disabled={isEditing && !esPrivilegiado}
-                    style={{ width: '100%', paddingLeft: '45px', borderRadius: '20px', height: '46px', border: '1px solid #e2e8f0', backgroundColor: 'white', fontWeight: '700', fontSize: '0.85rem', boxShadow: '0 2px 4px rgba(0,0,0,0.02)' }}
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label style={{ fontSize: '10px', fontWeight: '800', color: '#2d2d2d', marginBottom: '8px', display: 'block', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  Solicitante
-                </label>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'white', height: '46px', borderRadius: '20px', padding: '0 15px', border: '1px solid #e2e8f0', boxShadow: '0 2px 4px rgba(0,0,0,0.02)' }}>
-                  <div style={{
-                    width: '28px', height: '28px', borderRadius: '50%',
-                    backgroundColor: '#0ea5e9', color: 'white',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: '0.75rem', fontWeight: '1000'
-                  }}>
-                    {getInitials(form.solicitante || form.gerente, '')}
-                  </div>
-                  <span style={{ fontSize: '0.9rem', fontWeight: '700', color: '#1e293b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {form.solicitante || form.gerente}
-                  </span>
-                </div>
-              </div>
-
-              <div>
-                <label style={{ fontSize: '10px', fontWeight: '800', color: '#2d2d2d', marginBottom: '8px', display: 'block', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  Centro de Costos
-                </label>
-                <select
-                  className="input-tc"
-                  style={{ width: '100%', borderRadius: '20px', height: '46px', border: '1px solid #e2e8f0', backgroundColor: 'white', fontWeight: '700', padding: '0 15px', fontSize: '0.85rem', boxShadow: '0 2px 4px rgba(0,0,0,0.02)' }}
-                  value={form.centro_costo}
-                  onChange={(e) => {
-                    const newCc = e.target.value;
-                    setForm(prev => ({
-                      ...prev,
-                      centro_costo: newCc,
-                      partidas: prev.partidas.map(p => ({ ...p, cc: newCc }))
-                    }));
-                  }}
-                  disabled={isEditing}
-                >
-                  <option value="">Seleccione...</option>
-                  {centrosCosto.map(c => <option key={c.id} value={c.nombre}>{c.nombre}</option>)}
-                </select>
-              </div>
-
-              <div>
-                <label style={{ fontSize: '10px', fontWeight: '800', color: '#2d2d2d', marginBottom: '8px', display: 'block', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  Gerencia
-                </label>
-                <select
-                  className="input-tc"
-                  style={{ width: '100%', borderRadius: '20px', height: '46px', border: '1px solid #e2e8f0', backgroundColor: 'white', padding: '0 15px', fontWeight: '700', fontSize: '0.85rem', boxShadow: '0 2px 4px rgba(0,0,0,0.02)' }}
-                  value={form.departamento}
-                  onChange={(e) => setForm({ ...form, departamento: e.target.value })}
-                  disabled={isEditing}
-                >
-                  <option value="">Seleccione...</option>
-                  {["Administración Maracaibo", "Administración El Tigre", "Operaciones", "Mantenimiento", "Seguridad", "Recursos Humanos", "Estimación", "Almacén", "Gerencia General", "Servicios Generales", "Contabilidad", "Compras"].map(g => (
-                    <option key={g} value={g}>{g}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            {/* OBSERVACIONES AREA */}
-            <div style={{ marginBottom: '30px', padding: '0 10px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                <label style={{ fontSize: '10px', fontWeight: '800', color: '#2d2d2d', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  Justificación del Pago <span style={{ color: '#e03131' }}>*</span>
-                </label>
-                {verJustificacion && (
-                  <span style={{ fontSize: '10px', fontWeight: '800', color: '#3b82f6', textTransform: 'uppercase', letterSpacing: '0.05em', animation: 'fade-in 0.3s ease' }}>
-                    + Observaciones Activas
-                  </span>
-                )}
-              </div>
-              <div style={{ display: 'flex', gap: '15px' }}>
-                <textarea
-                  className="input-tc"
-                  value={form.justificacion_detallada}
-                  onChange={(e) => setForm({ ...form, justificacion_detallada: e.target.value })}
-                  placeholder="Justifique el motivo de este pago directo (Obligatorio)..."
-                  style={{ flex: 1, borderRadius: '20px', padding: '15px 20px', minHeight: '52px', fontSize: '0.95rem', backgroundColor: 'white', border: '1px solid #e2e8f0', boxShadow: '0 2px 4px rgba(0,0,0,0.02)' }}
-                  rows="1"
-                />
-                <button
-                  onClick={() => setVerJustificacion(!verJustificacion)}
-                  style={{
-                    width: '52px', height: '52px',
-                    backgroundColor: verJustificacion ? '#3b82f6' : 'white',
-                    borderRadius: '15px', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    border: '1px solid #e2e8f0',
-                    color: verJustificacion ? 'white' : '#94a3b8',
-                    boxShadow: '0 2px 4px rgba(0,0,0,0.02)',
-                    cursor: 'pointer',
-                    transition: 'all 0.3s ease'
-                  }}
-                  title="Agregar Observaciones Adicionales"
-                >
-                  <MessageSquare size={22} />
-                </button>
-              </div>
-
-              {/* RETRACTABLE OBSERVACIONES FIELD */}
-              {verJustificacion && (
-                <div style={{ marginTop: '15px', animation: 'slide-down 0.3s ease' }}>
-                  <label style={{ fontSize: '10px', fontWeight: '800', color: '#2d2d2d', marginBottom: '8px', display: 'block', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                    Observaciones Adicionales
-                  </label>
-                  <textarea
-                    className="input-tc"
-                    value={form.justificacion}
-                    onChange={(e) => setForm({ ...form, justificacion: e.target.value })}
-                    placeholder="Indique cualquier detalle u observación adicional..."
-                    style={{ width: '100%', borderRadius: '20px', padding: '15px 20px', minHeight: '80px', fontSize: '0.95rem', backgroundColor: 'rgba(255,255,255,0.8)', border: '1px solid #3b82f6', boxShadow: '0 4px 12px rgba(59, 130, 246, 0.1)' }}
-                  />
-                </div>
-              )}
-            </div>
-
-            {/* ITEMS TABLE */}
-            <div style={{ marginBottom: '25px', background: 'rgba(255,255,255,0.4)', borderRadius: '24px', overflow: 'hidden', border: '1px solid rgba(226, 232, 240, 0.5)' }}>
-              <table className="tc-table" style={{ fontSize: '0.8rem' }}>
-                <thead>
-                  <tr style={{ backgroundColor: 'rgba(248, 250, 252, 0.6)', borderBottom: '1px solid #e2e8f0' }}>
-                    <th style={{ width: '40px', textAlign: 'center', color: '#64748b', fontSize: '0.65rem', fontWeight: '800' }}>#</th>
-                    <th style={{ width: '200px', color: '#64748b', fontSize: '0.65rem', fontWeight: '800' }}>CLASIFICACIÓN</th>
-                    <th style={{ width: '200px', color: '#64748b', fontSize: '0.65rem', fontWeight: '800' }}>CATEGORÍA</th>
-                    <th style={{ width: '50px', textAlign: 'center', color: '#64748b', fontSize: '0.65rem', fontWeight: '800' }}>CANT.</th>
-                    <th style={{ width: '70px', textAlign: 'center', color: '#64748b', fontSize: '0.65rem', fontWeight: '800' }}>UNI.</th>
-                    <th style={{ color: '#64748b', fontSize: '0.65rem', fontWeight: '800' }}>DESCRIPCIÓN</th>
-                    <th style={{ width: '160px', color: '#64748b', fontSize: '0.65rem', fontWeight: '800' }}>BENEFICIARIO</th>
-                    <th style={{ width: '70px', textAlign: 'right', color: '#64748b', fontSize: '0.65rem', fontWeight: '800' }}>P.U.</th>
-                    <th style={{ width: '90px', textAlign: 'right', color: '#64748b', fontSize: '0.65rem', fontWeight: '800' }}>TOTAL</th>
-                    <th style={{ width: '40px', textAlign: 'center', color: '#64748b', fontSize: '0.65rem', fontWeight: '800' }}>TR.</th>
-                  </tr>
-                </thead>
-                <tbody style={{ backgroundColor: 'transparent' }}>
-                  {form?.partidas?.map((p, i) => (
-                    <tr key={p.id} className="renglon-row" style={{ borderBottom: '1px solid rgba(241, 245, 249, 0.5)' }}>
-                      <td style={{ textAlign: 'center', fontWeight: 'bold', color: '#94a3b8', padding: '12px 5px' }}>{i + 1}</td>
-                      <td style={{ padding: '12px 5px' }}>
-                        <select className="input-tc" value={p.clasificacion} onChange={(e) => manejarCambioPartida(i, 'clasificacion', e.target.value)} disabled={!form.centro_costo || isEditing} style={{ border: 'none', background: 'transparent', fontWeight: '600' }}>
-                          <option value="">Clasificación...</option>
-                          {(() => {
-                            const ccObj = centrosCosto.find(c => c.nombre === form.centro_costo);
-                            if (!ccObj) return null;
-                            return todasClasificaciones
-                              .filter(cl => cl.padreId === ccObj.id)
-                              .map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>);
-                          })()}
-                        </select>
-                      </td>
-                      <td style={{ padding: '12px 5px' }}>
-                        <select className="input-tc" value={p.categoria} onChange={(e) => manejarCambioPartida(i, 'categoria', e.target.value)} disabled={!p.clasificacion || isEditing} style={{ border: 'none', background: 'transparent', fontWeight: '600' }}>
-                          <option value="">Categoría...</option>
-                          {(() => {
-                            const ccObj = centrosCosto.find(c => c.nombre === form.centro_costo);
-                            if (!ccObj) return null;
-                            const clObj = todasClasificaciones.find(cl => cl.nombre === p.clasificacion && cl.padreId === ccObj.id);
-                            if (!clObj) return null;
-                            return todasCategorias
-                              .filter(ct => ct.padreId === clObj.id)
-                              .map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>);
-                          })()}
-                        </select>
-                      </td>
-                      <td style={{ padding: '12px 5px' }}><input className="input-tc" type="number" value={p.cantidad} onChange={(e) => manejarCambioPartida(i, 'cantidad', e.target.value)} style={{ textAlign: 'center', border: 'none', background: 'transparent', fontWeight: '600' }} disabled={isEditing} /></td>
-                      <td style={{ textAlign: 'center', padding: '12px 5px' }}>
-                        <select className="input-tc" style={{ textAlign: 'center', border: 'none', background: 'transparent', fontWeight: '600' }} value={p.unidad} onChange={(e) => manejarCambioPartida(i, 'unidad', e.target.value)} disabled={isEditing}>
-                          {unidades.map(u => <option key={u} value={u}>{u}</option>)}
-                        </select>
-                      </td>
-                      <td style={{ padding: '12px 5px' }}>
-                        <textarea
-                          className="input-tc"
-                          value={p.descripcion}
-                          onChange={(e) => manejarCambioPartida(i, 'descripcion', e.target.value)}
-                          style={{ backgroundColor: 'rgba(255,255,255,0.7)', borderRadius: '10px', minHeight: '38px', paddingTop: '8px', paddingLeft: '10px', border: 'none', fontSize: '0.8rem' }}
-                          rows="1"
-                          disabled={isEditing}
-                        />
-                      </td>
-                      <td style={{ padding: '12px 5px' }}><input className="input-tc" value={p.beneficiario} onChange={(e) => manejarCambioPartida(i, 'beneficiario', e.target.value)} placeholder="Beneficiario" style={{ border: 'none', background: 'transparent', fontWeight: '600' }} disabled={isEditing} /></td>
-                      <td style={{ textAlign: 'right', fontWeight: 'bold', padding: '12px 5px', color: '#1e293b' }}>{p.pu || 0}</td>
-                      <td style={{ textAlign: 'right', fontWeight: '800', padding: '12px 5px', color: '#1e293b' }}>{p.total.toLocaleString()}</td>
-                      <td style={{ textAlign: 'center', padding: '12px 5px' }}>
-                        <History size={14} color="#94a3b8" style={{ opacity: 0.6 }} />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            {/* TOTALS AND ACTIONS AREA */}
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '20px' }}>
-
-              {/* TOTALS CARD (MIRRORING SCREENSHOT) */}
-              <div style={{
-                background: 'white',
-                padding: '20px 30px',
-                borderRadius: '20px',
-                minWidth: '340px',
-                boxShadow: '0 10px 30px rgba(0,0,0,0.05)',
-                border: '1px solid #e2e8f0'
-              }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px', alignItems: 'center' }}>
-                  <span style={{ fontSize: '0.65rem', fontWeight: '900', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>SUB-TOTAL ESTIMADO:</span>
-                  <span style={{ fontSize: '1.1rem', fontWeight: '800', color: '#475569' }}>$ {subtotalTotal.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: '15px', borderTop: '1px solid #f1f5f9', alignItems: 'center' }}>
-                  <span style={{ fontSize: '0.75rem', fontWeight: '1000', color: '#1e293b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>TOTAL ESTIMADO (C/IVA):</span>
-                  <span style={{ fontSize: '1.5rem', fontWeight: '1000', color: '#1e3a8a', letterSpacing: '-0.02em' }}>$ {totalGeneral.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span>
-                </div>
-              </div>
-
-              {/* ACTION BUTTONS (MIRRORING SCREENSHOT) */}
-              <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+            <div style={{
+              width: '95vw',
+              maxWidth: '1600px',
+              height: '95vh',
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+              padding: 0,
+              borderRadius: '28px',
+              backgroundColor: 'rgba(255, 255, 255, 0.75)',
+              backdropFilter: 'blur(30px) saturate(180%)',
+              border: '1px solid rgba(255, 255, 255, 0.45)',
+              boxShadow: '0 30px 60px -12px rgba(0, 0, 0, 0.35)'
+            }}>
+              {/* --- CABECERA FIJA --- */}
+              <div style={{ flexShrink: 0, padding: '25px 35px', borderBottom: '1px solid rgba(226, 232, 240, 0.5)', backgroundColor: 'rgba(255, 255, 255, 0.3)', position: 'relative' }}>
                 <button
                   onClick={() => setShowModal(false)}
                   style={{
-                    height: '48px',
-                    padding: '0 25px',
-                    borderRadius: '12px',
+                    position: 'absolute',
+                    top: '25px',
+                    right: '35px',
+                    background: 'none',
                     border: 'none',
-                    background: '#f1f5f9',
-                    color: '#475569',
-                    fontWeight: '800',
-                    fontSize: '0.75rem',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.05em',
                     cursor: 'pointer',
-                    boxShadow: '0 2px 5px rgba(0,0,0,0.05)'
+                    color: '#64748b',
+                    transition: 'color 0.2s'
                   }}
+                  onMouseOver={(e) => e.currentTarget.style.color = '#0f172a'}
+                  onMouseOut={(e) => e.currentTarget.style.color = '#64748b'}
                 >
-                  CERRAR
+                  <X size={24} />
                 </button>
-                {isEditing && (
-                  <button
-                    style={{
-                      height: '48px',
-                      padding: '0 25px',
-                      borderRadius: '12px',
-                      border: 'none',
-                      background: '#0f172a',
-                      color: 'white',
-                      fontWeight: '800',
-                      fontSize: '0.75rem',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.05em',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      boxShadow: '0 4px 10px rgba(15, 23, 42, 0.3)'
-                    }}
-                  >
-                    <FileDown size={18} /> PDF
-                  </button>
-                )}
-                {!isEditing ? (
-                  <button
-                    onClick={emitirTicket}
-                    style={{
-                      height: '48px',
-                      padding: '0 30px',
-                      borderRadius: '12px',
-                      border: 'none',
-                      background: 'linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%)',
-                      color: 'white',
-                      fontWeight: '800',
-                      fontSize: '0.75rem',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.05em',
-                      cursor: 'pointer',
-                      boxShadow: '0 4px 12px rgba(30, 58, 138, 0.3)',
-                      transition: 'all 0.3s ease'
-                    }}
-                  >
-                    EMITIR Y FINALIZAR TICKET
-                  </button>
-                ) : esPrivilegiado && (
-                  <button
-                    onClick={actualizarTicket}
-                    style={{
-                      height: '48px',
-                      padding: '0 30px',
-                      borderRadius: '12px',
-                      border: 'none',
-                      background: 'linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%)',
-                      color: 'white',
-                      fontWeight: '800',
-                      fontSize: '0.75rem',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.05em',
-                      cursor: 'pointer',
-                      boxShadow: '0 4px 12px rgba(30, 58, 138, 0.3)',
-                      transition: 'all 0.3s ease'
-                    }}
-                  >
-                    ACTUALIZAR Y FINALIZAR
-                  </button>
-                )}
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                  <div>
+                    <h1 style={{ margin: 0, fontSize: '1.8rem', fontWeight: '950', color: '#0f172a', letterSpacing: '-0.5px' }}>
+                      Ticket de Pago
+                    </h1>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '5px' }}>
+                      <div style={{ background: '#0f172a', color: 'white', padding: '3px 10px', borderRadius: '6px', fontSize: '10px', fontWeight: 'bold' }}>ID TICKET: {idControlAutomatico}</div>
+                      {form.solicitud_ref && (
+                        <div style={{ background: '#3b82f6', color: 'white', padding: '3px 10px', borderRadius: '6px', fontSize: '10px', fontWeight: 'bold' }}>REF: {form.solicitud_ref}</div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* DASHBOARD INDICATORS */}
+                  <div style={{ display: 'flex', gap: '15px' }}>
+                    <div style={{ backgroundColor: 'white', border: '1px solid rgba(226, 232, 240, 0.8)', padding: '10px 20px', borderRadius: '16px', minWidth: '150px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)' }}>
+                      <div style={{ fontSize: '9px', fontWeight: '900', color: '#64748b', marginBottom: '2px' }}>SUB-TOTAL ESTIMADO</div>
+                      <div style={{ fontSize: '1.2rem', fontWeight: '950', color: '#0f172a' }}>$ {subtotalTotal.toLocaleString('de-DE')}</div>
+                    </div>
+                    <div style={{ backgroundColor: 'white', border: '1px solid rgba(226, 232, 240, 0.8)', padding: '10px 20px', borderRadius: '16px', minWidth: '150px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)', borderLeft: '5px solid #10b981' }}>
+                      <div style={{ fontSize: '9px', fontWeight: '900', color: '#10b981', marginBottom: '2px' }}>TOTAL CON IVA (1.16)</div>
+                      <div style={{ fontSize: '1.2rem', fontWeight: '950', color: '#10b981' }}>$ {totalGeneral.toLocaleString('de-DE')}</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* --- CUERPO DESPLAZABLE --- */}
+              <div style={{ flexGrow: 1, overflowY: 'auto', padding: '30px', backgroundColor: 'rgba(241, 245, 249, 0.4)' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '20px', background: 'white', padding: '20px', borderRadius: '20px', border: '1px solid #e2e8f0', marginBottom: '25px' }}>
+                  <div>
+                    <label style={{ fontSize: '10px', fontWeight: '800', color: '#64748b', display: 'block', marginBottom: '5px' }}>FECHA EMISIÓN</label>
+                    <input type="date" className="te-input" value={form.fecha} onChange={(e) => setForm({ ...form, fecha: e.target.value })} disabled={isEditing} style={{ width: '100%' }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '10px', fontWeight: '800', color: '#64748b', display: 'block', marginBottom: '5px' }}>SOLICITANTE</label>
+                    <input className="te-input" value={form.solicitante} readOnly style={{ width: '100%', backgroundColor: '#f8fafc' }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '10px', fontWeight: '800', color: '#64748b', display: 'block', marginBottom: '5px' }}>CENTRO DE COSTOS</label>
+                    <input className="te-input" value={form.centro_costo} readOnly style={{ width: '100%', backgroundColor: '#f8fafc' }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '10px', fontWeight: '800', color: '#64748b', display: 'block', marginBottom: '5px' }}>GERENCIA</label>
+                    <input className="te-input" value={form.departamento} readOnly style={{ width: '100%', backgroundColor: '#f8fafc' }} />
+                  </div>
+                </div>
+
+                <div style={{ background: 'white', padding: '25px', borderRadius: '24px', border: '1px solid #e2e8f0' }}>
+                  <div style={{ marginBottom: '25px' }}>
+                    <label style={{ fontSize: '10px', fontWeight: '900', color: '#0f172a', marginBottom: '8px', display: 'block' }}>JUSTIFICACIÓN DEL PAGO (OBLIGATORIO)</label>
+                    <textarea className="te-input" value={form.justificacion_detallada} onChange={(e) => setForm({ ...form, justificacion_detallada: e.target.value })} placeholder="Motivo del pago..." style={{ width: '100%', minHeight: '60px', borderRadius: '15px' }} disabled={isEditing} />
+                  </div>
+
+                  <div style={{ overflowX: 'auto', borderRadius: '15px', border: '1px solid #f1f5f9' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                      <thead style={{ backgroundColor: '#f8fafc' }}>
+                        <tr>
+                          <th style={{ padding: '12px', textAlign: 'left', fontSize: '9px' }}>#</th>
+                          <th style={{ padding: '12px', textAlign: 'left', fontSize: '9px' }}>CLASIFICACIÓN</th>
+                          <th style={{ padding: '12px', textAlign: 'left', fontSize: '9px' }}>CATEGORÍA</th>
+                          <th style={{ padding: '12px', textAlign: 'center', fontSize: '9px' }}>CANT.</th>
+                          <th style={{ padding: '12px', textAlign: 'center', fontSize: '9px' }}>UNI.</th>
+                          <th style={{ padding: '12px', textAlign: 'left', fontSize: '9px' }}>DESCRIPCIÓN</th>
+                          <th style={{ padding: '12px', textAlign: 'left', fontSize: '9px' }}>BENEFICIARIO</th>
+                          <th style={{ padding: '12px', textAlign: 'right', fontSize: '9px' }}>P.U.</th>
+                          <th style={{ padding: '12px', textAlign: 'right', fontSize: '9px' }}>TOTAL</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {form.partidas.map((p, i) => (
+                          <tr key={p.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                            <td style={{ padding: '12px', fontSize: '11px' }}>{i + 1}</td>
+                            <td style={{ padding: '8px', fontSize: '11px' }}>{p.clasificacion}</td>
+                            <td style={{ padding: '8px', fontSize: '11px' }}>{p.categoria}</td>
+                            <td style={{ padding: '8px', textAlign: 'center', fontSize: '11px' }}>{p.cantidad}</td>
+                            <td style={{ padding: '8px', textAlign: 'center', fontSize: '11px' }}>{p.unidad}</td>
+                            <td style={{ padding: '8px', fontSize: '11px' }}>{p.descripcion}</td>
+                            <td style={{ padding: '8px' }}>
+                              <input className="te-input" value={p.beneficiario} onChange={(e) => manejarCambioPartida(i, 'beneficiario', e.target.value)} disabled={isEditing} style={{ width: '100%', border: 'none', background: 'transparent', fontWeight: '600', fontSize: '11px' }} />
+                            </td>
+                            <td style={{ padding: '8px', textAlign: 'right', fontSize: '11px' }}>$ {p.pu.toLocaleString()}</td>
+                            <td style={{ padding: '8px', textAlign: 'right', fontSize: '11px', fontWeight: '800' }}>$ {p.total.toLocaleString()}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+
+              {/* --- PIE DE PÁGINA FIJO --- */}
+              <div style={{ flexShrink: 0, padding: '20px 35px', borderTop: '1px solid rgba(226, 232, 240, 0.5)', backgroundColor: 'rgba(255, 255, 255, 0.3)', display: 'flex', justifyContent: 'flex-end', gap: '15px' }}>
+                <button onClick={() => setShowModal(false)} style={{ padding: '10px 25px', borderRadius: '12px', border: '1px solid #cbd5e1', background: 'white', fontWeight: 'bold' }}>CERRAR</button>
+                <button onClick={emitirTicket} disabled={loading} style={{ padding: '10px 35px', borderRadius: '12px', border: 'none', background: '#1d4ed8', color: 'white', fontWeight: 'bold' }}>
+                  {loading ? 'PROCESANDO...' : 'EMITIR Y FINALIZAR TICKET'}
+                </button>
               </div>
             </div>
-
           </div>
-        </div>
+        </TicketErrorBoundary>
       )}
     </div>
   );

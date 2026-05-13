@@ -4,7 +4,7 @@ import html2canvas from 'html2canvas';
 import { supabase } from './supabaseClient';
 import toast from 'react-hot-toast';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Loader2, Upload, FileText, MessageSquare, Paperclip, Clock, CheckCircle2, AlertCircle, ShoppingBag, ChevronDown } from 'lucide-react';
+import { Loader2, Upload, FileText, MessageSquare, Paperclip, Clock, CheckCircle2, AlertCircle, ShoppingBag, ChevronDown, X } from 'lucide-react';
 import './Requisiciones.css';
 import './ReportesMaestro.css';
 
@@ -56,7 +56,7 @@ const Compras = () => {
   const [comentarioRetraso, setComentarioRetraso] = useState('');
   const [expandirSoportes, setExpandirSoportes] = useState(false);
   const [preciosReferencia, setPreciosReferencia] = useState({}); // { descripcion: ultimoPrecio }
-  
+
   // --- SLA & POSTERGACIÓN ---
   const [showPostergarModal, setShowPostergarModal] = useState(false);
   const [motivoPostergacion, setMotivoPostergacion] = useState('');
@@ -148,7 +148,7 @@ const Compras = () => {
       const matchStatus = filtroStatusCompra === 'Todos' || (req.status_compra || 'En espera') === filtroStatusCompra;
       const matchCC = filtroCentroCosto === 'Todos' || req.centro_costo === filtroCentroCosto;
       const matchCat = filtroCategoria === 'Todos' || (req.items || []).some(it => it.categoria === filtroCategoria);
-      
+
       return matchTexto && matchGerencia && matchStatus && matchCC && matchCat;
     });
   }, [historial, busqueda, filtroGerencia, filtroStatusCompra, filtroCentroCosto, filtroCategoria]);
@@ -269,7 +269,7 @@ const Compras = () => {
       const fullComentario = nuevaPausa ? `[${motivoCategoria}] ${comentario}` : comentario;
       const { error } = await supabase
         .from('requisiciones')
-        .update({ 
+        .update({
           is_pausada: nuevaPausa,
           motivo_postergacion: nuevaPausa ? fullComentario : req.motivo_postergacion
         })
@@ -611,9 +611,9 @@ const Compras = () => {
     setRenglones(prev => prev.map(f => {
       if (f.id === id) {
         let v = valor;
-        if (campo === 'compra_actual_pu') v = Math.max(0, Number(valor) || 0);
-        if (campo === 'compra_actual_cant') {
-          v = Math.max(0, Number(valor) || 0);
+        if (campo === 'compra_actual_pu' || campo === 'compra_actual_cant') {
+          if (valor === '') v = '';
+          else v = Math.max(0, Number(valor) || 0);
         }
 
         const act = { ...f, [campo]: v };
@@ -750,11 +750,20 @@ const Compras = () => {
         return acc + ejecutadoItem + estimadoPendiente;
       }, 0);
 
+      const totalEjecutadoReal = nuevosRenglones.reduce((acc, r) => {
+        const ejecutadoItem = (r.historial_compras || []).reduce((sum, t) => {
+          if (t.tipo === 'JUSTIFICACION') return sum;
+          return sum + ((Number(t.cant) || 0) * (Number(t.pu) || 0));
+        }, 0);
+        return acc + ejecutadoItem;
+      }, 0);
+
       const { error } = await supabase
         .from('requisiciones')
         .update({
           items: nuevosRenglones,
-          total_bs: totalDinamicoReal * 1.16
+          total_bs: totalDinamicoReal * 1.16,
+          total_ejecutado: totalEjecutadoReal * 1.16
         })
         .eq('id', editandoId);
 
@@ -1095,14 +1104,24 @@ const Compras = () => {
         return acc + ejecutadoItem + estimadoPendiente;
       }, 0);
 
+      const totalEjecutadoReal = renglonesProcesados.reduce((acc, r) => {
+        const ejecutadoItem = (r.historial_compras || []).reduce((sum, t) => {
+          if (t.tipo === 'JUSTIFICACION') return sum;
+          return sum + ((Number(t.cant) || 0) * (Number(t.pu) || 0));
+        }, 0);
+        return acc + ejecutadoItem;
+      }, 0);
+
       const totalConIVA = totalDinamicoReal * 1.16;
+      const ejecutadoConIVA = totalEjecutadoReal * 1.16;
 
       const updatePayload = {
         items: renglonesProcesados,
         total_bs: totalConIVA,
+        total_ejecutado: ejecutadoConIVA,
         status_compra: nuevoStatusCompra
       };
-      
+
       if (nuevoStatusCompra === 'Completado' || nuevoStatusCompra === 'COMPLETADO') {
         updatePayload.f_finalizado = new Date().toISOString();
       }
@@ -1121,7 +1140,7 @@ const Compras = () => {
         setRequisicionActiva(prev => ({ ...prev, items: renglonesProcesados }));
       } else {
         toast.success(todasCompletas ? "Requisición Finalizada / Comprada al 100%." : "Compra parcial registrada con éxito.");
-        
+
         // NOTIFICAR AL SOLICITANTE SI SE COMPLETÓ
         if (todasCompletas && requisicionActiva?.user_id) {
           await enviarNotificacion(requisicionActiva.user_id, `¡Tu Requisición ${requisicionActiva.correlativo} ha sido COMPLETADA! Todos los ítems fueron procesados.`, 'Compra Lista');
@@ -1248,9 +1267,9 @@ const Compras = () => {
               onChange={(e) => setBusqueda(e.target.value)}
             />
           </div>
-          
-          <select 
-            className="input-tc" 
+
+          <select
+            className="input-tc"
             style={{ width: '180px', margin: 0 }}
             value={filtroCategoria}
             onChange={(e) => setFiltroCategoria(e.target.value)}
@@ -1259,8 +1278,8 @@ const Compras = () => {
             {categoriasUnicas.filter(c => c !== 'Todos').map(c => <option key={c} value={c}>{c}</option>)}
           </select>
 
-          <select 
-            className="input-tc" 
+          <select
+            className="input-tc"
             style={{ width: '180px', margin: 0 }}
             value={filtroCentroCosto}
             onChange={(e) => setFiltroCentroCosto(e.target.value)}
@@ -1269,8 +1288,8 @@ const Compras = () => {
             {centrosCostoUnicos.filter(c => c !== 'Todos').map(c => <option key={c} value={c}>{c}</option>)}
           </select>
 
-          <select 
-            className="input-tc" 
+          <select
+            className="input-tc"
             style={{ width: '180px', margin: 0 }}
             value={filtroGerencia}
             onChange={(e) => setFiltroGerencia(e.target.value)}
@@ -1285,7 +1304,7 @@ const Compras = () => {
         <table className="tc-table" style={{ borderCollapse: 'collapse', width: '100%' }}>
           <thead>
             <tr>
-              <th style={{ width: '150px', padding: '12px 15px' }}>ID REQ</th>
+              <th style={{ width: '220px', padding: '12px 15px' }}>ID REQ</th>
               <th style={{ padding: '12px 15px' }}>CATEGORÍA</th>
               <th style={{ padding: '12px 15px' }}>SOLICITANTE / GERENCIA</th>
               <th style={{ padding: '12px 15px' }}>C. COSTOS</th>
@@ -1306,16 +1325,23 @@ const Compras = () => {
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <motion.span
-                      whileHover={{ scale: 1.05, color: '#0ea5e9' }}
+                      whileHover={{
+                        scale: 1.1,
+                        x: 5,
+                        color: '#2563eb',
+                        textShadow: '0 0 8px rgba(37, 99, 235, 0.2)'
+                      }}
                       whileTap={{ scale: 0.95 }}
+                      transition={{ type: "spring", stiffness: 400, damping: 10 }}
                       style={{
                         fontSize: '12px',
-                        fontWeight: '800',
-                        color: 'var(--primary)',
-                        cursor: 'pointer',
+                        fontWeight: '900',
+                        color: '#1e40af',
                         textDecoration: 'underline',
                         textUnderlineOffset: '3px',
-                        textDecorationColor: 'rgba(14, 165, 233, 0.3)'
+                        textDecorationColor: 'rgba(30, 64, 175, 0.4)',
+                        cursor: 'pointer',
+                        display: 'inline-block'
                       }}
                     >
                       {req.correlativo}
@@ -1340,7 +1366,14 @@ const Compras = () => {
                     {req.items?.[0]?.descripcion || 'Sin descripción'}
                   </div>
                   <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '500' }}>
-                    {req.items?.[0]?.categoria || 'N/A'} {req.items?.length > 1 ? <span style={{ color: '#0ea5e9' }}>(+{req.items.length - 1} más)</span> : ''}
+                    {req.items?.[0]?.categoria || 'N/A'} {req.items?.length > 1 ? (
+                      <span
+                        style={{ color: '#0ea5e9', cursor: 'help', fontWeight: '800' }}
+                        title={req.items.slice(1).map(it => `- ${it.descripcion}`).join('\n')}
+                      >
+                        (+{req.items.length - 1} más)
+                      </span>
+                    ) : ''}
                   </div>
                 </td>
                 <td style={{ padding: '8px 15px' }}>
@@ -1369,27 +1402,27 @@ const Compras = () => {
                       const hoy = new Date();
                       const diff = limite.getTime() - hoy.getTime();
                       const isPausada = req.is_pausada;
-                      
+
                       if (isPausada) return <span style={{ color: '#f59e0b', fontSize: '0.7rem', fontWeight: '900' }}>⏸️ PAUSADO</span>;
-                      
+
                       const horasTotales = Math.floor(diff / (1000 * 60 * 60));
                       const color = horasTotales < 0 ? '#ef4444' : (horasTotales < 24 ? '#f59e0b' : '#16a34a');
-                      
+
                       const dias = Math.floor(horasTotales / 24);
                       const horasRestantes = horasTotales % 24;
                       const label = horasTotales < 0 ? 'VENCIDO' : (dias > 0 ? `${dias}d ${horasRestantes}h` : `${horasRestantes}h`);
 
                       return (
-                        <div style={{ 
-                           fontSize: '0.75rem', 
-                           fontWeight: '800', 
-                           backgroundColor: `${color}15`, 
-                           color: color,
-                           padding: '4px 8px',
-                           borderRadius: '6px',
-                           display: 'inline-block'
-                         }}>
-                           {label}
+                        <div style={{
+                          fontSize: '0.75rem',
+                          fontWeight: '800',
+                          backgroundColor: `${color}15`,
+                          color: color,
+                          padding: '4px 8px',
+                          borderRadius: '6px',
+                          display: 'inline-block'
+                        }}>
+                          {label}
                         </div>
                       );
                     }
@@ -1407,7 +1440,7 @@ const Compras = () => {
                     if (status === 'Completado') { bg = '#dcfce7'; color = '#15803d'; }
                     else if (status === 'Parcial') { bg = '#ffedd5'; color = '#c2410c'; }
                     else if (status === 'En espera') { bg = '#fef9c3'; color = '#a16207'; }
-                    
+
                     return (
                       <span style={{
                         backgroundColor: bg,
@@ -1436,361 +1469,333 @@ const Compras = () => {
 
       {showModal && (
         <div className="modal-overlay">
-          <div className="modal-card animate-modal" style={{ maxWidth: '1450px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <h2 style={{ margin: 0 }}>Gestión de Compra: {requisicionActiva?.correlativo}</h2>
-                  {requisicionActiva?.observaciones && (
-                    <div style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '6px',
-                      backgroundColor: '#fef3c7',
-                      color: '#d97706',
-                      padding: '4px 10px',
-                      borderRadius: '8px',
-                      fontSize: '0.75rem',
-                      fontWeight: 'bold',
-                      border: '1px solid #fde68a'
-                    }}>
-                      <MessageSquare size={14} fill="#fef3c7" />
-                      REQUISICIÓN CON OBSERVACIÓN
-                    </div>
-                  )}
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '20px', marginTop: '12px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <div style={{
-                      width: '36px', height: '36px', borderRadius: '50%',
-                      backgroundColor: '#1e293b', color: 'white',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      fontSize: '0.85rem', fontWeight: 'bold'
-                    }}>
-                      {getInitials(currentUser?.nombre, currentUser?.apellido)}
-                    </div>
-                    <span style={{ fontSize: '1.1rem', fontWeight: '600', color: '#1e293b' }}>
-                      {requisicionActiva?.solicitante}
-                    </span>
-                  </div>
-                  <div style={{
-                    backgroundColor: '#334155', color: 'white',
-                    padding: '6px 14px', borderRadius: '8px',
-                    fontSize: '0.95rem', fontWeight: 'bold',
-                    display: 'flex', alignItems: 'center', gap: '6px'
-                  }}>
-                    <span style={{ opacity: 0.8, fontSize: '0.75rem' }}>CC:</span>
-                    {requisicionActiva?.centro_costo}
-                  </div>
-                </div>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
-                 {/* SLA TIMER PANEL */}
-                 {(() => {
-                   if (!requisicionActiva || requisicionActiva.status_compra === 'Completado') return null;
+          <div className="modal-card animate-modal" style={{ maxWidth: '1450px', height: '95vh', display: 'flex', flexDirection: 'column', padding: 0, overflow: 'hidden' }}>
+            
+            {/* CABECERA FIJA */}
+            <div style={{ padding: '25px 35px 15px 35px', flexShrink: 0, borderBottom: '1px solid #e2e8f0', backgroundColor: 'white', position: 'relative' }}>
+              <button 
+                onClick={intentarCerrarModal}
+                style={{ position: 'absolute', top: '20px', right: '20px', border: 'none', background: '#f1f5f9', borderRadius: '50%', width: '36px', height: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#64748b', transition: 'all 0.2s', zIndex: 100 }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = '#e2e8f0'; e.currentTarget.style.color = '#0f172a'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = '#f1f5f9'; e.currentTarget.style.color = '#64748b'; }}
+              >
+                <X size={20} />
+              </button>
 
-                   let limiteDate = requisicionActiva.fecha_limite_compra;
-                   if (!limiteDate && requisicionActiva.fecha_emision) {
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+                    <div style={{
+                      backgroundColor: 'var(--primary)',
+                      color: 'white',
+                      padding: '5px 12px',
+                      borderRadius: '8px',
+                      fontSize: '0.7rem',
+                      fontWeight: '900',
+                      letterSpacing: '0.05em',
+                      boxShadow: '0 4px 12px rgba(14, 165, 233, 0.2)'
+                    }}>
+                      GESTIÓN DE COMPRA
+                    </div>
+                    <h1 style={{ margin: 0, fontSize: '1.8rem', fontWeight: '950', color: '#0f172a', letterSpacing: '-0.5px' }}>
+                      {requisicionActiva?.correlativo}
+                    </h1>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '20px', marginTop: '15px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <div style={{
+                        width: '38px', height: '38px', borderRadius: '12px',
+                        backgroundColor: '#f1f5f9', color: '#1e293b',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: '0.9rem', fontWeight: 'bold', border: '1px solid #e2e8f0'
+                      }}>
+                        {getInitials(requisicionActiva?.solicitante?.split(' ')[0], requisicionActiva?.solicitante?.split(' ')[1])}
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column' }}>
+                        <span style={{ fontSize: '0.65rem', fontWeight: '900', color: '#64748b', textTransform: 'uppercase' }}>SOLICITANTE</span>
+                        <span style={{ fontSize: '1rem', fontWeight: '700', color: '#1e293b' }}>{requisicionActiva?.solicitante}</span>
+                      </div>
+                    </div>
+
+                    <div style={{ width: '1px', height: '30px', backgroundColor: '#e2e8f0' }}></div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                      <span style={{ fontSize: '0.65rem', fontWeight: '900', color: '#64748b', textTransform: 'uppercase' }}>CENTRO DE COSTO</span>
+                      <span style={{ fontSize: '1rem', fontWeight: '700', color: '#0ea5e9' }}>{requisicionActiva?.centro_costo}</span>
+                    </div>
+
+                    {requisicionActiva?.observaciones && (
+                      <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        backgroundColor: '#fffbeb',
+                        color: '#d97706',
+                        padding: '6px 14px',
+                        borderRadius: '10px',
+                        fontSize: '0.75rem',
+                        fontWeight: 'bold',
+                        border: '1px solid #fef3c7',
+                        marginLeft: '10px'
+                      }}>
+                        <MessageSquare size={16} fill="#fef3c7" />
+                        POSEE OBSERVACIONES
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '20px', marginRight: '50px' }}>
+                  {/* SLA TIMER PANEL */}
+                  {(() => {
+                    if (!requisicionActiva || requisicionActiva.status_compra === 'Completado') return null;
+
+                    let limiteDate = requisicionActiva.fecha_limite_compra;
+                    if (!limiteDate && requisicionActiva.fecha_emision) {
                       const base = new Date(requisicionActiva.fecha_emision);
                       const dias = requisicionActiva.prioridad === 'Emergencia' ? 1 : 5;
                       limiteDate = new Date(base.getTime() + (dias * 24 * 60 * 60 * 1000));
-                   } else if (limiteDate) {
+                    } else if (limiteDate) {
                       limiteDate = new Date(limiteDate);
-                   }
+                    }
 
-                   if (!limiteDate) return null;
-                   
-                   const hoy = new Date();
-                   const diff = limiteDate.getTime() - hoy.getTime();
-                   const isPausada = requisicionActiva.is_pausada;
+                    if (!limiteDate) return null;
 
-                   return (
-                     <div style={{
-                       display: 'flex',
-                       alignItems: 'center',
-                       gap: '12px',
-                       backgroundColor: isPausada ? '#fffbeb' : '#f8fafc',
-                       padding: '8px 15px',
-                       borderRadius: '10px',
-                       border: '1px solid',
-                       borderColor: isPausada ? '#fde68a' : '#e2e8f0'
-                     }}>
-                       {isPausada ? <AlertCircle size={16} color="#d97706" /> : <Clock size={16} color="#64748b" />}
-                       <div style={{ display: 'flex', flexDirection: 'column' }}>
-                         <span style={{ fontSize: '0.65rem', fontWeight: '900', color: '#64748b', textTransform: 'uppercase' }}>
-                           {isPausada ? 'SLA PAUSADO' : 'Tiempo Límite'}
-                         </span>
-                         <span style={{ 
-                           fontSize: '0.9rem', 
-                           fontWeight: '1000', 
-                           color: (() => {
-                             if (isPausada) return '#d97706';
-                             return diff < 0 ? '#ef4444' : (diff < 86400000 ? '#f59e0b' : '#16a34a');
-                           })()
-                         }}>
-                           {(() => {
-                             if (diff < 0 && !isPausada) return 'PLAZO VENCIDO';
-                             if (isPausada) return 'EN PAUSA';
-                             const d = Math.floor(diff / (1000 * 60 * 60 * 24));
-                             const h = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-                             return `${d}d ${h}h restantes`;
-                           })()}
-                         </span>
-                       </div>
-                       
-                       <button
-                         onClick={() => manejarPostergacion(requisicionActiva)}
-                         style={{
-                           marginLeft: '10px',
-                           padding: '6px 12px',
-                           borderRadius: '8px',
-                           border: '1px solid #cbd5e1',
-                           backgroundColor: isPausada ? '#fef3c7' : 'white',
-                           color: isPausada ? '#d97706' : '#64748b',
-                           fontSize: '0.7rem',
-                           fontWeight: 'bold',
-                           cursor: 'pointer'
-                         }}
-                       >
-                         {isPausada ? '▶️ REANUDAR' : '⏸️ POSTERGAR'}
-                       </button>
-                     </div>
-                   );
-                 })()}
+                    const hoy = new Date();
+                    const diff = limiteDate.getTime() - hoy.getTime();
+                    const isPausada = requisicionActiva.is_pausada;
 
-                <div style={{ textAlign: 'right' }}>
-                  <div style={{ fontSize: '0.65rem', fontWeight: 'bold', color: '#94a3b8', textTransform: 'uppercase' }}>Status de Compra</div>
-                  <div style={{ fontSize: '1.1rem', fontWeight: '900', color: requisicionActiva?.status_compra === 'Completado' ? '#15803d' : '#854d0e' }}>
-                    {requisicionActiva?.status_compra || 'EN ESPERA'}
+                    return (
+                      <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '12px',
+                        backgroundColor: isPausada ? '#fffbeb' : '#f8fafc',
+                        padding: '8px 15px',
+                        borderRadius: '10px',
+                        border: '1px solid',
+                        borderColor: isPausada ? '#fde68a' : '#e2e8f0'
+                      }}>
+                        {isPausada ? <AlertCircle size={16} color="#d97706" /> : <Clock size={16} color="#64748b" />}
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                          <span style={{ fontSize: '0.65rem', fontWeight: '900', color: '#64748b', textTransform: 'uppercase' }}>
+                            {isPausada ? 'SLA PAUSADO' : 'Tiempo Límite'}
+                          </span>
+                          <span style={{
+                            fontSize: '0.9rem',
+                            fontWeight: '1000',
+                            color: (() => {
+                              if (isPausada) return '#d97706';
+                              return diff < 0 ? '#ef4444' : (diff < 86400000 ? '#f59e0b' : '#16a34a');
+                            })()
+                          }}>
+                            {(() => {
+                              if (diff < 0 && !isPausada) return 'PLAZO VENCIDO';
+                              if (isPausada) return 'EN PAUSA';
+                              const d = Math.floor(diff / (1000 * 60 * 60 * 24));
+                              const h = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+                              return `${d}d ${h}h restantes`;
+                            })()}
+                          </span>
+                        </div>
+
+                        <button
+                          onClick={() => manejarPostergacion(requisicionActiva)}
+                          style={{
+                            marginLeft: '10px',
+                            padding: '6px 12px',
+                            borderRadius: '8px',
+                            border: '1px solid #cbd5e1',
+                            backgroundColor: isPausada ? '#fef3c7' : 'white',
+                            color: isPausada ? '#d97706' : '#64748b',
+                            fontSize: '0.7rem',
+                            fontWeight: 'bold',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          {isPausada ? '▶️ REANUDAR' : '⏸️ POSTERGAR'}
+                        </button>
+                      </div>
+                    );
+                  })()}
+
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: '0.65rem', fontWeight: 'bold', color: '#94a3b8', textTransform: 'uppercase' }}>Status de Compra</div>
+                    <div style={{ fontSize: '1.1rem', fontWeight: '900', color: requisicionActiva?.status_compra === 'Completado' ? '#15803d' : '#854d0e' }}>
+                      {requisicionActiva?.status_compra || 'EN ESPERA'}
+                    </div>
                   </div>
+                </div>
+              </div>
+
+              <div className="req-header-line" style={{ margin: '15px 0' }}></div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
+                <div style={{
+                  backgroundColor: '#f1f5f9',
+                  padding: '12px 18px',
+                  borderRadius: '10px',
+                  borderLeft: '4px solid #94a3b8'
+                }}>
+                  <label style={{ fontSize: '0.65rem', fontWeight: '900', color: '#475569', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>
+                    Justificación Operativa
+                  </label>
+                  <p style={{ margin: 0, color: '#1e293b', fontSize: '0.9rem', fontWeight: '500', lineHeight: '1.4' }}>
+                    {requisicionActiva?.justificacion || 'Sin justificación registrada'}
+                  </p>
+                </div>
+
+                <div style={{
+                  backgroundColor: '#fffbeb',
+                  padding: '12px 18px',
+                  borderRadius: '10px',
+                  borderLeft: '4px solid #f59e0b'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '4px' }}>
+                    <label style={{ fontSize: '0.65rem', fontWeight: '900', color: '#92400e', textTransform: 'uppercase', display: 'block', margin: 0 }}>
+                      Observaciones
+                    </label>
+                    {!editandoObs && (
+                      <button
+                        onClick={() => {
+                          setObsTemporal(requisicionActiva?.observaciones || '');
+                          setEditandoObs(true);
+                        }}
+                        style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '1rem', padding: 0 }}
+                        title="Editar Observaciones"
+                      >
+                        ✏️
+                      </button>
+                    )}
+                  </div>
+                  {editandoObs ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <textarea
+                        className="input-tc"
+                        style={{ minHeight: '60px', paddingTop: '10px', fontSize: '0.8rem' }}
+                        value={obsTemporal}
+                        onChange={(e) => setObsTemporal(e.target.value)}
+                        placeholder="Actualice las observaciones aquí..."
+                      />
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <button className="btn-tc btn-tc-success" style={{ padding: '4px 12px', fontSize: '0.65rem' }} onClick={guardarObservacionesDirecto}>✓ GUARDAR</button>
+                        <button className="btn-tc btn-tc-secondary" style={{ padding: '4px 12px', fontSize: '0.65rem' }} onClick={() => setEditandoObs(false)}>CANCELAR</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <p style={{ margin: 0, color: '#1e293b', fontSize: '0.9rem', fontWeight: '500', lineHeight: '1.4' }}>
+                      {requisicionActiva?.observaciones || 'Sin observaciones registradas'}
+                    </p>
+                  )}
                 </div>
               </div>
             </div>
 
-            <div className="req-header-line" style={{ margin: '20px 0 15px 0' }}></div>
+            {/* CUERPO DESPLAZABLE */}
+            <div style={{ flexGrow: 1, overflowY: 'auto', padding: '20px 35px' }}>
+              <table className="tc-table" style={{ fontSize: '0.85rem' }}>
+                <thead>
+                  <tr style={{ backgroundColor: '#f8fafc' }}>
+                    <th style={{ width: '40px' }}>N°</th>
+                    <th style={{ width: '120px' }}>PRODUCTO</th>
+                    <th style={{ textAlign: 'center', width: '60px' }}>PED.</th>
+                    <th style={{ textAlign: 'center', width: '60px' }}>COMP.</th>
+                    <th style={{ textAlign: 'center', width: '60px' }}>PEND.</th>
+                    <th style={{ textAlign: 'center', width: '320px' }}>DETALLE PAGO / PROVEEDOR</th>
+                    <th style={{ textAlign: 'right', width: '100px' }}>CANT. REAL</th>
+                    <th style={{ textAlign: 'right', width: '110px' }}>P.U. REAL</th>
+                    <th style={{ textAlign: 'right', width: '100px' }}>TOTAL $</th>
+                    <th style={{ textAlign: 'center', width: '130px' }}>ACCIONES</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {renglones.map((f, i) => (
+                    <React.Fragment key={f.id}>
+                      <tr style={{
+                        backgroundColor: (Number(f.cantidad_comprada || 0) + Number(f.compra_actual_cant || 0)) >= Number(f.cantidad_pedida) ? '#f0fdf4' : 'transparent',
+                        borderLeft: (Number(f.cantidad_comprada || 0) + Number(f.compra_actual_cant || 0)) >= Number(f.cantidad_pedida) ? '4px solid #16a34a' : 'none',
+                        transition: 'all 0.3s ease'
+                      }}>
+                        <td style={{ fontWeight: 'bold' }}>{i + 1}</td>
+                        <td style={{ verticalAlign: 'middle' }}>
+                          <div style={{ fontWeight: 'bold', color: '#1e293b', fontSize: '0.9rem' }}>{f.descripcion}</div>
+                          <div style={{ fontSize: '10px', color: '#64748b', fontWeight: '600' }}>{f.categoria}</div>
+                        </td>
+                        <td style={{ textAlign: 'center', fontWeight: '650', color: '#64748b' }}>{f.cantidad_pedida}</td>
+                        <td style={{ textAlign: 'center', color: '#16a34a', fontWeight: '800' }}>{f.cantidad_comprada}</td>
+                        <td style={{
+                          textAlign: 'center',
+                          fontWeight: '800',
+                          color: f.cantidad_pendiente > 0 ? '#f97316' : '#94a3b8'
+                        }}>{f.cantidad_pendiente}</td>
 
-            <div style={{
-              backgroundColor: '#f1f5f9',
-              padding: '12px 18px',
-              borderRadius: '10px',
-              borderLeft: '4px solid #94a3b8',
-              marginBottom: '20px'
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '4px' }}>
-                <label style={{
-                  fontSize: '0.65rem',
-                  fontWeight: '900',
-                  color: '#475569',
-                  textTransform: 'uppercase',
-                  display: 'block',
-                  margin: 0
-                }}>
-                  Justificación Operativa
-                </label>
-              </div>
-              <p style={{
-                margin: 0,
-                color: '#1e293b',
-                fontSize: '0.95rem',
-                fontWeight: '500',
-                lineHeight: '1.4'
-              }}>
-                {requisicionActiva?.justificacion || 'Sin justificación registrada'}
-              </p>
-            </div>
-
-            <div style={{
-              backgroundColor: '#fffbeb',
-              padding: '12px 18px',
-              borderRadius: '10px',
-              borderLeft: '4px solid #f59e0b',
-              marginBottom: '20px'
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '4px' }}>
-                <label style={{
-                  fontSize: '0.65rem',
-                  fontWeight: '900',
-                  color: '#92400e',
-                  textTransform: 'uppercase',
-                  display: 'block',
-                  margin: 0
-                }}>
-                  Observaciones
-                </label>
-                {!editandoObs && (
-                  <button
-                    onClick={() => {
-                      setObsTemporal(requisicionActiva?.observaciones || '');
-                      setEditandoObs(true);
-                    }}
-                    style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '1rem', padding: 0 }}
-                    title="Editar Observaciones"
-                  >
-                    ✏️
-                  </button>
-                )}
-              </div>
-              {editandoObs ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  <textarea
-                    className="input-tc"
-                    style={{ minHeight: '80px', paddingTop: '10px' }}
-                    value={obsTemporal}
-                    onChange={(e) => setObsTemporal(e.target.value)}
-                    placeholder="Actualice las observaciones aquí..."
-                  />
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    <button
-                      className="btn-tc btn-tc-success"
-                      style={{ padding: '4px 12px', fontSize: '0.7rem' }}
-                      onClick={guardarObservacionesDirecto}
-                    >
-                      ✓ GUARDAR
-                    </button>
-                    <button
-                      className="btn-tc btn-tc-secondary"
-                      style={{ padding: '4px 12px', fontSize: '0.7rem' }}
-                      onClick={() => setEditandoObs(false)}
-                    >
-                      CANCELAR
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <p style={{
-                  margin: 0,
-                  color: '#1e293b',
-                  fontSize: '0.95rem',
-                  fontWeight: '500',
-                  lineHeight: '1.4'
-                }}>
-                  {requisicionActiva?.observaciones || 'Sin observaciones registradas'}
-                </p>
-              )}
-            </div>
-
-            <table className="tc-table" style={{ fontSize: '0.85rem' }}>
-              <thead>
-                <tr style={{ backgroundColor: '#f8fafc' }}>
-                  <th style={{ width: '40px' }}>N°</th>
-                  <th style={{ width: '120px' }}>PRODUCTO</th>
-                  <th style={{ textAlign: 'center', width: '60px' }}>PED.</th>
-                  <th style={{ textAlign: 'center', width: '60px' }}>COMP.</th>
-                  <th style={{ textAlign: 'center', width: '60px' }}>PEND.</th>
-                  <th style={{ textAlign: 'center', width: '320px' }}>DETALLE PAGO / PROVEEDOR</th>
-                  <th style={{ textAlign: 'right', width: '100px' }}>CANT. REAL</th>
-                  <th style={{ textAlign: 'right', width: '110px' }}>P.U. REAL</th>
-                  <th style={{ textAlign: 'right', width: '100px' }}>TOTAL $</th>
-                  <th style={{ textAlign: 'center', width: '130px' }}>ACCIONES</th>
-                </tr>
-              </thead>
-              <tbody>
-                {renglones.map((f, i) => (
-                  <React.Fragment key={f.id}>
-                    <tr style={{
-                      backgroundColor: (Number(f.cantidad_comprada || 0) + Number(f.compra_actual_cant || 0)) >= Number(f.cantidad_pedida) ? '#f0fdf4' : 'transparent',
-                      borderLeft: (Number(f.cantidad_comprada || 0) + Number(f.compra_actual_cant || 0)) >= Number(f.cantidad_pedida) ? '4px solid #16a34a' : 'none',
-                      transition: 'all 0.3s ease'
-                    }}>
-                      <td style={{ fontWeight: 'bold' }}>{i + 1}</td>
-                      <td style={{ verticalAlign: 'middle' }}>
-                        <div style={{ fontWeight: 'bold', color: '#1e293b', fontSize: '0.9rem' }}>{f.descripcion}</div>
-                        <div style={{ fontSize: '10px', color: '#64748b', fontWeight: '600' }}>{f.categoria}</div>
-                      </td>
-                      <td style={{ textAlign: 'center', fontWeight: '650', color: '#64748b' }}>{f.cantidad_pedida}</td>
-                      <td style={{ textAlign: 'center', color: '#16a34a', fontWeight: '800' }}>{f.cantidad_comprada}</td>
-                      <td style={{
-                        textAlign: 'center',
-                        fontWeight: '800',
-                        color: f.cantidad_pendiente > 0 ? '#f97316' : '#94a3b8'
-                      }}>{f.cantidad_pendiente}</td>
-
-                      {/* CELDA COMPACTA PAGO / PROVEEDOR */}
-                      <td>
-                        <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr', gap: '12px', alignItems: 'center' }}>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                            <span style={{ fontSize: '9px', fontWeight: '900', color: '#94a3b8', textTransform: 'uppercase' }}>Documento / #</span>
-                            <div style={{ display: 'flex', gap: '4px' }}>
-                              <select
-                                className="input-tc focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                                style={{ fontSize: '10px', padding: '2px', width: '50px', border: '1px solid #cbd5e1', height: '32px' }}
-                                value={f.doc_tipo_actual || 'FAC'}
-                                onChange={(e) => actualizarFila(f.id, 'doc_tipo_actual', e.target.value)}
-                              >
-                                <option value="FAC">FAC</option>
-                                <option value="NC">NC</option>
-                              </select>
-                              <input
-                                className="input-tc focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                                style={{ fontSize: '11px', padding: '4px 8px', width: '65px', border: '1px solid #cbd5e1', fontWeight: 'bold', height: '32px' }}
-                                value={f.doc_numero_actual || ''}
-                                onChange={(e) => actualizarFila(f.id, 'doc_numero_actual', e.target.value)}
-                                onKeyDown={(e) => handleKeyDown(e, f.id, 'doc_numero')}
-                                ref={el => { if (!inputRefs.current[f.id]) inputRefs.current[f.id] = {}; inputRefs.current[f.id].doc_numero = el; }}
-                                placeholder="000"
-                              />
+                        {/* CELDA COMPACTA PAGO / PROVEEDOR */}
+                        <td>
+                          <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr', gap: '12px', alignItems: 'center' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                              <span style={{ fontSize: '9px', fontWeight: '900', color: '#94a3b8', textTransform: 'uppercase' }}>Factura # / Documento</span>
+                              <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                                <div style={{ 
+                                  fontSize: '10px', 
+                                  fontWeight: '900', 
+                                  color: '#475569', 
+                                  backgroundColor: '#f1f5f9', 
+                                  padding: '4px 8px', 
+                                  borderRadius: '6px',
+                                  height: '32px',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  border: '1px solid #e2e8f0'
+                                }}>
+                                  FAC
+                                </div>
+                                <input
+                                  className="input-tc focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                                  style={{ fontSize: '11px', padding: '4px 8px', flex: 1, border: '1px solid #cbd5e1', fontWeight: 'bold', height: '32px' }}
+                                  value={f.doc_numero_actual || ''}
+                                  onChange={(e) => actualizarFila(f.id, 'doc_numero_actual', e.target.value)}
+                                  onKeyDown={(e) => handleKeyDown(e, f.id, 'doc_numero')}
+                                  ref={el => { if (!inputRefs.current[f.id]) inputRefs.current[f.id] = {}; inputRefs.current[f.id].doc_numero = el; }}
+                                  placeholder="000"
+                                />
+                              </div>
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                              <span style={{ fontSize: '9px', fontWeight: '900', color: '#94a3b8', textTransform: 'uppercase' }}>Proveedor y Moneda de Pago</span>
+                              <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                                <select
+                                  className="input-tc focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                                  style={{ flex: 1, fontSize: '11px', padding: '4px', fontWeight: 'bold', border: '1px solid #cbd5e1', height: '32px' }}
+                                  value={f.proveedor_seleccionado_id || ''}
+                                  onChange={(e) => actualizarFila(f.id, 'proveedor_seleccionado_id', Number(e.target.value))}
+                                  onKeyDown={(e) => handleKeyDown(e, f.id, 'proveedor')}
+                                  ref={el => { if (!inputRefs.current[f.id]) inputRefs.current[f.id] = {}; inputRefs.current[f.id].proveedor = el; }}
+                                  disabled={f.cantidad_pendiente === 0}
+                                >
+                                  <option value="">Proveedor</option>
+                                  {proveedores.map(p => <option key={p.id} value={p.id}>{p.razon_social}</option>)}
+                                </select>
+                                <select
+                                  className="input-tc focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                                  style={{ width: '65px', fontSize: '10px', padding: '2px', height: '32px', border: '1px solid #cbd5e1', fontWeight: '800' }}
+                                  value={f.metodo_pago_actual || '$ / BS'}
+                                  onChange={(e) => actualizarFila(f.id, 'metodo_pago_actual', e.target.value)}
+                                >
+                                  <option value="$ / BS">$ / BS</option>
+                                  <option value="$ / $">$ / $</option>
+                                </select>
+                              </div>
                             </div>
                           </div>
+                        </td>
+
+                        <td style={{ verticalAlign: 'middle' }}>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                            <span style={{ fontSize: '9px', fontWeight: '900', color: '#94a3b8', textTransform: 'uppercase' }}>Proveedor y Moneda de Pago</span>
-                            <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                              <select
-                                className="input-tc focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                                style={{ flex: 1, fontSize: '11px', padding: '4px', fontWeight: 'bold', border: '1px solid #cbd5e1', height: '32px' }}
-                                value={f.proveedor_seleccionado_id || ''}
-                                onChange={(e) => actualizarFila(f.id, 'proveedor_seleccionado_id', Number(e.target.value))}
-                                onKeyDown={(e) => handleKeyDown(e, f.id, 'proveedor')}
-                                ref={el => { if (!inputRefs.current[f.id]) inputRefs.current[f.id] = {}; inputRefs.current[f.id].proveedor = el; }}
-                                disabled={f.cantidad_pendiente === 0}
-                              >
-                                <option value="">Proveedor</option>
-                                {proveedores.map(p => <option key={p.id} value={p.id}>{p.razon_social}</option>)}
-                              </select>
-                              <select
-                                className="input-tc focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                                style={{ width: '65px', fontSize: '10px', padding: '2px', height: '32px', border: '1px solid #cbd5e1', fontWeight: '800' }}
-                                value={f.metodo_pago_actual || '$ / BS'}
-                                onChange={(e) => actualizarFila(f.id, 'metodo_pago_actual', e.target.value)}
-                              >
-                                <option value="$ / BS">$ / BS</option>
-                                <option value="$ / $">$ / $</option>
-                              </select>
-                            </div>
-                          </div>
-                        </div>
-                      </td>
-
-                      <td style={{ verticalAlign: 'middle' }}>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                          <span style={{ fontSize: '9px', fontWeight: '900', color: '#64748b', textAlign: 'right' }}>COMPRAR</span>
-                          <input
-                            className="input-tc focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                            type="number"
-                            value={f.compra_actual_cant}
-                            disabled={f.cantidad_pendiente === 0}
-                            style={{
-                              textAlign: 'right',
-                              fontWeight: '900',
-                              fontSize: '13px',
-                              border: '1px solid #cbd5e1',
-                              backgroundColor: '#ffffff',
-                              boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.05)'
-                            }}
-                            onChange={(e) => actualizarFila(f.id, 'compra_actual_cant', e.target.value)}
-                            onKeyDown={(e) => handleKeyDown(e, f.id, 'cant')}
-                            ref={el => { if (!inputRefs.current[f.id]) inputRefs.current[f.id] = {}; inputRefs.current[f.id].cant = el; }}
-                          />
-                        </div>
-                      </td>
-
-                      <td style={{ verticalAlign: 'middle' }}>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                          <span style={{ fontSize: '9px', fontWeight: '900', color: '#64748b', textAlign: 'right' }}>P.U. REAL</span>
-                          <div style={{ position: 'relative' }}>
+                            <span style={{ fontSize: '9px', fontWeight: '900', color: '#64748b', textAlign: 'right' }}>COMPRAR</span>
                             <input
                               className="input-tc focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
                               type="number"
-                              value={f.compra_actual_pu}
+                              value={f.compra_actual_cant === 0 && f.compra_actual_cant !== '' ? '' : f.compra_actual_cant}
                               disabled={f.cantidad_pendiente === 0}
                               style={{
                                 textAlign: 'right',
@@ -1800,346 +1805,367 @@ const Compras = () => {
                                 backgroundColor: '#ffffff',
                                 boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.05)'
                               }}
-                              onChange={(e) => actualizarFila(f.id, 'compra_actual_pu', e.target.value)}
-                              onKeyDown={(e) => handleKeyDown(e, f.id, 'pu')}
-                              ref={el => { if (!inputRefs.current[f.id]) inputRefs.current[f.id] = {}; inputRefs.current[f.id].pu = el; }}
+                              onChange={(e) => actualizarFila(f.id, 'compra_actual_cant', e.target.value)}
+                              onFocus={(e) => e.target.select()}
+                              onKeyDown={(e) => handleKeyDown(e, f.id, 'cant')}
+                              ref={el => { if (!inputRefs.current[f.id]) inputRefs.current[f.id] = {}; inputRefs.current[f.id].cant = el; }}
                             />
-                            {f.variacion_precio >= 15 && (
-                              <div style={{ position: 'absolute', top: '-15px', right: 0, fontSize: '8px', color: '#ef4444', fontWeight: '900' }}>
-                                ▲ {f.variacion_precio.toFixed(0)}%
-                              </div>
-                            )}
                           </div>
-                        </div>
-                      </td>
+                        </td>
 
-                      <td style={{ textAlign: 'right', fontWeight: '900', color: '#0f172a', fontSize: '1rem' }}>
-                        $ {f.total?.toLocaleString('de-DE')}
-                        {(Number(f.cantidad_comprada || 0) + Number(f.compra_actual_cant || 0)) >= Number(f.cantidad_pedida) ? (
-                          <div style={{ fontSize: '9px', color: '#14532d', fontWeight: '900' }}>COMPLETO ✓</div>
-                        ) : (Number(f.cantidad_comprada || 0) + Number(f.compra_actual_cant || 0)) > 0 ? (
-                          <div style={{ fontSize: '9px', color: '#f97316', fontWeight: '900' }}>PARCIAL</div>
-                        ) : null}
-                      </td>
-
-                      <td style={{ textAlign: 'center' }}>
-                        <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
-                          {f.hasChanges && !loading && (
-                            <button
-                              onClick={() => guardarUnicoRenglon(f.id)}
-                              onKeyDown={(e) => handleKeyDown(e, f.id, 'save')}
-                              ref={el => { if (!inputRefs.current[f.id]) inputRefs.current[f.id] = {}; inputRefs.current[f.id].save = el; }}
-                              className="btn-tc btn-tc-primary focus:ring-2 focus:ring-green-500 outline-none transition-all"
-                              style={{ padding: '6px 10px', fontSize: '0.65rem', fontWeight: 'bold', background: '#22c55e', border: 'none' }}
-                              title="Guardar este renglón"
-                            >
-                              💾 GUARDAR
-                            </button>
-                          )}
-                          <div style={{ display: 'flex', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '2px', backgroundColor: '#f1f5f9' }}>
-                            <button
-                              onClick={() => {
-                                setItemParaJustificar(f);
-                                setShowJustificacionModal(true);
-                              }}
-                              style={{ border: 'none', background: 'none', cursor: 'pointer', padding: '4px', fontSize: '1.1rem' }}
-                              title="Agregar Comentario / Justificación"
-                            >
-                              💬
-                            </button>
-                            <button
-                              onClick={() => setExpandirHistorial(prev => ({ ...prev, [f.id]: !prev[f.id] }))}
-                              style={{ border: 'none', background: 'none', cursor: 'pointer', padding: '4px', fontSize: '1.1rem', opacity: (f.historial_compras?.length > 0) ? 1 : 0.3 }}
-                              title="Ver Historial"
-                              disabled={!f.historial_compras?.length}
-                            >
-                              {expandirHistorial[f.id] ? '🔼' : '🕒'}
-                            </button>
-                            <button
-                              onClick={() => {
-                                toast((t) => (
-                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                    <p style={{ margin: 0, fontSize: '0.85rem' }}>¿Anular este renglón?</p>
-                                    <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                                      <button
-                                        onClick={() => { toast.dismiss(t.id); actualizarFila(f.id, 'status', 'ANULADO'); }}
-                                        style={{ padding: '2px 8px', background: '#ef4444', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.75rem' }}
-                                      >
-                                        ANULAR
-                                      </button>
-                                      <button onClick={() => toast.dismiss(t.id)} style={{ padding: '2px 8px', background: '#f1f5f9', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.75rem' }}>NO</button>
-                                    </div>
-                                  </div>
-                                ));
-                              }}
-                              style={{ border: 'none', background: 'none', cursor: 'pointer', padding: '4px', fontSize: '1.1rem' }}
-                              title="Anular Renglón"
-                            >
-                              🗑️
-                            </button>
-                          </div>
-                        </div>
-                      </td>
-                    </tr>
-                    {expandirHistorial[f.id] && f.historial_compras?.length > 0 && (
-                      <tr>
-                        <td colSpan="11" style={{ padding: '0 0 15px 50px' }}>
-                          <div style={{ backgroundColor: 'white', borderRadius: '12px', border: '1px solid #e2e8f0', overflow: 'hidden', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)' }}>
-                            <div style={{ padding: '10px 15px', backgroundColor: '#f8fafc', fontSize: '0.75rem', fontWeight: '900', color: '#334155', display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #e2e8f0' }}>
-                              <span style={{ letterSpacing: '0.05em' }}>TRAZABILIDAD Y REGISTROS DE COMPRA</span>
-                              <span style={{ color: '#0ea5e9', backgroundColor: '#e0f2fe', padding: '2px 8px', borderRadius: '10px' }}>{f.historial_compras.length} EVENTOS</span>
+                        <td style={{ verticalAlign: 'middle' }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                            <span style={{ fontSize: '9px', fontWeight: '900', color: '#64748b', textAlign: 'right' }}>P.U. REAL</span>
+                            <div style={{ position: 'relative' }}>
+                              <input
+                                className="input-tc focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                                type="number"
+                                value={f.compra_actual_pu === 0 && f.compra_actual_pu !== '' ? '' : f.compra_actual_pu}
+                                disabled={f.cantidad_pendiente === 0}
+                                style={{
+                                  textAlign: 'right',
+                                  fontWeight: '900',
+                                  fontSize: '13px',
+                                  border: '1px solid #cbd5e1',
+                                  backgroundColor: '#ffffff',
+                                  boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.05)'
+                                }}
+                                onChange={(e) => actualizarFila(f.id, 'compra_actual_pu', e.target.value)}
+                                onFocus={(e) => e.target.select()}
+                                onKeyDown={(e) => handleKeyDown(e, f.id, 'pu')}
+                                ref={el => { if (!inputRefs.current[f.id]) inputRefs.current[f.id] = {}; inputRefs.current[f.id].pu = el; }}
+                              />
+                              {f.variacion_precio >= 15 && (
+                                <div style={{ position: 'absolute', top: '-15px', right: 0, fontSize: '8px', color: '#ef4444', fontWeight: '900' }}>
+                                  ▲ {f.variacion_precio.toFixed(0)}%
+                                </div>
+                              )}
                             </div>
-                            <table style={{ width: '100%', fontSize: '0.75rem', borderCollapse: 'collapse' }}>
-                              <thead>
-                                <tr style={{ backgroundColor: '#f1f5f9', color: '#475569', fontSize: '0.65rem', borderBottom: '1px solid #e2e8f0' }}>
-                                  <th style={{ padding: '10px 12px', textAlign: 'left' }}>FECHA</th>
-                                  <th style={{ padding: '10px 12px', textAlign: 'left' }}>EVENTO</th>
-                                  <th style={{ padding: '10px 12px', textAlign: 'left' }}>PROVEEDOR</th>
-                                  <th style={{ padding: '10px 12px', textAlign: 'left' }}>DETALLE / DOCUMENTO</th>
-                                  <th style={{ padding: '10px 12px', textAlign: 'center' }}>CANT.</th>
-                                  <th style={{ padding: '10px 12px', textAlign: 'right' }}>P.U. REAL</th>
-                                  <th style={{ padding: '10px 12px', textAlign: 'right' }}>TOTAL / COMENTARIO</th>
-                                  <th style={{ padding: '10px 12px', textAlign: 'right' }}>USUARIO</th>
-                                  <th style={{ padding: '10px 12px', textAlign: 'center' }}></th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {f.historial_compras.map((h, idx) => (
-                                  <tr key={idx} style={{
-                                    borderBottom: idx < f.historial_compras.length - 1 ? '1px solid #f1f5f9' : 'none',
-                                    backgroundColor: h.tipo === 'JUSTIFICACION' ? '#fffbeb' : 'transparent',
-                                    transition: 'background-color 0.2s'
-                                  }}>
-                                    <td style={{ padding: '10px 12px', color: '#64748b', fontWeight: '600' }}>{new Date(h.fecha).toLocaleDateString()}</td>
-                                    <td style={{ padding: '10px 12px', fontWeight: '800', color: h.tipo === 'JUSTIFICACION' ? '#d97706' : (h.doc_tipo === 'NC' ? '#f59e0b' : '#1e293b') }}>
-                                      {h.tipo === 'JUSTIFICACION' ? '⚠️ JUSTIFICACIÓN' : (h.doc_tipo === 'NC' ? '💳 A CRÉDITO' : '✅ COMPRADO')}
-                                    </td>
-                                    <td style={{ padding: '10px 12px', fontSize: '0.7rem', fontWeight: '700', color: '#334155' }}>
-                                      {h.tipo !== 'JUSTIFICACION' ? (h.proveedor_nombre || 'No asignado') : '-'}
-                                    </td>
-                                    <td style={{ padding: '10px 12px' }}>
-                                      {h.tipo === 'JUSTIFICACION' ? (
-                                        <div style={{ fontStyle: 'italic', color: '#92400e', fontWeight: '600', fontSize: '0.7rem' }}>{h.motivo}</div>
-                                      ) : (
-                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                            <span style={{ fontSize: '0.6rem', backgroundColor: '#e2e8f0', color: '#475569', padding: '2px 6px', borderRadius: '4px', fontWeight: '900' }}>{h.metodo_pago}</span>
-                                            <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#1e293b' }}>{h.doc_tipo}: {h.doc_numero}</span>
-                                          </div>
-                                          {h.fecha_pago && (
-                                            <div style={{ fontSize: '9px', color: '#16a34a', fontWeight: '800', textTransform: 'uppercase' }}>
-                                              📅 PAGADO: {new Date(h.fecha_pago).toLocaleDateString()}
-                                            </div>
-                                          )}
-                                        </div>
-                                      )}
-                                    </td>
-                                    <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: '800', color: '#1e293b' }}>{h.cant || '-'}</td>
-                                    <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: '700', color: '#1e293b' }}>{h.pu ? `$ ${h.pu.toLocaleString('de-DE')}` : '-'}</td>
-                                    <td style={{ padding: '10px 12px', textAlign: 'right' }}>
-                                      {h.tipo === 'JUSTIFICACION' ? (
-                                        <div style={{ fontSize: '0.7rem', color: '#475569', whiteSpace: 'pre-wrap', textAlign: 'left', backgroundColor: '#fef3c7', padding: '8px', borderRadius: '6px', border: '1px solid #fde68a' }}>
-                                          {h.comentario}
-                                        </div>
-                                      ) : <span style={{ fontWeight: '900', color: '#0ea5e9', fontSize: '0.85rem' }}>$ {(h.cant * h.pu).toLocaleString('de-DE')}</span>}
-                                    </td>
-                                    <td style={{ padding: '10px 12px', textAlign: 'right', color: '#64748b', fontSize: '0.65rem', fontWeight: '600' }}>{h.usuario_nombre}</td>
-                                    <td style={{ padding: '10px 12px', textAlign: 'center' }}>
-                                      {(deptoUpperFinal.includes('COMPRAS') || currentUser?.esAdminReal || rolUpperFinal === 'ADMIN' || rolUpperFinal === 'GERENTE GENERAL') && (
-                                        <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
-                                          {(h.doc_tipo === 'NC' || h.metodo_pago?.includes('CRÉDITO')) && h.metodo_pago !== 'PAGADO (NC)' && (
-                                            <button
-                                              onClick={() => liquidarNC(f.id, idx)}
-                                              style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#0ea5e9', fontSize: '1rem', transition: 'transform 0.2s' }}
-                                              onMouseOver={(e) => e.currentTarget.style.transform = 'scale(1.2)'}
-                                              onMouseOut={(e) => e.currentTarget.style.transform = 'scale(1)'}
-                                              title="Confirmar Pago NC"
-                                            >
-                                              💸
-                                            </button>
-                                          )}
-                                          <button
-                                            onClick={() => eliminarEntradaHistorial(f.id, idx)}
-                                            style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#ef4444', fontSize: '1rem', transition: 'transform 0.2s' }}
-                                            onMouseOver={(e) => e.currentTarget.style.transform = 'scale(1.2)'}
-                                            onMouseOut={(e) => e.currentTarget.style.transform = 'scale(1)'}
-                                            title="Eliminar Registro"
-                                          >
-                                            🗑️
-                                          </button>
-                                        </div>
-                                      )}
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
+                          </div>
+                        </td>
+
+                        <td style={{ textAlign: 'right', fontWeight: '900', color: '#0f172a', fontSize: '1rem' }}>
+                          $ {f.total?.toLocaleString('de-DE')}
+                          {(Number(f.cantidad_comprada || 0) + Number(f.compra_actual_cant || 0)) >= Number(f.cantidad_pedida) ? (
+                            <div style={{ fontSize: '9px', color: '#14532d', fontWeight: '900' }}>COMPLETO ✓</div>
+                          ) : (Number(f.cantidad_comprada || 0) + Number(f.compra_actual_cant || 0)) > 0 ? (
+                            <div style={{ fontSize: '9px', color: '#f97316', fontWeight: '900' }}>PARCIAL</div>
+                          ) : null}
+                        </td>
+
+                        <td style={{ textAlign: 'center' }}>
+                          <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+                            {f.hasChanges && !loading && (
+                              <button
+                                onClick={() => guardarUnicoRenglon(f.id)}
+                                onKeyDown={(e) => handleKeyDown(e, f.id, 'save')}
+                                ref={el => { if (!inputRefs.current[f.id]) inputRefs.current[f.id] = {}; inputRefs.current[f.id].save = el; }}
+                                className="btn-tc btn-tc-primary focus:ring-2 focus:ring-green-500 outline-none transition-all"
+                                style={{ padding: '6px 10px', fontSize: '0.65rem', fontWeight: 'bold', background: '#22c55e', border: 'none' }}
+                                title="Guardar este renglón"
+                              >
+                                💾 GUARDAR
+                              </button>
+                            )}
+                            <div style={{ display: 'flex', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '2px', backgroundColor: '#f1f5f9' }}>
+                              <button
+                                onClick={() => {
+                                  setItemParaJustificar(f);
+                                  setShowJustificacionModal(true);
+                                }}
+                                style={{ border: 'none', background: 'none', cursor: 'pointer', padding: '4px', fontSize: '1.1rem' }}
+                                title="Agregar Comentario / Justificación"
+                              >
+                                💬
+                              </button>
+                              <button
+                                onClick={() => setExpandirHistorial(prev => ({ ...prev, [f.id]: !prev[f.id] }))}
+                                style={{ border: 'none', background: 'none', cursor: 'pointer', padding: '4px', fontSize: '1.1rem', opacity: (f.historial_compras?.length > 0) ? 1 : 0.3 }}
+                                title="Ver Historial"
+                                disabled={!f.historial_compras?.length}
+                              >
+                                {expandirHistorial[f.id] ? '🔼' : '🕒'}
+                              </button>
+                            </div>
                           </div>
                         </td>
                       </tr>
-                    )}
-                  </React.Fragment>
-                ))}
-              </tbody>
-            </table>
-
-            <div style={{ marginTop: '30px', display: 'grid', gridTemplateColumns: 'minmax(0, 1.5fr) minmax(0, 1fr)', gap: '40px' }}>
-              <div style={{ backgroundColor: '#f8fafc', padding: '20px', borderRadius: '15px', border: '1px solid #e2e8f0' }}>
-                <div 
-                  onClick={() => setExpandirSoportes(!expandirSoportes)}
-                  style={{ 
-                    display: 'flex', 
-                    justifyContent: 'space-between', 
-                    alignItems: 'center', 
-                    cursor: 'pointer',
-                    marginBottom: '15px'
-                  }}
-                >
-                  <h4 style={{ margin: 0, fontSize: '0.9rem', color: '#1e293b', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    🧾 Soporte de Documentos 
-                    <span style={{ fontSize: '0.7rem', color: '#64748b', backgroundColor: '#f1f5f9', padding: '2px 8px', borderRadius: '10px' }}>
-                      {facturasUrls.length} archivos
-                    </span>
-                  </h4>
-                  <ChevronDown size={18} style={{ transform: expandirSoportes ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
-                </div>
-
-                {expandirSoportes && (
-                  <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap', marginBottom: '20px' }}>
-                  {facturasUrls.map((item, idx) => {
-                    const url = (() => {
-                      if (typeof item === 'string') {
-                        if (item.trim().startsWith('{')) {
-                          try { return JSON.parse(item).url; } catch (e) { return item; }
-                        }
-                        return item;
-                      }
-                      return item?.url;
-                    })();
-                    const etiqueta = (() => {
-                      if (typeof item === 'string' && item.trim().startsWith('{')) {
-                        try { return JSON.parse(item).etiqueta || 'Archivo'; } catch (e) { return 'Archivo'; }
-                      }
-                      return typeof item === 'string' ? 'Archivo' : (item?.etiqueta || 'Sin etiqueta');
-                    })();
-                    if (!url || url.length < 5) return null;
-                    
-                    const isImg = /\.(jpg|jpeg|png|webp|avif|gif)$/i.test(url.split('?')[0]);
-                    return (
-                      <div key={idx} style={{ position: 'relative', display: 'flex', flexDirection: 'column', gap: '5px', width: '80px' }}>
-                        <a href={url} target="_blank" rel="noreferrer" style={{
-                          display: 'block',
-                          width: '80px', height: '80px',
-                          borderRadius: '10px',
-                          overflow: 'hidden',
-                          border: '2px solid #e2e8f0',
-                          backgroundColor: 'white',
-                          transition: 'all 0.2s ease',
-                          boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
-                        }}>
-                          {isImg ? (
-                            <img src={url} alt={`Preview ${idx}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                          ) : (
-                            <div style={{
-                              width: '100%', height: '100%',
-                              display: 'flex', flexDirection: 'column',
-                              alignItems: 'center', justifyContent: 'center',
-                              backgroundColor: '#f8fafc', color: '#ef4444'
-                            }}>
-                              <FileText size={32} />
+                      {expandirHistorial[f.id] && f.historial_compras?.length > 0 && (
+                        <tr>
+                          <td colSpan="11" style={{ padding: '0 0 15px 50px' }}>
+                            <div style={{ backgroundColor: 'white', borderRadius: '12px', border: '1px solid #e2e8f0', overflow: 'hidden', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)' }}>
+                              <div style={{ padding: '10px 15px', backgroundColor: '#f8fafc', fontSize: '0.75rem', fontWeight: '900', color: '#334155', display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #e2e8f0' }}>
+                                <span style={{ letterSpacing: '0.05em' }}>TRAZABILIDAD Y REGISTROS DE COMPRA</span>
+                                <span style={{ color: '#0ea5e9', backgroundColor: '#e0f2fe', padding: '2px 8px', borderRadius: '10px' }}>{f.historial_compras.length} EVENTOS</span>
+                              </div>
+                              <table style={{ width: '100%', fontSize: '0.75rem', borderCollapse: 'collapse' }}>
+                                <thead>
+                                  <tr style={{ backgroundColor: '#f1f5f9', color: '#475569', fontSize: '0.65rem', borderBottom: '1px solid #e2e8f0' }}>
+                                    <th style={{ padding: '10px 12px', textAlign: 'left' }}>FECHA</th>
+                                    <th style={{ padding: '10px 12px', textAlign: 'left' }}>EVENTO</th>
+                                    <th style={{ padding: '10px 12px', textAlign: 'left' }}>PROVEEDOR</th>
+                                    <th style={{ padding: '10px 12px', textAlign: 'left' }}>DETALLE / DOCUMENTO</th>
+                                    <th style={{ padding: '10px 12px', textAlign: 'center' }}>CANT.</th>
+                                    <th style={{ padding: '10px 12px', textAlign: 'right' }}>P.U. REAL</th>
+                                    <th style={{ padding: '10px 12px', textAlign: 'right' }}>TOTAL / COMENTARIO</th>
+                                    <th style={{ padding: '10px 12px', textAlign: 'right' }}>USUARIO</th>
+                                    <th style={{ padding: '10px 12px', textAlign: 'center' }}></th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {f.historial_compras.map((h, idx) => (
+                                    <tr key={idx} style={{
+                                      borderBottom: idx < f.historial_compras.length - 1 ? '1px solid #f1f5f9' : 'none',
+                                      backgroundColor: h.tipo === 'JUSTIFICACION' ? '#fffbeb' : 'transparent',
+                                      transition: 'background-color 0.2s'
+                                    }}>
+                                      <td style={{ padding: '10px 12px', color: '#64748b', fontWeight: '600' }}>{new Date(h.fecha).toLocaleDateString()}</td>
+                                      <td style={{ padding: '10px 12px', fontWeight: '800', color: h.tipo === 'JUSTIFICACION' ? '#d97706' : (h.doc_tipo === 'NC' ? '#f59e0b' : '#1e293b') }}>
+                                        {h.tipo === 'JUSTIFICACION' ? '⚠️ JUSTIFICACIÓN' : (h.doc_tipo === 'NC' ? '💳 A CRÉDITO' : '✅ COMPRADO')}
+                                      </td>
+                                      <td style={{ padding: '10px 12px', fontSize: '0.7rem', fontWeight: '700', color: '#334155' }}>
+                                        {h.tipo !== 'JUSTIFICACION' ? (h.proveedor_nombre || 'No asignado') : '-'}
+                                      </td>
+                                      <td style={{ padding: '10px 12px' }}>
+                                        {h.tipo === 'JUSTIFICACION' ? (
+                                          <div style={{ fontStyle: 'italic', color: '#92400e', fontWeight: '600', fontSize: '0.7rem' }}>{h.motivo}</div>
+                                        ) : (
+                                          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                              <span style={{ fontSize: '0.6rem', backgroundColor: '#e2e8f0', color: '#475569', padding: '2px 6px', borderRadius: '4px', fontWeight: '900' }}>{h.metodo_pago}</span>
+                                              <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#1e293b' }}>{h.doc_tipo}: {h.doc_numero}</span>
+                                            </div>
+                                            {h.fecha_pago && (
+                                              <div style={{ fontSize: '9px', color: '#16a34a', fontWeight: '800', textTransform: 'uppercase' }}>
+                                                📅 PAGADO: {new Date(h.fecha_pago).toLocaleDateString()}
+                                              </div>
+                                            )}
+                                          </div>
+                                        )}
+                                      </td>
+                                      <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: '800', color: '#1e293b' }}>{h.cant || '-'}</td>
+                                      <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: '700', color: '#1e293b' }}>{h.pu ? `$ ${h.pu.toLocaleString('de-DE')}` : '-'}</td>
+                                      <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                                        {h.tipo === 'JUSTIFICACION' ? (
+                                          <div style={{ fontSize: '0.7rem', color: '#475569', whiteSpace: 'pre-wrap', textAlign: 'left', backgroundColor: '#fef3c7', padding: '8px', borderRadius: '6px', border: '1px solid #fde68a' }}>
+                                            {h.comentario}
+                                          </div>
+                                        ) : <span style={{ fontWeight: '900', color: '#0ea5e9', fontSize: '0.85rem' }}>$ {(h.cant * h.pu).toLocaleString('de-DE')}</span>}
+                                      </td>
+                                      <td style={{ padding: '10px 12px', textAlign: 'right', color: '#64748b', fontSize: '0.65rem', fontWeight: '600' }}>{h.usuario_nombre}</td>
+                                      <td style={{ padding: '10px 12px', textAlign: 'center' }}>
+                                        {(deptoUpperFinal.includes('COMPRAS') || currentUser?.esAdminReal || rolUpperFinal === 'ADMIN' || rolUpperFinal === 'GERENTE GENERAL') && (
+                                          <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+                                            <button
+                                              onClick={() => eliminarEntradaHistorial(f.id, idx)}
+                                              style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#ef4444', fontSize: '1rem', transition: 'transform 0.2s' }}
+                                              onMouseOver={(e) => e.currentTarget.style.transform = 'scale(1.2)'}
+                                              onMouseOut={(e) => e.currentTarget.style.transform = 'scale(1)'}
+                                              title="Eliminar Registro"
+                                            >
+                                              🗑️
+                                            </button>
+                                          </div>
+                                        )}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
                             </div>
-                          )}
-                        </a>
-                        <input 
-                          type="text" 
-                          placeholder="Nombre..."
-                          value={etiqueta}
-                          onChange={(e) => renombrarAdjunto(idx, e.target.value)}
-                          style={{
-                            fontSize: '0.6rem',
-                            padding: '2px 4px',
-                            border: '1px solid #cbd5e1',
-                            borderRadius: '4px',
-                            width: '100%',
-                            boxSizing: 'border-box',
-                            backgroundColor: 'white',
-                            textAlign: 'center'
-                          }}
-                        />
-                        <button
-                          onClick={() => eliminarSoporteReal(idx, url)}
-                          style={{ position: 'absolute', top: '-8px', right: '-8px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '50%', width: '22px', height: '22px', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 4px rgba(0,0,0,0.2)', fontWeight: 'bold', zIndex: 10 }}
-                          title="Eliminar Soporte Definitivamente"
-                        >
-                          X
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-                )}
-                <label className="btn-tc btn-tc-secondary" style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '10px 20px' }}>
-                  {uploading ? <Loader2 className="animate-spin" size={16} /> : <Upload size={16} />}
-                  <span>{uploading ? 'Subiendo...' : 'Adjuntar Documento'}</span>
-                  <input type="file" multiple hidden onChange={subirFactura} disabled={uploading} />
-                </label>
-              </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  ))}
+                </tbody>
+              </table>
 
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
-                <div className="financial-summary-grid">
-                  <div className="financial-item">
-                    <span className="financial-label">Facturado (Pagado/FAC)</span>
-                    <span className="financial-val" style={{ color: '#16a34a' }}>$ {montoPagadoF.toLocaleString('de-DE')}</span>
-                  </div>
-                  <div className="financial-item">
-                    <span className="financial-label">Nota de Crédito (CRÉDITO)</span>
-                    <span className="financial-val" style={{ color: '#f59e0b' }}>$ {montoPendienteNE.toLocaleString('de-DE')}</span>
-                  </div>
-                </div>
-
-                <div className="totals-container" style={{ width: '100%' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                    <span className="stat-label" style={{ fontSize: '1rem' }}>SUB-TOTAL ($ / BS):</span>
-                    <span style={{ fontWeight: 'bold', fontSize: '1.4rem' }}>$ {subTotalCalculado.toLocaleString('de-DE')}</span>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '2px solid #e2e8f0', paddingTop: '10px' }}>
-                    <span style={{ fontWeight: '900', color: '#1e293b', fontSize: '1.2rem' }}>TOTAL FINAL (C/IVA):</span>
-                    <span style={{ fontSize: '2rem', fontWeight: '900', color: '#0ea5e9' }}>$ {totalCalculado.toLocaleString('de-DE')}</span>
-                  </div>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', marginTop: '25px' }}>
-                  <button
-                    className="btn-tc btn-tc-secondary"
-                    onClick={intentarCerrarModal}
-                    style={{ padding: '12px 25px', backgroundColor: '#f1f5f9', color: '#475569', border: '1px solid #e2e8f0' }}
+              <div style={{ marginTop: '30px', display: 'grid', gridTemplateColumns: 'minmax(0, 1.5fr) minmax(0, 1fr)', gap: '40px' }}>
+                <div style={{ backgroundColor: '#f8fafc', padding: '20px', borderRadius: '15px', border: '1px solid #e2e8f0' }}>
+                  <div
+                    onClick={() => setExpandirSoportes(!expandirSoportes)}
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      cursor: 'pointer',
+                      marginBottom: '15px'
+                    }}
                   >
-                    CERRAR
-                  </button>
+                    <h4 style={{ margin: 0, fontSize: '0.9rem', color: '#1e293b', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      🧾 Soporte de Documentos
+                      <span style={{ fontSize: '0.7rem', color: '#64748b', backgroundColor: '#f1f5f9', padding: '2px 8px', borderRadius: '10px' }}>
+                        {facturasUrls.length} archivos
+                      </span>
+                    </h4>
+                    <ChevronDown size={18} style={{ transform: expandirSoportes ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
+                  </div>
 
-                  <div style={{ display: 'flex', gap: '12px' }}>
-                    <button
-                      className="btn-tc"
-                      onClick={() => guardarCambiosProcesamiento(true)}
-                      disabled={loading}
-                      style={{ padding: '12px 25px', backgroundColor: 'transparent', border: '2px solid #1e293b', color: '#1e293b', fontWeight: 'bold' }}
-                    >
-                      {loading ? <Loader2 className="animate-spin" size={16} /> : 'GUARDAR BORRADOR'}
-                    </button>
-                    <button
-                      className="btn-tc btn-tc-success"
-                      onClick={() => guardarCambiosProcesamiento(false)}
-                      disabled={loading || !renglones.every(r => r.compra_actual_cant > 0 ? (r.doc_numero_actual?.trim() && r.proveedor_seleccionado_id) : true)}
-                      style={{ padding: '12px 30px', backgroundColor: '#16a34a', color: 'white', fontWeight: '900', boxShadow: '0 4px 14px rgba(22, 163, 74, 0.3)' }}
-                    >
-                      {loading ? <Loader2 className="animate-spin" size={16} /> : 'PROCESAR COMPRA'}
-                    </button>
+                  {expandirSoportes && (
+                    <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap', marginBottom: '20px' }}>
+                      {facturasUrls.map((item, idx) => {
+                        const url = (() => {
+                          if (typeof item === 'string') {
+                            if (item.trim().startsWith('{')) {
+                              try { return JSON.parse(item).url; } catch (e) { return item; }
+                            }
+                            return item;
+                          }
+                          return item?.url;
+                        })();
+                        const etiqueta = (() => {
+                          if (typeof item === 'string' && item.trim().startsWith('{')) {
+                            try { return JSON.parse(item).etiqueta || 'Archivo'; } catch (e) { return 'Archivo'; }
+                          }
+                          return typeof item === 'string' ? 'Archivo' : (item?.etiqueta || 'Sin etiqueta');
+                        })();
+                        if (!url || url.length < 5) return null;
+
+                        const isImg = /\.(jpg|jpeg|png|webp|avif|gif)$/i.test(url.split('?')[0]);
+                        return (
+                          <div key={idx} style={{ position: 'relative', display: 'flex', flexDirection: 'column', gap: '5px', width: '80px' }}>
+                            <a href={url} target="_blank" rel="noreferrer" style={{
+                              display: 'block',
+                              width: '80px', height: '80px',
+                              borderRadius: '10px',
+                              overflow: 'hidden',
+                              border: '2px solid #e2e8f0',
+                              backgroundColor: 'white',
+                              transition: 'all 0.2s ease',
+                              boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
+                            }}>
+                              {isImg ? (
+                                <img src={url} alt={`Preview ${idx}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                              ) : (
+                                <div style={{
+                                  width: '100%', height: '100%',
+                                  display: 'flex', flexDirection: 'column',
+                                  alignItems: 'center', justifyContent: 'center',
+                                  backgroundColor: '#f8fafc', color: '#ef4444'
+                                }}>
+                                  <FileText size={32} />
+                                </div>
+                              )}
+                            </a>
+                            <input
+                              type="text"
+                              placeholder="Nombre..."
+                              value={etiqueta}
+                              onChange={(e) => renombrarAdjunto(idx, e.target.value)}
+                              style={{
+                                fontSize: '0.6rem',
+                                padding: '2px 4px',
+                                border: '1px solid #cbd5e1',
+                                borderRadius: '4px',
+                                width: '100%',
+                                boxSizing: 'border-box',
+                                backgroundColor: 'white',
+                                textAlign: 'center'
+                              }}
+                            />
+                            <button
+                              onClick={() => eliminarSoporteReal(idx, url)}
+                              style={{ position: 'absolute', top: '-8px', right: '-8px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '50%', width: '22px', height: '22px', fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 4px rgba(0,0,0,0.2)', fontWeight: 'bold', zIndex: 10 }}
+                              title="Eliminar Soporte Definitivamente"
+                            >
+                              X
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <label className="btn-tc btn-tc-secondary" style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '10px 20px' }}>
+                    {uploading ? <Loader2 className="animate-spin" size={16} /> : <Upload size={16} />}
+                    <span>{uploading ? 'Subiendo...' : 'Adjuntar Documento'}</span>
+                    <input type="file" multiple hidden onChange={subirFactura} disabled={uploading} />
+                  </label>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+                     <div style={{ 
+                        backgroundColor: '#f0fdf4', 
+                        padding: '15px 25px', 
+                        borderRadius: '16px', 
+                        border: '1px solid #dcfce7',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '15px',
+                        marginBottom: '15px',
+                        width: '100%',
+                        boxShadow: '0 2px 4px rgba(22, 163, 74, 0.05)',
+                        boxSizing: 'border-box'
+                      }}>
+                        <div style={{ 
+                          backgroundColor: '#16a34a', 
+                          color: 'white', 
+                          width: '40px', 
+                          height: '40px', 
+                          borderRadius: '12px', 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          justifyContent: 'center',
+                          boxShadow: '0 4px 10px rgba(22, 163, 74, 0.2)'
+                        }}>
+                          <CheckCircle2 size={22} />
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                          <span style={{ fontSize: '0.65rem', fontWeight: '900', color: '#15803d', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                            Monto Facturado (FAC)
+                          </span>
+                          <span style={{ fontSize: '1.4rem', fontWeight: '1000', color: '#16a34a' }}>
+                            $ {montoPagadoF.toLocaleString('de-DE')}
+                          </span>
+                        </div>
+                      </div>
+
+                  <div className="totals-container" style={{ width: '100%' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                      <span className="stat-label" style={{ fontSize: '1rem' }}>SUB-TOTAL ($ / BS):</span>
+                      <span style={{ fontWeight: 'bold', fontSize: '1.4rem' }}>$ {subTotalCalculado.toLocaleString('de-DE')}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '2px solid #e2e8f0', paddingTop: '10px' }}>
+                      <span style={{ fontWeight: '900', color: '#1e293b', fontSize: '1.2rem' }}>TOTAL FINAL (C/IVA):</span>
+                      <span style={{ fontSize: '2rem', fontWeight: '900', color: '#0ea5e9' }}>$ {totalCalculado.toLocaleString('de-DE')}</span>
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
+
+            {/* PIE DE PÁGINA FIJO */}
+            <div style={{ padding: '20px 35px 30px 35px', flexShrink: 0, borderTop: '1px solid #e2e8f0', backgroundColor: 'white', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <button
+                className="btn-tc btn-tc-secondary"
+                onClick={intentarCerrarModal}
+                style={{ padding: '12px 25px', backgroundColor: '#f1f5f9', color: '#475569', border: '1px solid #e2e8f0' }}
+              >
+                CERRAR
+              </button>
+
+              <div style={{ display: 'flex', gap: '12px' }}>
+                <button
+                  className="btn-tc"
+                  onClick={() => guardarCambiosProcesamiento(true)}
+                  disabled={loading}
+                  style={{ padding: '12px 25px', backgroundColor: 'transparent', border: '2px solid #1e293b', color: '#1e293b', fontWeight: 'bold' }}
+                >
+                  {loading ? <Loader2 className="animate-spin" size={16} /> : 'GUARDAR BORRADOR'}
+                </button>
+                <button
+                  className="btn-tc btn-tc-success"
+                  onClick={() => guardarCambiosProcesamiento(false)}
+                  disabled={loading || !renglones.every(r => r.compra_actual_cant > 0 ? (r.doc_numero_actual?.trim() && r.proveedor_seleccionado_id) : true)}
+                  style={{ padding: '12px 30px', backgroundColor: '#16a34a', color: 'white', fontWeight: '900', boxShadow: '0 4px 14px rgba(22, 163, 74, 0.3)' }}
+                >
+                  {loading ? <Loader2 className="animate-spin" size={16} /> : 'PROCESAR COMPRA'}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
-        )}
+      )}
 
       {/* --- MODAL DE JUSTIFICACIÓN DE RETRASO --- */}
       {showJustificacionModal && (
@@ -2203,7 +2229,7 @@ const Compras = () => {
               </div>
               <h2 style={{ margin: 0 }}>Postergar Gestión de Compra</h2>
             </div>
-            
+
             <p style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '20px' }}>
               Está a punto de <strong>pausar el tiempo de SLA</strong> para esta requisición. Esto se verá reflejado en los reportes de auditoría.
             </p>

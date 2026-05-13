@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from './supabaseClient';
 import toast from 'react-hot-toast';
+import { motion, AnimatePresence } from 'framer-motion';
 import Requisiciones from './Requisiciones';
 import Usuarios from './Usuarios';
 import SolicitudFondos from './SolicitudFondos';
@@ -27,6 +28,7 @@ function Dashboard() {
   const [cargando, setCargando] = useState(true);
   const [notificacionesLog, setNotificacionesLog] = useState([]);
   const [verNotificaciones, setVerNotificaciones] = useState(false);
+  const [verPerfil, setVerPerfil] = useState(false);
 
   // Helper para obtener semana actual
   const getSemanaActual = () => {
@@ -186,6 +188,23 @@ function Dashboard() {
           font-size: 16px !important; /* Prevent iOS zoom */
           padding: 12px 14px !important;
           min-height: 44px; /* Touch target size */
+        }
+
+        .user-dropdown-item {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          padding: 10px 15px;
+          color: #1e293b;
+          font-size: 0.8rem;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all 0.2s;
+          border-radius: 10px;
+        }
+        .user-dropdown-item:hover {
+          background-color: #f1f5f9;
+          color: #0ea5e9;
         }
       }
     `;
@@ -494,13 +513,6 @@ function Dashboard() {
 
           <div style={{ width: '1px', height: '20px', backgroundColor: 'rgba(255,255,255,0.08)' }}></div>
 
-          {/* Modo Oscuro/Claro */}
-          <button style={{ background: 'none', border: 'none', color: '#cbd5e1', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: '4px' }} title="Cambiar Tema">
-            <Sun size={16} />
-          </button>
-
-          <div style={{ width: '1px', height: '20px', backgroundColor: 'rgba(255,255,255,0.08)' }}></div>
-
           {/* Centro de Notificaciones */}
           <div
             style={{ position: 'relative', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center' }}
@@ -558,60 +570,112 @@ function Dashboard() {
           </div>
 
           <div style={{ width: '1px', height: '20px', backgroundColor: 'rgba(255,255,255,0.08)' }}></div>
-
-          {/* Perfil de Usuario Compacto */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', padding: '2px 6px', borderRadius: '8px', transition: 'background 0.2s' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '2px' }}>
-              <span style={{ fontSize: '0.8rem', fontWeight: '800', color: 'white', letterSpacing: '0.3px' }}>{usuario.nombre || 'Usuario'}</span>
-              <span style={{
-                fontSize: '0.55rem',
-                fontWeight: '900',
-                color: '#38bdf8',
-                textTransform: 'uppercase',
-                backgroundColor: 'rgba(56, 189, 248, 0.12)',
-                padding: '2px 8px',
-                borderRadius: '100px',
-                letterSpacing: '0.8px',
-                border: '1px solid rgba(56, 189, 248, 0.2)'
-              }}>
-                {usuario.rol || 'Rol'}
-              </span>
-            </div>
-            <div style={{
-              width: '32px', height: '32px', borderRadius: '50%', backgroundColor: '#3b82f6',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.8rem', fontWeight: 'bold', color: 'white',
-              border: '2px solid rgba(255,255,255,0.2)'
-            }}>
-              {getInitials(usuario.nombre, usuario.apellido)}
-            </div>
-            <ChevronDown size={14} style={{ color: '#94a3b8', marginLeft: '2px' }} title="Opciones" />
-          </div>
-
-          <div style={{ width: '1px', height: '20px', backgroundColor: 'rgba(255,255,255,0.08)' }}></div>
-
-          {/* Botón de Apagar / Salir */}
-          <button
-            onClick={cerrarSesion}
-            style={{
-              background: 'rgba(239, 68, 68, 0.15)',
-              border: '1px solid rgba(239, 68, 68, 0.3)',
-              color: '#f87171',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              padding: '8px',
-              borderRadius: '10px',
-              transition: 'all 0.2s',
-              marginLeft: '5px'
-            }}
-            title="Cerrar Sesión (Apagar Sistema)"
-            onMouseEnter={(e) => { e.currentTarget.style.background = '#ef4444'; e.currentTarget.style.color = 'white'; e.currentTarget.style.boxShadow = '0 0 10px rgba(239, 68, 68, 0.5)'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(239, 68, 68, 0.15)'; e.currentTarget.style.color = '#f87171'; e.currentTarget.style.boxShadow = 'none'; }}
-          >
-            <Power size={16} strokeWidth={2.5} />
-          </button>
-        </div>
+ 
+           {/* Perfil de Usuario Premium */}
+           <div 
+             style={{ position: 'relative' }}
+             onMouseLeave={() => setVerPerfil(false)}
+           >
+             <div 
+               onClick={() => setVerPerfil(!verPerfil)}
+               style={{ 
+                 display: 'flex', 
+                 alignItems: 'center', 
+                 gap: '12px', 
+                 cursor: 'pointer', 
+                 padding: '4px 10px', 
+                 borderRadius: '12px', 
+                 transition: 'all 0.2s',
+                 backgroundColor: verPerfil ? 'rgba(255,255,255,0.05)' : 'transparent'
+               }}
+               onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.05)'}
+               onMouseLeave={(e) => { if(!verPerfil) e.currentTarget.style.backgroundColor = 'transparent' }}
+             >
+               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+                 <span style={{ 
+                   fontSize: '0.85rem', 
+                   fontWeight: '800', 
+                   color: 'white', 
+                   letterSpacing: '0.2px',
+                   lineHeight: '1.2'
+                 }}>
+                   {`${usuario.nombre?.split(' ')[0] || ''} ${usuario.apellido?.split(' ')[0] || ''}`.trim() || 'Usuario'}
+                 </span>
+                 <span style={{
+                   fontSize: '0.55rem',
+                   fontWeight: '900',
+                   color: '#38bdf8',
+                   textTransform: 'uppercase',
+                   letterSpacing: '0.5px',
+                   opacity: 0.9
+                 }}>
+                   {usuario.rol || 'Rol'}
+                 </span>
+               </div>
+               <div style={{
+                 width: '36px', 
+                 height: '36px', 
+                 borderRadius: '10px', 
+                 backgroundColor: '#0ea5e9',
+                 display: 'flex', 
+                 alignItems: 'center', 
+                 justifyContent: 'center', 
+                 fontSize: '0.9rem', 
+                 fontWeight: '900', 
+                 color: 'white',
+                 border: '2px solid rgba(255,255,255,0.15)',
+                 boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)'
+               }}>
+                 {getInitials(usuario.nombre, usuario.apellido)}
+               </div>
+               <ChevronDown 
+                 size={14} 
+                 style={{ 
+                   color: '#64748b', 
+                   transition: 'transform 0.3s ease',
+                   transform: verPerfil ? 'rotate(180deg)' : 'rotate(0)'
+                 }} 
+               />
+             </div>
+ 
+             {/* DROPDOWN DE PERFIL */}
+             <AnimatePresence>
+               {verPerfil && (
+                 <motion.div
+                   initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                   animate={{ opacity: 1, y: 5, scale: 1 }}
+                   exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                   style={{
+                     position: 'absolute',
+                     top: '100%',
+                     right: 0,
+                     width: '200px',
+                     backgroundColor: 'white',
+                     borderRadius: '16px',
+                     boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1), 0 10px 10px -5px rgba(0,0,0,0.04)',
+                     padding: '8px',
+                     zIndex: 1100,
+                     border: '1px solid #f1f5f9'
+                   }}
+                 >
+                   <div style={{ padding: '8px 12px', borderBottom: '1px solid #f1f5f9', marginBottom: '4px' }}>
+                     <div style={{ fontSize: '0.6rem', fontWeight: '900', color: '#94a3b8', textTransform: 'uppercase' }}>Sesión activa</div>
+                     <div style={{ fontSize: '0.75rem', fontWeight: '700', color: '#1e293b', marginTop: '2px' }}>{usuario.correo}</div>
+                   </div>
+ 
+                   <div 
+                     className="user-dropdown-item"
+                     onClick={cerrarSesion}
+                     style={{ color: '#ef4444', cursor: 'pointer', padding: '8px', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.8rem', fontWeight: '600' }}
+                   >
+                     <Power size={16} />
+                     <span>Cerrar Sesión</span>
+                   </div>
+                 </motion.div>
+               )}
+             </AnimatePresence>
+           </div>
+         </div>
       </div>
 
       {/* ÁREA DE CONTENIDO (SIDEBAR + PRINCIPAL) */}

@@ -62,8 +62,8 @@ const AnalyticsCompras = () => {
 
                 if (deadline) {
                     const hoy = new Date();
-                    if (r.status_compra === 'Completado') {
-                        const fin = r.f_culminacion_compras ? new Date(r.f_culminacion_compras) : new Date(r.updated_at);
+                    if (r.status_compra?.toUpperCase() === 'COMPLETADO') {
+                        const fin = r.f_culminacion_compras ? new Date(r.f_culminacion_compras) : new Date(r.updated_at || r.fecha_emision);
                         status = fin <= deadline ? 'A TIEMPO' : 'VENCIDO';
                     } else {
                         status = hoy > deadline ? 'VENCIDO' : 'PENDIENTE';
@@ -73,7 +73,7 @@ const AnalyticsCompras = () => {
                 }
             }
 
-            if (r.estado_aprobacion === 'aprobado_final' || r.status_compra === 'Completado') {
+            if (r.estado_aprobacion === 'aprobado_final' || r.status_compra?.toUpperCase() === 'COMPLETADO') {
                 complMap[status]++;
             }
         });
@@ -81,7 +81,7 @@ const AnalyticsCompras = () => {
         const complianceData = Object.entries(complMap).map(([name, value]) => ({ name, value }));
 
         // 2. LEAD TIMES PROMEDIO
-        const completed = data.filter(r => r.status_compra === 'Completado');
+        const completed = data.filter(r => r.status_compra?.toUpperCase() === 'COMPLETADO');
         const avgTotal = completed.reduce((acc, r) => acc + (Number(r.dias_totales_proceso) || 0), 0) / (completed.length || 1);
         const avgAprobacion = data.reduce((acc, r) => acc + (Number(r.dias_en_aprobacion) || 0), 0) / (data.length || 1);
         const avgCompra = completed.reduce((acc, r) => acc + (Number(r.dias_en_compra) || 0), 0) / (completed.length || 1);
@@ -90,9 +90,9 @@ const AnalyticsCompras = () => {
         let totalEst = 0;
         let totalReal = 0;
         data.forEach(r => {
-            if (r.status_compra === 'Completado' || r.totalEjecutado > 0) {
-                totalEst += Number(r.montoEstimado) || 0;
-                totalReal += Number(r.totalEjecutado) || 0;
+            if (r.status_compra?.toUpperCase() === 'COMPLETADO' || (Number(r.total_ejecutado) || 0) > 0) {
+                totalEst += Number(r.total_bs) || 0;
+                totalReal += Number(r.total_ejecutado) || 0;
             }
         });
         const ahorroTotal = totalEst - totalReal;
@@ -224,8 +224,18 @@ const AnalyticsCompras = () => {
                         <div style={{ marginTop: '10px' }}>
                             {data.filter(r => r.sla_cumplimiento === 'VENCIDO').slice(0, 4).map((r, i) => (
                                 <div key={i} style={tableRowStyle}>
-                                    <div style={{ flex: 1, fontWeight: 'bold', fontSize: '0.75rem' }}>#{r.correlativo_req || r.id.toString().slice(0,6)}</div>
-                                    <div style={{ flex: 2, fontSize: '0.7rem', color: '#64748b' }}>{r.items?.[0]?.categoria || 'General'}</div>
+                                    <div style={{ flex: 1.5, fontWeight: 'bold', fontSize: '0.75rem' }}>#{r.correlativo_req || r.id.toString().slice(0,6)}</div>
+                                    <div style={{ flex: 2.5, fontSize: '0.7rem', color: '#64748b' }}>
+                                        {r.items?.[0]?.categoria || 'General'}
+                                        {r.items?.length > 1 && (
+                                            <span 
+                                                style={{ color: '#0ea5e9', fontWeight: 'bold', cursor: 'help', marginLeft: '5px' }}
+                                                title={r.items.slice(1).map(it => `- ${it.descripcion}`).join('\n')}
+                                            >
+                                                (+{r.items.length - 1} más)
+                                            </span>
+                                        )}
+                                    </div>
                                     <div style={{ flex: 1, textAlign: 'right' }}>
                                         <span style={{ fontSize: '0.65rem', color: '#ef4444', backgroundColor: '#fef2f2', padding: '2px 6px', borderRadius: '4px', fontWeight: 'bold' }}>
                                             VENCIDO

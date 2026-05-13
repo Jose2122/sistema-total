@@ -26,7 +26,8 @@ import {
   CheckCircle2,
   CreditCard,
   Ticket,
-  Clock
+  Clock,
+  X
 } from 'lucide-react';
 import './ModuloTicketsPago.css';
 
@@ -43,6 +44,7 @@ const ModuloTicketsPago = () => {
   const [busqueda, setBusqueda] = useState('');
   const [filtroBancos, setFiltroBancos] = useState('');
   const [filtroStatus, setFiltroStatus] = useState('Todos');
+  const [filtroGerencia, setFiltroGerencia] = useState('Todos');
 
   // ==========================================
   // ESTADOS DEL FORMULARIO DE NUEVO TICKET
@@ -71,6 +73,15 @@ const ModuloTicketsPago = () => {
   const [preciosReferencia, setPreciosReferencia] = useState({});
   const [expandirHistorial, setExpandirHistorial] = useState({}); // { itemID: boolean }
 
+  const formatName = (fullName) => {
+    if (!fullName) return '';
+    const parts = fullName.trim().split(/\s+/);
+    if (parts.length <= 1) return fullName;
+    const firstName = parts[0];
+    const firstLastName = parts[1];
+    return `${firstName} ${firstLastName}`;
+  };
+
   const getInitials = (nombre, apellido) => {
     return `${nombre?.charAt(0) || ''}${apellido?.charAt(0) || ''}`.toUpperCase();
   };
@@ -89,10 +100,10 @@ const ModuloTicketsPago = () => {
       const { data: perfil } = await supabase.from('perfiles').select('*').eq('id', user.id).single();
       const emailLower = (user.email || '').toLowerCase();
       const esSuperAdmin = emailLower === 'jcontreras.totalclean@gmail.com';
-      const esAdminReal = esSuperAdmin || 
-                          emailLower === 'cvega.totalclean@gmail.com' || 
-                          emailLower === 'cvega@totalclean.com' || 
-                          emailLower === 'karincmm1@gmail.com';
+      const esAdminReal = esSuperAdmin ||
+        emailLower === 'cvega.totalclean@gmail.com' ||
+        emailLower === 'cvega@totalclean.com' ||
+        emailLower === 'karincmm1@gmail.com';
 
       const userInfo = {
         id: user.id,
@@ -106,7 +117,7 @@ const ModuloTicketsPago = () => {
       };
 
       setCurrentUser(userInfo);
-      
+
       if (perfil) {
         setResponsableText(`${perfil.nombre} ${perfil.apellido} - ${perfil.departamento}`);
       }
@@ -147,10 +158,10 @@ const ModuloTicketsPago = () => {
     setCargandoHistorial(true);
     try {
       let query = supabase.from('tickets_directos').select('*');
-      
+
       // FILTRADO POR DEPARTAMENTO (REGLA DE NEGOCIO)
       if (!esPrivilegiado && currentUser?.departamento) {
-          query = query.eq('departamento', currentUser.departamento);
+        query = query.eq('departamento', currentUser.departamento);
       }
 
       const { data, error } = await query.order('fecha_emision', { ascending: false });
@@ -225,6 +236,40 @@ const ModuloTicketsPago = () => {
     }
   };
 
+  const pagarTodoRenglon = async (id) => {
+    const item = renglones.find(r => r.id === id);
+    if (!item || item.cantidad_pendiente === 0) return;
+
+    // Pre-llenamos con valores totales
+    const cant = item.cantidad_pendiente;
+    const pu = item.compra_actual_pu || item.pu || item.puUsd || 0;
+    
+    // Si no hay numero de documento, pedimos uno o usamos default
+    let docNum = item.doc_numero_actual || '';
+    if (!docNum) {
+      docNum = window.prompt("Ingrese N° de Factura / Control para este pago:", "RECIBO-DIRECTO");
+      if (!docNum) return;
+    }
+
+    setRenglones(prev => prev.map(f => {
+      if (f.id === id) {
+        return {
+          ...f,
+          compra_actual_cant: cant,
+          compra_actual_pu: pu,
+          doc_numero_actual: docNum,
+          hasChanges: true
+        };
+      }
+      return f;
+    }));
+
+    // Ejecutamos el guardado inmediatamente para simular el "botón de pagado"
+    setTimeout(() => {
+      guardarPagoRenglon(id, { cant, pu, docNum });
+    }, 100);
+  };
+
   const actualizarFila = (id, campo, valor) => {
     setRenglones(prev => prev.map(f => {
       if (f.id === id) {
@@ -251,38 +296,44 @@ const ModuloTicketsPago = () => {
     }));
   };
 
-  const guardarPagoRenglon = async (id) => {
+  const guardarPagoRenglon = async (id, overrideValues = null) => {
     if (loading) return;
     const item = renglones.find(r => r.id === id);
-    if (!item || !item.hasChanges) return;
+    if (!item) return;
+    if (!overrideValues && !item.hasChanges) return;
+
     setLoading(true);
     try {
-      if (!item.doc_numero_actual || !item.doc_numero_actual.trim()) {
+      const cantProcesar = overrideValues ? overrideValues.cant : Number(item.compra_actual_cant || 0);
+      const puProcesar = overrideValues ? overrideValues.pu : Number(item.compra_actual_pu || 0);
+      const docNumProcesar = overrideValues ? overrideValues.docNum : item.doc_numero_actual;
+
+      if (!docNumProcesar || !docNumProcesar.trim()) {
         toast.error("Error: El número de documento es obligatorio.");
         setLoading(false);
         return;
       }
-      if (Number(item.compra_actual_cant || 0) <= 0) {
+      if (cantProcesar <= 0) {
         toast.error("Error: Ingrese una cantidad mayor a 0.");
         setLoading(false);
         return;
       }
       // El proveedor ahora es opcional para impuestos/servicios
       const proveedorSelec = proveedores.find(p => p.id === item.proveedor_seleccionado_id);
-      
+
       const nuevaTransaccion = {
         fecha: new Date().toISOString(),
-        cant: item.compra_actual_cant,
-        pu: item.compra_actual_pu,
+        cant: cantProcesar,
+        pu: puProcesar,
         metodo_pago: item.metodo_pago_actual || '$ / BS',
         proveedor_id: item.proveedor_seleccionado_id || null,
         proveedor_nombre: proveedorSelec?.razon_social || 'Pago Directo / Sin Proveedor',
         usuario_id: currentUser?.id,
         usuario_nombre: `${currentUser?.nombre} ${currentUser?.apellido}`,
-        doc_tipo: item.doc_tipo_actual,
-        doc_numero: item.doc_numero_actual
+        doc_tipo: item.doc_tipo_actual || 'FAC',
+        doc_numero: docNumProcesar
       };
-      const nuevaCantComprada = (item.cantidad_comprada || 0) + (item.compra_actual_cant || 0);
+      const nuevaCantComprada = (item.cantidad_comprada || 0) + cantProcesar;
       const nuevaCantPendiente = Math.max(0, item.cantidad_pedida - nuevaCantComprada);
       let nuevoStatus = item.status;
       if (nuevaCantPendiente === 0) nuevoStatus = 'Completado';
@@ -293,7 +344,7 @@ const ModuloTicketsPago = () => {
         cantidad_pendiente: nuevaCantPendiente,
         historial_compras: [...(item.historial_compras || []), nuevaTransaccion],
         status: nuevoStatus,
-        pu: item.compra_actual_pu || item.pu,
+        pu: puProcesar || item.pu,
         compra_actual_cant: 0,
         doc_numero_actual: '',
         proveedor_seleccionado_id: '',
@@ -328,7 +379,7 @@ const ModuloTicketsPago = () => {
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
         <p style={{ margin: 0, fontSize: '0.9rem' }}>¿Está seguro de eliminar esta entrada? El saldo pendiente se restaurará automáticamente.</p>
         <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-          <button 
+          <button
             onClick={() => { toast.dismiss(t.id); ejecutarEliminacionHistorial(idRenglon, indexHistorial); }}
             style={{ padding: '4px 12px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}
           >
@@ -472,7 +523,7 @@ const ModuloTicketsPago = () => {
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
         <p style={{ margin: 0, fontSize: '0.9rem' }}>¿Está seguro de eliminar permanentemente este soporte? Se borrará tanto del registro como del servidor.</p>
         <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-          <button 
+          <button
             onClick={() => { toast.dismiss(t.id); ejecutarBorradoSoporte(url); }}
             style={{ padding: '4px 12px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}
           >
@@ -530,7 +581,7 @@ const ModuloTicketsPago = () => {
 
   const rechazarTicket = async () => {
     const motivo = window.prompt("Indique el motivo del rechazo:");
-    if (motivo === null) return; 
+    if (motivo === null) return;
 
     setLoading(true);
     try {
@@ -556,12 +607,12 @@ const ModuloTicketsPago = () => {
       toast.error("Solo el SuperAdministrador (José) tiene permisos para eliminar tickets.");
       return;
     }
-    
+
     toast((t) => (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
         <p style={{ margin: 0, fontSize: '0.9rem' }}>¿Está seguro de eliminar permanentemente este ticket de pago? Esta acción no se puede deshacer.</p>
         <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-          <button 
+          <button
             onClick={() => { toast.dismiss(t.id); ejecutarEliminacionTicket(id); }}
             style={{ padding: '4px 12px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}
           >
@@ -592,16 +643,15 @@ const ModuloTicketsPago = () => {
     }
   };
 
-  // ==========================================
-  // RENDER: VISTA HISTORIAL
-  // ==========================================
   const renderHistorial = () => {
     const filtrados = historialTickets.filter(t => {
       const qs = busqueda.toLowerCase();
-      const bMatch = (t.codigo_control || '').toLowerCase().includes(qs) || (t.gerente_nombre || '').toLowerCase().includes(qs);
-      const cMatch = filtroBancos ? t.banco_origen === filtroBancos : true;
+      const bMatch = (t.codigo_control || '').toLowerCase().includes(qs) || 
+                     (t.gerente_nombre || '').toLowerCase().includes(qs) ||
+                     (t.departamento || '').toLowerCase().includes(qs);
       const sMatch = filtroStatus !== 'Todos' ? (t.status || 'Emitido').toLowerCase() === filtroStatus.toLowerCase() : true;
-      return bMatch && cMatch && sMatch;
+      const gMatch = filtroGerencia !== 'Todos' ? t.departamento === filtroGerencia : true;
+      return bMatch && sMatch && gMatch;
     });
 
     return (
@@ -611,13 +661,6 @@ const ModuloTicketsPago = () => {
             <h1 style={{ margin: 0, color: '#0f172a', fontSize: '1.8rem', fontWeight: '900', letterSpacing: '-1px' }}>Control de Tickets de Pago</h1>
             <p style={{ color: '#64748b', fontSize: '0.9rem', margin: '5px 0 0 0' }}>Gestión centralizada de emisiones y egresos</p>
           </div>
-          <button
-            onClick={() => setVistaActual('nuevo')}
-            className="btn-tc btn-tc-primary"
-            style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '12px 24px' }}
-          >
-            <Plus size={18} /> Nueva Solicitud
-          </button>
         </div>
 
         {/* --- DASHBOARD DE ESTADÍSTICAS --- */}
@@ -656,16 +699,39 @@ const ModuloTicketsPago = () => {
         </div>
 
         <div className="filters-overlap" style={{ marginBottom: '25px', display: 'flex', gap: '15px', alignItems: 'center', backgroundColor: 'white', padding: '15px', borderRadius: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-          <div style={{ flex: 1, position: 'relative' }}>
+          <div style={{ flex: 1.5, position: 'relative' }}>
             <Search size={18} style={{ position: 'absolute', left: '15px', top: '12px', color: '#94a3b8' }} />
             <input
               type="text"
-              placeholder="Buscar por referencia o beneficiario..."
+              placeholder="Buscar por referencia, beneficiario o gerencia..."
               value={busqueda}
               onChange={(e) => setBusqueda(e.target.value)}
               style={{ width: '100%', padding: '12px 15px 12px 40px', borderRadius: '10px', border: '1px solid #e2e8f0', outline: 'none', boxSizing: 'border-box', backgroundColor: '#f8fafc' }}
             />
           </div>
+
+          <select
+            value={filtroStatus}
+            onChange={(e) => setFiltroStatus(e.target.value)}
+            style={{ flex: 0.8, padding: '12px', borderRadius: '10px', border: '1px solid #e2e8f0', backgroundColor: '#f8fafc', color: '#475569', fontWeight: '600' }}
+          >
+            <option value="Todos">Todos los Estatus</option>
+            <option value="Emitido">EMITIDO</option>
+            <option value="Pagado">PAGADO</option>
+            <option value="Rechazado">RECHAZADO</option>
+          </select>
+
+          <select
+            value={filtroGerencia}
+            onChange={(e) => setFiltroGerencia(e.target.value)}
+            style={{ flex: 1, padding: '12px', borderRadius: '10px', border: '1px solid #e2e8f0', backgroundColor: '#f8fafc', color: '#475569', fontWeight: '600' }}
+          >
+            <option value="Todos">Todas las Gerencias</option>
+            {[...new Set(historialTickets.map(t => t.departamento))].filter(Boolean).sort().map(d => (
+              <option key={d} value={d}>{d}</option>
+            ))}
+          </select>
+
           <button onClick={fetchHistorial} style={{ backgroundColor: '#f1f5f9', color: '#475569', border: 'none', padding: '12px 15px', borderRadius: '10px', cursor: 'pointer' }}>
             <RefreshCw size={20} />
           </button>
@@ -696,7 +762,7 @@ const ModuloTicketsPago = () => {
                   const justif = ticket.justificacion || ticket.items?.[0]?.justificacion_detallada || ticket.items?.[0]?.justificacion || 'Sin justificación';
                   const cc = ticket.centro_costo || ticket.items?.[0]?.cc || ticket.items?.[0]?.centro_costo || '---';
                   const categ = ticket.items?.[0]?.clasificacion || 'Sin categoría';
-                  
+
                   let fechaStr = 'N/A';
                   try {
                     if (ticket.fecha_emision) {
@@ -716,20 +782,20 @@ const ModuloTicketsPago = () => {
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                             <div style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#0ea5e9', flexShrink: 0 }} />
                             <motion.span
-                              whileHover={{ 
-                                scale: 1.1, 
+                              whileHover={{
+                                scale: 1.1,
                                 x: 5,
                                 color: '#2563eb',
                                 textShadow: '0 0 8px rgba(37, 99, 235, 0.2)'
                               }}
                               whileTap={{ scale: 0.95 }}
                               transition={{ type: "spring", stiffness: 400, damping: 10 }}
-                              style={{ 
-                                fontSize: '12px', 
-                                fontWeight: '900', 
-                                color: '#1e40af', 
-                                textDecoration: 'underline', 
-                                textUnderlineOffset: '3px', 
+                              style={{
+                                fontSize: '12px',
+                                fontWeight: '900',
+                                color: '#1e40af',
+                                textDecoration: 'underline',
+                                textUnderlineOffset: '3px',
                                 textDecorationColor: 'rgba(30, 64, 175, 0.4)',
                                 cursor: 'pointer',
                                 display: 'inline-block'
@@ -745,20 +811,27 @@ const ModuloTicketsPago = () => {
                       </td>
                       <td style={{ padding: '12px 15px' }}>
                         <div style={{ display: 'flex', flexDirection: 'column' }}>
-                          <span style={{ fontWeight: '800', color: '#1e293b', fontSize: '0.85rem' }}>{ticket.gerente_nombre || 'Varios'}</span>
+                          <div style={{ fontWeight: '700', color: '#1e293b', fontSize: '0.9rem' }}>{formatName(ticket.gerente_nombre)}</div>
                           <span style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '600', textTransform: 'uppercase' }}>{ticket.departamento || 'No especificado'}</span>
                         </div>
                       </td>
                       <td style={{ padding: '12px 15px' }}>
                         <div style={{ display: 'flex', flexDirection: 'column', maxWidth: '300px' }}>
-                          <span 
+                          <span
                             title={justif}
                             style={{ fontWeight: '700', color: '#334155', fontSize: '0.8rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
                           >
                             {justif}
                           </span>
                           <span style={{ fontSize: '0.7rem', color: '#94a3b8', fontWeight: '600' }}>
-                            {categ} {ticket.items?.length > 1 ? `(+${ticket.items.length - 1} más)` : ''}
+                            {categ} {ticket.items?.length > 1 ? (
+                              <span
+                                style={{ color: '#0ea5e9', cursor: 'help', fontWeight: '800' }}
+                                title={ticket.items.slice(1).map(it => `- ${it.descripcion || it.desc}`).join('\n')}
+                              >
+                                (+{ticket.items.length - 1} más)
+                              </span>
+                            ) : ''}
                           </span>
                         </div>
                       </td>
@@ -821,245 +894,229 @@ const ModuloTicketsPago = () => {
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.95, y: 30 }}
           transition={{ duration: 0.4, ease: "easeOut" }}
-          style={{ maxWidth: '1400px', width: '95%' }}
+          style={{ maxWidth: '1400px', width: '95%', height: '95vh', display: 'flex', flexDirection: 'column', padding: 0, overflow: 'hidden' }}
           onClick={(e) => e.stopPropagation()}
         >
-          {/* --- CABECERA --- */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-            <div>
-              <h2 style={{ margin: 0, color: '#0f172a', fontSize: '1.5rem', fontWeight: '800' }}>Gestión de Pago Detallado</h2>
-              <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '10px' }}>
-                <div style={{ background: '#0f172a', color: 'white', padding: '4px 12px', borderRadius: '6px', fontSize: '11px', fontWeight: 'bold' }}>
-                  ID: {t.codigo_control}
-                </div>
-                <div className={`badge-status ${t.status?.toLowerCase() || 'emitido'}`} style={{ fontSize: '10px', height: '22px' }}>
-                  {t.status?.toUpperCase() || 'EMITIDO'}
-                </div>
-              </div>
-            </div>
-
-            <button
+          {/* --- CABECERA FIJA --- */}
+          <div style={{ padding: '25px 35px 15px 35px', flexShrink: 0, borderBottom: '1px solid #f1f5f9', backgroundColor: 'white', position: 'relative' }}>
+            <button 
               onClick={() => { setVistaActual('historial'); setTicketSeleccionado(null); }}
-              className="btn-tc btn-tc-secondary"
-              style={{ padding: '10px 20px' }}
+              style={{ position: 'absolute', top: '20px', right: '20px', border: 'none', background: '#f1f5f9', borderRadius: '50%', width: '36px', height: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#64748b', transition: 'all 0.2s', zIndex: 100 }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = '#e2e8f0'; e.currentTarget.style.color = '#0f172a'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = '#f1f5f9'; e.currentTarget.style.color = '#64748b'; }}
             >
-              <ArrowLeft size={16} /> Volver
+              <X size={20} />
             </button>
-          </div>
 
-          <div className="te-header-line" style={{ height: '1px', background: '#f1f5f9', marginBottom: '24px' }}></div>
-
-          {/* --- METADATA --- */}
-          <div className="metadata-box" style={{ marginBottom: '30px' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '25px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
-                <label className="stat-label">FECHA EMISIÓN</label>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '5px', color: '#1e293b', fontWeight: '600' }}>
-                  <Calendar size={18} color="#94a3b8" />
-                  {t.fecha_emision ? new Date(t.fecha_emision).toLocaleDateString() : 'N/A'}
+                <h2 style={{ margin: 0, color: '#0f172a', fontSize: '1.5rem', fontWeight: '800' }}>Gestión de Pago Detallado</h2>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '10px' }}>
+                  <div style={{ background: '#0f172a', color: 'white', padding: '4px 12px', borderRadius: '6px', fontSize: '11px', fontWeight: 'bold' }}>
+                    ID: {t.codigo_control}
+                  </div>
+                  <div className={`badge-status ${t.status?.toLowerCase() || 'emitido'}`} style={{ fontSize: '10px', height: '22px' }}>
+                    {t.status?.toUpperCase() || 'EMITIDO'}
+                  </div>
                 </div>
               </div>
 
-              <div>
-                <label className="stat-label">BENEFICIARIO</label>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '5px', color: '#1e293b', fontWeight: '600' }}>
-                  <User size={18} color="#94a3b8" />
-                  {t.gerente_nombre || 'Varios'}
-                </div>
+              <div style={{ marginRight: '50px' }}>
+                <button
+                  onClick={() => { setVistaActual('historial'); setTicketSeleccionado(null); }}
+                  className="btn-tc btn-tc-secondary"
+                  style={{ padding: '10px 20px' }}
+                >
+                  <ArrowLeft size={16} /> Volver
+                </button>
               </div>
+            </div>
 
-              <div>
-                <label className="stat-label">REFERENCIA FONDO</label>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '5px', color: '#0ea5e9', fontWeight: '700' }}>
-                  <Hash size={18} color="#0ea5e9" />
-                  {t.solicitud_ref || 'TR-Directo'}
+            <div className="te-header-line" style={{ height: '1px', background: '#f1f5f9', margin: '20px 0 15px 0' }}></div>
+
+            {/* --- METADATA --- */}
+            <div className="metadata-box" style={{ padding: '15px 20px', backgroundColor: '#f8fafc', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '25px' }}>
+                <div>
+                  <label className="stat-label">FECHA EMISIÓN</label>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '5px', color: '#1e293b', fontWeight: '600' }}>
+                    <Calendar size={18} color="#94a3b8" />
+                    {t.fecha_emision ? new Date(t.fecha_emision).toLocaleDateString() : 'N/A'}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="stat-label">BENEFICIARIO</label>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '5px', color: '#1e293b', fontWeight: '600' }}>
+                    <User size={18} color="#94a3b8" />
+                    {formatName(t.gerente_nombre) || 'Varios'}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="stat-label">REFERENCIA FONDO</label>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '5px', color: '#0ea5e9', fontWeight: '700' }}>
+                    <Hash size={18} color="#0ea5e9" />
+                    {t.solicitud_ref || 'TR-Directo'}
+                  </div>
                 </div>
               </div>
             </div>
           </div>
 
-          {/* --- TABLA DE RENGLONES --- */}
-          <div style={{ marginBottom: '35px' }}>
-            <label className="stat-label" style={{ marginBottom: '15px' }}>DESGLOSE Y CONTROL DE SALDOS</label>
-            <div className="te-table-wrapper" style={{ borderRadius: '16px', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
-              <table className="tc-table">
-                <thead>
-                  <tr>
-                    <th style={{ width: '40px' }}></th>
-                    <th>DESCRIPCIÓN</th>
-                    <th style={{ width: '80px', textAlign: 'center' }}>PEDIDA</th>
-                    <th style={{ width: '80px', textAlign: 'center' }}>PAGADA</th>
-                    <th style={{ width: '80px', textAlign: 'center' }}>PEND.</th>
-                    <th style={{ width: '100px', textAlign: 'center' }}>CANT. PAGO</th>
-                    <th style={{ width: '120px', textAlign: 'center' }}>P.U. REAL</th>
-                    <th style={{ width: '150px' }}>PROVEEDOR</th>
-                    <th style={{ width: '120px' }}>DOCUMENTO</th>
-                    <th style={{ width: '100px', textAlign: 'right' }}>TOTAL</th>
-                    <th style={{ width: '80px', textAlign: 'center' }}>ACCIONES</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {renglones.map((r) => (
-                    <React.Fragment key={r.id}>
-                      <tr className={r.cantidad_pendiente === 0 ? 'row-completed' : ''}>
-                        <td style={{ textAlign: 'center' }}>
-                          <button
-                            onClick={() => setExpandirHistorial(prev => ({ ...prev, [r.id]: !prev[r.id] }))}
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748b' }}
-                          >
-                            <History size={16} />
-                          </button>
-                        </td>
-                        <td>
-                          <div style={{ fontWeight: '600', fontSize: '0.85rem' }}>{r.desc || r.descripcion}</div>
-                          <div style={{ fontSize: '0.7rem', color: '#94a3b8' }}>CC: {r.cc} | {r.categoria}</div>
-                        </td>
-                        <td style={{ textAlign: 'center', fontWeight: 'bold' }}>{r.cantidad_pedida}</td>
-                        <td style={{ textAlign: 'center', color: '#10b981', fontWeight: 'bold' }}>{r.cantidad_comprada}</td>
-                        <td style={{ textAlign: 'center', color: r.cantidad_pendiente > 0 ? '#ef4444' : '#10b981', fontWeight: 'bold' }}>
-                          {r.cantidad_pendiente}
-                        </td>
-                        <td>
-                          <input
-                            type="number"
-                            className="editable-cell-input"
-                            value={r.compra_actual_cant || ''}
-                            onChange={(e) => actualizarFila(r.id, 'compra_actual_cant', e.target.value)}
-                            disabled={r.cantidad_pendiente === 0}
-                          />
-                        </td>
-                        <td>
-                          <div style={{ position: 'relative' }}>
-                            <input
-                              type="number"
-                              className="editable-cell-input"
-                              value={r.compra_actual_pu || ''}
-                              onChange={(e) => actualizarFila(r.id, 'compra_actual_pu', e.target.value)}
-                              disabled={r.cantidad_pendiente === 0}
-                            />
-                            {r.precio_ref_encontrado && (
-                              <div style={{ fontSize: '0.6rem', color: r.variacion_precio > 0 ? '#ef4444' : '#10b981', position: 'absolute', bottom: '-12px', right: 0 }}>
-                                Ref: ${r.precio_ref_encontrado.toLocaleString()} ({r.variacion_precio > 0 ? '+' : ''}{r.variacion_precio.toFixed(1)}%)
-                              </div>
-                            )}
-                          </div>
-                        </td>
-                        <td>
-                          <select
-                            className="editable-cell-input"
-                            value={r.proveedor_seleccionado_id || ''}
-                            onChange={(e) => actualizarFila(r.id, 'proveedor_seleccionado_id', e.target.value)}
-                            disabled={r.cantidad_pendiente === 0}
-                          >
-                            <option value="">Proveedor (Opcional)...</option>
-                            {proveedores.map(p => (
-                              <option key={p.id} value={p.id}>{p.razon_social}</option>
-                            ))}
-                          </select>
-                        </td>
-                        <td>
-                          <div style={{ display: 'flex', gap: '4px' }}>
-                            <select
-                              className="editable-cell-input"
-                              style={{ width: '50px', padding: '2px' }}
-                              value={r.doc_tipo_actual || 'FAC'}
-                              onChange={(e) => actualizarFila(r.id, 'doc_tipo_actual', e.target.value)}
-                              disabled={r.cantidad_pendiente === 0}
+          {/* --- CUERPO DESPLAZABLE --- */}
+          <div style={{ flexGrow: 1, overflowY: 'auto', padding: '20px 35px' }}>
+            {/* --- TABLA DE RENGLONES --- */}
+            <div style={{ marginBottom: '35px' }}>
+              <label className="stat-label" style={{ marginBottom: '15px' }}>DESGLOSE Y CONTROL DE SALDOS</label>
+              <div className="te-table-wrapper" style={{ borderRadius: '16px', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
+                <table className="tc-table">
+                  <thead>
+                    <tr>
+                      <th style={{ width: '40px' }}></th>
+                      <th>DESCRIPCIÓN DEL ÍTEM</th>
+                      <th style={{ width: '100px', textAlign: 'center' }}>CANTIDAD</th>
+                      <th style={{ width: '120px', textAlign: 'center' }}>P.U. ($)</th>
+                      <th style={{ width: '150px' }}>PROVEEDOR / DOC</th>
+                      <th style={{ width: '120px', textAlign: 'right' }}>TOTAL</th>
+                      <th style={{ width: '150px', textAlign: 'center' }}>ESTADO PAGO</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {renglones.map((r) => (
+                      <React.Fragment key={r.id}>
+                        <tr className={r.cantidad_pendiente === 0 ? 'row-completed' : ''}>
+                          <td style={{ textAlign: 'center' }}>
+                            <button
+                              onClick={() => setExpandirHistorial(prev => ({ ...prev, [r.id]: !prev[r.id] }))}
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748b' }}
                             >
-                              <option value="FAC">FAC</option>
-                              <option value="NC">NC</option>
-                              <option value="IMP">IMP</option>
-                              <option value="SERV">SERV</option>
-                              <option value="OTRO">OTRO</option>
-                            </select>
-                            <input
-                              type="text"
-                              className="editable-cell-input"
-                              placeholder="N°"
-                              value={r.doc_numero_actual || ''}
-                              onChange={(e) => actualizarFila(r.id, 'doc_numero_actual', e.target.value)}
-                              disabled={r.cantidad_pendiente === 0}
-                            />
-                          </div>
-                        </td>
-                        <td style={{ textAlign: 'right', fontWeight: 'bold' }}>
-                          $ {(r.total || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
-                        </td>
-                        <td style={{ textAlign: 'center' }}>
-                          <button
-                            onClick={() => guardarPagoRenglon(r.id)}
-                            className="btn-tc btn-tc-success"
-                            style={{ padding: '6px', borderRadius: '8px' }}
-                            disabled={!r.hasChanges || loading || !esPrivilegiado}
-                            title={!esPrivilegiado ? "Solo Administración/RRHH/Contabilidad pueden procesar" : ""}
-                          >
-                            <Save size={16} />
-                          </button>
-                        </td>
-                      </tr>
-
-                      {/* --- HISTORIAL EXPANDIBLES --- */}
-                      <AnimatePresence>
-                        {expandirHistorial[r.id] && (
-                          <motion.tr
-                            initial={{ opacity: 0, height: 0 }}
-                            animate={{ opacity: 1, height: 'auto' }}
-                            exit={{ opacity: 0, height: 0 }}
-                          >
-                            <td colSpan="11" style={{ padding: '0 0 15px 0', backgroundColor: '#f8fafc' }}>
-                              <div style={{ padding: '15px' }}>
-                                <table style={{ width: '100%', fontSize: '0.75rem', borderCollapse: 'collapse' }}>
-                                  <thead>
-                                    <tr style={{ color: '#94a3b8', textAlign: 'left' }}>
-                                      <th style={{ padding: '8px' }}>FECHA</th>
-                                      <th>DOC</th>
-                                      <th>PROVEEDOR</th>
-                                      <th style={{ textAlign: 'center' }}>CANT</th>
-                                      <th style={{ textAlign: 'right' }}>P.U.</th>
-                                      <th style={{ textAlign: 'right' }}>TOTAL</th>
-                                      <th style={{ textAlign: 'center' }}>ACCIONES</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {(r.historial_compras || []).map((h, hIdx) => (
-                                      <tr key={hIdx} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                                        <td style={{ padding: '8px' }}>{new Date(h.fecha).toLocaleDateString()}</td>
-                                        <td>{h.doc_tipo} {h.doc_numero}</td>
-                                        <td>{h.proveedor_nombre}</td>
-                                        <td style={{ textAlign: 'center' }}>{h.cant}</td>
-                                        <td style={{ textAlign: 'right' }}>$ {h.pu.toLocaleString()}</td>
-                                        <td style={{ textAlign: 'right', fontWeight: 'bold' }}>$ {(h.cant * h.pu).toLocaleString()}</td>
-                                        <td style={{ textAlign: 'center' }}>
-                                          <button
-                                            onClick={() => eliminarEntradaHistorial(r.id, hIdx)}
-                                            style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}
-                                          >
-                                            <Trash2 size={14} />
-                                          </button>
-                                        </td>
-                                      </tr>
-                                    ))}
-                                    {(!r.historial_compras || r.historial_compras.length === 0) && (
-                                      <tr>
-                                        <td colSpan="7" style={{ textAlign: 'center', padding: '10px', color: '#94a3b8' }}>No hay registros.</td>
-                                      </tr>
-                                    )}
-                                  </tbody>
-                                </table>
+                              <History size={16} />
+                            </button>
+                          </td>
+                          <td>
+                            <div style={{ fontWeight: '600', fontSize: '0.85rem' }}>{r.desc || r.descripcion}</div>
+                            <div style={{ fontSize: '0.7rem', color: '#94a3b8' }}>CC: {r.cc} | {r.categoria}</div>
+                          </td>
+                          <td style={{ textAlign: 'center', fontWeight: 'bold' }}>{r.cantidad_pedida}</td>
+                          <td style={{ textAlign: 'center' }}>
+                            <div style={{ position: 'relative' }}>
+                              <input
+                                type="number"
+                                className="editable-cell-input"
+                                value={r.compra_actual_pu || r.pu || r.puUsd || ''}
+                                onChange={(e) => actualizarFila(r.id, 'compra_actual_pu', e.target.value)}
+                                disabled={r.cantidad_pendiente === 0}
+                                style={{ textAlign: 'center' }}
+                              />
+                            </div>
+                          </td>
+                          <td>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                              <input
+                                type="text"
+                                className="editable-cell-input"
+                                placeholder="N° Documento"
+                                value={r.doc_numero_actual || ''}
+                                onChange={(e) => actualizarFila(r.id, 'doc_numero_actual', e.target.value)}
+                                disabled={r.cantidad_pendiente === 0}
+                                style={{ fontSize: '0.7rem' }}
+                              />
+                              <select
+                                className="editable-cell-input"
+                                value={r.proveedor_seleccionado_id || ''}
+                                onChange={(e) => actualizarFila(r.id, 'proveedor_seleccionado_id', e.target.value)}
+                                disabled={r.cantidad_pendiente === 0}
+                                style={{ fontSize: '0.7rem' }}
+                              >
+                                <option value="">Prov (Opcional)...</option>
+                                {proveedores.map(p => (
+                                  <option key={p.id} value={p.id}>{p.razon_social}</option>
+                                ))}
+                              </select>
+                            </div>
+                          </td>
+                          <td style={{ textAlign: 'right', fontWeight: 'bold' }}>
+                            $ {(r.cantidad_pedida * (r.compra_actual_pu || r.pu || r.puUsd || 0)).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                          </td>
+                          <td style={{ textAlign: 'center' }}>
+                            {r.cantidad_pendiente === 0 ? (
+                              <div style={{ color: '#10b981', fontWeight: 'bold', fontSize: '0.8rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
+                                <CheckCircle2 size={16} /> PAGADO
                               </div>
-                            </td>
-                          </motion.tr>
-                        )}
-                      </AnimatePresence>
-                    </React.Fragment>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
+                            ) : (
+                              <button
+                                onClick={() => pagarTodoRenglon(r.id)}
+                                className="btn-tc btn-tc-success"
+                                style={{ padding: '8px 15px', borderRadius: '10px', fontSize: '0.75rem', fontWeight: 'bold', width: '100%' }}
+                                disabled={loading || !esPrivilegiado}
+                              >
+                                <DollarSign size={14} /> MARCAR PAGADO
+                              </button>
+                            )}
+                          </td>
+                        </tr>
 
-          {/* --- FOOTER / ADJUNTOS --- */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: '30px' }}>
+                        {/* --- HISTORIAL EXPANDIBLES --- */}
+                        <AnimatePresence>
+                          {expandirHistorial[r.id] && (
+                            <motion.tr
+                              initial={{ opacity: 0, height: 0 }}
+                              animate={{ opacity: 1, height: 'auto' }}
+                              exit={{ opacity: 0, height: 0 }}
+                            >
+                              <td colSpan="11" style={{ padding: '0 0 15px 0', backgroundColor: '#f8fafc' }}>
+                                <div style={{ padding: '15px' }}>
+                                  <table style={{ width: '100%', fontSize: '0.75rem', borderCollapse: 'collapse' }}>
+                                    <thead>
+                                      <tr style={{ color: '#94a3b8', textAlign: 'left' }}>
+                                        <th style={{ padding: '8px' }}>FECHA</th>
+                                        <th>DOC</th>
+                                        <th>PROVEEDOR</th>
+                                        <th style={{ textAlign: 'center' }}>CANT</th>
+                                        <th style={{ textAlign: 'right' }}>P.U.</th>
+                                        <th style={{ textAlign: 'right' }}>TOTAL</th>
+                                        <th style={{ textAlign: 'center' }}>ACCIONES</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {(r.historial_compras || []).map((h, hIdx) => (
+                                        <tr key={hIdx} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                          <td style={{ padding: '8px' }}>{new Date(h.fecha).toLocaleDateString()}</td>
+                                          <td>{h.doc_tipo} {h.doc_numero}</td>
+                                          <td>{h.proveedor_nombre}</td>
+                                          <td style={{ textAlign: 'center' }}>{h.cant}</td>
+                                          <td style={{ textAlign: 'right' }}>$ {h.pu.toLocaleString()}</td>
+                                          <td style={{ textAlign: 'right', fontWeight: 'bold' }}>$ {(h.cant * h.pu).toLocaleString()}</td>
+                                          <td style={{ textAlign: 'center' }}>
+                                            <button
+                                              onClick={() => eliminarEntradaHistorial(r.id, hIdx)}
+                                              style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}
+                                            >
+                                              <Trash2 size={14} />
+                                            </button>
+                                          </td>
+                                        </tr>
+                                      ))}
+                                      {(!r.historial_compras || r.historial_compras.length === 0) && (
+                                        <tr>
+                                          <td colSpan="7" style={{ textAlign: 'center', padding: '10px', color: '#94a3b8' }}>No hay registros.</td>
+                                        </tr>
+                                      )}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </td>
+                            </motion.tr>
+                          )}
+                        </AnimatePresence>
+                      </React.Fragment>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
             <div style={{ backgroundColor: '#f8fafc', padding: '20px', borderRadius: '16px', border: '1px solid #e2e8f0' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
                 <h3 style={{ margin: 0, fontSize: '0.9rem', color: '#0f172a' }}>Soportes y Comprobantes</h3>
@@ -1100,30 +1157,36 @@ const ModuloTicketsPago = () => {
                 ))}
               </div>
             </div>
+          </div>
 
-            <div style={{ textAlign: 'right' }}>
-              <div style={{ marginBottom: '15px' }}>
-                <span style={{ fontSize: '0.85rem', color: '#64748b' }}>TOTAL EJECUTADO (PAGADO):</span>
-                <div style={{ fontSize: '1.5rem', fontWeight: '800', color: '#10b981' }}>
+          {/* --- PIE DE PÁGINA FIJO --- */}
+          <div style={{ padding: '20px 35px 30px 35px', flexShrink: 0, borderTop: '1px solid #f1f5f9', backgroundColor: 'white', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ display: 'flex', gap: '30px' }}>
+              <div>
+                <span style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: 'bold' }}>TOTAL EJECUTADO:</span>
+                <div style={{ fontSize: '1.2rem', fontWeight: '800', color: '#10b981' }}>
                   $ {renglones.reduce((acc, r) => acc + (r.historial_compras || []).reduce((sum, h) => sum + (h.cant * h.pu), 0), 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
                 </div>
               </div>
-              <div style={{ marginBottom: '15px' }}>
-                <span style={{ fontSize: '0.85rem', color: '#64748b' }}>SALDO PENDIENTE Estimado (Base):</span>
-                <div style={{ fontSize: '1.5rem', fontWeight: '800', color: '#ef4444' }}>
+              <div>
+                <span style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: 'bold' }}>SALDO PENDIENTE:</span>
+                <div style={{ fontSize: '1.2rem', fontWeight: '800', color: '#ef4444' }}>
                   $ {renglones.reduce((acc, r) => acc + (r.cantidad_pendiente * (r.pu || r.puUsd || 0)), 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
                 </div>
               </div>
-              <div style={{ marginBottom: '25px', color: '#94a3b8', fontSize: '0.75rem' }}>
-                  * El estatus del ticket cambiará a "Parcial" o "Pagado" según el saldo.
+            </div>
+            
+            <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
+              <div style={{ color: '#94a3b8', fontSize: '0.7rem', textAlign: 'right', width: '180px' }}>
+                * El estatus cambiará según el saldo restante.
               </div>
-              <button 
+              <button
                 onClick={actualizarPago}
-                className="btn-tc btn-tc-primary" 
-                style={{ width: '100%', padding: '15px', fontSize: '1rem', opacity: !esPrivilegiado ? 0.6 : 1 }}
+                className="btn-tc btn-tc-primary"
+                style={{ padding: '12px 30px', fontSize: '0.95rem', fontWeight: 'bold', opacity: !esPrivilegiado ? 0.6 : 1, minWidth: '250px' }}
                 disabled={loading || !esPrivilegiado}
               >
-                {!esPrivilegiado ? 'Solo lectura (Sin permisos de proceso)' : (loading ? 'Procesando...' : 'Finalizar y Guardar Cambios')}
+                {!esPrivilegiado ? 'Solo lectura' : (loading ? 'Procesando...' : 'Finalizar y Guardar Cambios')}
               </button>
             </div>
           </div>
