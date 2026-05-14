@@ -44,6 +44,9 @@ const Atributos = () => {
   const [filtroCC, setFiltroCC] = useState('');
   const [filasExpandidas, setFilasExpandidas] = useState({});
   const [seleccionados, setSeleccionados] = useState([]); // Array de IDs seleccionados para borrar
+  const [modalCopiarAbierto, setModalCopiarAbierto] = useState(false);
+  const [copiaOrigen, setCopiaOrigen] = useState('');
+  const [copiaDestino, setCopiaDestino] = useState('');
   const inputNombreRef = useRef(null);
 
   const PERMISOS_DISPONIBLES = [
@@ -274,6 +277,93 @@ const Atributos = () => {
     ), { duration: 8000 });
   };
 
+  const ejecutarCopiaConfiguracion = async () => {
+    if (!copiaOrigen || !copiaDestino) return toast.error('Debe seleccionar origen y destino');
+    if (copiaOrigen === copiaDestino) return toast.error('El origen y destino no pueden ser iguales');
+
+    setLoading(true);
+    try {
+      // 1. Obtener todas las clasificaciones del origen
+      const { data: clasificacionesOrigen, error: errCl } = await supabase
+        .from('maestros_clasificaciones')
+        .select('*')
+        .eq('centro_costo_id', copiaOrigen);
+      
+      if (errCl) throw errCl;
+      if (!clasificacionesOrigen || clasificacionesOrigen.length === 0) {
+        toast.error('El centro de costo origen no tiene clasificaciones para copiar.');
+        setLoading(false);
+        return;
+      }
+
+      // 2. Obtener clasificaciones existentes en el destino para evitar duplicados exactos por nombre (opcional, pero recomendado)
+      const { data: clasificacionesDestinoExistentes } = await supabase
+        .from('maestros_clasificaciones')
+        .select('nombre')
+        .eq('centro_costo_id', copiaDestino);
+      
+      const nombresExistentes = (clasificacionesDestinoExistentes || []).map(c => c.nombre.toLowerCase());
+
+      let insertadosCont = 0;
+      let saltadosCont = 0;
+
+      for (const cl of clasificacionesOrigen) {
+        if (nombresExistentes.includes(cl.nombre.toLowerCase())) {
+          saltadosCont++;
+          continue;
+        }
+
+        // 3. Crear clasificación en el destino
+        const { data: nuevaCl, error: errNewCl } = await supabase
+          .from('maestros_clasificaciones')
+          .insert([{ nombre: cl.nombre, centro_costo_id: copiaDestino, activo: true }])
+          .select()
+          .single();
+        
+        if (errNewCl) throw errNewCl;
+
+        // 4. Obtener sub-clasificaciones (equipos) de esta clasificación original
+        const { data: subClOrigen, error: errSub } = await supabase
+          .from('maestros_sub_clasificaciones')
+          .select('*')
+          .eq('clasificacion_id', cl.id);
+        
+        if (errSub) throw errSub;
+
+        if (subClOrigen && subClOrigen.length > 0) {
+          const subToInsert = subClOrigen.map(s => ({
+            nombre: s.nombre,
+            clasificacion_id: nuevaCl.id,
+            activo: true
+          }));
+
+          const { error: errInsSub } = await supabase
+            .from('maestros_sub_clasificaciones')
+            .insert(subToInsert);
+          
+          if (errInsSub) throw errInsSub;
+        }
+        insertadosCont++;
+      }
+
+      if (insertadosCont > 0) {
+        toast.success(`Copiado exitoso: ${insertadosCont} clasificaciones y sus equipos clonados.`);
+      }
+      if (saltadosCont > 0) {
+        toast.error(`${saltadosCont} clasificaciones ya existían en el destino y se omitieron.`);
+      }
+      
+      setModalCopiarAbierto(false);
+      setCopiaOrigen('');
+      setCopiaDestino('');
+      cargarDatos();
+    } catch (err) {
+      toast.error('Error durante el proceso de copiado: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const realizarMigracion = async () => {
     setLoading(true);
     try {
@@ -434,6 +524,19 @@ const Atributos = () => {
           <p className="atributos-subtitle">Gestiona las listas maestras y parámetros globales del sistema de compras.</p>
         </div>
         <div style={{ display: 'flex', gap: '10px' }}>
+          {listaActiva === 'centros_costo' && (
+            <button 
+              className="btn-add" 
+              style={{ backgroundColor: '#6366f1' }} 
+              onClick={async () => {
+                const { data } = await supabase.from('maestros_centros_costo').select('id, nombre').eq('activo', true);
+                setCentrosCosto(data || []);
+                setModalCopiarAbierto(true);
+              }}
+            >
+              <Users size={18} /> COPIAR CONFIGURACIÓN
+            </button>
+          )}
           {listaActiva === 'clasificaciones' && (
             <button key="btn-migrar" className="btn-add" style={{ backgroundColor: '#f59e0b' }} onClick={ejecutarMigracionClasificaciones}>
               ⚙️ MIGRAR DATOS
@@ -1004,6 +1107,84 @@ const Atributos = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      {/* Modal de Copiado de Configuración */}
+      {modalCopiarAbierto && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '500px' }}>
+            <div className="modal-header">
+              <h2 className="modal-title">Copiar Configuración de Centro de Costo</h2>
+              <p style={{ color: '#64748b', fontSize: '0.85rem', marginTop: '5px' }}>
+                Esta herramienta clonará todas las clasificaciones y equipos de un centro de costo a otro.
+              </p>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', marginTop: '20px' }}>
+              <div className="form-group">
+                <label className="form-label">Centro de Costo ORIGEN (Desde donde se copia)</label>
+                <select 
+                  className="form-input"
+                  value={copiaOrigen}
+                  onChange={(e) => setCopiaOrigen(e.target.value)}
+                >
+                  <option value="">Seleccione origen...</option>
+                  {centrosCosto.map(cc => (
+                    <option key={cc.id} value={cc.id}>{cc.nombre}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'center' }}>
+                <ChevronDown size={24} color="#94a3b8" />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Centro de Costo DESTINO (Hacia donde se copia)</label>
+                <select 
+                  className="form-input"
+                  value={copiaDestino}
+                  onChange={(e) => setCopiaDestino(e.target.value)}
+                >
+                  <option value="">Seleccione destino...</option>
+                  {centrosCosto.map(cc => (
+                    <option key={cc.id} value={cc.id}>{cc.nombre}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div style={{ 
+                padding: '15px', 
+                backgroundColor: '#fef2f2', 
+                border: '1px solid #fecaca', 
+                borderRadius: '12px',
+                color: '#991b1b',
+                fontSize: '0.75rem',
+                lineHeight: '1.4'
+              }}>
+                <strong>Nota:</strong> Se crearán nuevos registros. Si ya existen clasificaciones con el mismo nombre en el destino, se omitirán para evitar duplicidad.
+              </div>
+            </div>
+
+            <div className="modal-actions" style={{ marginTop: '30px' }}>
+              <button 
+                type="button" 
+                className="btn-cancel" 
+                onClick={() => setModalCopiarAbierto(false)}
+              >
+                Cancelar
+              </button>
+              <button 
+                type="button" 
+                className="btn-save"
+                style={{ backgroundColor: '#6366f1' }}
+                disabled={loading || !copiaOrigen || !copiaDestino}
+                onClick={ejecutarCopiaConfiguracion}
+              >
+                {loading ? 'Copiando...' : 'Iniciar Copiado'}
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -100,7 +100,11 @@ const Usuarios = () => {
       const deptoUpper = (miPerfilLocal?.departamento || '').trim().toUpperCase();
       
       // Acceso Total: Admins, Gerencia General, o equipo de Administración
-      const esGlobalAdmin = esAdminReal || rolUpper === 'GERENTE GENERAL' || rolUpper === 'GERENCIA GENERAL' || rolUpper === 'ADMIN' || deptoUpper.includes('ADMINISTRACIÓN');
+      const esGlobalAdmin = esAdminReal || 
+                            rolUpper === 'ADMIN' || 
+                            rolUpper === 'GERENTE GENERAL' || 
+                            rolUpper === 'GERENCIA GENERAL' || 
+                            deptoUpper.includes('ADMINISTRACIÓN');
 
       // Si falla la carga del perfil por RLS, creamos una sesión mínima para no romper la UI
       if (!miPerfilLocal && session?.user) {
@@ -226,7 +230,15 @@ const Usuarios = () => {
   }, [formData.rol, cargos]);
 
   useEffect(() => {
+    const isAdmin = currentUser?.esAdminReal || 
+                   ['ADMIN', 'GERENTE GENERAL', 'GERENCIA GENERAL'].includes((currentUser?.rol || '').toUpperCase()) ||
+                   (currentUser?.departamento || '').toUpperCase().includes('ADMINISTRACIÓN');
+
     let resultado = usuarios.filter(u => {
+      // 1. FILTRO DE SEGURIDAD: Solo ve su departamento si no es admin
+      if (!isAdmin && u.departamento !== currentUser?.departamento) return false;
+
+      // 2. FILTROS DE BÚSQUEDA Y SELECCIÓN
       const nombreCompleto = `${u.nombre} ${u.apellido}`.toLowerCase();
       const coincideNombre = nombreCompleto.includes(busqueda.toLowerCase());
       const coincideDepto = filtroDpto === 'Todos' || u.departamento === filtroDpto;
@@ -234,7 +246,7 @@ const Usuarios = () => {
       return coincideNombre && coincideDepto && coincideCargo;
     });
     setUsuariosFiltrados(resultado);
-  }, [busqueda, filtroDpto, filtroCargo, usuarios]);
+  }, [busqueda, filtroDpto, filtroCargo, usuarios, currentUser]);
 
   const guardarUsuario = async () => {
     const rolUpper = (currentUser?.rol || '').toUpperCase();
@@ -568,19 +580,25 @@ const Usuarios = () => {
                   </td>
                   <td style={estilos.td}>
                     <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                      <button onClick={() => { 
-                        setFormData({ 
-                          ...u, 
-                          capacidades: u.capacidades || {},
-                          delegado_id: u.delegado_id || '',
-                          delegacion_desde: u.delegacion_desde || '',
-                          delegacion_hasta: u.delegacion_hasta || ''
-                        });
-                        setVerPassword(false);
-                        setTabActiva('general');
-                        obtenerLogsUsuario(u.id);
-                        setShowModal(true); 
-                      }} style={{ color: '#0ea5e9', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>Editar</button>
+                      {/* Solo Admins o Gerentes pueden editar */}
+                      {(currentUser?.esAdminReal || 
+                        ['ADMIN', 'GERENTE GENERAL', 'GERENCIA GENERAL'].includes((currentUser?.rol || '').toUpperCase()) ||
+                        (currentUser?.departamento || '').toUpperCase().includes('ADMINISTRACIÓN')) && (
+                        <button onClick={() => { 
+                          setFormData({ 
+                            ...u, 
+                            capacidades: u.capacidades || {},
+                            delegado_id: u.delegado_id || '',
+                            delegacion_desde: u.delegacion_desde || '',
+                            delegacion_hasta: u.delegacion_hasta || ''
+                          });
+                          setVerPassword(false);
+                          setTabActiva('general');
+                          obtenerLogsUsuario(u.id);
+                          setShowModal(true); 
+                        }} style={{ color: '#0ea5e9', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>Editar</button>
+                      )}
+                      
                       {currentUser?.esAdminReal && (
                         <>
                           <Key size={16} color="#f59e0b" style={{ cursor: 'pointer' }} onClick={() => manejarResetPassword(u.id, u.correo)} title="Restablecer Contraseña" />

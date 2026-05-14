@@ -638,6 +638,52 @@ const Compras = () => {
     }));
   };
 
+  const toggleAlmacen = async (id, valor) => {
+    const nuevosRenglones = renglones.map(r => {
+      if (r.id === id) {
+        return { ...r, enviado_almacen: valor };
+      }
+      return r;
+    });
+    setRenglones(nuevosRenglones);
+
+    try {
+      const { error } = await supabase
+        .from('requisiciones')
+        .update({ items: nuevosRenglones })
+        .eq('id', editandoId);
+      if (error) throw error;
+      toast.success(valor ? "Ítem marcado: Enviado a Almacén" : "Ítem marcado: No enviado a Almacén");
+    } catch (err) {
+      toast.error("Error al actualizar estado de almacén: " + err.message);
+    }
+  };
+
+  const toggleAlmacenSubRow = async (renglonId, historyIndex, valor) => {
+    const nuevosRenglones = renglones.map(r => {
+      if (r.id === renglonId) {
+        const nuevoHistorial = [...(r.historial_compras || [])];
+        if (nuevoHistorial[historyIndex]) {
+          nuevoHistorial[historyIndex] = { ...nuevoHistorial[historyIndex], enviado_almacen: valor };
+        }
+        return { ...r, historial_compras: nuevoHistorial };
+      }
+      return r;
+    });
+    setRenglones(nuevosRenglones);
+
+    try {
+      const { error } = await supabase
+        .from('requisiciones')
+        .update({ items: nuevosRenglones })
+        .eq('id', editandoId);
+      if (error) throw error;
+      toast.success(valor ? "Sub-ítem: En Almacén" : "Sub-ítem: Pendiente");
+    } catch (err) {
+      toast.error("Error al actualizar sub-fila: " + err.message);
+    }
+  };
+
   const handleKeyDown = (e, id, currentField) => {
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -700,7 +746,8 @@ const Compras = () => {
         usuario_id: currentUser?.id,
         usuario_nombre: `${currentUser?.nombre} ${currentUser?.apellido}`,
         doc_tipo: item.doc_tipo_actual,
-        doc_numero: item.doc_numero_actual
+        doc_numero: item.doc_numero_actual,
+        enviado_almacen: false
       } : null;
 
       const nuevaCantComprada = (item.cantidad_comprada || 0) + (item.compra_actual_cant || 0);
@@ -1060,7 +1107,8 @@ const Compras = () => {
             usuario_id: currentUser?.id,
             usuario_nombre: `${currentUser?.nombre} ${currentUser?.apellido}`,
             doc_tipo: r.doc_tipo_actual,
-            doc_numero: r.doc_numero_actual
+            doc_numero: r.doc_numero_actual,
+            enviado_almacen: false
           } : null;
 
           const nuevaCantComprada = (r.cantidad_comprada || 0) + (r.compra_actual_cant || 0);
@@ -1705,6 +1753,7 @@ const Compras = () => {
                     <th style={{ textAlign: 'right', width: '100px' }}>CANT. REAL</th>
                     <th style={{ textAlign: 'right', width: '110px' }}>P.U. REAL</th>
                     <th style={{ textAlign: 'right', width: '100px' }}>TOTAL $</th>
+                    <th style={{ textAlign: 'center', width: '80px' }}>ALMACÉN</th>
                     <th style={{ textAlign: 'center', width: '130px' }}>ACCIONES</th>
                   </tr>
                 </thead>
@@ -1854,6 +1903,35 @@ const Compras = () => {
                         </td>
 
                         <td style={{ textAlign: 'center' }}>
+                          {(() => {
+                            const isEnAlmacen = f.enviado_almacen || (f.historial_compras?.length > 0 && f.historial_compras.every(h => h.enviado_almacen));
+                            return (
+                              <div
+                                onClick={() => toggleAlmacen(f.id, !isEnAlmacen)}
+                                style={{
+                                  cursor: 'pointer',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  width: '32px',
+                                  height: '32px',
+                                  borderRadius: '8px',
+                                  backgroundColor: isEnAlmacen ? '#e0f2fe' : '#f1f5f9',
+                                  border: '1px solid',
+                                  borderColor: isEnAlmacen ? '#0ea5e9' : '#e2e8f0',
+                                  color: isEnAlmacen ? '#0369a1' : '#94a3b8',
+                                  transition: 'all 0.2s',
+                                  fontSize: '1.1rem'
+                                }}
+                                title={isEnAlmacen ? 'Registrado en Almacén' : 'Marcar como enviado a Almacén'}
+                              >
+                                {isEnAlmacen ? '📦' : '📥'}
+                              </div>
+                            );
+                          })()}
+                        </td>
+
+                        <td style={{ textAlign: 'center' }}>
                           <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
                             {f.hasChanges && !loading && (
                               <button
@@ -1908,6 +1986,7 @@ const Compras = () => {
                                     <th style={{ padding: '10px 12px', textAlign: 'center' }}>CANT.</th>
                                     <th style={{ padding: '10px 12px', textAlign: 'right' }}>P.U. REAL</th>
                                     <th style={{ padding: '10px 12px', textAlign: 'right' }}>TOTAL / COMENTARIO</th>
+                                    <th style={{ padding: '10px 12px', textAlign: 'center' }}>ALM.</th>
                                     <th style={{ padding: '10px 12px', textAlign: 'right' }}>USUARIO</th>
                                     <th style={{ padding: '10px 12px', textAlign: 'center' }}></th>
                                   </tr>
@@ -1951,6 +2030,31 @@ const Compras = () => {
                                             {h.comentario}
                                           </div>
                                         ) : <span style={{ fontWeight: '900', color: '#0ea5e9', fontSize: '0.85rem' }}>$ {(h.cant * h.pu).toLocaleString('de-DE')}</span>}
+                                      </td>
+                                      <td style={{ padding: '10px 12px', textAlign: 'center' }}>
+                                        {h.tipo !== 'JUSTIFICACION' && (
+                                          <div
+                                            onClick={() => toggleAlmacenSubRow(f.id, idx, !h.enviado_almacen)}
+                                            style={{
+                                              cursor: 'pointer',
+                                              display: 'inline-flex',
+                                              alignItems: 'center',
+                                              justifyContent: 'center',
+                                              width: '24px',
+                                              height: '24px',
+                                              borderRadius: '6px',
+                                              backgroundColor: h.enviado_almacen ? '#e0f2fe' : '#f1f5f9',
+                                              border: '1px solid',
+                                              borderColor: h.enviado_almacen ? '#0ea5e9' : '#e2e8f0',
+                                              color: h.enviado_almacen ? '#0369a1' : '#94a3b8',
+                                              transition: 'all 0.2s',
+                                              fontSize: '0.8rem'
+                                            }}
+                                            title={h.enviado_almacen ? 'Registrado en Almacén' : 'Marcar como enviado a Almacén'}
+                                          >
+                                            {h.enviado_almacen ? '📦' : '📥'}
+                                          </div>
+                                        )}
                                       </td>
                                       <td style={{ padding: '10px 12px', textAlign: 'right', color: '#64748b', fontSize: '0.65rem', fontWeight: '600' }}>{h.usuario_nombre}</td>
                                       <td style={{ padding: '10px 12px', textAlign: 'center' }}>

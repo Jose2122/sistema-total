@@ -460,7 +460,7 @@ function Dashboard() {
         animation: 'spin 1s linear infinite',
         marginBottom: '20px'
       }}></div>
-      <h2 style={{ fontSize: '1.2rem', fontWeight: '800', letterSpacing: '2px', margin: 0 }}>SMART<span style={{ color: '#0ea5e9' }}>TC</span></h2>
+      <h2 style={{ fontSize: '1.2rem', fontWeight: '800', letterSpacing: '2px', margin: 0 }}>SITC<span style={{ color: '#0ea5e9' }}>.</span></h2>
       <p style={{ fontSize: '0.7rem', color: '#64748b', marginTop: '10px', textTransform: 'uppercase', letterSpacing: '1px' }}>Iniciando sistema...</p>
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
@@ -674,7 +674,40 @@ function Dashboard() {
                  </motion.div>
                )}
              </AnimatePresence>
-           </div>
+            </div>
+
+            {/* Botón de Cierre de Sesión Directo (Lado Derecho) */}
+            {!isMobile && (
+              <button
+                onClick={cerrarSesion}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  background: 'rgba(239, 68, 68, 0.1)',
+                  color: '#f87171',
+                  border: '1px solid rgba(239, 68, 68, 0.2)',
+                  padding: '6px 12px',
+                  borderRadius: '10px',
+                  fontSize: '0.75rem',
+                  fontWeight: '700',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s',
+                  marginLeft: '10px'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = 'rgba(239, 68, 68, 0.2)';
+                  e.currentTarget.style.color = '#ef4444';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)';
+                  e.currentTarget.style.color = '#f87171';
+                }}
+              >
+                <Power size={14} />
+                <span>SALIR</span>
+              </button>
+            )}
          </div>
       </div>
 

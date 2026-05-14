@@ -58,6 +58,9 @@ const ReportesMaestro = () => {
     const [filtroEstadoTick, setFiltroEstadoTick] = useState('Todos');
     const [filtroSolicitante, setFiltroSolicitante] = useState('Todos');
     const [filtroMes, setFiltroMes] = useState('Todos');
+    const [filtroAlmacen, setFiltroAlmacen] = useState('Todos');
+    const [listaCentrosCostos, setListaCentrosCostos] = useState([]);
+    const [showMoreFilters, setShowMoreFilters] = useState(false);
 
     // Filtros por Pestaña (Nuevos)
     const [filtroCategoria, setFiltroCategoria] = useState('Todos');
@@ -126,45 +129,79 @@ const ReportesMaestro = () => {
     const cargarDatos = useCallback(async () => {
         setLoading(true);
         try {
-            const { data: tickets, error: errT } = await supabase
-                .from('tickets_directos')
-                .select('*')
-                .order('fecha_emision', { ascending: false });
+            const [resReq, resTickets, resCC, resBancos, resSols, resParts] = await Promise.all([
+                supabase.from('requisiciones').select('*').order('fecha_emision', { ascending: false }),
+                supabase.from('tickets_directos').select('*').order('fecha_emision', { ascending: false }),
+                supabase.from('maestros_centros_costo').select('id, nombre').eq('activo', true).order('nombre'),
+                supabase.from('bancos').select('*').eq('activo', true),
+                supabase.from('solicitudes_fondos').select('*').order('fecha_operativa', { ascending: false }),
+                supabase.from('partidas_fondos').select('*')
+            ]);
 
-            const { data: reqs, error: errR } = await supabase
-                .from('requisiciones')
-                .select('*')
-                .order('fecha_emision', { ascending: false });
-
-            const { data: bData, error: errB } = await supabase
-                .from('bancos')
-                .select('*')
-                .eq('activo', true);
-
-            const { data: sols, error: errS } = await supabase
-                .from('solicitudes_fondos')
-                .select('*')
-                .order('fecha_operativa', { ascending: false });
-
-            const { data: parts, error: errP } = await supabase
-                .from('partidas_fondos')
-                .select('*');
-
-            if (errT || errR || errB || errS || errP) throw new Error("Error en la descarga de datos");
+            if (resReq.error || resTickets.error) throw new Error("Error en la descarga de datos");
+            if (resCC.data) setListaCentrosCostos(resCC.data);
 
             setData({
-                tickets: tickets || [],
-                requisiciones: reqs || [],
-                solicitudes: sols || [],
-                partidas: parts || []
+                tickets: resTickets.data || [],
+                requisiciones: resReq.error ? [] : resReq.data,
+                solicitudes: resSols.data || [],
+                partidas: resParts.data || []
             });
-            setBancos(bData || []);
+            setBancos(resBancos.data || []);
         } catch (error) {
             console.error(error);
         } finally {
             setLoading(false);
         }
     }, []);
+    
+    const toggleAlmacenSubRow = async (requisicionId, itemIdx, historyIndex, valor) => {
+        // 1. Actualización local
+        setData(prev => {
+            const nuevasReqs = prev.requisiciones.map(r => {
+                if (r.id === requisicionId) {
+                    const nuevosItems = [...(r.items || [])];
+                    if (nuevosItems[itemIdx]) {
+                        const item = { ...nuevosItems[itemIdx] };
+                        const nuevoHistorial = [...(item.historial_compras || [])];
+                        if (nuevoHistorial[historyIndex]) {
+                            nuevoHistorial[historyIndex] = { ...nuevoHistorial[historyIndex], enviado_almacen: valor };
+                        }
+                        item.historial_compras = nuevoHistorial;
+                        nuevosItems[itemIdx] = item;
+                    }
+                    return { ...r, items: nuevosItems };
+                }
+                return r;
+            });
+            return { ...prev, requisiciones: nuevasReqs };
+        });
+
+        // 2. Actualización en DB
+        try {
+            const req = data.requisiciones.find(r => r.id === requisicionId);
+            if (!req) return;
+            
+            const nuevosItems = [...(req.items || [])];
+            if (nuevosItems[itemIdx]) {
+                const item = { ...nuevosItems[itemIdx] };
+                const nuevoHistorial = [...(item.historial_compras || [])];
+                if (nuevoHistorial[historyIndex]) {
+                    nuevoHistorial[historyIndex] = { ...nuevoHistorial[historyIndex], enviado_almacen: valor };
+                }
+                item.historial_compras = nuevoHistorial;
+                nuevosItems[itemIdx] = item;
+
+                const { error } = await supabase
+                    .from('requisiciones')
+                    .update({ items: nuevosItems })
+                    .eq('id', requisicionId);
+                if (error) throw error;
+            }
+        } catch (err) {
+            console.error("Error al actualizar sub-fila:", err);
+        }
+    };
 
     useEffect(() => {
         cargarDatos();
@@ -212,7 +249,12 @@ const ReportesMaestro = () => {
                         gerencia: r.gerencia,
                         tipo: 'REQUISICIÓN',
                         ref: r.correlativo_req || `REQ-${r.id}`,
-                        factura: h.doc_numero || '-'
+                        factura: h.doc_numero || '-',
+                        almacen: h.enviado_almacen || false,
+                        requisicionIdReal: r.id,
+                        itemIdx: (r.items || []).indexOf(item),
+                        historyIdx: hIdx,
+                        solicitante: r.solicitante
                     });
                 });
             });
@@ -227,9 +269,10 @@ const ReportesMaestro = () => {
             if (fechaDesde && row.fecha < fechaDesde) matchFecha = false;
             if (fechaHasta && row.fecha > fechaHasta) matchFecha = false;
 
-            return matchBusqueda && matchCC && matchGerencia && matchSemana && matchFecha;
+            const matchAlmacen = filtroAlmacen === 'Todos' || (filtroAlmacen === 'Si' ? row.almacen : !row.almacen);
+            return matchBusqueda && matchCC && matchGerencia && matchSemana && matchFecha && matchAlmacen;
         });
-    }, [data, busqueda, filtroCC, filtroGerencia, filtroSemana, fechaDesde, fechaHasta]);
+    }, [data, busqueda, filtroCC, filtroGerencia, filtroSemana, fechaDesde, fechaHasta, filtroAlmacen, listaCentrosCostos]);
 
     const totalGasto = useMemo(() => {
         return costosRows.reduce((sum, r) => sum + (Number(r.monto) || 0), 0);
@@ -674,16 +717,18 @@ const ReportesMaestro = () => {
         };
 
         const columns = [
+            { header: 'CORRELATIVO #', key: 'ref', width: 15 },
+            { header: 'ALMACÉN', key: 'almacen', width: 12 },
+            { header: 'PRODUCTO / DESCRIPCIÓN', key: 'descripcion', width: 45 },
+            { header: 'SOPORTE / FACTURA', key: 'factura', width: 18 },
             { header: 'FECHA', key: 'fecha', width: 15 },
-            { header: 'SEMANA', key: 'semana', width: 10 },
-            { header: 'CATEGORÍA', key: 'categoria', width: 25 },
-            { header: 'DESCRIPCIÓN', key: 'descripcion', width: 45 },
-            { header: 'MONTO ($)', key: 'monto', width: 18 },
-            { header: 'PROYECTO (CC)', key: 'cc', width: 25 },
-            { header: 'GERENCIA', key: 'gerencia', width: 25 },
-            { header: 'REF', key: 'ref', width: 15 },
-            { header: 'N° FACTURA', key: 'factura', width: 18 }
+            { header: 'ORIGEN (SOLICITANTE)', key: 'solicitante', width: 25 },
+            { header: 'CLASIFICACIÓN (CAT.)', key: 'categoria', width: 25 },
+            { header: 'DESTINO (GERENCIA / CC)', key: 'gerencia_cc', width: 40 },
+            { header: 'FINANCIERO ($)', key: 'monto', width: 18 }
         ];
+        // Note: solicitante is not in r for costosRows directly? 
+        // Let's check costosRows mapping.
 
         worksheet.columns = columns;
         worksheet.getRow(1).eachCell((cell) => { Object.assign(cell, headerStyle); });
@@ -691,15 +736,15 @@ const ReportesMaestro = () => {
 
         costosRows.forEach(r => {
             const row = worksheet.addRow({
-                fecha: r.fecha,
-                semana: r.semana,
-                categoria: r.categoria,
-                descripcion: r.descripcion,
-                monto: Number(r.monto) || 0,
-                cc: r.cc,
-                gerencia: r.gerencia,
                 ref: r.ref,
-                factura: r.factura
+                almacen: r.almacen ? 'SÍ' : 'NO',
+                descripcion: r.descripcion,
+                factura: r.factura,
+                fecha: r.fecha,
+                solicitante: r.solicitante || 'N/A', // We should add solicitante to mapping
+                categoria: r.categoria,
+                gerencia_cc: `${r.gerencia} / ${r.cc?.split('(')[0]}`,
+                monto: Number(r.monto) || 0
             });
             if (r.fecha) {
                 try {
@@ -744,11 +789,12 @@ const ReportesMaestro = () => {
             (r.cc || '').split('(')[0],
             r.gerencia,
             r.ref,
-            r.factura
+            r.factura,
+            r.almacen ? 'SÍ' : 'NO'
         ]);
 
         doc.autoTable({
-            head: [['FECHA', 'SEM', 'CATEGORÍA', 'DESCRIPCIÓN', 'MONTO ($)', 'PROYECTO', 'GERENCIA', 'REF', 'FACTURA']],
+            head: [['FECHA', 'SEM', 'CATEGORÍA', 'DESCRIPCIÓN', 'MONTO ($)', 'PROYECTO', 'GERENCIA', 'REF', 'FACTURA', 'ALM.']],
             body: tableData,
             startY: 35,
             theme: 'grid',
@@ -783,44 +829,100 @@ const ReportesMaestro = () => {
 
             <div className="rm-stats-grid">
                 <div className="rm-stat-card primary">
-                    <div className="rm-stat-info"><label>Gasto Total Filtrado</label><h3>$ {(Number(totalGasto) || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</h3></div>
-                    <div className="rm-stat-icon"><DollarSign size={24} /></div>
+                    <div className="rm-stat-info"><label>Gasto Total ($)</label><h3>$ {totalGasto.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</h3></div>
                 </div>
-                <div className="rm-stat-card secondary">
+                <div className="rm-stat-card primary">
                     <div className="rm-stat-info"><label>Movimientos Registrados</label><h3>{costosRows.length} Renglones</h3></div>
-                    <div className="rm-stat-icon"><Clock size={24} /></div>
                 </div>
-                <div className="rm-stat-card highlight">
+                <div className="rm-stat-card primary">
                     <div className="rm-stat-info"><label>Semanas Activas</label><h3>{new Set(costosRows.map(r => r.semana)).size} Semanas</h3></div>
-                    <div className="rm-stat-icon"><Calendar size={24} /></div>
                 </div>
             </div>
 
-            <div className="rm-filter-bar">
-                <div className="rm-filter-item search">
-                    <Search size={16} /><input type="text" placeholder="Buscar..." value={busqueda} onChange={e => setBusqueda(e.target.value)} />
+            <div className="rm-filter-section-premium">
+                <div className="rm-filter-grid-layout main-filters">
+                    <div className="filter-item-premium">
+                        <label className="filter-label-premium">Fechas</label>
+                        <div className="date-input-group">
+                            <input type="date" value={fechaDesde} onChange={e => setFechaDesde(e.target.value)} />
+                            <input type="date" value={fechaHasta} onChange={e => setFechaHasta(e.target.value)} />
+                        </div>
+                    </div>
+
+                    <div className="filter-item-premium" style={{ maxWidth: '120px' }}>
+                        <label className="filter-label-premium">Mes</label>
+                        <select value={filtroMes} onChange={e => setFiltroMes(e.target.value)}>
+                            <option value="Todos">Todos</option>
+                            {["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"].map(m => <option key={m} value={m}>{m}</option>)}
+                        </select>
+                    </div>
+
+                    <div className="filter-item-premium" style={{ maxWidth: '150px' }}>
+                        <label className="filter-label-premium">C. Costo</label>
+                        <select value={filtroCC} onChange={e => setFiltroCC(e.target.value)}>
+                            <option value="Todos">Todos</option>
+                            {listaCentrosCostos.map(cc => <option key={cc.id} value={cc.nombre}>{cc.nombre}</option>)}
+                        </select>
+                    </div>
+
+                    <div className="filter-item-premium" style={{ maxWidth: '150px' }}>
+                        <label className="filter-label-premium">Gerencia</label>
+                        <select value={filtroGerencia} onChange={e => setFiltroGerencia(e.target.value)}>
+                            <option value="Todos">Todas</option>
+                            {["Administración Maracaibo", "Operaciones", "Mantenimiento", "Seguridad", "Recursos Humanos", "Gerencia General"].map(g => <option key={g} value={g}>{g}</option>)}
+                        </select>
+                    </div>
+
+                    <div className="filter-item-premium">
+                        <label className="filter-label-premium">ALM.</label>
+                        <select value={filtroAlmacen} onChange={e => setFiltroAlmacen(e.target.value)}>
+                            <option value="Todos">Todos</option>
+                            <option value="Si">Si 📦</option>
+                            <option value="No">No 📥</option>
+                        </select>
+                    </div>
+
+                    <div className="filter-item-premium" style={{ flex: 1, minWidth: '150px' }}>
+                        <label className="filter-label-premium">Búsqueda</label>
+                        <div className="search-input-wrapper">
+                            <input type="text" placeholder="ID, Descripción..." value={busqueda} onChange={e => setBusqueda(e.target.value)} />
+                        </div>
+                    </div>
+                    
+                    <div className="filter-item-premium" style={{ alignSelf: 'flex-end', display: 'flex', gap: '8px' }}>
+                        <button 
+                            className={`btn-toggle-filters ${showMoreFilters ? 'active' : ''}`}
+                            onClick={() => setShowMoreFilters(!showMoreFilters)}
+                            title="Más Filtros"
+                        >
+                            <Filter size={14} />
+                        </button>
+                    </div>
                 </div>
-                <div className="rm-filter-item">
-                    <label>Mes</label>
-                    <select value={filtroMes} onChange={e => setFiltroMes(e.target.value)}>
-                        <option value="Todos">Todos</option>
-                        {["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"].map(m => <option key={m} value={m}>{m}</option>)}
-                    </select>
-                </div>
-                <div className="rm-filter-item">
-                    <label>Semana</label><input type="number" value={filtroSemana} onChange={e => setFiltroSemana(e.target.value)} />
-                </div>
-                <div className="rm-filter-item">
-                    <label>Gerencia</label>
-                    <select value={filtroGerencia} onChange={e => setFiltroGerencia(e.target.value)}>
-                        <option value="Todos">Todas</option>
-                        {["Administración Maracaibo", "Operaciones", "Mantenimiento", "Seguridad", "Recursos Humanos", "Gerencia General"].map(g => <option key={g} value={g}>{g}</option>)}
-                    </select>
-                </div>
-                <div className="rm-filter-date-group">
-                    <input type="date" value={fechaDesde} onChange={e => setFechaDesde(e.target.value)} />
-                    <input type="date" value={fechaHasta} onChange={e => setFechaHasta(e.target.value)} />
-                </div>
+
+                <AnimatePresence>
+                    {showMoreFilters && (
+                        <motion.div 
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: 'auto', opacity: 1 }}
+                            exit={{ height: 0, opacity: 0 }}
+                            className="rm-filter-grid-layout secondary-filters"
+                            style={{ overflow: 'hidden', borderTop: '1px dashed #e2e8f0', paddingTop: '10px', marginTop: '10px' }}
+                        >
+                            <div className="filter-item-premium">
+                                <label className="filter-label-premium">Categoría</label>
+                                <select value={filtroCategoria} onChange={e => setFiltroCategoria(e.target.value)}>
+                                    <option value="Todos">Todas</option>
+                                    {/* Categorías dinámicas si estuvieran disponibles en el estado global */}
+                                </select>
+                            </div>
+                            <div className="filter-item-premium">
+                                <label className="filter-label-premium">Semana</label>
+                                <input type="number" placeholder="Ej: 15" value={filtroSemana} onChange={e => setFiltroSemana(e.target.value)} />
+                            </div>
+                        </motion.div>
+                    )}
+                </AnimatePresence>
             </div>
 
             <div className="rm-tabs">
@@ -908,6 +1010,7 @@ const ReportesMaestro = () => {
                                                 <th style={{ textAlign: 'center', fontSize: '0.65rem' }}>APROB. GENERAL</th>
                                                 <th style={{ textAlign: 'center', fontSize: '0.65rem' }}>INICIO COMPRAS</th>
                                                 <th style={{ textAlign: 'center', fontSize: '0.65rem' }}>DURACIÓN TOTAL</th>
+                                                <th style={{ textAlign: 'center' }}>ALMACÉN</th>
                                                 <th style={{ textAlign: 'center' }}>ESTATUS</th>
                                             </tr>
                                         </thead>
@@ -972,6 +1075,18 @@ const ReportesMaestro = () => {
                                                         </td>
                                                         <td style={{ textAlign: 'center', fontSize: '0.75rem', fontWeight: 'bold', color: sla.alerta ? '#ef4444' : '#10b981' }}>
                                                             {sla.duracion}
+                                                        </td>
+
+                                                        <td style={{ textAlign: 'center' }}>
+                                                            {(() => {
+                                                              const items = r.items || [];
+                                                              const enAlmacen = items.filter(it => it.enviado_almacen || (it.historial_compras?.length > 0 && it.historial_compras.every(h => h.enviado_almacen))).length;
+                                                              const total = items.length;
+                                                              if (total === 0) return <span style={{ color: '#94a3b8', fontSize: '10px' }}>-</span>;
+                                                              if (enAlmacen === total) return <div style={{ color: '#10b981', fontWeight: '900', fontSize: '11px' }}>RECIBIDO 📦</div>;
+                                                              if (enAlmacen > 0) return <div style={{ color: '#f59e0b', fontWeight: '900', fontSize: '11px' }}>{enAlmacen}/{total} 📥</div>;
+                                                              return <div style={{ color: '#94a3b8', fontWeight: '600', fontSize: '11px' }}>PENDIENTE</div>;
+                                                            })()}
                                                         </td>
 
                                                         <td style={{ textAlign: 'center' }}>
@@ -1062,19 +1177,59 @@ const ReportesMaestro = () => {
                                 <div className="rm-table-card">
                                     <table className="rm-table">
                                         <thead>
-                                            <tr><th>FECHA</th><th>SEM</th><th>CATEGORÍA</th><th>DESCRIPCIÓN</th><th style={{ textAlign: 'right' }}>MONTO</th><th>PROYECTO</th><th>GERENCIA</th><th>N° FACTURA</th></tr>
+                                            <tr>
+                                                <th>REF #</th>
+                                                <th style={{ textAlign: 'center' }}>ALM.</th>
+                                                <th>PRODUCTO</th>
+                                                <th>FACTURA</th>
+                                                <th>FECHA</th>
+                                                <th>SOLICITANTE</th>
+                                                <th>CAT.</th>
+                                                <th>DESTINO (G/CC)</th>
+                                                <th style={{ textAlign: 'right' }}>TOTAL ($)</th>
+                                            </tr>
                                         </thead>
                                         <tbody>
                                             {costosRows.map((r) => (
                                                 <tr key={r.uId}>
-                                                    <td className="rm-td-date">{safeFormatDate(r.fecha)}</td>
-                                                    <td className="rm-td-week">{r.semana}</td>
-                                                    <td><span className="rm-badge-type">{r.categoria}</span></td>
+                                                    <td><span style={{ fontWeight: 800, color: '#0ea5e9' }}>{r.ref}</span></td>
+                                                    <td style={{ textAlign: 'center' }}>
+                                                         {r.tipo === 'REQUISICIÓN' ? (
+                                                             <div
+                                                                 onClick={() => toggleAlmacenSubRow(r.requisicionIdReal, r.itemIdx, r.historyIdx, !r.almacen)}
+                                                                 style={{
+                                                                     cursor: 'pointer',
+                                                                     display: 'inline-flex',
+                                                                     alignItems: 'center',
+                                                                     justifyContent: 'center',
+                                                                     width: '24px',
+                                                                     height: '24px',
+                                                                     borderRadius: '6px',
+                                                                     backgroundColor: r.almacen ? '#e0f2fe' : '#f1f5f9',
+                                                                     border: '1px solid',
+                                                                     borderColor: r.almacen ? '#0ea5e9' : '#e2e8f0',
+                                                                     color: r.almacen ? '#0369a1' : '#94a3b8',
+                                                                     transition: 'all 0.2s',
+                                                                     fontSize: '0.8rem'
+                                                                 }}
+                                                                 title={r.almacen ? 'Registrado en Almacén' : 'Marcar como enviado a Almacén'}
+                                                             >
+                                                                 {r.almacen ? '📦' : '📥'}
+                                                             </div>
+                                                         ) : (
+                                                             <span style={{ fontSize: '1.1rem', opacity: 0.1 }}>📦</span>
+                                                         )}
+                                                     </td>
                                                     <td className="rm-td-desc">{r.descripcion}</td>
-                                                    <td className="rm-td-amount">$ {(r.monto || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
-                                                    <td className="rm-td-cc">{r.cc?.split('(')[0]}</td>
-                                                    <td className="rm-td-gerencia">{r.gerencia}</td>
                                                     <td style={{ fontSize: '10px', fontWeight: 'bold', color: '#3b82f6' }}>{r.factura}</td>
+                                                    <td className="rm-td-date">{safeFormatDate(r.fecha)}</td>
+                                                    <td style={{ fontSize: '11px', fontWeight: '700', color: '#475569' }}>{r.solicitante || 'N/A'}</td>
+                                                    <td><span className="rm-badge-type">{r.categoria}</span></td>
+                                                    <td className="rm-td-cc">
+                                                        <div style={{ fontWeight: 700 }}>{r.gerencia}</div>
+                                                        <div style={{ fontSize: '10px', color: '#94a3b8' }}>{r.cc?.split('(')[0]}</div>
+                                                    </td>
+                                                    <td className="rm-td-amount">$ {(r.monto || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
                                                 </tr>
                                             ))}
                                         </tbody>

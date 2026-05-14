@@ -1273,7 +1273,10 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       }
       // Si está en modo edición (ej. re-enviando o corrigiendo)
       try {
-        const { error } = await supabase.from('requisiciones').update({
+        const reqActual = historial.find(h => String(h.id) === String(editandoId));
+        const isRechazada = reqActual?.estado_aprobacion === 'rechazada';
+
+        const updatePayload = {
           fecha_requerida: fechaRequerida,
           centro_costo: centroCosto,
           prioridad,
@@ -1283,7 +1286,45 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
           id_referencia_proyecto: idReferenciaProyecto,
           total_bs: Number(totalEstimado) || 0,
           facturas_url: facturasUrls
-        }).eq('id', editandoId);
+        };
+
+        if (isRechazada) {
+          console.log("[RE-ENVIAR] Detectada REQ rechazada, reiniciando flujo...");
+          const rangoSolicitante = getRank(currentUser?.rol);
+          let estadoInicial = 'pendiente_area';
+          let nombreEstado = 'Re-enviada (Pendiente Área)';
+
+          if (rangoSolicitante >= 3) {
+            estadoInicial = 'enviada_general';
+            nombreEstado = 'Re-enviada (Pendiente General)';
+          }
+
+          // DETERMINAR SI TIENE GERENTE DE PROYECTO ASIGNADO
+          if (rangoSolicitante < 2.5 && departamento !== 'Mantenimiento') {
+            const { data: gProyectos } = await supabase
+              .from('perfiles')
+              .select('id')
+              .contains('obras_asignadas', [centroCosto])
+              .ilike('rol', '%proyecto%');
+
+            if (gProyectos && gProyectos.length > 0) {
+              estadoInicial = 'pendiente_proyecto';
+              nombreEstado = 'Re-enviada (Pendiente Proyecto)';
+            }
+          }
+
+          updatePayload.estado_aprobacion = estadoInicial;
+          updatePayload.aprobacion_nombre = nombreEstado;
+          updatePayload.motivo_rechazo = null;
+          updatePayload.firma_gerente = null;
+          updatePayload.firma_gerente_general = null;
+          updatePayload.aprobado_gerente_area = false;
+          updatePayload.aprobado_gerente_general = false;
+          updatePayload.aprobado_gerente_proyecto = false;
+          updatePayload.firma_gerente_proyecto = null;
+        }
+
+        const { error } = await supabase.from('requisiciones').update(updatePayload).eq('id', editandoId);
         if (error) throw error;
 
         await ejecutarGuardarUpdate(editandoId);
@@ -2484,6 +2525,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                       <th style={{ width: '250px', color: '#1e293b' }}>BENEFICIARIO</th>
                       <th style={{ width: '60px', textAlign: 'right', color: '#1e293b' }}>P.U.</th>
                       <th style={{ width: '60px', textAlign: 'right', color: '#1e293b' }}>TOTAL</th>
+                      <th style={{ width: '40px', textAlign: 'center', color: '#1e293b' }}>ALM.</th>
                       <th style={{ width: '10px', textAlign: 'center', color: '#1e293b' }}>TR.</th>
                       <th style={{ width: '5px' }}></th>
                     </tr>
@@ -2513,6 +2555,16 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                             <td style={{ padding: '12px 4px' }}><input className="input-tc" value={f.beneficiario} onChange={(e) => actualizarFila(f.id, 'beneficiario', e.target.value)} placeholder="Beneficiario" disabled={editandoId && !modoEdicion} /></td>
                             <td style={{ padding: '12px 4px' }}><input className="input-tc" type="number" value={f.pu === '' ? '' : Number(f.pu)} style={{ textAlign: 'right' }} onChange={(e) => actualizarFila(f.id, 'pu', e.target.value)} disabled={!!editandoId} /></td>
                             <td style={{ textAlign: 'right', fontWeight: 'bold', padding: '12px 4px' }}>{f.total.toLocaleString('de-DE')}</td>
+                            <td style={{ textAlign: 'center', verticalAlign: 'middle' }}>
+                              <div style={{ 
+                                opacity: f.enviado_almacen ? 1 : 0.15,
+                                filter: f.enviado_almacen ? 'none' : 'grayscale(1)',
+                                fontSize: '1.2rem',
+                                transition: 'all 0.3s ease'
+                              }} title={f.enviado_almacen ? 'Producto en Almacén' : 'No registrado en Almacén'}>
+                                📦
+                              </div>
+                            </td>
                             <td style={{ textAlign: 'center', padding: '12px 4px' }}>
                               <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', alignItems: 'center' }}>
                                 <button
