@@ -2,18 +2,18 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from './supabaseClient';
 import { motion, AnimatePresence } from 'framer-motion';
 import { format, parseISO } from 'date-fns';
-import { 
-  FileSpreadsheet, 
-  Calendar, 
-  Filter, 
-  Clock, 
-  Search, 
-  ChevronDown, 
-  LayoutDashboard, 
-  Tag, 
-  AlertCircle, 
-  TrendingDown, 
-  MessageSquare, 
+import {
+  FileSpreadsheet,
+  Calendar,
+  Filter,
+  Clock,
+  Search,
+  ChevronDown,
+  LayoutDashboard,
+  Tag,
+  AlertCircle,
+  TrendingDown,
+  MessageSquare,
   Paperclip,
   DollarSign,
   BarChart3
@@ -116,7 +116,7 @@ const Reportes = () => {
       setLoading(false);
     }
   }, []);
-  
+
   const toggleAlmacenSubRow = async (requisicionId, itemIdx, historyIndex, valor) => {
     // 1. Actualización local
     setDataRaw(prev => prev.map(doc => {
@@ -140,7 +140,7 @@ const Reportes = () => {
     try {
       const doc = dataRaw.find(d => d._tipoDoc === 'requisicion' && d.id === requisicionId);
       if (!doc) return;
-      
+
       const nuevosItems = [...(doc.items || [])];
       if (nuevosItems[itemIdx]) {
         const item = { ...nuevosItems[itemIdx] };
@@ -168,10 +168,10 @@ const Reportes = () => {
 
     const channel = supabase
       .channel('reportes_realtime')
-      .on('postgres_changes', { 
-        event: 'UPDATE', 
-        schema: 'public', 
-        table: 'requisiciones' 
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'requisiciones'
       }, (payload) => {
         setDataRaw(prev => prev.map(doc => {
           if (doc._tipoDoc === 'requisicion' && doc.id === payload.new.id) {
@@ -321,16 +321,16 @@ const Reportes = () => {
 
     // Encabezados según solicitud
     const headers = [
-      'CORRELATIVO #', 
-      'ALMACÉN', 
-      'DESCRIPCIÓN', 
-      'NRO DE FACTURA', 
-      'FECHA', 
-      'SOLICITANTE', 
-      'CATEGORÍA', 
-      'GERENCIA', 
-      'CENTRO DE COSTO', 
-      'CANTIDAD COMPRADA', 
+      'CORRELATIVO #',
+      'ALMACÉN',
+      'DESCRIPCIÓN',
+      'NRO DE FACTURA',
+      'FECHA',
+      'SOLICITANTE',
+      'CATEGORÍA',
+      'GERENCIA',
+      'CENTRO DE COSTO',
+      'CANTIDAD COMPRADA',
       'TOTAL ($)'
     ];
     worksheet.addRow(headers);
@@ -452,16 +452,16 @@ const Reportes = () => {
     worksheet.getRow(1).height = 40;
 
     const headers = [
-      'CORRELATIVO #', 
-      'ALMACÉN', 
-      'DESCRIPCIÓN', 
-      'NRO DE FACTURA', 
-      'FECHA', 
-      'SOLICITANTE', 
-      'CATEGORÍA', 
-      'GERENCIA', 
-      'CENTRO DE COSTO', 
-      'CANTIDAD COMPRADA', 
+      'CORRELATIVO #',
+      'ALMACÉN',
+      'DESCRIPCIÓN',
+      'NRO DE FACTURA',
+      'FECHA',
+      'SOLICITANTE',
+      'CATEGORÍA',
+      'GERENCIA',
+      'CENTRO DE COSTO',
+      'CANTIDAD COMPRADA',
       'TOTAL ($)'
     ];
     worksheet.addRow(headers);
@@ -620,7 +620,7 @@ const Reportes = () => {
                 onChange={e => setBusqueda(e.target.value)}
                 style={{ flex: 1 }}
               />
-              <button 
+              <button
                 className={`btn-toggle-filters ${showMoreFilters ? 'active' : ''}`}
                 onClick={() => setShowMoreFilters(!showMoreFilters)}
                 title="Más Filtros"
@@ -642,7 +642,7 @@ const Reportes = () => {
 
         <AnimatePresence>
           {showMoreFilters && (
-            <motion.div 
+            <motion.div
               initial={{ height: 0, opacity: 0 }}
               animate={{ height: 'auto', opacity: 1 }}
               exit={{ height: 0, opacity: 0 }}
@@ -676,212 +676,242 @@ const Reportes = () => {
       </div>
 
       <table className="audit-table-premium" style={{ width: '100%', tableLayout: 'fixed', borderCollapse: 'collapse', backgroundColor: '#fff', borderRadius: '12px', overflow: 'hidden', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)' }}>
-          <thead>
-            <tr style={{ background: '#1e293b', color: '#fff' }}>
-              <th style={{ width: '130px', padding: '12px 15px', borderRadius: '8px 0 0 8px', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>CORRELATIVO #</th>
-              <th style={{ width: '60px', padding: '12px 10px', textAlign: 'center', fontSize: '0.75rem' }}>ALM.</th>
-              <th style={{ padding: '12px 15px', textAlign: 'left', fontSize: '0.75rem' }}>PRODUCTO / CATEGORÍA</th>
-              <th style={{ width: '140px', padding: '12px 15px', textAlign: 'left', fontSize: '0.75rem' }}>SOPORTE / FECHA</th>
-              <th style={{ width: '180px', padding: '12px 15px', textAlign: 'left', fontSize: '0.75rem' }}>ORIGEN (SOLICITANTE)</th>
-              <th style={{ width: '220px', padding: '12px 15px', textAlign: 'left', fontSize: '0.75rem' }}>DESTINO (G / CC)</th>
-              <th style={{ width: '80px', padding: '12px 15px', textAlign: 'right', fontSize: '0.75rem' }}>CANT.</th>
-              <th style={{ width: '140px', padding: '12px 15px', textAlign: 'right', borderRadius: '0 8px 8px 0', fontSize: '0.75rem' }}>FINANCIERO ($)</th>
+        <thead>
+          <tr style={{ background: '#1e293b', color: '#fff' }}>
+            <th style={{ width: '130px', padding: '12px 15px', borderRadius: '8px 0 0 8px', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>CORRELATIVO #</th>
+            <th style={{ width: '60px', padding: '12px 10px', textAlign: 'center', fontSize: '0.75rem' }}>ALM.</th>
+            <th style={{ padding: '12px 15px', textAlign: 'left', fontSize: '0.75rem' }}>PRODUCTO / CATEGORÍA</th>
+            <th style={{ width: '140px', padding: '12px 15px', textAlign: 'left', fontSize: '0.75rem' }}>SOPORTE / FECHA</th>
+            <th style={{ width: '180px', padding: '12px 15px', textAlign: 'left', fontSize: '0.75rem' }}>ORIGEN (SOLICITANTE)</th>
+            <th style={{ width: '220px', padding: '12px 15px', textAlign: 'left', fontSize: '0.75rem' }}>DESTINO (G / CC)</th>
+            <th style={{ width: '80px', padding: '12px 15px', textAlign: 'right', fontSize: '0.75rem' }}>CANT.</th>
+            <th style={{ width: '140px', padding: '12px 15px', textAlign: 'right', borderRadius: '0 8px 8px 0', fontSize: '0.75rem' }}>FINANCIERO ($)</th>
+          </tr>
+        </thead>
+        <tbody style={{ background: 'transparent' }}>
+          {rows.length === 0 ? (
+            <tr>
+              <td colSpan="8" style={{ textAlign: 'center', padding: '100px', color: '#94a3b8', background: '#fff', borderRadius: '12px' }}>
+                No se encontraron registros con los filtros aplicados.
+              </td>
             </tr>
-          </thead>
-          <tbody style={{ background: 'transparent' }}>
-            {rows.length === 0 ? (
-              <tr>
-                <td colSpan="8" style={{ textAlign: 'center', padding: '100px', color: '#94a3b8', background: '#fff', borderRadius: '12px' }}>
-                  No se encontraron registros con los filtros aplicados.
-                </td>
-              </tr>
-            ) : (
-              rows.map((r, i) => (
-                <React.Fragment key={`${r.idReq}-${i}`}>
-                  <motion.tr
-                    key={`${r.idReq}-${i}`}
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: i * 0.03 }}
-                    onClick={() => toggleExpandirHistorial(r.idReq, i)}
-                    style={{ 
-                      borderBottom: '1px solid #f1f5f9',
-                      cursor: 'pointer',
-                      transition: 'background 0.2s'
-                    }}
-                    onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f8fafc'}
-                    onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
-                  >
-                    <td style={{ padding: '10px 15px', borderLeft: r.tipoDoc === 'REQUISICIÓN' ? '4px solid #3b82f6' : '4px solid #f59e0b' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <span style={{ fontWeight: '900', color: r.tipoDoc === 'REQUISICIÓN' ? '#1e40af' : '#b45309', fontSize: '0.85rem' }}>{r.idReq}</span>
-                        {r.justificada && <span title="Justificación especial" style={{ cursor: 'help', color: '#f59e0b', fontSize: '1rem' }}>⚠️</span>}
-                      </div>
-                    </td>
+          ) : (
+            rows.map((r, i) => (
+              <React.Fragment key={`${r.idReq}-${i}`}>
+                <motion.tr
+                  key={`${r.idReq}-${i}`}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: i * 0.03 }}
+                  onClick={() => toggleExpandirHistorial(r.idReq, i)}
+                  style={{
+                    borderBottom: '1px solid #f1f5f9',
+                    cursor: 'pointer',
+                    transition: 'background 0.2s'
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f8fafc'}
+                  onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                >
+                  <td style={{ padding: '10px 15px', borderLeft: r.tipoDoc === 'REQUISICIÓN' ? '4px solid #3b82f6' : '4px solid #f59e0b' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ fontWeight: '900', color: r.tipoDoc === 'REQUISICIÓN' ? '#1e40af' : '#b45309', fontSize: '0.85rem' }}>{r.idReq}</span>
+                      {r.justificada && <span title="Justificación especial" style={{ cursor: 'help', color: '#f59e0b', fontSize: '1rem' }}>⚠️</span>}
+                    </div>
+                  </td>
 
-                    <td style={{ textAlign: 'center', padding: '15px' }}>
-                      <div style={{ 
-                        width: '30px', 
-                        height: '30px', 
-                        borderRadius: '8px', 
-                        display: 'flex', 
-                        alignItems: 'center', 
-                        justifyContent: 'center',
-                        background: r.almacen ? '#eff6ff' : '#f8fafc',
-                        border: '1px solid',
-                        borderColor: r.almacen ? '#bfdbfe' : '#e2e8f0',
-                        color: r.almacen ? '#2563eb' : '#94a3b8',
-                        opacity: r.almacen ? 1 : 0.4
-                      }}>
-                        {r.almacen ? '📦' : '📥'}
-                      </div>
-                    </td>
+                  <td style={{ textAlign: 'center', padding: '15px' }}>
+                    <div style={{
+                      width: '30px',
+                      height: '30px',
+                      borderRadius: '8px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      background: r.almacen ? '#eff6ff' : '#f8fafc',
+                      border: '1px solid',
+                      borderColor: r.almacen ? '#bfdbfe' : '#e2e8f0',
+                      color: r.almacen ? '#2563eb' : '#94a3b8',
+                      opacity: r.almacen ? 1 : 0.4
+                    }}>
+                      {r.almacen ? '📦' : '📥'}
+                    </div>
+                  </td>
 
-                    <td style={{ padding: '15px' }}>
-                      <div style={{ fontWeight: '800', color: '#0f172a', fontSize: '0.85rem', lineHeight: '1.2' }}>
-                        {r.descripcion}
-                      </div>
-                      <div style={{ fontSize: '0.7rem', fontWeight: '700', color: '#64748b', marginTop: '4px', textTransform: 'uppercase' }}>
-                        {r.categoria}
-                      </div>
-                    </td>
+                  <td style={{ padding: '15px' }}>
+                    <div style={{ fontWeight: '800', color: '#0f172a', fontSize: '0.85rem', lineHeight: '1.2' }}>
+                      {r.descripcion}
+                    </div>
+                    <div style={{ fontSize: '0.7rem', fontWeight: '700', color: '#64748b', marginTop: '4px', textTransform: 'uppercase' }}>
+                      {r.categoria}
+                    </div>
+                  </td>
 
-                    <td style={{ padding: '15px' }}>
-                      <div style={{ fontWeight: '800', color: '#2563eb', fontSize: '0.8rem' }}>
-                        {r.nroFactura}
-                      </div>
-                      <div style={{ fontSize: '0.75rem', fontWeight: '600', color: '#94a3b8', marginTop: '2px' }}>
-                        {r.fechaPago !== 'Pendiente' && r.fechaPago !== 'N/A' ? format(new Date(r.fechaPago + 'T12:00:00'), 'dd/MM/yyyy') : r.fechaPago}
-                      </div>
-                    </td>
+                  <td style={{ padding: '15px' }}>
+                    <div style={{ fontWeight: '800', color: '#2563eb', fontSize: '0.8rem' }}>
+                      {r.nroFactura}
+                    </div>
+                    <div style={{ fontSize: '0.75rem', fontWeight: '600', color: '#94a3b8', marginTop: '2px' }}>
+                      {r.fechaPago !== 'Pendiente' && r.fechaPago !== 'N/A' ? format(new Date(r.fechaPago + 'T12:00:00'), 'dd/MM/yyyy') : r.fechaPago}
+                    </div>
+                  </td>
 
-                    <td style={{ padding: '15px', fontSize: '0.85rem', color: '#334155', fontWeight: '700' }}>
-                      {r.solicitante}
-                    </td>
+                  <td style={{ padding: '15px', fontSize: '0.85rem', color: '#334155', fontWeight: '700' }}>
+                    {r.solicitante}
+                  </td>
 
-                    <td style={{ padding: '15px' }}>
-                      <div style={{ fontWeight: '800', color: '#1e293b', fontSize: '0.85rem' }}>
-                        {r.gerencia}
-                      </div>
-                      <div style={{ fontSize: '0.7rem', color: '#94a3b8', fontWeight: '600', marginTop: '2px' }}>
-                        {r.centroCosto.split('(')[0]}
-                      </div>
-                    </td>
+                  <td style={{ padding: '15px' }}>
+                    <div style={{ fontWeight: '800', color: '#1e293b', fontSize: '0.85rem' }}>
+                      {r.gerencia}
+                    </div>
+                    <div style={{ fontSize: '0.7rem', color: '#94a3b8', fontWeight: '600', marginTop: '2px' }}>
+                      {r.centroCosto.split('(')[0]}
+                    </div>
+                  </td>
 
-                    <td style={{ textAlign: 'right', padding: '15px', fontWeight: '900', fontSize: '1rem', color: '#16a34a' }}>
-                      {r.cantComprada}
-                    </td>
+                  <td style={{ textAlign: 'right', padding: '15px', fontWeight: '900', fontSize: '1rem', color: '#16a34a' }}>
+                    {r.cantComprada}
+                  </td>
 
-                    <td style={{ textAlign: 'right', padding: '15px', borderRadius: '0 12px 12px 0' }}>
-                      <div style={{ fontWeight: '900', fontSize: '1.05rem', color: '#0ea5e9', letterSpacing: '-0.5px' }}>
-                        $ {r.total.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
-                      </div>
-                    </td>
-                  </motion.tr>
+                  <td style={{ textAlign: 'right', padding: '15px', borderRadius: '0 12px 12px 0' }}>
+                    <div style={{ fontWeight: '900', fontSize: '1.05rem', color: '#0ea5e9', letterSpacing: '-0.5px' }}>
+                      $ {r.total.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                    </div>
+                  </td>
+                </motion.tr>
 
-                  {/* HISTORIAL EXPANDIBLE (ESTILO COMPRAS) */}
-                  {expandirHistorial[`${r.idReq}-${i}`] && r.historial_compras?.length > 0 && (
-                    <tr className="rm-expanded-row">
-                      <td colSpan="8" style={{ padding: '0 20px 20px 20px' }}>
-                        <motion.div
-                          initial={{ opacity: 0, height: 0 }}
-                          animate={{ opacity: 1, height: 'auto' }}
-                          style={{ 
-                            background: '#f8fafc', 
-                            borderRadius: '12px', 
-                            padding: '15px', 
-                            border: '1px solid #e2e8f0',
-                            boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.02)',
-                            overflow: 'hidden'
-                          }}
-                        >
-                          <div style={{ fontSize: '0.65rem', fontWeight: '900', color: '#64748b', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'flex', justifyContent: 'space-between' }}>
-                            <span>Trazabilidad y Registros de Compra</span>
-                            <span style={{ color: '#0ea5e9' }}>{r.historial_compras.length} EVENTOS</span>
-                          </div>
-                          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                            <thead>
-                              <tr style={{ borderBottom: '2px solid #e2e8f0' }}>
-                                <th style={{ textAlign: 'left', padding: '8px', fontSize: '0.65rem', color: '#94a3b8' }}>FECHA</th>
-                                <th style={{ textAlign: 'left', padding: '8px', fontSize: '0.65rem', color: '#94a3b8' }}>PROVEEDOR</th>
-                                <th style={{ textAlign: 'left', padding: '8px', fontSize: '0.65rem', color: '#94a3b8' }}>DOCUMENTO</th>
-                                <th style={{ textAlign: 'right', padding: '8px', fontSize: '0.65rem', color: '#94a3b8' }}>CANT.</th>
-                                <th style={{ textAlign: 'right', padding: '8px', fontSize: '0.65rem', color: '#94a3b8' }}>P.U. ($)</th>
-                                <th style={{ textAlign: 'right', padding: '8px', fontSize: '0.65rem', color: '#94a3b8' }}>TOTAL ($)</th>
-                                <th style={{ textAlign: 'center', padding: '8px', fontSize: '0.65rem', color: '#94a3b8' }}>ALM.</th>
-                                <th style={{ textAlign: 'center', padding: '8px', fontSize: '0.65rem', color: '#94a3b8' }}>USUARIO</th>
+                {/* HISTORIAL EXPANDIBLE (ESTILO COMPRAS) */}
+                {expandirHistorial[`${r.idReq}-${i}`] && r.historial_compras?.length > 0 && (
+                  <tr className="rm-expanded-row">
+                    <td colSpan="8" style={{ padding: '0 20px 20px 20px' }}>
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        style={{
+                          background: '#f8fafc',
+                          borderRadius: '12px',
+                          padding: '15px',
+                          border: '1px solid #e2e8f0',
+                          boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.02)',
+                          overflow: 'hidden'
+                        }}
+                      >
+                        <div style={{ fontSize: '0.65rem', fontWeight: '900', color: '#64748b', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'flex', justifyContent: 'space-between' }}>
+                          <span>Trazabilidad y Registros de Compra</span>
+                          <span style={{ color: '#0ea5e9' }}>{r.historial_compras.length} EVENTOS</span>
+                        </div>
+                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                          <thead>
+                            <tr style={{ borderBottom: '2px solid #e2e8f0', backgroundColor: '#f1f5f9', color: '#475569', fontSize: '0.65rem' }}>
+                              <th style={{ textAlign: 'left', padding: '10px 8px', color: '#94a3b8' }}>FECHA</th>
+                              <th style={{ textAlign: 'left', padding: '10px 8px', color: '#94a3b8' }}>EVENTO</th>
+                              <th style={{ textAlign: 'left', padding: '10px 8px', color: '#94a3b8' }}>PROVEEDOR</th>
+                              <th style={{ textAlign: 'left', padding: '10px 8px', color: '#94a3b8' }}>DETALLE / DOCUMENTO</th>
+                              <th style={{ textAlign: 'center', padding: '10px 8px', color: '#94a3b8' }}>CANT.</th>
+                              <th style={{ textAlign: 'right', padding: '10px 8px', color: '#94a3b8' }}>P.U. REAL ($)</th>
+                              <th style={{ textAlign: 'right', padding: '10px 8px', color: '#94a3b8' }}>TOTAL / COMENTARIO ($)</th>
+                              <th style={{ textAlign: 'center', padding: '10px 8px', color: '#94a3b8' }}>ALM.</th>
+                              <th style={{ textAlign: 'right', padding: '10px 8px', color: '#94a3b8' }}>USUARIO</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {r.historial_compras.map((h, hIdx) => (
+                              <tr key={hIdx} style={{ borderBottom: '1px solid #f1f5f9', backgroundColor: h.tipo === 'JUSTIFICACION' ? '#fffbeb' : 'transparent' }}>
+                                <td style={{ padding: '10px 8px', fontSize: '0.75rem', fontWeight: '600', color: '#64748b' }}>
+                                  {h.tipo === 'JUSTIFICACION' ? safeFormatDate(h.fecha) : safeFormatDate(h.fecha_pago || h.created_at)}
+                                </td>
+                                <td style={{ padding: '10px 8px', fontSize: '0.75rem', fontWeight: '800', color: h.tipo === 'JUSTIFICACION' ? '#d97706' : (h.doc_tipo === 'NC' ? '#f59e0b' : '#16a34a') }}>
+                                  {h.tipo === 'JUSTIFICACION' ? '⚠️ JUSTIFICACIÓN' : (h.doc_tipo === 'NC' ? '💳 A CRÉDITO' : '✅ COMPRADO')}
+                                </td>
+                                <td style={{ padding: '10px 8px', fontSize: '0.7rem', color: '#334155', fontWeight: '700' }}>
+                                  {h.tipo !== 'JUSTIFICACION' ? (h.proveedor_nombre || 'No asignado') : '-'}
+                                </td>
+                                <td style={{ padding: '10px 8px' }}>
+                                  {h.tipo === 'JUSTIFICACION' ? (
+                                    <div style={{ fontStyle: 'italic', color: '#92400e', fontWeight: '600', fontSize: '0.7rem' }}>{h.motivo}</div>
+                                  ) : (
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                      {h.metodo_pago && (
+                                        <span style={{ fontSize: '0.55rem', backgroundColor: '#e2e8f0', color: '#475569', padding: '2px 5px', borderRadius: '4px', fontWeight: '900' }}>
+                                          {h.metodo_pago}
+                                        </span>
+                                      )}
+                                      <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#2563eb' }}>
+                                        {h.doc_tipo || 'FAC'}: {h.doc_numero || 'S/D'}
+                                      </span>
+                                      {h.fecha_pago && (
+                                        <span style={{ fontSize: '8px', color: '#16a34a', fontWeight: '800', textTransform: 'uppercase', marginLeft: '5px' }}>
+                                          📅 PAGADO
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
+                                </td>
+                                <td style={{ padding: '10px 8px', fontSize: '0.75rem', textAlign: 'center', fontWeight: '700', color: '#1e293b' }}>
+                                  {h.cant || '-'}
+                                </td>
+                                <td style={{ padding: '10px 8px', fontSize: '0.75rem', textAlign: 'right', fontWeight: '700', color: '#1e293b' }}>
+                                  {h.tipo !== 'JUSTIFICACION' ? `$ ${(Number(h.pu) || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}` : '-'}
+                                </td>
+                                <td style={{ padding: '10px 8px', textAlign: 'right' }}>
+                                  {h.tipo === 'JUSTIFICACION' ? (
+                                    <div style={{ fontSize: '0.7rem', color: '#475569', whiteSpace: 'pre-wrap', textAlign: 'left', backgroundColor: '#fef3c7', padding: '6px', borderRadius: '4px', border: '1px solid #fde68a' }}>
+                                      {h.comentario}
+                                    </div>
+                                  ) : (
+                                    <span style={{ fontWeight: '800', fontSize: '0.8rem', color: '#0ea5e9' }}>
+                                      $ {((Number(h.cant) || 0) * (Number(h.pu) || 0)).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                                    </span>
+                                  )}
+                                </td>
+                                <td style={{ padding: '10px 8px', textAlign: 'center' }}>
+                                  {h.tipo !== 'JUSTIFICACION' && (
+                                    <div
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        toggleAlmacenSubRow(r.idReal, r.itemIdx, hIdx, !h.enviado_almacen);
+                                      }}
+                                      style={{
+                                        cursor: 'pointer',
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        width: '22px',
+                                        height: '22px',
+                                        borderRadius: '5px',
+                                        backgroundColor: h.enviado_almacen ? '#e0f2fe' : '#f1f5f9',
+                                        border: '1px solid',
+                                        borderColor: h.enviado_almacen ? '#0ea5e9' : '#e2e8f0',
+                                        color: h.enviado_almacen ? '#0369a1' : '#94a3b8',
+                                        fontSize: '0.7rem'
+                                      }}
+                                    >
+                                      {h.enviado_almacen ? '📦' : '📥'}
+                                    </div>
+                                  )}
+                                </td>
+                                <td style={{ padding: '10px 8px', textAlign: 'right', fontSize: '0.65rem', color: '#94a3b8', fontWeight: '600' }}>
+                                  {h.usuario_nombre?.split(' ')[0] || 'S/U'}
+                                </td>
                               </tr>
-                            </thead>
-                            <tbody>
-                              {r.historial_compras.map((h, hIdx) => (
-                                <tr key={hIdx} style={{ borderBottom: '1px solid #f1f5f9', backgroundColor: h.tipo === 'JUSTIFICACION' ? '#fffbeb' : 'transparent' }}>
-                                  <td style={{ padding: '10px 8px', fontSize: '0.75rem', fontWeight: '700', color: '#475569' }}>
-                                    {h.tipo === 'JUSTIFICACION' ? safeFormatDate(h.fecha) : safeFormatDate(h.fecha_pago || h.created_at)}
-                                  </td>
-                                  <td style={{ padding: '10px 8px', fontSize: '0.75rem', color: h.tipo === 'JUSTIFICACION' ? '#b45309' : '#334155', fontWeight: '600' }}>
-                                    {h.tipo === 'JUSTIFICACION' ? '⚠️ JUSTIFICACIÓN' : (h.proveedor || 'S/P')}
-                                  </td>
-                                  <td style={{ padding: '10px 8px', fontSize: '0.7rem', color: h.tipo === 'JUSTIFICACION' ? '#92400e' : '#2563eb', fontWeight: '800' }}>
-                                    {h.tipo === 'JUSTIFICACION' ? h.motivo : (h.doc_numero || 'S/D')}
-                                  </td>
-                                  <td style={{ padding: '10px 8px', fontSize: '0.75rem', textAlign: 'right', fontWeight: '700', color: '#16a34a' }}>
-                                    {h.cant || '-'}
-                                  </td>
-                                  <td style={{ padding: '10px 8px', fontSize: '0.75rem', textAlign: 'right', color: '#64748b' }}>
-                                    {h.tipo !== 'JUSTIFICACION' ? `$ ${(Number(h.pu) || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}` : '-'}
-                                  </td>
-                                  <td style={{ padding: '10px 8px', fontSize: '0.8rem', textAlign: 'right', fontWeight: '800', color: '#0ea5e9' }}>
-                                    {h.tipo === 'JUSTIFICACION' ? '-' : `$ ${((Number(h.cant) || 0) * (Number(h.pu) || 0)).toLocaleString('de-DE', { minimumFractionDigits: 2 })}`}
-                                  </td>
-                                  <td style={{ padding: '10px 8px', textAlign: 'center' }}>
-                                    {h.tipo !== 'JUSTIFICACION' && (
-                                      <div
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          toggleAlmacenSubRow(r.idReal, r.itemIdx, hIdx, !h.enviado_almacen);
-                                        }}
-                                        style={{
-                                          cursor: 'pointer',
-                                          display: 'inline-flex',
-                                          alignItems: 'center',
-                                          justifyContent: 'center',
-                                          width: '22px',
-                                          height: '22px',
-                                          borderRadius: '5px',
-                                          backgroundColor: h.enviado_almacen ? '#e0f2fe' : '#f1f5f9',
-                                          border: '1px solid',
-                                          borderColor: h.enviado_almacen ? '#0ea5e9' : '#e2e8f0',
-                                          color: h.enviado_almacen ? '#0369a1' : '#94a3b8',
-                                          fontSize: '0.7rem'
-                                        }}
-                                      >
-                                        {h.enviado_almacen ? '📦' : '📥'}
-                                      </div>
-                                    )}
-                                  </td>
-                                  <td style={{ padding: '10px 8px', textAlign: 'center', fontSize: '0.65rem', color: '#94a3b8', fontWeight: '600' }}>
-                                    {h.usuario_nombre?.split(' ')[0] || 'S/U'}
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </motion.div>
-                      </td>
-                    </tr>
-                  )}
-                </React.Fragment>
-              ))
-            )}
-          </tbody>
-        </table>
+                            ))}
+                          </tbody>
+                        </table>
+                      </motion.div>
+                    </td>
+                  </tr>
+                )}
+              </React.Fragment>
+            ))
+          )}
+        </tbody>
+      </table>
 
-        {rows.length === 0 && !loading && (
-          <div style={{ textAlign: 'center', padding: '60px', color: '#94a3b8' }}>
-            <LayoutDashboard size={48} style={{ opacity: 0.2, marginBottom: '10px' }} />
-            <p>No se encontraron registros activos para los filtros seleccionados.</p>
-          </div>
-        )}
+      {rows.length === 0 && !loading && (
+        <div style={{ textAlign: 'center', padding: '60px', color: '#94a3b8' }}>
+          <LayoutDashboard size={48} style={{ opacity: 0.2, marginBottom: '10px' }} />
+          <p>No se encontraron registros activos para los filtros seleccionados.</p>
+        </div>
+      )}
 
 
     </motion.div>

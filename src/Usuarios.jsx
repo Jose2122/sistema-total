@@ -38,11 +38,13 @@ const Usuarios = () => {
 
   const [userLogs, setUserLogs] = useState([]);
   const [loadingLogs, setLoadingLogs] = useState(false);
+  const [uploadingFoto, setUploadingFoto] = useState(false);
 
   const MODULOS_DISPONIBLES = [
     { id: 'requisiciones', label: 'Requisiciones' },
     { id: 'fondos', label: 'Solicitud de Fondos' },
     { id: 'tickets', label: 'Ticket de Pago' },
+    { id: 'almacen', label: 'Almacén' },
     { id: 'compras', label: 'Compras' },
     { id: 'reportes', label: 'Reporte de Compras' },
     { id: 'proveedores', label: 'Proveedores' },
@@ -215,7 +217,7 @@ const Usuarios = () => {
     if (!formData.id && formData.rol) { // Solo si es nuevo usuario
       const r = cargos.find(c => c.nombre === formData.rol);
       if (r && r.permisos_default) {
-        let sugeridos = ['requisiciones', 'fondos', 'tickets']; // Básicos
+        let sugeridos = ['requisiciones', 'fondos', 'tickets', 'usuarios']; // Básicos preasignados por defecto
         if (r.permisos_default.gestionar_usuarios) sugeridos.push('usuarios');
         if (r.permisos_default.acceso_compras) sugeridos.push('compras', 'reportes', 'proveedores');
         if (r.permisos_default.gestionar_atributos) sugeridos.push('administracion');
@@ -612,6 +614,40 @@ const Usuarios = () => {
             </tbody>
           </table>
         </div>
+
+        {/* Panel de Resumen de Usuarios Totales */}
+        <div style={{ 
+          display: 'flex', 
+          justifyContent: 'space-between', 
+          alignItems: 'center', 
+          marginTop: '20px', 
+          padding: '14px 20px', 
+          backgroundColor: '#f8fafc', 
+          borderRadius: '16px', 
+          border: '1px solid #f1f5f9',
+          fontSize: '0.82rem',
+          color: '#64748b',
+          flexWrap: 'wrap',
+          gap: '10px'
+        }}>
+          <div>
+            Mostrando <span style={{ fontWeight: 'bold', color: '#1e293b' }}>{usuariosFiltrados.length}</span> de <span style={{ fontWeight: 'bold', color: '#1e293b' }}>{usuarios.length}</span> colaboradores.
+          </div>
+          <div style={{ display: 'flex', gap: '15px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ width: '8px', height: '8px', backgroundColor: '#10b981', borderRadius: '50%' }}></span>
+              Activos: <b style={{ color: '#1e293b' }}>{usuarios.filter(u => u.activo).length}</b>
+            </span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ width: '8px', height: '8px', backgroundColor: '#cbd5e1', borderRadius: '50%' }}></span>
+              Inactivos: <b style={{ color: '#1e293b' }}>{usuarios.filter(u => !u.activo).length}</b>
+            </span>
+            <span style={{ borderLeft: '1px solid #e2e8f0', height: '14px' }}></span>
+            <span style={{ fontWeight: 'bold', color: '#0ea5e9' }}>
+              Total General: {usuarios.length} Usuarios
+            </span>
+          </div>
+        </div>
       </div>
 
       {showModal && (
@@ -724,9 +760,87 @@ const Usuarios = () => {
                       ))}
                     </div>
 
-                    <div style={{ marginTop: '25px', padding: '20px', borderRadius: '15px', backgroundColor: '#f8fafc', border: '1.5px dashed #e2e8f0', textAlign: 'center' }}>
-                      <UserCircle size={40} color="#94a3b8" />
-                      <p style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '10px' }}>La foto de perfil se puede actualizar una vez registrado el usuario.</p>
+                    <div style={{ marginTop: '25px', padding: '20px', borderRadius: '15px', backgroundColor: '#f8fafc', border: '1.5px dashed #cbd5e1', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px' }}>
+                      <div style={{ position: 'relative', width: '70px', height: '70px', borderRadius: '50%', backgroundColor: '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', border: '2px solid #e2e8f0' }}>
+                        {formData.foto_url ? (
+                          <img src={formData.foto_url} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="Avatar Preview" />
+                        ) : (
+                          <UserCircle size={45} color="#94a3b8" />
+                        )}
+                        {uploadingFoto && (
+                          <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(15, 23, 42, 0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: '0.65rem', fontWeight: 'bold' }}>
+                            Subiendo...
+                          </div>
+                        )}
+                      </div>
+                      <div>
+                        <input
+                          type="file"
+                          id="avatar-upload"
+                          accept="image/*"
+                          style={{ display: 'none' }}
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            setUploadingFoto(true);
+                            const toastId = toast.loading("Subiendo foto de perfil...");
+                            try {
+                              const fileExt = file.name.split('.').pop();
+                              const fileName = `avatar-${Date.now()}.${fileExt}`;
+                              const filePath = `avatars/${fileName}`;
+                              
+                              const { error: uploadError } = await supabase.storage
+                                .from('facturas')
+                                .upload(filePath, file);
+
+                              if (uploadError) throw uploadError;
+
+                              const { data: { publicUrl } } = supabase.storage
+                                .from('facturas')
+                                .getPublicUrl(filePath);
+
+                              setFormData(prev => ({ ...prev, foto_url: publicUrl }));
+
+                              // Si ya existe el usuario, actualizar directamente en la base de datos
+                              if (formData.id) {
+                                const { error: dbError } = await supabase
+                                  .from('perfiles')
+                                  .update({ foto_url: publicUrl })
+                                  .eq('id', formData.id);
+                                if (dbError) throw dbError;
+                                toast.success("Foto de perfil actualizada en el sistema", { id: toastId });
+                                // Actualizar la lista local de usuarios
+                                setUsuarios(prev => prev.map(u => u.id === formData.id ? { ...u, foto_url: publicUrl } : u));
+                              } else {
+                                toast.success("Foto de perfil cargada para el nuevo usuario", { id: toastId });
+                              }
+                            } catch (err) {
+                              console.error("Error subiendo avatar:", err);
+                              toast.error("Error al subir foto: " + err.message, { id: toastId });
+                            } finally {
+                              setUploadingFoto(false);
+                            }
+                          }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => document.getElementById('avatar-upload')?.click()}
+                          disabled={uploadingFoto}
+                          style={{
+                            padding: '6px 14px',
+                            backgroundColor: '#0ea5e9',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '8px',
+                            fontSize: '0.75rem',
+                            fontWeight: '600',
+                            cursor: 'pointer',
+                            transition: '0.2s'
+                          }}
+                        >
+                          {formData.foto_url ? 'Cambiar Foto' : 'Subir Foto'}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>

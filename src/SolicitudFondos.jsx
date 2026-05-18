@@ -469,22 +469,174 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
     setLoading(false);
   }, [currentUser]);
 
-  // --- EFECTO DE CARGA INICIAL ---
+  // --- EFECTO DE CARGA INICIAL CON SUSCRIPCIÓN EN TIEMPO REAL ---
   useEffect(() => {
     cargarTodo();
+
+    const channel = supabase
+      .channel('fondos_realtime')
+      // 1. Escuchar cambios en solicitudes_fondos (creación, edición o eliminación)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'solicitudes_fondos'
+      }, (payload) => {
+        console.log('[REALTIME FONDOS] Cambio detectado en solicitudes_fondos:', payload.eventType, payload.new);
+        cargarTodo();
+      })
+      // 2. Escuchar cambios en partidas_fondos (pagos, duplicaciones, eliminaciones o vinculación a requisiciones)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'partidas_fondos'
+      }, (payload) => {
+        console.log('[REALTIME FONDOS] Cambio detectado en partidas_fondos:', payload.eventType, payload.new);
+        cargarTodo();
+      })
+      // 3. Escuchar creación de nuevas requisiciones (INSERT) para bloquear partidas de inmediato
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'requisiciones'
+      }, (payload) => {
+        console.log('[REALTIME FONDOS] Nueva Requisición creada:', payload.new);
+        toast.success(`Nueva requisición ${payload.new.correlativo_req || ''} generada. Sincronizando partidas...`, { icon: '📝' });
+        cargarTodo();
+      })
+      // 4. Escuchar actualizaciones de requisiciones (UPDATE) para sincronizar aprobaciones
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'requisiciones'
+      }, (payload) => {
+        console.log('[REALTIME FONDOS] Requisición actualizada:', payload.new);
+        if (payload.new.estado_aprobacion === 'aprobado_final') {
+          toast.success(`Requisición ${payload.new.correlativo_req || ''} APROBADA GLOBAL. Sincronizando montos...`, { icon: '✅' });
+        }
+        cargarTodo();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [cargarTodo]);
+
+  const obtenerGerentePorCentroCosto = (cc) => {
+    if (!cc) return null;
+    const ccUpper = cc.toString().toUpperCase().trim();
+    
+    // Si contiene "MTTO" o "MAYOR" o "GRANDE"
+    if (
+      ccUpper.includes("MTTO") || 
+      ccUpper.includes("MAYOR") || 
+      ccUpper.includes("GRANDE")
+    ) {
+      return "Hilda Colina";
+    }
+    
+    // Si contiene "EXCELENCIA" o "VAC" o "VACCUM"
+    if (
+      ccUpper.includes("EXCELENCIA") || 
+      ccUpper.includes("VAC") || 
+      ccUpper.includes("VACCUM")
+    ) {
+      return "Johannel García";
+    }
+    
+    return null;
+  };
+
+  const determinarGerenteSuperior = async (user, depto) => {
+    try {
+      // Recopilar posibles Centros de Costo / Contratos del usuario
+      const posiblesCCs = [];
+      if (user && user.contrato) {
+        posiblesCCs.push(user.contrato);
+      }
+      if (user && user.obras_asignadas && user.obras_asignadas.length > 0) {
+        posiblesCCs.push(...user.obras_asignadas);
+      }
+
+      // 1. PRIMER NIVEL: Evaluar los Centros de Costo recopilados contra la matriz estricta
+      if (posiblesCCs.length > 0) {
+        for (const cc of posiblesCCs) {
+          const gerente = obtenerGerentePorCentroCosto(cc);
+          if (gerente) {
+            console.log(`[GERENTE SUPERIOR] Asignado por matriz (obra/contrato: ${cc}):`, gerente);
+            return gerente;
+          }
+        }
+      }
+
+      // 2. SEGUNDO NIVEL: Buscar Gerente de Proyecto genérico en base de datos
+      if (posiblesCCs.length > 0) {
+        const { data: gProyectos } = await supabase
+          .from('perfiles')
+          .select('nombre, apellido, obras_asignadas, contrato, rol')
+          .ilike('rol', '%proyecto%')
+          .eq('activo', true);
+
+        if (gProyectos && gProyectos.length > 0) {
+          const matchedProj = gProyectos.find(g => {
+            const ccG = [];
+            if (g.contrato) ccG.push(g.contrato);
+            if (g.obras_asignadas && g.obras_asignadas.length > 0) ccG.push(...g.obras_asignadas);
+            return ccG.some(obra => posiblesCCs.includes(obra));
+          });
+          if (matchedProj) {
+            console.log("[GERENTE SUPERIOR] Gerente Proyecto genérico encontrado:", `${matchedProj.nombre} ${matchedProj.apellido}`);
+            return `${matchedProj.nombre} ${matchedProj.apellido}`;
+          }
+        }
+      }
+
+      // 3. TERCER NIVEL: Buscar Gerente de Área
+      if (depto) {
+        const { data: gerentesArea } = await supabase
+          .from('perfiles')
+          .select('nombre, apellido, rol')
+          .ilike('departamento', `%${depto}%`)
+          .eq('activo', true);
+
+        if (gerentesArea && gerentesArea.length > 0) {
+          const matchedArea = gerentesArea.find(g => {
+            const r = (g.rol || '').toLowerCase();
+            return (r.includes('área') || r.includes('area') || g.rol === 'Gerente') && !r.includes('proyecto');
+          });
+          if (matchedArea) {
+            console.log("[GERENTE SUPERIOR] Gerente de Área encontrado:", `${matchedArea.nombre} ${matchedArea.apellido}`);
+            return `${matchedArea.nombre} ${matchedArea.apellido}`;
+          }
+        }
+      }
+
+      // Fallback
+      const gerentesDept = gerenciasData[depto];
+      if (gerentesDept && gerentesDept.length > 0) {
+        console.log("[GERENTE SUPERIOR] Fallback estático:", gerentesDept[0]);
+        return gerentesDept[0];
+      }
+    } catch (err) {
+      console.error("[GERENTE SUPERIOR] Error determinando superior:", err);
+    }
+    return '';
+  };
 
   useEffect(() => {
     if (showModal && !isEditing && currentUser) {
       const depto = currentUser.departamento || '';
-      const gerentesDept = gerenciasData[depto];
-      const gerenteNombre = (gerentesDept && gerentesDept.length > 0) ? gerentesDept[0] : '';
+      
+      const inicializarResponsable = async () => {
+        const superior = await determinarGerenteSuperior(currentUser, depto);
+        setForm(prev => ({
+          ...prev,
+          responsable: superior || `${currentUser.nombre} ${currentUser.apellido}`,
+          gerencia: depto
+        }));
+      };
 
-      setForm(prev => ({
-        ...prev,
-        responsable: `${currentUser.nombre} ${currentUser.apellido}`,
-        gerencia: currentUser.departamento
-      }));
+      inicializarResponsable();
     }
   }, [showModal, isEditing, currentUser]);
 
@@ -1256,7 +1408,72 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       toast.success("¡Guardado con éxito!");
       await cargarTodo();
       setHasChanges(false);
-      if (!keepOpen) setShowModal(false);
+      
+      if (keepOpen) {
+        setIsEditing(true);
+        // Recargar las partidas recién insertadas de Supabase para obtener sus IDs reales y evitar duplicaciones
+        const { data: dbPartidas } = await supabase
+          .from('partidas_fondos')
+          .select('*')
+          .eq('solicitud_id', cabeceraId);
+
+        if (dbPartidas && dbPartidas.length > 0) {
+          const mappedPartidas = dbPartidas.filter(p => !p.clasificacion.includes('[*]') && p.clasificacion !== 'Gastos Imprevistos' && p.clasificacion !== 'Ticket de Pago' && p.clasificacion !== 'Solicitud de ticket').map(p => ({
+            id: p.id,
+            cc: p.centro_costo,
+            clasif: p.clasificacion,
+            cat: p.categoria,
+            cant: p.cantidad,
+            uni: p.unidad,
+            desc: p.descripcion,
+            ben: p.beneficiario,
+            puBs: p.pu_bs,
+            puUsd: p.pu_usd,
+            pago_realizado: p.pago_realizado || false,
+            emisor: p.emisor_nombre || 'S/E',
+            requisicion_id: p.requisicion_id || null,
+            ticket_id: p.ticket_id || null,
+            codigo_ticket: p.codigo_ticket || null,
+            codigo_ref: p.codigo_ticket || p.codigo_ticket || null,
+            status: p.status || 'Disponible',
+            selected: false,
+            montoReal: 0,
+            montoPendiente: (p.pu_bs || p.pu_usd || 0) * (p.cantidad || 1)
+          }));
+
+          const mappedImprevistos = dbPartidas.filter(p => p.clasificacion.includes('[*]') || p.clasificacion === 'Gastos Imprevistos' || p.clasificacion === 'Ticket de Pago' || p.clasificacion === 'Solicitud de ticket').map(p => ({
+            id: p.id,
+            cc: p.centro_costo,
+            clasif: p.clasificacion.replace(' [*]', ''),
+            cat: p.categoria,
+            cant: p.cantidad,
+            uni: p.unidad,
+            desc: p.descripcion,
+            ben: p.beneficiario,
+            puBs: p.pu_bs,
+            puUsd: p.pu_usd,
+            pago_realizado: p.pago_realizado || false,
+            emisor: p.emisor_nombre || 'S/E',
+            requisicion_id: p.requisicion_id || null,
+            ticket_id: p.ticket_id || null,
+            codigo_ticket: p.codigo_ticket || null,
+            codigo_ref: p.codigo_ticket || p.codigo_ticket || null,
+            status: p.status || 'Disponible',
+            selected: false,
+            montoReal: 0,
+            montoPendiente: (p.pu_bs || p.pu_usd || 0) * (p.cantidad || 1)
+          }));
+
+          setForm(prev => ({
+            ...prev,
+            id_db: cabeceraId,
+            partidas: mappedPartidas.length > 0 ? mappedPartidas : prev.partidas,
+            imprevistos: mappedImprevistos.length > 0 ? mappedImprevistos : prev.imprevistos
+          }));
+        }
+      } else {
+        setShowModal(false);
+      }
     } catch (err) {
       toast.error("Error al registrar: " + err.message);
     } finally {
@@ -1669,7 +1886,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
             {loading ? (
               <tr><td colSpan="6" style={{ textAlign: 'center', padding: '40px', color: '#64748b' }}>Cargando registros...</td></tr>
             ) : historialFiltrado.map((h, i) => (
-              <tr key={i} style={{ borderBottom: '1px solid #f8fafc', fontSize: '0.80rem', backgroundColor: i % 2 === 0 ? '#ffffff' : '#f8fafc' }}>
+              <tr key={h.id_db || h.id} style={{ borderBottom: '1px solid #f8fafc', fontSize: '0.80rem', backgroundColor: i % 2 === 0 ? '#ffffff' : '#f8fafc' }}>
                 <td data-label="ID CONTROL" style={{ padding: '12px' }}>
                   <motion.span
                     whileHover={{
@@ -2021,14 +2238,15 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                       value={form.gerencia}
                       onChange={(e) => {
                         const nuevaGerencia = e.target.value;
-                        const gerentesRel = gerenciasData[nuevaGerencia];
-                        const primerGerente = (gerentesRel && gerentesRel.length > 0) ? gerentesRel[0] : '';
-                        setForm({
-                          ...form,
-                          gerencia: nuevaGerencia,
-                          responsable: primerGerente
+                        determinarGerenteSuperior(currentUser, nuevaGerencia).then(superior => {
+                          setForm(prev => ({
+                            ...prev,
+                            gerencia: nuevaGerencia,
+                            responsable: superior || ''
+                          }));
                         });
                       }}
+
                     >
                       <option value="">Seleccione Gerencia...</option>
                       {[...new Set([...gerentesDisponibles.map(g => g.departamento), 'Contabilidad'])].sort().map(dep => (

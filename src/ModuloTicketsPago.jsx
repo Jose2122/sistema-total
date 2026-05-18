@@ -113,7 +113,9 @@ const ModuloTicketsPago = () => {
         rol: perfil ? perfil.rol : 'Gerente',
         esSuperAdmin,
         esAdminReal,
-        esAdminGlobal: esAdminReal || perfil?.rol === 'Gerente General' || perfil?.rol === 'Administrador'
+        esAdminGlobal: esAdminReal || perfil?.rol === 'Gerente General' || perfil?.rol === 'Administrador',
+        obras_asignadas: perfil ? perfil.obras_asignadas || [] : [],
+        contrato: perfil ? perfil.contrato || '' : ''
       };
 
       setCurrentUser(userInfo);
@@ -121,22 +123,22 @@ const ModuloTicketsPago = () => {
       if (perfil) {
         setResponsableText(`${perfil.nombre} ${perfil.apellido} - ${perfil.departamento}`);
       }
+
+      // 2. Fetch de todas las solicitudes de fondo existentes
+      const { data: sData } = await supabase.from('solicitudes_fondos').select('id, codigo_control, fecha_operativa, responsable_nombre').order('created_at', { ascending: false });
+      if (sData) setSolicitudes(sData);
+
+      // 3. Fetch de Bancos de Origen
+      const { data: bData } = await supabase.from('bancos').select('*').eq('activo', true).order('nombre');
+      if (bData) setBancos(bData);
+
+      // 3.5 Fetch de Proveedores
+      const { data: pData } = await supabase.from('proveedores').select('*').eq('status', true).order('razon_social', { ascending: true });
+      if (pData) setProveedores(pData);
+
+      // 4. Fetch Historial
+      await fetchHistorial(userInfo);
     }
-
-    // 2. Fetch de todas las solicitudes de fondo existentes
-    const { data: sData } = await supabase.from('solicitudes_fondos').select('id, codigo_control, fecha_operativa, responsable_nombre').order('created_at', { ascending: false });
-    if (sData) setSolicitudes(sData);
-
-    // 3. Fetch de Bancos de Origen
-    const { data: bData } = await supabase.from('bancos').select('*').eq('activo', true).order('nombre');
-    if (bData) setBancos(bData);
-
-    // 3.5 Fetch de Proveedores
-    const { data: pData } = await supabase.from('proveedores').select('*').eq('status', true).order('razon_social', { ascending: true });
-    if (pData) setProveedores(pData);
-
-    // 4. Fetch Historial
-    await fetchHistorial();
   };
 
   const totals = useMemo(() => {
@@ -154,14 +156,71 @@ const ModuloTicketsPago = () => {
     return currentUser.esAdminGlobal;
   }, [currentUser]);
 
-  const fetchHistorial = async () => {
+  const fetchHistorial = async (userParam = null) => {
     setCargandoHistorial(true);
     try {
       let query = supabase.from('tickets_directos').select('*');
 
-      // FILTRADO POR DEPARTAMENTO (REGLA DE NEGOCIO)
-      if (!esPrivilegiado && currentUser?.departamento) {
-        query = query.eq('departamento', currentUser.departamento);
+      const activeUser = userParam || currentUser;
+
+      if (activeUser) {
+        const rolUpper = (activeUser.rol || '').toUpperCase();
+        const emailLower = (activeUser.correo || '').toLowerCase();
+        
+        const esAdminReal = emailLower === 'jcontreras.totalclean@gmail.com' ||
+          emailLower === 'cvega.totalclean@gmail.com' ||
+          emailLower === 'cvega@totalclean.com' ||
+          emailLower === 'karincmm1@gmail.com';
+
+        const esAdminRealOCarlos = esAdminReal ||
+          emailLower === 'cvega@totalclean.com' ||
+          (activeUser.nombre || '').toLowerCase().includes('carlos') ||
+          rolUpper.includes('ADMIN') ||
+          rolUpper.includes('GERENTE GENERAL');
+
+        if (!esAdminRealOCarlos) {
+          const rawUserId = activeUser.id || '';
+          const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawUserId);
+          const userIdMatch = isUUID ? rawUserId : '00000000-0000-0000-0000-000000000000';
+
+          const deptoMatch = activeUser.departamento || '';
+          const nombreMatch = (activeUser.nombre || '').split(' ')[0] || 'Unknown';
+
+          // Recopilar obras asignadas / contrato
+          const misObras = [];
+          if (activeUser.contrato) {
+            misObras.push(activeUser.contrato);
+          }
+          if (activeUser.obras_asignadas && activeUser.obras_asignadas.length > 0) {
+            misObras.push(...activeUser.obras_asignadas);
+          }
+          
+          const obrasFiltro = misObras.length > 0 ? `centro_costo.in.(${misObras.map(o => `"${o}"`).join(',')})` : '';
+          const rolUserLower = (activeUser.rol || '').toLowerCase();
+
+          if (rolUserLower.includes('analista')) {
+            // 1. ANALISTAS: Ven sus PROPIOS tickets + Obras Asignadas
+            let orQ = `usuario_id.eq.${userIdMatch},gerente_nombre.ilike.%${nombreMatch}%`;
+            if (obrasFiltro) orQ += `,${obrasFiltro}`;
+            query = query.or(orQ);
+
+          } else if (rolUserLower.includes('gerente') || rolUserLower.includes('coordinador')) {
+            // 2. GERENTES DE ÁREA/PROYECTO: Ven su DEPARTAMENTO + OBRAS ASIGNADAS
+            let orFiltros = [];
+            if (deptoMatch) orFiltros.push(`departamento.ilike.%${deptoMatch}%`);
+            if (obrasFiltro) orFiltros.push(obrasFiltro);
+
+            if (orFiltros.length > 0) {
+              query = query.or(orFiltros.join(','));
+            } else {
+              // Seguridad de respaldo
+              query = query.or(`usuario_id.eq.${userIdMatch},gerente_nombre.ilike.%${nombreMatch}%`);
+            }
+          } else {
+            // Otros roles: Ven sus propios
+            query = query.or(`usuario_id.eq.${userIdMatch},gerente_nombre.ilike.%${nombreMatch}%`);
+          }
+        }
       }
 
       const { data, error } = await query.order('fecha_emision', { ascending: false });

@@ -15,11 +15,11 @@ serve(async (req) => {
 
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
-    const supabaseServiceKey = Deno.env.get('ADMIN_SERVICE_KEY') || Deno.env.get('admin_service_key') || '';
+    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || Deno.env.get('ADMIN_SERVICE_KEY') || Deno.env.get('admin_service_key') || '';
     const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY') || '';
 
     console.log('--- Inicia Proceso admin-user-manager ---');
-    if (!supabaseServiceKey) console.error('ADVERTENCIA: No se encontró admin_service_key en las variables de entorno.');
+    if (!supabaseServiceKey) console.error('ADVERTENCIA: No se encontró la clave de servicio (SUPABASE_SERVICE_ROLE_KEY ni ADMIN_SERVICE_KEY) en las variables de entorno.');
 
     // 1. Cliente Admin (usando específicamente la clave de administración manual)
     const adminClient = createClient(supabaseUrl, supabaseServiceKey, {

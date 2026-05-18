@@ -9,7 +9,7 @@ import {
   Loader2, MessageSquare, FileText, Upload, Paperclip,
   ChevronDown, ChevronUp, Settings, Building2, Diamond,
   ShoppingCart, CheckCircle2, Eye, EyeOff, ChevronRight,
-  Clock, User, Ban, Trash2, Camera, Plus, X, ArrowLeft
+  Clock, User, Ban, Trash2, Camera, Plus, X, ArrowLeft, Edit2
 } from 'lucide-react';
 import './Requisiciones.css';
 
@@ -1575,12 +1575,293 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
   };
 
   const exportarPDF = async () => {
-    const input = document.getElementById('area-pdf');
-    const canvas = await html2canvas(input, { scale: 2, useCORS: true });
-    const imgData = canvas.toDataURL('image/png');
+    const reqActual = editandoId ? historial.find(h => String(h.id) === String(editandoId)) : null;
+    if (!reqActual) {
+      toast.error("No se encontraron datos para exportar.");
+      return;
+    }
+
+    // Inicializar jsPDF (A4 en mm)
     const pdf = new jsPDF('p', 'mm', 'a4');
-    pdf.addImage(imgData, 'PNG', 0, 0, 210, (canvas.height * 210) / canvas.width);
-    pdf.save(`REQ_${editandoId || 'NUEVA'}.pdf`);
+    const fontPrimary = 'helvetica';
+    
+    // --- CABECERA ---
+    // Izquierda: Nombre de la empresa
+    pdf.setFont(fontPrimary, 'bold');
+    pdf.setFontSize(13);
+    pdf.setTextColor(15, 23, 42); // Gris muy oscuro / Slate-900
+    pdf.text("TOTAL CLEAN C.A.", 15, 20);
+    
+    pdf.setFont(fontPrimary, 'normal');
+    pdf.setFontSize(9);
+    pdf.setTextColor(71, 85, 105); // Slate-600
+    pdf.text("J-303658587-0", 15, 25);
+    
+    // Derecha: Fecha y Solicitud #
+    const fechaEmision = reqActual.fecha 
+      ? format(new Date(reqActual.fecha + 'T12:00:00'), 'dd/MM/yyyy hh:mm a') 
+      : format(new Date(), 'dd/MM/yyyy hh:mm a');
+    
+    pdf.setFontSize(9);
+    pdf.setTextColor(71, 85, 105);
+    pdf.text(`Fecha : ${fechaEmision}`, 195, 20, { align: 'right' });
+    pdf.text("Solicitud 1 de 1", 195, 25, { align: 'right' });
+    
+    // --- TÍTULO CENTRAL ---
+    const correlativoStr = reqActual.correlativo || `REQ-${String(reqActual.id).padStart(3, '0')}`;
+    pdf.setFont(fontPrimary, 'bold');
+    pdf.setFontSize(12);
+    pdf.setTextColor(15, 23, 42);
+    const titulo = `REQUISICIÓN DE RECURSOS: ${correlativoStr}`;
+    const textWidth = pdf.getTextWidth(titulo);
+    const posX = (210 - textWidth) / 2;
+    pdf.text(titulo, posX, 38);
+    
+    // Línea subrayada del título
+    pdf.setDrawColor(15, 23, 42);
+    pdf.setLineWidth(0.4);
+    pdf.line(posX, 40, posX + textWidth, 40);
+    
+    // --- CUADRO DE METADATA (Gerencia, Responsable, etc.) ---
+    const startY = 46;
+    pdf.setDrawColor(226, 232, 240); // Borde gris claro
+    pdf.setFillColor(248, 250, 252); // Fondo gris muy claro
+    pdf.setLineWidth(0.3);
+    pdf.roundedRect(15, startY, 180, 22, 2, 2, 'FD');
+    
+    // Texto dentro de la Metadata
+    pdf.setFontSize(9.5);
+    pdf.setTextColor(15, 23, 42);
+    
+    // Columna Izquierda
+    pdf.setFont(fontPrimary, 'bold');
+    pdf.text("Gerencia: ", 20, startY + 8);
+    pdf.setFont(fontPrimary, 'normal');
+    pdf.setTextColor(51, 65, 85);
+    pdf.text(reqActual.gerencia || 'N/A', 38, startY + 8);
+    
+    pdf.setFont(fontPrimary, 'bold');
+    pdf.setTextColor(15, 23, 42);
+    pdf.text("Responsable: ", 20, startY + 15);
+    pdf.setFont(fontPrimary, 'normal');
+    pdf.setTextColor(51, 65, 85);
+    pdf.text(reqActual.solicitante || 'N/A', 43, startY + 15);
+    
+    // Columna Derecha
+    const fechaEmisionMeta = reqActual.fecha 
+      ? format(new Date(reqActual.fecha + 'T12:00:00'), 'dd/MM/yyyy') 
+      : 'N/A';
+      
+    pdf.setFont(fontPrimary, 'bold');
+    pdf.setTextColor(15, 23, 42);
+    pdf.text("Fecha Emisión: ", 125, startY + 8);
+    pdf.setFont(fontPrimary, 'normal');
+    pdf.setTextColor(51, 65, 85);
+    pdf.text(fechaEmisionMeta, 151, startY + 8);
+    
+    // --- TABLA DE ITEMS ---
+    const tableY = startY + 30;
+    
+    // Cabecera de la tabla
+    pdf.setFont(fontPrimary, 'bold');
+    pdf.setFontSize(9.5);
+    pdf.setTextColor(15, 23, 42);
+    
+    // Dibujar líneas superior e inferior de la cabecera de la tabla
+    pdf.setDrawColor(15, 23, 42);
+    pdf.setLineWidth(0.5);
+    pdf.line(15, tableY, 195, tableY);
+    
+    pdf.text("C.COSTO", 16, tableY + 5);
+    pdf.text("CLASIF.", 46, tableY + 5);
+    pdf.text("DESCRIPCIÓN", 76, tableY + 5);
+    pdf.text("CANT.", 145, tableY + 5, { align: 'right' });
+    pdf.text("PAGO Bs ($)", 170, tableY + 5, { align: 'right' });
+    pdf.text("PAGO USD ($)", 194, tableY + 5, { align: 'right' });
+    
+    pdf.line(15, tableY + 8, 195, tableY + 8);
+    
+    // Renglones de la tabla
+    pdf.setFont(fontPrimary, 'normal');
+    pdf.setFontSize(8.5);
+    pdf.setTextColor(51, 65, 85);
+    
+    let currentY = tableY + 13;
+    
+    // Obtener ítems sanitizados
+    let items = [];
+    if (typeof reqActual.detalles === 'string') {
+      try {
+        items = JSON.parse(reqActual.detalles);
+        if (typeof items === 'string') items = JSON.parse(items);
+      } catch (e) {
+        items = [];
+      }
+    } else if (Array.isArray(reqActual.detalles)) {
+      items = reqActual.detalles;
+    }
+    
+    items.forEach((item, idx) => {
+      // Ajuste de descripción si es muy larga
+      const descText = item.descripcion || 'N/A';
+      const descLines = pdf.splitTextToSize(descText, 60);
+      
+      // Mostrar Centro de Costo de la req
+      const ccText = reqActual.centroCosto || 'N/A';
+      const ccLines = pdf.splitTextToSize(ccText, 28);
+      
+      // Mostrar Clasificación del renglón
+      const clasifText = item.clasificacion || 'N/A';
+      const clasifLines = pdf.splitTextToSize(clasifText, 28);
+      
+      // Altura requerida para este renglón
+      const linesCount = Math.max(descLines.length, ccLines.length, clasifLines.length);
+      const rowHeight = linesCount * 4 + 4;
+      
+      // Renderizar columnas de texto multilínea
+      pdf.text(ccLines, 16, currentY);
+      pdf.text(clasifLines, 46, currentY);
+      pdf.text(descLines, 76, currentY);
+      
+      // Renderizar columnas simples
+      pdf.text(String(item.cant || 1), 145, currentY, { align: 'right' });
+      
+      // Calcular valores acumulados de pago (Bs o USD) para el ítem
+      const historial = Array.isArray(item.historial_compras) ? item.historial_compras : [];
+      const tieneCompras = historial.some(h => h.tipo !== 'JUSTIFICACION');
+      
+      let totalPaidBs = 0;
+      let totalPaidUsd = 0;
+      
+      if (tieneCompras) {
+        historial.forEach(h => {
+          if (h.tipo === 'JUSTIFICACION') return;
+          const monto = (Number(h.cant) || 0) * (Number(h.pu) || 0);
+          const esBs = h.metodo_pago && (h.metodo_pago.toUpperCase().includes('BS') || h.metodo_pago.toUpperCase().includes('B/S'));
+          if (esBs) {
+            totalPaidBs += monto;
+          } else {
+            totalPaidUsd += monto;
+          }
+        });
+      } else {
+        const cantOri = Number(item.cantidad_pedida ?? item.cant) || 1;
+        const puEst = Number(item.pu_estimado ?? item.precio_unitario ?? item.pu) || 0;
+        totalPaidUsd = cantOri * puEst;
+      }
+      
+      if (totalPaidBs > 0) {
+        pdf.text(`$ ${totalPaidBs.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 170, currentY, { align: 'right' });
+      } else {
+        pdf.text("-", 170, currentY, { align: 'right' });
+      }
+      
+      if (totalPaidUsd > 0) {
+        pdf.text(`$ ${totalPaidUsd.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 194, currentY, { align: 'right' });
+      } else {
+        pdf.text("-", 194, currentY, { align: 'right' });
+      }
+      
+      // Beneficiario si existe
+      if (item.beneficiario) {
+        pdf.setFont(fontPrimary, 'italic');
+        pdf.setFontSize(7.5);
+        pdf.setTextColor(100, 116, 139); // Slate-500
+        pdf.text(`Benef: ${item.beneficiario}`, 76, currentY + (descLines.length * 4));
+        pdf.setFont(fontPrimary, 'normal');
+        pdf.setFontSize(8.5);
+        pdf.setTextColor(51, 65, 85);
+      }
+      
+      currentY += rowHeight;
+      
+      // Dibujar una sutil línea divisoria
+      pdf.setDrawColor(241, 245, 249);
+      pdf.setLineWidth(0.2);
+      pdf.line(15, currentY - 1, 195, currentY - 1);
+    });
+    
+    // --- CUADRO DE TOTALES (ALINEADO A LA DERECHA) ---
+    let totalPagoBs = 0;
+    let totalPagoUsd = 0;
+    
+    items.forEach(item => {
+      const historial = Array.isArray(item.historial_compras) ? item.historial_compras : [];
+      const tieneCompras = historial.some(h => h.tipo !== 'JUSTIFICACION');
+      
+      let itemBs = 0;
+      let itemUsd = 0;
+      
+      if (tieneCompras) {
+        historial.forEach(h => {
+          if (h.tipo === 'JUSTIFICACION') return;
+          const monto = (Number(h.cant) || 0) * (Number(h.pu) || 0);
+          const esBs = h.metodo_pago && (h.metodo_pago.toUpperCase().includes('BS') || h.metodo_pago.toUpperCase().includes('B/S'));
+          if (esBs) {
+            itemBs += monto;
+          } else {
+            itemUsd += monto;
+          }
+        });
+      } else {
+        const cantOri = Number(item.cantidad_pedida ?? item.cant) || 1;
+        const puEst = Number(item.pu_estimado ?? item.precio_unitario ?? item.pu) || 0;
+        itemUsd = cantOri * puEst;
+      }
+      
+      totalPagoBs += itemBs;
+      totalPagoUsd += itemUsd;
+    });
+
+    const totalPagoBsConIva = totalPagoBs * 1.16;
+    const totalPagoUsdConIva = totalPagoUsd * 1.16;
+    
+    let finalPagoBs = totalPagoBsConIva;
+    let finalPagoUsd = totalPagoUsdConIva;
+    
+    if (totalPagoBs > 0 && totalPagoUsd === 0) {
+      finalPagoBs = Number(reqActual.total) || totalPagoBsConIva;
+      finalPagoUsd = 0;
+    } else if (totalPagoUsd > 0 && totalPagoBs === 0) {
+      finalPagoUsd = Number(reqActual.total) || totalPagoUsdConIva;
+      finalPagoBs = 0;
+    }
+    
+    const finalTotal = finalPagoBs + finalPagoUsd;
+
+    currentY += 5;
+    const boxWidth = 70;
+    const boxHeight = 18;
+    const boxX = 195 - boxWidth;
+    
+    pdf.setDrawColor(15, 23, 42);
+    pdf.setLineWidth(0.4);
+    pdf.rect(boxX, currentY, boxWidth, boxHeight);
+    
+    pdf.setFont(fontPrimary, 'normal');
+    pdf.setFontSize(8.5);
+    pdf.setTextColor(15, 23, 42);
+    
+    // Fila 1: Pago Bs
+    pdf.text("Pago Bs (Con IVA)", boxX + 3, currentY + 5);
+    pdf.text(`$ ${finalPagoBs.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 192, currentY + 5, { align: 'right' });
+    
+    // Fila 2: Pago USD
+    pdf.text("Pago USD (Con IVA)", boxX + 3, currentY + 10);
+    pdf.text(`$ ${finalPagoUsd.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 192, currentY + 10, { align: 'right' });
+    
+    // Línea divisoria interna
+    pdf.setDrawColor(226, 232, 240);
+    pdf.setLineWidth(0.2);
+    pdf.line(boxX, currentY + 12, 195, currentY + 12);
+    
+    // Fila 3: Total General
+    pdf.setFont(fontPrimary, 'bold');
+    pdf.text("TOTAL (Con IVA)", boxX + 3, currentY + 15);
+    pdf.text(`$ ${finalTotal.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 192, currentY + 15, { align: 'right' });
+    
+    // Guardar el PDF
+    pdf.save(`REQ_${correlativoStr}.pdf`);
   };
 
   return (
@@ -2616,7 +2897,18 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                                           <td style={{ padding: '8px' }}>
                                             {h.tipo === 'JUSTIFICACION' ? (
                                               <span style={{ fontStyle: 'italic', color: '#92400e', fontWeight: '600' }}>{h.motivo}</span>
-                                            ) : 'Procesamiento de compra'}
+                                            ) : (
+                                              <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                                                {h.metodo_pago && (
+                                                  <span style={{ fontSize: '0.55rem', backgroundColor: '#e2e8f0', color: '#475569', padding: '2px 5px', borderRadius: '4px', fontWeight: '900' }}>
+                                                    {h.metodo_pago}
+                                                  </span>
+                                                )}
+                                                <span style={{ fontWeight: '800', color: '#2563eb' }}>
+                                                  {h.doc_tipo || 'FAC'}: {h.doc_numero || 'S/D'}
+                                                </span>
+                                              </div>
+                                            )}
                                           </td>
                                           <td style={{ padding: '8px', textAlign: 'center', fontWeight: '700' }}>{h.cant || '-'}</td>
                                           <td style={{ padding: '8px', textAlign: 'right' }}>{h.pu ? `$ ${h.pu.toLocaleString('de-DE')}` : '-'}</td>
@@ -2831,7 +3123,36 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                     gap: '20px'
                   }}>
                     <div style={{ display: 'flex', gap: '20px' }}>
-                      <button className="btn-tc btn-tc-secondary" onClick={intentarCerrarModal}>
+                      <button
+                        className="btn-tc"
+                        style={{
+                          backgroundColor: 'transparent',
+                          color: '#475569',
+                          border: '2px solid #cbd5e1',
+                          fontWeight: '900',
+                          padding: '10px 22px',
+                          borderRadius: '10px',
+                          cursor: 'pointer',
+                          transition: 'all 0.2s',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                          fontSize: '0.85rem'
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.backgroundColor = '#f1f5f9';
+                          e.currentTarget.style.borderColor = '#94a3b8';
+                          e.currentTarget.style.color = '#0f172a';
+                          e.currentTarget.style.transform = 'scale(1.03)';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.backgroundColor = 'transparent';
+                          e.currentTarget.style.borderColor = '#cbd5e1';
+                          e.currentTarget.style.color = '#475569';
+                          e.currentTarget.style.transform = 'scale(1)';
+                        }}
+                        onClick={intentarCerrarModal}
+                      >
                         <ArrowLeft size={16} /> VOLVER
                       </button>
                       {editandoId && (
@@ -2850,7 +3171,22 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                             </button>
                           ) : (
                             <button
-                              className="btn-tc btn-tc-secondary"
+                              className="btn-tc"
+                              style={{
+                                backgroundColor: '#2563eb', // Premium Blue-600
+                                color: 'white',
+                                fontWeight: '800',
+                                padding: '10px 22px',
+                                borderRadius: '10px',
+                                border: 'none',
+                                boxShadow: '0 4px 10px rgba(37, 99, 235, 0.35)',
+                                cursor: 'pointer',
+                                transition: 'all 0.2s',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '8px',
+                                fontSize: '0.85rem'
+                              }}
                               onClick={() => {
                                 const reqActual = historial.find(h => String(h.id) === String(editandoId));
                                 if (reqActual?.estado_aprobacion !== 'aprobado_final' && reqActual?.estado_aprobacion !== 'rechazada') {
@@ -2862,8 +3198,18 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                                   toast.error("No se puede editar una requisición ya aprobada.");
                                 }
                               }}
+                              onMouseEnter={(e) => {
+                                e.currentTarget.style.backgroundColor = '#1d4ed8';
+                                e.currentTarget.style.transform = 'scale(1.03)';
+                                e.currentTarget.style.boxShadow = '0 6px 14px rgba(29, 78, 216, 0.45)';
+                              }}
+                              onMouseLeave={(e) => {
+                                e.currentTarget.style.backgroundColor = '#2563eb';
+                                e.currentTarget.style.transform = 'scale(1)';
+                                e.currentTarget.style.boxShadow = '0 4px 10px rgba(37, 99, 235, 0.35)';
+                              }}
                             >
-                              HABILITAR EDICIÓN
+                              <Edit2 size={16} /> HABILITAR EDICIÓN
                             </button>
                           )}
 

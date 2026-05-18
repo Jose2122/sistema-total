@@ -1355,7 +1355,7 @@ const ReportesMaestro = () => {
                                                 <div className="val">{tiempoRespuestaGerencial} <small>Días</small></div>
                                             </div>
                                             <div className="rm-kpi-small alert">
-                                                <label>Reqs Estancadas (>48h)</label>
+                                                <label>Reqs Estancadas (&gt;48h)</label>
                                                 <div className="val">{requisicionesControl.filter(r => !r.f_finalizado && calcularSLA(r).alerta).length}</div>
                                             </div>
                                         </div>
