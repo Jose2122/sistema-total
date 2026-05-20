@@ -1,48 +1,6 @@
--- SQL Script for SLA Control and Advanced Analytics in Requisiciones
+-- SQL Update for Requisitions Purchase SLA and Start Stage
 
--- 1. Add new columns to 'requisiciones' table for SLA and Performance Metrics
-ALTER TABLE requisiciones 
-ADD COLUMN IF NOT EXISTS fecha_aprobacion_final TIMESTAMPTZ,
-ADD COLUMN IF NOT EXISTS fecha_limite_compra TIMESTAMPTZ,
-ADD COLUMN IF NOT EXISTS is_pausada BOOLEAN DEFAULT FALSE,
-ADD COLUMN IF NOT EXISTS motivo_postergacion TEXT,
-ADD COLUMN IF NOT EXISTS tiempo_pausado_total INTERVAL DEFAULT '0 seconds',
--- New Performance Metrics
-ADD COLUMN IF NOT EXISTS sla_cumplimiento TEXT, -- 'A TIEMPO', 'VENCIDO', 'PENDIENTE'
-ADD COLUMN IF NOT EXISTS dias_totales_proceso DECIMAL(10,2),
-ADD COLUMN IF NOT EXISTS dias_en_aprobacion DECIMAL(10,2),
-ADD COLUMN IF NOT EXISTS dias_en_compra DECIMAL(10,2);
-
--- 2. Create audit logs table (Extended for tracking)
-CREATE TABLE IF NOT EXISTS requisicion_logs (
-    id BIGSERIAL PRIMARY KEY,
-    requisicion_id BIGINT REFERENCES requisiciones(id) ON DELETE CASCADE,
-    usuario_id UUID,
-    usuario_nombre TEXT,
-    accion TEXT, -- 'PAUSA', 'REANUDACIÓN', 'SLA_CALCULO', 'FINALIZADO'
-    comentario TEXT,
-    fecha TIMESTAMPTZ DEFAULT NOW()
-);
-
--- 3. Advanced Function to calculate business days (skipping weekends)
-CREATE OR REPLACE FUNCTION add_business_days(start_date TIMESTAMPTZ, days_to_add INTEGER)
-RETURNS TIMESTAMPTZ AS $$
-DECLARE
-    fecha_rastreo TIMESTAMPTZ := start_date;
-    added_days INTEGER := 0;
-BEGIN
-    WHILE added_days < days_to_add LOOP
-        fecha_rastreo := fecha_rastreo + INTERVAL '1 day';
-        -- Skip Saturday (6) and Sunday (0)
-        IF EXTRACT(DOW FROM fecha_rastreo) NOT IN (0, 6) THEN
-            added_days := added_days + 1;
-        END IF;
-    END LOOP;
-    RETURN fecha_rastreo;
-END;
-$$ LANGUAGE plpgsql;
-
--- 4. Unified Trigger Function for SLA and Performance Metrics
+-- 1. Create or replace the unified trigger function for SLA and Performance Metrics
 CREATE OR REPLACE FUNCTION funcion_trigger_sla_performance()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -91,10 +49,3 @@ BEGIN
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
-
--- 5. Attach trigger to table
-DROP TRIGGER IF EXISTS trigger_sla_performance ON requisiciones;
-CREATE TRIGGER trigger_sla_performance
-BEFORE UPDATE ON requisiciones
-FOR EACH ROW
-EXECUTE FUNCTION funcion_trigger_sla_performance();

@@ -99,10 +99,7 @@ const Auth = () => {
           </div>
 
           <div className="form-options">
-            <label className="remember-me">
-              <input type="checkbox" /> Mantener sesión activa
-            </label>
-            <a href="#" className="forgot-link">¿Problemas para entrar?</a>
+           
           </div>
 
           <button type="submit" className="login-button" disabled={loading}>
@@ -111,7 +108,7 @@ const Auth = () => {
         </form>
 
         <footer className="auth-footer">
-          Total Clean C.A. &copy; 2026 | Seguridad Certificada
+          Total Clean C.A. &copy; 2026 
         </footer>
       </div>
     </div>

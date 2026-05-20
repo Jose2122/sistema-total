@@ -5,7 +5,7 @@ import TicketExpress from './TicketExpress';
 import { format, getWeek } from 'date-fns';
 import toast from 'react-hot-toast';
 import { motion } from 'framer-motion';
-import { Loader2, Upload, FileText, Printer, FileSpreadsheet, BarChart3, Clock, Activity, CheckCircle2, DollarSign, Copy, AlertCircle, X } from 'lucide-react';
+import { Loader2, Upload, FileText, Printer, FileSpreadsheet, BarChart3, Clock, Activity, CheckCircle2, DollarSign, Copy, AlertCircle, X, ChevronDown } from 'lucide-react';
 import './SolicitudFondos.css';
 
 const StockSmartTotalClean = ({ currentUserProp }) => {
@@ -24,6 +24,12 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
   // --- ESTADO PARA GASTOS IMPREVISTOS ---
   const [mostrarImprevistos, setMostrarImprevistos] = useState(false);
   const [mostrarDesglose, setMostrarDesglose] = useState(false);
+
+  // --- ESTADOS PARA FILTROS DENTRO DEL MODAL ---
+  const [filtroPartidaEmisor, setFiltroPartidaEmisor] = useState('Todos');
+  const [filtroPartidaCategoria, setFiltroPartidaCategoria] = useState('Todos');
+  const [filtroPartidaClasificacion, setFiltroPartidaClasificacion] = useState('Todos');
+  const [mostrarFiltrosTabla, setMostrarFiltrosTabla] = useState(false);
   const [currentUser, setCurrentUser] = useState(currentUserProp || null);
   const [loading, setLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -117,8 +123,12 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
 
   // --- FUNCIÓN PARA ELIMINAR ---
   const eliminarSolicitud = (id_db) => {
-    if (currentUser?.correo?.toLowerCase() !== 'jcontreras.totalclean@gmail.com') {
-      toast.error("Solo el SuperAdministrador (José) tiene permisos para eliminar solicitudes.");
+    const esAutorizado = currentUser?.esSuperAdmin === true ||
+                         currentUser?.esAdminReal === true ||
+                         ['jcontreras.totalclean@gmail.com', 'karincmm1@gmail.com', 'cvega@totalclean.com', 'cvega.totalclean@gmail.com'].includes(currentUser?.correo?.toLowerCase());
+
+    if (!esAutorizado) {
+      toast.error("Solo el SuperAdministrador tiene permisos para eliminar solicitudes.");
       return;
     }
 
@@ -423,13 +433,20 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
 
       setHistorial(dataHist.map(h => {
         const misPartidas = (pagosData || []).filter(p => p.solicitud_id === h.id);
+        
+        // Calcular total_bs y total_usd directamente de las partidas reales de la solicitud
+        const calculatedTotalBs = misPartidas.reduce((acc, p) => acc + (parseFloat(p.pu_bs) || 0) * (p.cantidad || 1), 0);
+        const calculatedTotalUsd = misPartidas.reduce((acc, p) => acc + (parseFloat(p.pu_usd) || 0) * (p.cantidad || 1), 0);
+        
         const totalPagado = misPartidas.reduce((acc, p) => acc + (p.pago_realizado ? (parseFloat(p.pu_bs) || parseFloat(p.pu_usd) || 0) * (p.cantidad || 1) : 0), 0);
-        const total = parseFloat(h.total_usd || 0) + parseFloat(h.total_bs || 0);
+        const total = calculatedTotalBs + calculatedTotalUsd;
 
         return {
           ...h,
           id_db: h.id,
           id: h.codigo_control,
+          total_bs: calculatedTotalBs,
+          total_usd: calculatedTotalUsd,
           total,
           total_pagado: totalPagado,
           responsable: h.responsable_nombre,
@@ -838,9 +855,15 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
   const siglasGerencia = obtenerSiglas(form.gerencia);
   const aa = new Date(form.fecha).getFullYear().toString().slice(-2);
 
-  // Complementamos el identificador con el Centro de Costo (Primeras 4 letras o similar)
   const idDinamico = isEditing ? form.id : `${siglasGerencia}-SEM ${numSemana}-${aa}`;
   const periodoSemana = getWeekRange(numSemana, new Date(form.fecha).getFullYear());
+
+  useEffect(() => {
+    setFiltroPartidaEmisor('Todos');
+    setFiltroPartidaCategoria('Todos');
+    setFiltroPartidaClasificacion('Todos');
+    setMostrarFiltrosTabla(false);
+  }, [idDinamico]);
 
   // --- LÓGICA DE CIERRE SEMANAL (DOMINGO 23:59:59) ---
   const calculateDeadline = (fecha) => {
@@ -1301,10 +1324,23 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       let finalCodigoControl = idDinamico;
       const targetForm = overrideForm || form;
 
+      // Un renglón tiene contenido si se ha seleccionado o llenado al menos un campo significativo
+      const tieneContenido = (p) => {
+        return !!(
+          (p.cc && p.cc.trim() !== '') ||
+          (p.clasif && p.clasif.trim() !== '') ||
+          (p.cat && p.cat.trim() !== '') ||
+          (p.desc && p.desc.trim() !== '') ||
+          (p.ben && p.ben.trim() !== '') ||
+          (p.puBs && parseFloat(p.puBs) > 0) ||
+          (p.puUsd && parseFloat(p.puUsd) > 0)
+        );
+      };
+
       // --- CÁLCULO MANUAL DE TOTALES PARA EVITAR DESFASE POR ASINCRONÍA ---
-      const pFiltradas = targetForm.partidas.filter(p => p.desc && p.desc.trim() !== '');
+      const pFiltradas = targetForm.partidas.filter(tieneContenido);
       const iFiltradas = (mostrarImprevistos || targetForm.imprevistos?.length > 0)
-        ? targetForm.imprevistos.filter(p => p.desc && p.desc.trim() !== '')
+        ? targetForm.imprevistos.filter(tieneContenido)
         : [];
 
       const totalBsCalc = [...pFiltradas, ...iFiltradas].reduce((acc, p) => acc + (parseFloat(p.puBs) || 0) * (parseFloat(p.cant) || 1), 0);
@@ -1348,25 +1384,25 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         setForm(prev => ({ ...prev, id_db: newCab.id }));
       }
 
-      // --- CORRECCIÓN: Filtramos filas vacías para evitar que falle el insert y se pierda la data ---
+      // --- CORRECCIÓN: Filtramos filas completamente vacías para evitar que se guarde basura, pero permitimos guardar borradores incompletos ---
       const renglones = targetForm.partidas
-        .filter(p => p.desc && p.desc.trim() !== '') // Solo filas con descripción
+        .filter(tieneContenido)
         .map((p, i) => {
           const codRef = p.codigo_ref || '';
           return {
             solicitud_id: cabeceraId,
             n_renglon: i + 1,
-            centro_costo: p.cc,
-            clasificacion: p.clasif,
-            categoria: p.cat,
+            centro_costo: p.cc || '',
+            clasificacion: p.clasif || '',
+            categoria: p.cat || '',
             cantidad: parseFloat(p.cant) || 0,
-            unidad: p.uni,
-            descripcion: p.desc,
-            beneficiario: p.ben,
+            unidad: p.uni || 'UNID',
+            descripcion: p.desc || '',
+            beneficiario: p.ben || '',
             pu_bs: parseFloat(p.puBs) || 0,
             pu_usd: parseFloat(p.puUsd) || 0,
             pago_realizado: p.pago_realizado || false,
-            // emisor_nombre: p.emisor || `${currentUser?.nombre} ${currentUser?.apellido}` || 'Sistema', // Removido hasta que la columna exista en DB
+            emisor_nombre: p.emisor || `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim() || 'Sistema',
             requisicion_id: p.requisicion_id || null,
             ticket_id: p.ticket_id || null,
             codigo_ticket: codRef || p.codigo_ticket || null,
@@ -1376,7 +1412,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
 
       if (mostrarImprevistos || targetForm.imprevistos?.length > 0) {
         const renglonesImprevistos = targetForm.imprevistos
-          .filter(imp => imp.desc && imp.desc.trim() !== '')
+          .filter(tieneContenido)
           .map((imp, i) => {
             const codRef = imp.codigo_ref || '';
             return {
@@ -1387,12 +1423,12 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
               categoria: imp.cat || 'Ticket',
               cantidad: parseFloat(imp.cant) || 1,
               unidad: imp.uni || 'UND',
-              descripcion: imp.desc,
-              beneficiario: imp.ben,
+              descripcion: imp.desc || '',
+              beneficiario: imp.ben || '',
               pu_bs: parseFloat(imp.puBs) || 0,
               pu_usd: parseFloat(imp.puUsd) || 0,
               pago_realizado: imp.pago_realizado || false,
-              // emisor_nombre: imp.emisor || `${currentUser?.nombre} ${currentUser?.apellido}` || 'Sistema', // Removido hasta que la columna exista en DB
+              emisor_nombre: imp.emisor || `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim() || 'Sistema',
               requisicion_id: imp.requisicion_id || null,
               ticket_id: imp.ticket_id || null,
               codigo_ticket: codRef || imp.codigo_ticket || null,
@@ -1606,33 +1642,116 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
     setAbrirTicketModal(true);
   };
 
+  // --- ARRAYS FILTRADOS PARA LA TABLA DEL MODAL ---
+  const partidasFiltradas = useMemo(() => {
+    return form.partidas.map((p, idx) => ({ ...p, originalIndex: idx })).filter(p => {
+      const matchEmisor = filtroPartidaEmisor === 'Todos' || (p.emisor || '---') === filtroPartidaEmisor;
+      const matchCategoria = filtroPartidaCategoria === 'Todos' || p.cat === filtroPartidaCategoria;
+      const matchClasif = filtroPartidaClasificacion === 'Todos' || p.clasif === filtroPartidaClasificacion;
+      return matchEmisor && matchCategoria && matchClasif;
+    });
+  }, [form.partidas, filtroPartidaEmisor, filtroPartidaCategoria, filtroPartidaClasificacion]);
+
+  const imprevistosFiltrados = useMemo(() => {
+    return form.imprevistos.map((imp, idx) => ({ ...imp, originalIndex: idx })).filter(imp => {
+      const matchEmisor = filtroPartidaEmisor === 'Todos' || (imp.emisor || '---') === filtroPartidaEmisor;
+      const matchCategoria = filtroPartidaCategoria === 'Todos' || imp.cat === filtroPartidaCategoria;
+      const matchClasif = filtroPartidaClasificacion === 'Todos' || imp.clasif === filtroPartidaClasificacion;
+      return matchEmisor && matchCategoria && matchClasif;
+    });
+  }, [form.imprevistos, filtroPartidaEmisor, filtroPartidaCategoria, filtroPartidaClasificacion]);
+
+  const listaEmisoresUnicos = useMemo(() => {
+    const todos = [
+      ...form.partidas.map(p => p.emisor || '---'),
+      ...form.imprevistos.map(imp => imp.emisor || '---')
+    ];
+    return [...new Set(todos)].filter(x => x && x !== '---').sort();
+  }, [form.partidas, form.imprevistos]);
+
+  const listaCategoriasUnicas = useMemo(() => {
+    const todos = [
+      ...form.partidas.map(p => p.cat),
+      ...form.imprevistos.map(imp => imp.cat)
+    ];
+    return [...new Set(todos)].filter(Boolean).sort();
+  }, [form.partidas, form.imprevistos]);
+
+  const listaClasificacionesUnicas = useMemo(() => {
+    const todos = [
+      ...form.partidas.map(p => p.clasif),
+      ...form.imprevistos.map(imp => imp.clasif)
+    ];
+    return [...new Set(todos)].filter(Boolean).sort();
+  }, [form.partidas, form.imprevistos]);
+
   return (
     <div style={{ padding: '25px', backgroundColor: '#f1f5f9', minHeight: '100vh', fontFamily: 'Inter, sans-serif' }}>
 
-      {/* --- DASHBOARD UNIFICADO PREMIUM --- */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '20px', marginBottom: '32px' }}>
+      {/* --- ENCABECERA UNIFICADA PREMIUM --- */}
+      <div style={{
+        borderLeft: '6px solid #10b981',
+        paddingLeft: '16px',
+        marginBottom: '30px'
+      }}>
+        <h1 style={{ margin: 0, color: '#0f172a', fontSize: '1.8rem', fontWeight: '900', fontFamily: 'Inter, sans-serif', letterSpacing: '-0.5px' }}>
+          Solicitud de Fondos
+        </h1>
+        <p style={{ margin: '4px 0 0 0', color: '#64748b', fontSize: '0.9rem', fontWeight: '500', fontFamily: 'Inter, sans-serif' }}>
+          Gestión y control de solicitudes de fondos
+        </p>
+      </div>
+
+      {/* --- DASHBOARD UNIFICADO PREMIUM (KPICards) --- */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+        gap: '20px',
+        marginBottom: '32px'
+      }}>
         {[
-          { label: 'Pendientes por procesar', val: `${totalesVisibles.pendienteCount} Sols ($ ${totalesVisibles.pendienteMonto.toLocaleString('de-DE', { minimumFractionDigits: 2 })})`, col: '#f59e0b' },
-          { label: 'Solicitudes Pagadas', val: `${totalesVisibles.pagadoCount} Sols ($ ${totalesVisibles.pagadoMonto.toLocaleString('de-DE', { minimumFractionDigits: 2 })})`, col: '#10b981' },
-          { label: 'Gasto Total Acumulado', val: `$ ${totalesVisibles.general.toLocaleString('de-DE', { minimumFractionDigits: 2 })}`, col: '#0ea5e9' },
+          { label: 'Pendientes por procesar', val: `${totalesVisibles.pendienteCount} Sols ($ ${totalesVisibles.pendienteMonto.toLocaleString('de-DE', { minimumFractionDigits: 2 })})`, icon: <Clock size={20} />, col: '#f59e0b', bg: '#fef3c7' },
+          { label: 'Solicitudes Pagadas', val: `${totalesVisibles.pagadoCount} Sols ($ ${totalesVisibles.pagadoMonto.toLocaleString('de-DE', { minimumFractionDigits: 2 })})`, icon: <CheckCircle2 size={20} />, col: '#10b981', bg: '#dcfce7' },
+          { label: 'Gasto Total Acumulado', val: `$ ${totalesVisibles.general.toLocaleString('de-DE', { minimumFractionDigits: 2 })}`, icon: <DollarSign size={20} />, col: '#0ea5e9', bg: '#e0f2fe' },
         ].map((x, i) => (
           <div
             key={i}
-            className="stat-card"
             style={{
-              borderLeft: `6px solid ${x.col}`,
-              backgroundColor: 'white',
-              padding: '24px',
-              borderRadius: '20px',
-              boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
+              background: 'white',
+              padding: '20px 24px',
+              borderRadius: '24px',
               border: '1px solid #e2e8f0',
               display: 'flex',
-              flexDirection: 'column',
-              justifyContent: 'center'
+              alignItems: 'center',
+              gap: '15px',
+              boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02)',
+              transition: 'transform 0.2s, box-shadow 0.2s'
             }}
           >
-            <div style={{ fontSize: '0.75rem', fontWeight: '800', color: '#64748b', textTransform: 'uppercase', marginBottom: '8px', letterSpacing: '0.5px' }}>{x.label}</div>
-            <div style={{ fontSize: '1.75rem', fontWeight: '900', color: '#1e293b', margin: 0 }}>{x.val}</div>
+            <div style={{
+              width: '46px',
+              height: '46px',
+              borderRadius: '14px',
+              backgroundColor: x.bg,
+              color: x.col,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0
+            }}>
+              {x.icon}
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <label style={{ display: 'block', fontSize: '0.65rem', fontWeight: '800', color: '#475569', textTransform: 'uppercase', letterSpacing: '0.5px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {x.label}
+              </label>
+              <h3 style={{ margin: '2px 0 0 0', fontSize: '1.25rem', fontWeight: '900', color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {x.val}
+              </h3>
+            </div>
+            <div style={{ color: '#cbd5e1', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+              <ChevronDown size={14} />
+            </div>
           </div>
         ))}
       </div>
@@ -1640,26 +1759,18 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       {/* TABLA DE HISTORIAL */}
 
       <div style={{ backgroundColor: 'white', padding: '30px', borderRadius: '20px', boxShadow: '0 4px 20px rgba(0,0,0,0.02)' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '25px', alignItems: 'center' }}>
-          <h2 style={{ fontSize: '1.3rem', color: '#1e293b', margin: 0 }}>Gestión de Solicitudes </h2>
-
-          <select
-            className="report-input small"
-            value={filtroStatus}
-            onChange={e => setFiltroStatus(e.target.value)}
-            style={{ padding: '8px 12px', borderRadius: '10px', border: '1px solid #e2e8f0', fontSize: '0.85rem' }}
-          >
-            <option value="Todos">Todos los Estados</option>
-            <option value="Pendientes">Pendientes</option>
-            <option value="Pagados">Pagados</option>
-          </select>
-          <button
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '15px', marginBottom: '25px', alignItems: 'center' }}>
+          <motion.button
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
             onClick={exportarExcel}
-            style={{ padding: '12px 20px', backgroundColor: '#166534', color: 'white', border: 'none', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
+            style={{ padding: '12px 20px', backgroundColor: '#166534', color: 'white', border: 'none', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: '0 4px 6px rgba(22, 101, 52, 0.2)' }}
           >
             <FileSpreadsheet size={18} /> Exportar Excel
-          </button>
-          <button
+          </motion.button>
+          <motion.button
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
             onClick={async () => {
               try {
                 setLoading(true);
@@ -1810,18 +1921,25 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                 setLoading(false);
               }
             }}
-            style={{ padding: '12px 20px', backgroundColor: '#0f172a', color: 'white', border: 'none', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
+            style={{ padding: '12px 20px', backgroundColor: '#0f172a', color: 'white', border: 'none', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: '0 4px 6px rgba(15, 23, 42, 0.2)' }}
           >
             <Printer size={18} /> Reporte Global
-          </button>
-          <button onClick={() => {
-            setIsEditing(false);
-            setCcPreVal('');
-            setFechaPreVal(new Date().toISOString().split('T')[0]);
-            setErrorCheck('');
-            setSolCheckExitosa(false);
-            setShowPreVal(true);
-          }} style={{ padding: '12px 25px', backgroundColor: '#0ea5e9', color: 'white', border: 'none', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer' }}>+ Nueva Solicitud</button>
+          </motion.button>
+          <motion.button 
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            onClick={() => {
+              setIsEditing(false);
+              setCcPreVal('');
+              setFechaPreVal(new Date().toISOString().split('T')[0]);
+              setErrorCheck('');
+              setSolCheckExitosa(false);
+              setShowPreVal(true);
+            }} 
+            style={{ padding: '12px 25px', backgroundColor: '#0ea5e9', color: 'white', border: 'none', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer', boxShadow: '0 4px 6px rgba(14, 165, 233, 0.2)' }}
+          >
+            + Nueva Solicitud
+          </motion.button>
         </div>
 
 
@@ -2029,65 +2147,32 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                 <X size={20} />
               </button>
 
-              {/* BANNER DE FECHA TOPE INTEGRADO EN CABECERA */}
-              <div style={{
-                backgroundColor: isExpired ? '#fef2f2' : '#f0f9ff',
-                border: `1px solid ${isExpired ? '#fecaca' : '#bae6fd'}`,
-                padding: '8px 20px',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                borderRadius: '12px',
-                marginBottom: '15px'
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-                  <div style={{
-                    backgroundColor: isExpired ? '#ef4444' : '#0ea5e9',
-                    color: 'white',
-                    padding: '4px 12px',
-                    borderRadius: '20px',
-                    fontSize: '10px',
-                    fontWeight: '800'
-                  }}>
-                    {isExpired ? 'SEMANA CERRADA' : 'SEMANA ACTIVA'}
-                  </div>
-                  <span style={{ fontSize: '11px', color: isExpired ? '#991b1b' : '#0369a1', fontWeight: '600' }}>
-                    Período: <span style={{ fontWeight: '800' }}>{periodoSemana}</span>
-                  </span>
-                </div>
-
-                {/* SALUD PRESUPUESTARIA CENTRALIZADA RESTAURADA */}
-                <div style={{ flex: 1, maxWidth: '300px', margin: '0 40px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                    <span style={{ fontSize: '9px', fontWeight: '900', color: '#64748b' }}>SALUD PRESUPUESTARIA</span>
-                    <span style={{ fontSize: '10px', fontWeight: '900', color: '#10b981' }}>{dashEjecucion.estimado > 0 ? Math.round((dashEjecucion.ejecutado / dashEjecucion.estimado) * 100) : 0}%</span>
-                  </div>
-                  <div style={{ height: '6px', backgroundColor: '#e2e8f0', borderRadius: '10px', overflow: 'hidden' }}>
-                    <div style={{
-                      height: '100%',
-                      width: `${Math.min(100, (dashEjecucion.ejecutado / (dashEjecucion.estimado || 1)) * 100)}%`,
-                      backgroundColor: '#10b981',
-                      borderRadius: '10px'
-                    }}></div>
-                  </div>
-                </div>
-
-                <div style={{ fontSize: '11px', color: isExpired ? '#ef4444' : '#64748b', fontWeight: 'bold' }}>
-                  {isExpired ? (
-                    <span>🛑 Plazo vencido. No se pueden añadir nuevos registros.</span>
-                  ) : (
-                    <span>⏰ Fecha Tope Requisiciones: <span style={{ color: '#0f172a' }}>Domingo {format(deadlineDate, 'dd/MM')} - 11:59 PM</span></span>
-                  )}
-                </div>
-              </div>
-
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <div>
-                  <h1 style={{ margin: 0, fontSize: '1.8rem', fontWeight: '950', color: '#0f172a', letterSpacing: '-0.5px' }}>
-                    {isEditing ? 'Solicitud de Fondos' : 'Registro de Fondos'}
-                  </h1>
-                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '5px' }}>
-                    <div style={{ background: '#0f172a', color: 'white', padding: '3px 10px', borderRadius: '6px', fontSize: '10px', fontWeight: 'bold' }}>ID CONTROL: {idDinamico}</div>
+                  <span style={{ fontSize: '0.8rem', color: '#0369a1', fontWeight: '800', backgroundColor: '#e0f2fe', padding: '4px 12px', borderRadius: '20px', letterSpacing: 'normal', display: 'inline-block', marginBottom: '6px' }}>
+                    📅 Período: {periodoSemana}
+                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <h1 style={{ margin: 0, fontSize: '1.8rem', fontWeight: '950', color: '#0f172a', letterSpacing: '-0.5px' }}>
+                      {isEditing ? 'Solicitud de Fondos' : 'Registro de Fondos'}
+                    </h1>
+                    <div style={{
+                      backgroundColor: isExpired ? '#ef4444' : '#0ea5e9',
+                      color: 'white',
+                      padding: '4px 12px',
+                      borderRadius: '8px',
+                      fontSize: '10px',
+                      fontWeight: '800',
+                      letterSpacing: '0.02em',
+                      boxShadow: isExpired ? '0 2px 4px rgba(239, 68, 68, 0.2)' : '0 2px 4px rgba(14, 165, 233, 0.2)'
+                    }}>
+                      {isExpired ? 'SEMANA CERRADA' : 'SEMANA ACTIVA'}
+                    </div>
+                  </div>
+                  <div style={{ marginTop: '6px' }}>
+                    <span style={{ background: '#0f172a', color: 'white', padding: '3px 10px', borderRadius: '6px', fontSize: '10px', fontWeight: 'bold' }}>
+                      ID CONTROL: {idDinamico}
+                    </span>
                   </div>
                 </div>
 
@@ -2223,6 +2308,29 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
             {/* --- CUERPO DESPLAZABLE --- */}
             <div style={{ flexGrow: 1, overflowY: 'auto', padding: '30px', backgroundColor: 'rgba(241, 245, 249, 0.4)' }}>
 
+              {/* LÍMITE REQUISICIONES COLOCADO EN EL ESPACIO GRIS DEBAJO DEL TOTAL/DESGLOSE */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '8px' }}>
+                <div style={{
+                  fontSize: '11px',
+                  color: isExpired ? '#ef4444' : '#475569',
+                  fontWeight: 'bold',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  backgroundColor: isExpired ? '#fee2e2' : '#f1f5f9',
+                  padding: '6px 14px',
+                  borderRadius: '10px',
+                  border: isExpired ? '1px solid #fecaca' : '1px solid #e2e8f0',
+                  boxShadow: '0 1px 2px rgba(0,0,0,0.02)'
+                }}>
+                  {isExpired ? (
+                    <span>🛑 Plazo vencido. No se pueden añadir nuevos registros.</span>
+                  ) : (
+                    <span>⏰ Límite Requisiciones: <span style={{ color: '#0f172a', fontWeight: '800' }}>Dom {format(deadlineDate, 'dd/MM')} - 11:59 PM</span></span>
+                  )}
+                </div>
+              </div>
+
               {/* FORM CABECERA */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px', background: 'white', padding: '20px', borderRadius: '15px', border: '1px solid #e2e8f0', marginBottom: '20px' }}>
                 <div style={{ display: 'flex', flexDirection: 'column' }}>
@@ -2260,36 +2368,198 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
 
                 <div style={{ display: 'flex', flexDirection: 'column' }}>
                   <label style={{ fontSize: '10px', fontWeight: 'bold', color: '#363636', marginBottom: '5px' }}>RESPONSABLE DE GASTO</label>
-                  <input
-                    className="sf-input"
-                    value={form.responsable}
-                    readOnly
-                    style={{ backgroundColor: '#f8fafc', color: '#1e293b', fontWeight: '600' }}
-                  />
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <input
+                      className="sf-input"
+                      value={form.responsable}
+                      readOnly
+                      style={{ backgroundColor: '#f8fafc', color: '#1e293b', fontWeight: '600', flex: 1, minWidth: 0 }}
+                    />
+                    <button
+                      onClick={() => setMostrarFiltrosTabla(!mostrarFiltrosTabla)}
+                      style={{
+                        background: mostrarFiltrosTabla ? '#0ea5e9' : 'white',
+                        border: '1px solid #cbd5e1',
+                        borderRadius: '12px',
+                        width: '42px',
+                        height: '42px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: 'pointer',
+                        color: mostrarFiltrosTabla ? 'white' : '#64748b',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
+                        transition: 'all 0.2s',
+                        position: 'relative',
+                        flexShrink: 0
+                      }}
+                      title="Filtrar Renglones por Emisor / Categoría / Clasificación"
+                    >
+                      <Activity size={18} />
+                      {/* INDICADOR DOT DE FILTRO ACTIVO */}
+                      {(filtroPartidaEmisor !== 'Todos' || filtroPartidaCategoria !== 'Todos' || filtroPartidaClasificacion !== 'Todos') && (
+                        <div style={{
+                          position: 'absolute',
+                          top: '-3px',
+                          right: '-3px',
+                          width: '10px',
+                          height: '10px',
+                          borderRadius: '50%',
+                          backgroundColor: '#ef4444',
+                          border: '2px solid white'
+                        }} />
+                      )}
+                    </button>
+                  </div>
                 </div>
               </div>
 
+              {/* PANEL DE FILTROS OPCIONALES DESPLEGABLES */}
+              {mostrarFiltrosTabla && (
+                <div style={{
+                  marginBottom: '15px',
+                  background: 'white',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '16px',
+                  padding: '16px 20px',
+                  boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)',
+                  animation: 'fadeIn 0.2s ease-in-out'
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', paddingBottom: '8px', borderBottom: '1px solid #f1f5f9' }}>
+                    <div style={{ fontSize: '11px', fontWeight: '900', color: '#475569', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <Activity size={14} style={{ color: '#0ea5e9' }} />
+                      <span>FILTRAR RENGLONES POR EMISOR / CATEGORÍA / CLASIFICACIÓN</span>
+                    </div>
+
+                    {(filtroPartidaEmisor !== 'Todos' || filtroPartidaCategoria !== 'Todos' || filtroPartidaClasificacion !== 'Todos') && (
+                      <button
+                        onClick={() => {
+                          setFiltroPartidaEmisor('Todos');
+                          setFiltroPartidaCategoria('Todos');
+                          setFiltroPartidaClasificacion('Todos');
+                        }}
+                        style={{
+                          background: '#fee2e2',
+                          border: 'none',
+                          color: '#ef4444',
+                          fontSize: '9px',
+                          fontWeight: '900',
+                          padding: '4px 10px',
+                          borderRadius: '8px',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '4px'
+                        }}
+                      >
+                        <X size={10} /> LIMPIAR FILTROS
+                      </button>
+                    )}
+                  </div>
+
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(3, 1fr)',
+                    gap: '15px'
+                  }}>
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                      <label style={{ fontSize: '8.5px', fontWeight: '900', color: '#64748b', marginBottom: '4px', textTransform: 'uppercase' }}>Emitido Por</label>
+                      <select
+                        value={filtroPartidaEmisor}
+                        onChange={(e) => setFiltroPartidaEmisor(e.target.value)}
+                        style={{
+                          width: '100%',
+                          fontSize: '11px',
+                          padding: '6px 10px',
+                          border: '1px solid #cbd5e1',
+                          borderRadius: '8px',
+                          backgroundColor: '#f8fafc',
+                          color: '#334155',
+                          outline: 'none',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        <option value="Todos">Todos ({listaEmisoresUnicos.length})</option>
+                        {listaEmisoresUnicos.map(em => (
+                          <option key={em} value={em}>{em}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                      <label style={{ fontSize: '8.5px', fontWeight: '900', color: '#64748b', marginBottom: '4px', textTransform: 'uppercase' }}>Categoría</label>
+                      <select
+                        value={filtroPartidaCategoria}
+                        onChange={(e) => setFiltroPartidaCategoria(e.target.value)}
+                        style={{
+                          width: '100%',
+                          fontSize: '11px',
+                          padding: '6px 10px',
+                          border: '1px solid #cbd5e1',
+                          borderRadius: '8px',
+                          backgroundColor: '#f8fafc',
+                          color: '#334155',
+                          outline: 'none',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        <option value="Todos">Todas ({listaCategoriasUnicas.length})</option>
+                        {listaCategoriasUnicas.map(cat => (
+                          <option key={cat} value={cat}>{cat}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                      <label style={{ fontSize: '8.5px', fontWeight: '900', color: '#64748b', marginBottom: '4px', textTransform: 'uppercase' }}>Material / Clasificación</label>
+                      <select
+                        value={filtroPartidaClasificacion}
+                        onChange={(e) => setFiltroPartidaClasificacion(e.target.value)}
+                        style={{
+                          width: '100%',
+                          fontSize: '11px',
+                          padding: '6px 10px',
+                          border: '1px solid #cbd5e1',
+                          borderRadius: '8px',
+                          backgroundColor: '#f8fafc',
+                          color: '#334155',
+                          outline: 'none',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        <option value="Todos">Todas ({listaClasificacionesUnicas.length})</option>
+                        {listaClasificacionesUnicas.map(cl => (
+                          <option key={cl} value={cl}>{cl}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* TABLA DE RENGLONES */}
-              <div className="sf-table-wrapper">
+              {!mostrarImprevistos && (
+                <div className="sf-table-wrapper">
                 <div className="sf-table-header">
-                  <div style={{ width: '25px', padding: '12px', textAlign: 'center' }}>SEL</div>
-                  <div style={{ width: '15px', padding: '12px' }}>N°</div>
-                  <div style={{ width: '125px', padding: '12px' }}>ID REF</div>
-                  <div style={{ width: '170px', padding: '12px' }}>C. COSTO</div>
-                  <div style={{ width: '200px', padding: '12px' }}>CLASIFICACIÓN</div>
-                  <div style={{ width: '200px', padding: '12px' }}>CATEGORÍA</div>
-                  <div style={{ width: '80px', padding: '12px' }}>CANT</div>
-                  <div style={{ width: '90px', padding: '12px' }}>UNID</div>
+                  <div style={{ width: '40px', padding: '12px', textAlign: 'center' }}>SEL</div>
+                  <div style={{ width: '45px', padding: '12px', textAlign: 'center' }}>N°</div>
+                  <div style={{ width: '130px', padding: '12px', textAlign: 'center' }}>ID REF</div>
+                  <div style={{ width: '180px', padding: '12px' }}>C. COSTO</div>
+                  <div style={{ width: '215px', padding: '12px' }}>CLASIFICACIÓN</div>
+                  <div style={{ width: '215px', padding: '12px' }}>CATEGORÍA</div>
+                  <div style={{ width: '80px', padding: '12px', textAlign: 'center' }}>CANT</div>
+                  <div style={{ width: '90px', padding: '12px', textAlign: 'center' }}>UNID</div>
                   <div style={{ width: '460px', padding: '12px' }}>DESCRIPCIÓN DEL GASTO</div>
                   <div style={{ width: '200px', padding: '12px' }}>BENEFICIARIO</div>
                   <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>P.U $/BS</div>
                   <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>P.U $/$</div>
                   <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>TOTAL $</div>
                   <div style={{ width: '130px', padding: '12px' }}>EMITIDO POR</div>
+                  <div style={{ width: '80px', padding: '12px', textAlign: 'center' }}>ACCIONES</div>
                 </div>
 
                 <div style={{ maxHeight: '40vh', overflowY: 'auto' }}>
-                  {form.partidas.map((p, i) => (
+                  {partidasFiltradas.map((p, i) => (
                     <div key={p.id} className="sf-table-row" style={{
                       background: (p.requisicion_id || p.codigo_ticket || p.status === 'Bloqueado') ? '#f1f5f9' : (p.selected ? '#e0f2fe' : 'transparent'),
                       opacity: 1
@@ -2298,7 +2568,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                         <input
                           type="checkbox"
                           checked={p.selected || false}
-                          onChange={(e) => manejarCambioPartida(i, 'selected', e.target.checked)}
+                          onChange={(e) => manejarCambioPartida(p.originalIndex, 'selected', e.target.checked)}
                           style={{ cursor: (p.requisicion_id || p.codigo_ticket || p.status === 'Bloqueado') ? 'not-allowed' : 'pointer', transform: 'scale(1.2)' }}
                           disabled={!!p.requisicion_id || !!p.codigo_ticket || p.status === 'Bloqueado'}
                           title={p.codigo_ticket ? `Ticket Emitido: ${p.codigo_ticket}` : (p.requisicion_id ? "Bloqueado por Requisición" : "")}
@@ -2320,13 +2590,13 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                         )}
                       </div>
                       <div style={{ width: '180px', padding: '6px' }}>
-                        <select className="sf-table-input" value={p.cc} onChange={(e) => manejarCambioPartida(i, 'cc', e.target.value)} style={{ fontWeight: 'bold' }} disabled={!!p.codigo_ref}>
+                        <select className="sf-table-input" value={p.cc} onChange={(e) => manejarCambioPartida(p.originalIndex, 'cc', e.target.value)} style={{ fontWeight: 'bold' }} disabled={!!p.codigo_ref}>
                           <option value="">Seleccione C.C...</option>
                           {centrosCosto.map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>)}
                         </select>
                       </div>
                       <div style={{ width: '215px', padding: '6px' }}>
-                        <select className="sf-table-input" value={p.clasif} onChange={(e) => manejarCambioPartida(i, 'clasif', e.target.value)} disabled={!p.cc || !!p.codigo_ref}>
+                        <select className="sf-table-input" value={p.clasif} onChange={(e) => manejarCambioPartida(p.originalIndex, 'clasif', e.target.value)} disabled={!p.cc || !!p.codigo_ref}>
                           <option value="">Clasificación...</option>
                           {(() => {
                             const ccObj = centrosCosto.find(c => c.nombre === p.cc);
@@ -2337,7 +2607,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                         </select>
                       </div>
                       <div style={{ width: '215px', padding: '6px' }}>
-                        <select className="sf-table-input" value={p.cat} onChange={(e) => manejarCambioPartida(i, 'cat', e.target.value)} disabled={!p.clasif || !!p.codigo_ref}>
+                        <select className="sf-table-input" value={p.cat} onChange={(e) => manejarCambioPartida(p.originalIndex, 'cat', e.target.value)} disabled={!p.clasif || !!p.codigo_ref}>
                           <option value="">Categoría...</option>
                           {(() => {
                             const ccObj = centrosCosto.find(c => c.nombre === p.cc);
@@ -2348,24 +2618,25 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                           })()}
                         </select>
                       </div>
-                      <div style={{ width: '80px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.cant} onChange={(e) => manejarCambioPartida(i, 'cant', e.target.value)} style={{ textAlign: 'center' }} disabled={!!p.codigo_ref} /></div>
-                      <div style={{ width: '90px', padding: '6px' }}><select className="sf-table-input" value={p.uni} onChange={(e) => manejarCambioPartida(i, 'uni', e.target.value)} disabled={!!p.codigo_ref}>{unidades.map(u => <option key={u}>{u}</option>)}</select></div>
-                      <div style={{ width: '460px', padding: '10px' }}><textarea className="sf-table-input" value={p.desc} onChange={(e) => manejarCambioPartida(i, 'desc', e.target.value)} style={{ resize: 'none' }} rows="1" disabled={!!p.codigo_ref} /></div>
-                      <div style={{ width: '200px', padding: '6px' }}><input className="sf-table-input" value={p.ben} onChange={(e) => manejarCambioPartida(i, 'ben', e.target.value)} disabled={!!p.codigo_ref} /></div>
-                      <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puBs === 0 ? '' : p.puBs} onChange={(e) => manejarCambioPartida(i, 'puBs', e.target.value)} style={{ textAlign: 'right' }} disabled={p.puUsd > 0 || !!p.codigo_ref} /></div>
-                      <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puUsd === 0 ? '' : p.puUsd} onChange={(e) => manejarCambioPartida(i, 'puUsd', e.target.value)} style={{ textAlign: 'right' }} disabled={p.puBs > 0 || !!p.codigo_ref} /></div>
+                      <div style={{ width: '80px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.cant} onChange={(e) => manejarCambioPartida(p.originalIndex, 'cant', e.target.value)} style={{ textAlign: 'center' }} disabled={!!p.codigo_ref} /></div>
+                      <div style={{ width: '90px', padding: '6px' }}><select className="sf-table-input" value={p.uni} onChange={(e) => manejarCambioPartida(p.originalIndex, 'uni', e.target.value)} disabled={!!p.codigo_ref}>{unidades.map(u => <option key={u}>{u}</option>)}</select></div>
+                      <div style={{ width: '460px', padding: '10px' }}><textarea className="sf-table-input" value={p.desc} onChange={(e) => manejarCambioPartida(p.originalIndex, 'desc', e.target.value)} style={{ resize: 'none' }} rows="1" disabled={!!p.codigo_ref} /></div>
+                      <div style={{ width: '200px', padding: '6px' }}><input className="sf-table-input" value={p.ben} onChange={(e) => manejarCambioPartida(p.originalIndex, 'ben', e.target.value)} disabled={!!p.codigo_ref} /></div>
+                      <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puBs === 0 ? '' : p.puBs} onChange={(e) => manejarCambioPartida(p.originalIndex, 'puBs', e.target.value)} style={{ textAlign: 'right' }} disabled={p.puUsd > 0 || !!p.codigo_ref} /></div>
+                      <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puUsd === 0 ? '' : p.puUsd} onChange={(e) => manejarCambioPartida(p.originalIndex, 'puUsd', e.target.value)} style={{ textAlign: 'right' }} disabled={p.puBs > 0 || !!p.codigo_ref} /></div>
                       <div style={{ width: '120px', padding: '6px', textAlign: 'right', fontWeight: 'bold' }}>{((parseFloat(p.puBs) || parseFloat(p.puUsd) || 0) * (p.cant || 0)).toLocaleString('de-DE')}</div>
                       <div style={{ width: '130px', padding: '6px', fontSize: '9px', color: '#64748b', fontWeight: '600' }}>
                         {p.emisor || '---'}
                       </div>
                       <div style={{ width: '80px', display: 'flex', gap: '5px', justifyContent: 'center' }}>
-                        <button onClick={() => duplicarPartida(i)} style={{ background: 'none', border: 'none', color: '#0ea5e9', cursor: (p.codigo_ticket || p.requisicion_id) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (p.codigo_ticket || p.requisicion_id) ? 0.3 : 1 }} disabled={!!p.codigo_ticket || !!p.requisicion_id} title="Duplicar renglón"><Copy size={16} /></button>
-                        <button onClick={() => { setHasChanges(true); setForm({ ...form, partidas: form.partidas.filter((_, idx) => idx !== i) }); }} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: (p.codigo_ticket || p.requisicion_id) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (p.codigo_ticket || p.requisicion_id) ? 0.3 : 1 }} disabled={!!p.codigo_ticket || !!p.requisicion_id} title="Eliminar renglón">🗑️</button>
+                        <button onClick={() => duplicarPartida(p.originalIndex)} style={{ background: 'none', border: 'none', color: '#0ea5e9', cursor: (p.codigo_ticket || p.requisicion_id) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (p.codigo_ticket || p.requisicion_id) ? 0.3 : 1 }} disabled={!!p.codigo_ticket || !!p.requisicion_id} title="Duplicar renglón"><Copy size={16} /></button>
+                        <button onClick={() => { setHasChanges(true); setForm({ ...form, partidas: form.partidas.filter((_, idx) => idx !== p.originalIndex) }); }} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: (p.codigo_ticket || p.requisicion_id) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (p.codigo_ticket || p.requisicion_id) ? 0.3 : 1 }} disabled={!!p.codigo_ticket || !!p.requisicion_id} title="Eliminar renglón">🗑️</button>
                       </div>
                     </div>
                   ))}
                 </div>
               </div>
+              )}
 
               {/* SECCIÓN GASTOS IMPREVISTOS */}
               {mostrarImprevistos && (
@@ -2388,23 +2659,25 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
 
                   <div className="sf-table-wrapper" style={{ border: '1px solid #fcd34d', boxShadow: '0 4px 15px rgba(245, 158, 11, 0.05)' }}>
                     <div className="sf-table-header" style={{ background: '#fffcf0', borderBottom: '2px solid #fef3c7', color: '#b45309' }}>
-                      <div style={{ width: '45px', padding: '12px' }}>N°</div>
-                      <div style={{ width: '130px', padding: '12px' }}>ID REF</div>
+                      <div style={{ width: '40px', padding: '12px', textAlign: 'center' }}>SEL</div>
+                      <div style={{ width: '45px', padding: '12px', textAlign: 'center' }}>N°</div>
+                      <div style={{ width: '130px', padding: '12px', textAlign: 'center' }}>ID REF</div>
                       <div style={{ width: '180px', padding: '12px' }}>C. COSTO</div>
                       <div style={{ width: '215px', padding: '12px' }}>CLASIFICACIÓN</div>
                       <div style={{ width: '215px', padding: '12px' }}>CATEGORÍA</div>
-                      <div style={{ width: '80px', padding: '12px' }}>CANT</div>
-                      <div style={{ width: '90px', padding: '12px' }}>UNID</div>
+                      <div style={{ width: '80px', padding: '12px', textAlign: 'center' }}>CANT</div>
+                      <div style={{ width: '90px', padding: '12px', textAlign: 'center' }}>UNID</div>
                       <div style={{ width: '460px', padding: '12px' }}>DESCRIPCIÓN DEL GASTO</div>
                       <div style={{ width: '200px', padding: '12px' }}>BENEFICIARIO</div>
                       <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>P.U $/BS</div>
                       <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>P.U $/$</div>
                       <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>TOTAL $</div>
                       <div style={{ width: '130px', padding: '12px' }}>EMITIDO POR</div>
+                      <div style={{ width: '80px', padding: '12px', textAlign: 'center' }}>ACCIONES</div>
                     </div>
 
                     <div style={{ maxHeight: '30vh', overflowY: 'auto' }}>
-                      {form.imprevistos.map((imp, i) => (
+                      {imprevistosFiltrados.map((imp, i) => (
                         <div key={imp.id} className="sf-table-row" style={{
                           background: (imp.requisicion_id || imp.status === 'Bloqueado') ? '#f1f5f9' : (imp.selected ? '#fffcf0' : 'transparent'),
                           opacity: 1
@@ -2413,7 +2686,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                             <input
                               type="checkbox"
                               checked={imp.selected || false}
-                              onChange={(e) => manejarCambioImprevisto(i, 'selected', e.target.checked)}
+                              onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'selected', e.target.checked)}
                               style={{ cursor: (imp.requisicion_id || imp.status === 'Bloqueado') ? 'not-allowed' : 'pointer', transform: 'scale(1.2)' }}
                               disabled={!!imp.requisicion_id || imp.status === 'Bloqueado'}
                               title={(imp.requisicion_id || imp.status === 'Bloqueado') ? "Esta partida está bloqueada por una requisición activa" : ""}
@@ -2434,13 +2707,13 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                             )}
                           </div>
                           <div style={{ width: '180px', padding: '6px' }}>
-                            <select className="sf-table-input" value={imp.cc} onChange={(e) => manejarCambioImprevisto(i, 'cc', e.target.value)} style={{ fontWeight: 'bold' }} disabled={!!imp.codigo_ref}>
+                            <select className="sf-table-input" value={imp.cc} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'cc', e.target.value)} style={{ fontWeight: 'bold' }} disabled={!!imp.codigo_ref}>
                               <option value="">Seleccione C.C...</option>
                               {centrosCosto.map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>)}
                             </select>
                           </div>
                           <div style={{ width: '215px', padding: '6px' }}>
-                            <select className="sf-table-input" value={imp.clasif} onChange={(e) => manejarCambioImprevisto(i, 'clasif', e.target.value)} disabled={!imp.cc || !!imp.codigo_ref}>
+                            <select className="sf-table-input" value={imp.clasif} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'clasif', e.target.value)} disabled={!imp.cc || !!imp.codigo_ref}>
                               <option value="">Clasificación...</option>
                               {(() => {
                                 const ccObj = centrosCosto.find(c => c.nombre === imp.cc);
@@ -2451,7 +2724,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                             </select>
                           </div>
                           <div style={{ width: '215px', padding: '6px' }}>
-                            <select className="sf-table-input" value={imp.cat} onChange={(e) => manejarCambioImprevisto(i, 'cat', e.target.value)} disabled={!imp.clasif || !!imp.codigo_ref}>
+                            <select className="sf-table-input" value={imp.cat} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'cat', e.target.value)} disabled={!imp.clasif || !!imp.codigo_ref}>
                               <option value="">Categoría...</option>
                               {(() => {
                                 const ccObj = centrosCosto.find(c => c.nombre === imp.cc);
@@ -2462,19 +2735,19 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                               })()}
                             </select>
                           </div>
-                          <div style={{ width: '80px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.cant} onChange={(e) => manejarCambioImprevisto(i, 'cant', e.target.value)} style={{ textAlign: 'center' }} disabled={!!imp.codigo_ref} /></div>
-                          <div style={{ width: '90px', padding: '6px' }}><select className="sf-table-input" value={imp.uni} onChange={(e) => manejarCambioImprevisto(i, 'uni', e.target.value)} disabled={!!imp.codigo_ref}>{unidades.map(u => <option key={u}>{u}</option>)}</select></div>
-                          <div style={{ width: '460px', padding: '10px' }}><textarea className="sf-table-input" value={imp.desc} onChange={(e) => manejarCambioImprevisto(i, 'desc', e.target.value)} style={{ resize: 'none' }} rows="1" disabled={!!imp.codigo_ref} /></div>
-                          <div style={{ width: '200px', padding: '6px' }}><input className="sf-table-input" value={imp.ben} onChange={(e) => manejarCambioImprevisto(i, 'ben', e.target.value)} disabled={!!imp.codigo_ref} /></div>
-                          <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.puBs === 0 ? '' : imp.puBs} onChange={(e) => manejarCambioImprevisto(i, 'puBs', e.target.value)} style={{ textAlign: 'right' }} disabled={imp.puUsd > 0 || !!imp.codigo_ref} /></div>
-                          <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.puUsd === 0 ? '' : imp.puUsd} onChange={(e) => manejarCambioImprevisto(i, 'puUsd', e.target.value)} style={{ textAlign: 'right' }} disabled={imp.puBs > 0 || !!imp.codigo_ref} /></div>
+                          <div style={{ width: '80px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.cant} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'cant', e.target.value)} style={{ textAlign: 'center' }} disabled={!!imp.codigo_ref} /></div>
+                          <div style={{ width: '90px', padding: '6px' }}><select className="sf-table-input" value={imp.uni} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'uni', e.target.value)} disabled={!!imp.codigo_ref}>{unidades.map(u => <option key={u}>{u}</option>)}</select></div>
+                          <div style={{ width: '460px', padding: '10px' }}><textarea className="sf-table-input" value={imp.desc} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'desc', e.target.value)} style={{ resize: 'none' }} rows="1" disabled={!!imp.codigo_ref} /></div>
+                          <div style={{ width: '200px', padding: '6px' }}><input className="sf-table-input" value={imp.ben} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'ben', e.target.value)} disabled={!!imp.codigo_ref} /></div>
+                          <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.puBs === 0 ? '' : imp.puBs} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'puBs', e.target.value)} style={{ textAlign: 'right' }} disabled={imp.puUsd > 0 || !!imp.codigo_ref} /></div>
+                          <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.puUsd === 0 ? '' : imp.puUsd} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'puUsd', e.target.value)} style={{ textAlign: 'right' }} disabled={imp.puBs > 0 || !!imp.codigo_ref} /></div>
                           <div style={{ width: '120px', padding: '6px', textAlign: 'right', fontWeight: 'bold' }}>{((parseFloat(imp.puBs) || parseFloat(imp.puUsd) || 0) * (imp.cant || 1)).toLocaleString('de-DE')}</div>
                           <div style={{ width: '130px', padding: '6px', fontSize: '9px', color: '#64748b', fontWeight: '600' }}>
                             {imp.emisor || '---'}
                           </div>
                           <div style={{ width: '80px', display: 'flex', gap: '5px', justifyContent: 'center' }}>
-                            <button onClick={() => duplicarImprevisto(i)} style={{ background: 'none', border: 'none', color: '#f59e0b', cursor: (imp.codigo_ref || imp.status === 'Bloqueado') ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (imp.codigo_ref || imp.status === 'Bloqueado') ? 0.3 : 1 }} disabled={!!imp.codigo_ref || imp.status === 'Bloqueado'} title="Duplicar imprevisto"><Copy size={16} /></button>
-                            <button onClick={() => { setHasChanges(true); setForm({ ...form, imprevistos: form.imprevistos.filter((_, idx) => idx !== i) }); }} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: (imp.codigo_ref || imp.status === 'Bloqueado') ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (imp.codigo_ref || imp.status === 'Bloqueado') ? 0.3 : 1 }} disabled={!!imp.codigo_ref || imp.status === 'Bloqueado'} title="Eliminar imprevisto">🗑️</button>
+                            <button onClick={() => duplicarImprevisto(imp.originalIndex)} style={{ background: 'none', border: 'none', color: '#f59e0b', cursor: (imp.codigo_ref || imp.status === 'Bloqueado') ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (imp.codigo_ref || imp.status === 'Bloqueado') ? 0.3 : 1 }} disabled={!!imp.codigo_ref || imp.status === 'Bloqueado'} title="Duplicar imprevisto"><Copy size={16} /></button>
+                            <button onClick={() => { setHasChanges(true); setForm({ ...form, imprevistos: form.imprevistos.filter((_, idx) => idx !== imp.originalIndex) }); }} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: (imp.codigo_ref || imp.status === 'Bloqueado') ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (imp.codigo_ref || imp.status === 'Bloqueado') ? 0.3 : 1 }} disabled={!!imp.codigo_ref || imp.status === 'Bloqueado'} title="Eliminar imprevisto">🗑️</button>
                           </div>
                         </div>
                       ))}
@@ -2501,38 +2774,56 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
               alignItems: 'center'
             }}>
               <div style={{ display: 'flex', gap: '10px' }}>
-                <button
-                  className="sf-btn sf-btn-add"
-                  onClick={() => {
-                    setHasChanges(true);
-                    setForm({ ...form, partidas: [...form.partidas, { id: Date.now(), selected: false, cc: form.partidas[0]?.cc || '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '', emisor: `${currentUser?.nombre} ${currentUser?.apellido}` }] });
-                  }}
-                  disabled={isExpired}
-                  style={{ opacity: isExpired ? 0.5 : 1, cursor: isExpired ? 'not-allowed' : 'pointer' }}
-                >
-                  + AÑADIR RENGLÓN
-                </button>
+                {!mostrarImprevistos && (
+                  <button
+                    className="sf-btn sf-btn-add"
+                    onClick={() => {
+                      setHasChanges(true);
+                      setForm({ ...form, partidas: [...form.partidas, { id: Date.now(), selected: false, cc: form.partidas[0]?.cc || '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '', emisor: `${currentUser?.nombre} ${currentUser?.apellido}` }] });
+                    }}
+                    disabled={isExpired}
+                    style={{ opacity: isExpired ? 0.5 : 1, cursor: isExpired ? 'not-allowed' : 'pointer' }}
+                  >
+                    + AÑADIR RENGLÓN
+                  </button>
+                )}
                 <button className="sf-btn" onClick={() => setMostrarImprevistos(!mostrarImprevistos)} style={{
                   border: '2px solid #f59e0b',
                   color: '#d97706',
                   background: 'white',
                   padding: '10px 25px',
                   borderRadius: '12px',
-                  fontWeight: '900'
-                }}>
-                  {mostrarImprevistos ? 'OCULTAR TICKET' : '+ MOSTRAR TICKET'}
-                </button>
-                <button className="sf-btn sf-btn-success" onClick={handleCrearRequisicion} disabled={isExpired} style={{
-                  backgroundColor: '#10b981',
-                  color: 'white',
-                  padding: '10px 25px',
-                  borderRadius: '12px',
                   fontWeight: '900',
-                  opacity: isExpired ? 0.5 : 1,
-                  boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)'
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px'
                 }}>
-                  <FileText size={18} /> CREAR REQUISICIÓN
+                  {mostrarImprevistos ? (
+                    <>
+                      <FileText size={18} /> MOSTRAR REQUISICIONES
+                    </>
+                  ) : (
+                    <>
+                      <Activity size={18} /> MOSTRAR TICKET DE PAGO
+                    </>
+                  )}
                 </button>
+                {!mostrarImprevistos && (
+                  <button className="sf-btn sf-btn-success" onClick={handleCrearRequisicion} disabled={isExpired} style={{
+                    backgroundColor: '#10b981',
+                    color: 'white',
+                    padding: '10px 25px',
+                    borderRadius: '12px',
+                    fontWeight: '900',
+                    opacity: isExpired ? 0.5 : 1,
+                    boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px'
+                  }}>
+                    <FileText size={18} /> CREAR REQUISICIÓN
+                  </button>
+                )}
                 {mostrarImprevistos && (
                   <button className="sf-btn" style={{
                     background: '#f59e0b',
@@ -2584,6 +2875,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                   isOpen={abrirReq}
                   onClose={() => setAbrirReq(false)}
                   datosPredefinidos={dataParaReq}
+                  currentUserProp={currentUser}
                   onSuccess={handleRequisicionFinalizada}
                 />
               </div>

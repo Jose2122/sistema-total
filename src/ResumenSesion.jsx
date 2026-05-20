@@ -24,25 +24,31 @@ import {
 const COLORS = ['#0ea5e9', '#6366f1', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981'];
 
 const reqStatusLabels = {
-    'borrador': 'Borrador',
-    'pendiente_proyecto': 'Pend. Proyecto',
-    'pendiente_area': 'Pend. Área',
-    'enviada_general': 'Enviada Gral.',
-    'aprobado_general': 'Aprobado Gral.',
-    'completado': 'Aprobado Final',
-    'rechazado': 'Rechazado',
-    'anulada': 'Anulada'
+    'borrador': 'BORRADOR',
+    'pendiente_proyecto': 'GERENTE PROYECTO',
+    'pendiente_area': 'GERENTE ÁREA',
+    'enviada_area': 'GERENTE ÁREA',
+    'enviada_general': 'GERENTE GENERAL',
+    'aprobado_final': 'APROBADA',
+    'completado': 'APROBADA',
+    'rechazada': 'RECHAZADA',
+    'rechazado': 'RECHAZADA',
+    'anulada': 'ANULADA',
+    'ANULADA': 'ANULADA'
 };
 
 const reqStatusColors = {
     'borrador': '#64748b',
-    'pendiente_proyecto': '#f59e0b',
-    'pendiente_area': '#f59e0b',
-    'enviada_general': '#f59e0b',
-    'aprobado_general': '#10b981',
+    'pendiente_proyecto': '#1e40af',
+    'pendiente_area': '#1e40af',
+    'enviada_area': '#1e40af',
+    'enviada_general': '#1e40af',
+    'aprobado_final': '#10b981',
     'completado': '#10b981',
+    'rechazada': '#ef4444',
     'rechazado': '#ef4444',
-    'anulada': '#ef4444'
+    'anulada': '#64748b',
+    'ANULADA': '#64748b'
 };
 
 const ResumenSesion = ({ currentUser, setActiveSeccion }) => {
@@ -78,11 +84,15 @@ const ResumenSesion = ({ currentUser, setActiveSeccion }) => {
                     .order('created_at', { ascending: false });
 
                 // 2. Personal a cargo (Subordinados en la misma gerencia)
-                const { data: subs } = await supabase
-                    .from('perfiles')
-                    .select('*')
-                    .eq('gerencia_id', currentUser.gerencia_id)
-                    .neq('id', currentUser.id);
+                let subs = [];
+                if (currentUser.gerencia_id) {
+                    const { data: subsData } = await supabase
+                        .from('perfiles')
+                        .select('*')
+                        .eq('gerencia_id', currentUser.gerencia_id)
+                        .neq('id', currentUser.id);
+                    subs = subsData || [];
+                }
 
                 // 3. Aprobaciones pendientes
                 let queryPending = supabase.from('requisiciones').select('id, correlativo_req, solicitante, estado_aprobacion, justificacion');

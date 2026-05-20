@@ -508,7 +508,6 @@ function Dashboard() {
           {/* Indicador de Nube/Sincronización */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.65rem', fontWeight: '700', color: '#60a5fa', letterSpacing: '0.5px' }} title="Conectado a Supabase">
             <Cloud size={14} />
-            {!isMobile && <span>ONLINE</span>}
           </div>
 
           <div style={{ width: '1px', height: '20px', backgroundColor: 'rgba(255,255,255,0.08)' }}></div>

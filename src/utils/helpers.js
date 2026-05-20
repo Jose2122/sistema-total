@@ -45,6 +45,10 @@ export const getInitials = (nombre, apellido) => {
  * Mapeo de gerencias a sus siglas oficiales.
  */
 export const obtenerSiglasGerencia = (gerencia) => {
+  const gUpper = (gerencia || '').toUpperCase().trim();
+  if (gUpper.includes('ADMINISTRA')) {
+    return 'ADM';
+  }
   const mapping = {
     'Gerencia General': 'GG',
     'Administración': 'ADM',

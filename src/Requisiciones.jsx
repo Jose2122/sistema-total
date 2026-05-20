@@ -172,14 +172,14 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
           query = query.or(orQ);
 
         } else if (rolUserLower.includes('gerente') || rolUserLower.includes('coordinador')) {
-          // 2. GERENTES DE ÁREA/PROYECTO: Ven su DEPARTAMENTO + OBRAS ASIGNADAS
-          let orFiltros = [];
-          if (deptoMatch) orFiltros.push(`gerencia.ilike.%${deptoMatch}%`);
-          if (obrasFiltro) orFiltros.push(obrasFiltro);
-
-          if (orFiltros.length > 0) {
-            query = query.or(orFiltros.join(','));
-          } else {
+          // 2. GERENTES DE ÁREA/PROYECTO: Ven su DEPARTAMENTO Y sus OBRAS ASIGNADAS (AND, no OR)
+          if (deptoMatch) {
+            query = query.ilike('gerencia', `%${deptoMatch}%`);
+          }
+          if (misObras.length > 0) {
+            query = query.in('centro_costo', misObras);
+          }
+          if (!deptoMatch && misObras.length === 0) {
             // Seguridad de respaldo
             query = query.or(`user_id.eq.${userIdMatch},solicitante.ilike.%${nombreMatch}%`);
           }
@@ -226,6 +226,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
           f_aprobacion_general: db.f_aprobacion_general,
           n_aprobacion_general: db.n_aprobacion_general,
           f_culminacion_compras: db.f_culminacion_compras,
+          f_inicio_compras: db.f_inicio_compras,
           fecha_limite_compra: db.fecha_limite_compra,
           is_pausada: db.is_pausada,
           motivo_postergacion: db.motivo_postergacion
@@ -509,8 +510,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       if (data && data.length > 0) {
         const correlativoMax = data[0].correlativo_req;
         const partes = correlativoMax.split('-');
-        if (partes.length === 4) {
-          const num = parseInt(partes[3], 10);
+        if (partes.length >= 4) {
+          const num = parseInt(partes[partes.length - 1], 10);
           if (!isNaN(num)) max = num;
         }
       }
@@ -1360,8 +1361,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     if (registrosMismaSigla && registrosMismaSigla.length > 0) {
       const correlativoMax = registrosMismaSigla[0].correlativo_req;
       const partes = correlativoMax.split('-');
-      if (partes.length === 4) {
-        const num = parseInt(partes[3], 10);
+      if (partes.length >= 4) {
+        const num = parseInt(partes[partes.length - 1], 10);
         if (!isNaN(num)) maxNumero = num;
       }
     }
@@ -1380,7 +1381,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       correlativo_req: nuevoCorrelativo,
       fecha_emision: new Date().toISOString(),
       fecha_requerida: fechaRequerida,
-      solicitante,
+      solicitante: solicitante || `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim() || 'S/E',
       gerencia: departamento,
       centro_costo: centroCosto,
       prioridad,
@@ -1521,7 +1522,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
           .update({
             requisicion_id: nuevaReq.id,
             codigo_ticket: nuevaReq.correlativo_req, // GUARDAR EL CORRELATIVO PARA TRAZABILIDAD
-            status: 'Bloqueado'
+            status: 'Bloqueado',
+            emisor_nombre: solicitante || `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim()
           })
           .in('id', idsPartidas);
       }
@@ -1542,6 +1544,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       }
 
       const { data: superiores } = await querySuperiores;
+      const notificadosIds = new Set();
 
       console.log("Buscando superiores para:", currentUser.nombre, "en", currentUser.departamento);
       if (superiores) {
@@ -1550,6 +1553,26 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
 
         for (const s of superioresFiltrados) {
           await enviarNotificacion(s.id, `Nueva Requisición ${nuevaReq.correlativo_req} de ${currentUser.nombre} pendiente de su aprobación.`, 'Nueva Requisición', nuevaReq.id);
+          notificadosIds.add(s.id);
+        }
+      }
+
+      // 1.5 Notificar directamente al Gerente de Proyecto asignado (por obras_asignadas)
+      if (nuevaReq.estado_aprobacion === 'pendiente_proyecto' && nuevaReq.centro_costo) {
+        const { data: gerentesProyecto } = await supabase
+          .from('perfiles')
+          .select('id, nombre')
+          .contains('obras_asignadas', [nuevaReq.centro_costo])
+          .ilike('rol', '%proyecto%');
+
+        if (gerentesProyecto) {
+          for (const gp of gerentesProyecto) {
+            if (!notificadosIds.has(gp.id)) {
+              console.log("Notificando Gerente de Proyecto:", gp.nombre, "para obra:", nuevaReq.centro_costo);
+              await enviarNotificacion(gp.id, `Nueva Requisición ${nuevaReq.correlativo_req} de ${currentUser.nombre} requiere su aprobación de proyecto en ${nuevaReq.centro_costo}.`, 'Nueva Requisición', nuevaReq.id);
+              notificadosIds.add(gp.id);
+            }
+          }
         }
       }
 
@@ -1873,28 +1896,44 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       transition={{ duration: 0.5, ease: "easeOut" }}
     >
 
+      {/* --- ENCABECERA UNIFICADA PREMIUM --- */}
+      <div style={{
+        borderLeft: '6px solid #0ea5e9',
+        paddingLeft: '16px',
+        marginBottom: '30px'
+      }}>
+        <h1 style={{ margin: 0, color: '#0f172a', fontSize: '1.8rem', fontWeight: '900', fontFamily: 'Inter, sans-serif', letterSpacing: '-0.5px' }}>
+          Gestión de Requisiciones
+        </h1>
+        <p style={{ margin: '4px 0 0 0', color: '#64748b', fontSize: '0.9rem', fontWeight: '500', fontFamily: 'Inter, sans-serif' }}>
+          Control y flujo de aprobación de requisiciones internas
+        </p>
+      </div>
+
       {/* --- DASHBOARD SUPERIOR (STATS CARDS INTERACTIVAS) --- */}
-      <div className="dashboard-container" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '15px', marginBottom: '25px' }}>
+      <div className="dashboard-container" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '15px', marginBottom: '25px' }}>
         {(() => {
           const rolUser = (currentUser?.rol || '').toLowerCase();
           const baseStats = [
-            { label: 'TOTAL REQUISICIONES', val: historial.length, col: '#030712', filter: 'Todos' },
-            { label: 'GERENTE PROYECTO', val: historial.filter(r => r.estado_aprobacion === 'pendiente_proyecto').length, col: '#030712', filter: 'pendiente_proyecto' },
-            { label: 'GERENTE ÁREA', val: historial.filter(r => r.estado_aprobacion === 'pendiente_area').length, col: '#030712', filter: 'pendiente_area' },
-            { label: 'POR APROBAR', val: historial.filter(r => r.estado_aprobacion === 'enviada_general').length, col: '#030712', filter: 'enviada_general' },
-            { label: 'APROBADA GLOBAL', val: historial.filter(r => r.estado_aprobacion === 'aprobado_final').length, col: '#030712', filter: 'aprobado_final' },
-            { label: 'RECHAZADA', val: historial.filter(r => r.estado_aprobacion === 'rechazada').length, col: '#030712', filter: 'rechazada' },
-            { label: 'ANULADA', val: historial.filter(r => r.estado_aprobacion === 'ANULADA').length, col: '#030712', filter: 'ANULADA' }
+            { label: 'TOTAL REQUISICIONES', val: historial.length, col: '#0ea5e9', bg: '#e0f2fe', icon: <FileText size={18} />, filter: 'Todos' },
+            { label: 'GERENTE PROYECTO', val: historial.filter(r => r.estado_aprobacion === 'pendiente_proyecto').length, col: '#d97706', bg: '#fef3c7', icon: <User size={18} />, filter: 'pendiente_proyecto' },
+            { label: 'GERENTE ÁREA', val: historial.filter(r => r.estado_aprobacion === 'pendiente_area').length, col: '#6366f1', bg: '#e0e7ff', icon: <Building2 size={18} />, filter: 'pendiente_area' },
+            { label: 'POR APROBAR', val: historial.filter(r => r.estado_aprobacion === 'enviada_general').length, col: '#8b5cf6', bg: '#f3e8ff', icon: <ShoppingCart size={18} />, filter: 'enviada_general' },
+            { label: 'APROBADA GLOBAL', val: historial.filter(r => r.estado_aprobacion === 'aprobado_final').length, col: '#10b981', bg: '#dcfce7', icon: <CheckCircle2 size={18} />, filter: 'aprobado_final' },
+            { label: 'RECHAZADA', val: historial.filter(r => r.estado_aprobacion === 'rechazada').length, col: '#ef4444', bg: '#fee2e2', icon: <Ban size={18} />, filter: 'rechazada' },
+            { label: 'ANULADA', val: historial.filter(r => r.estado_aprobacion === 'ANULADA').length, col: '#6b7280', bg: '#f3f4f6', icon: <X size={18} />, filter: 'ANULADA' }
           ];
 
           if (rolUser.includes('analista')) {
             return [
-              baseStats[0], // TOTAL REQUISICIONES
-              baseStats[4], // APROBADA GLOBAL
+              baseStats[0],
+              baseStats[4],
               {
                 label: 'PENDIENTES, RECHAZADAS Y ANULADAS',
                 val: historial.filter(r => ['pendiente_proyecto', 'pendiente_area', 'enviada_general', 'rechazada', 'ANULADA'].includes(r.estado_aprobacion)).length,
                 col: '#ef4444',
+                bg: '#fee2e2',
+                icon: <Clock size={18} />,
                 filter: 'pendientes_especiales'
               }
             ];
@@ -1911,29 +1950,50 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
             return true;
           });
         })().map((x, i) => {
-          const colorBorde = x.col; // El color del estatus solo para el borde
-          const colorTexto = '#1e293b'; // Azul oscuro/Gris carbón profesional para todo el texto
+          const isActive = filtroAprobacion === x.filter;
           return (
             <div
               key={i}
-              className="stat-card"
               onClick={() => setFiltroAprobacion(x.filter)}
               style={{
-                borderLeft: `6px solid ${colorBorde}`,
+                background: 'white',
+                padding: '16px 20px',
+                borderRadius: '20px',
+                border: isActive ? `1.5px solid ${x.col}` : '1px solid #e2e8f0',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+                boxShadow: isActive ? '0 4px 12px rgba(0,0,0,0.06)' : '0 4px 6px -1px rgba(0,0,0,0.02)',
                 cursor: 'pointer',
-                backgroundColor: filtroAprobacion === x.filter ? '#f8fafc' : 'white',
-                transform: filtroAprobacion === x.filter ? 'scale(1.02)' : 'scale(1)',
                 transition: 'all 0.2s ease',
-                boxShadow: filtroAprobacion === x.filter ? '0 4px 12px rgba(0,0,0,0.1)' : '0 2px 4px rgba(0,0,0,0.05)',
                 position: 'relative',
                 overflow: 'hidden'
               }}
             >
-              {filtroAprobacion === x.filter && (
-                <div style={{ position: 'absolute', top: 0, right: 0, width: '4px', height: '100%', backgroundColor: colorBorde }}></div>
-              )}
-              <div className="stat-label" style={{ fontSize: '0.65rem', fontWeight: '800', color: '#64748b' }}>{x.label}</div>
-              <div className="stat-value" style={{ fontSize: '1.5rem', fontWeight: '900', color: colorTexto }}>{loading ? '...' : x.val}</div>
+              <div style={{
+                width: '36px',
+                height: '36px',
+                borderRadius: '10px',
+                backgroundColor: x.bg || '#f1f5f9',
+                color: x.col,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0
+              }}>
+                {x.icon}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <label style={{ display: 'block', fontSize: '0.62rem', fontWeight: '800', color: '#475569', textTransform: 'uppercase', letterSpacing: '0.5px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {x.label}
+                </label>
+                <h3 style={{ margin: '1px 0 0 0', fontSize: '1.15rem', fontWeight: '900', color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {loading ? '...' : x.val}
+                </h3>
+              </div>
+              <div style={{ color: isActive ? x.col : '#cbd5e1', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                <ChevronDown size={14} />
+              </div>
             </div>
           );
         })}
@@ -2134,7 +2194,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                             req.estado_aprobacion === 'pendiente_proyecto' ? 'GERENTE PROYECTO' :
                               req.estado_aprobacion === 'pendiente_area' || req.estado_aprobacion === 'enviada_area' ? 'GERENTE ÁREA' :
                                 req.estado_aprobacion === 'enviada_general' ? 'GERENTE GENERAL' :
-                                  req.estado_aprobacion?.replace('_', ' ') || 'PENDIENTE'}
+                                  req.estado_aprobacion === 'rechazada' ? 'RECHAZADA' :
+                                    req.estado_aprobacion?.toUpperCase()?.replace('_', ' ') || 'PENDIENTE'}
                         </span>
                       </div>
                     );
@@ -2477,6 +2538,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                                   ...(tieneProyecto ? [{ label: 'GERENTE PROYECTO', name: reqActual.n_aprobacion_proyecto, date: reqActual.f_aprobacion_proyecto, icon: <Settings size={20} />, completed: true }] : []),
                                   { label: 'GERENTE ÁREA', name: reqActual.n_aprobacion_area, date: reqActual.f_aprobacion_area, icon: <Building2 size={20} />, completed: reqActual.aprobado_gerente_area || (reqActual.estado_aprobacion !== 'pendiente_proyecto' && reqActual.estado_aprobacion !== 'pendiente_area' && reqActual.estado_aprobacion !== 'enviada_area' && reqActual.estado_aprobacion !== 'rechazada') },
                                   { label: 'GERENTE GENERAL', name: reqActual.n_aprobacion_general, date: reqActual.f_aprobacion_general, icon: <Diamond size={20} />, completed: reqActual.aprobado_gerente_general || reqActual.estado_aprobacion === 'aprobado_final' },
+                                  { label: 'INICIO COMPRAS', date: reqActual.f_inicio_compras, icon: <Clock size={20} />, completed: !!reqActual.f_inicio_compras },
                                   { label: 'COMPRA CULMINADA', date: reqActual.f_culminacion_compras, icon: <ShoppingCart size={20} />, completed: reqActual.status?.toUpperCase() === 'COMPLETADO' }
                                 ];
 

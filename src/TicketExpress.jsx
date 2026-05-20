@@ -156,8 +156,8 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
       // 1. Verificar si viene de una Requisición (RR)
       if (form.solicitud_ref && form.solicitud_ref.startsWith('RR-')) {
         const partesRR = form.solicitud_ref.split('-');
-        if (partesRR.length === 4) {
-          const numRR = partesRR[3];
+        if (partesRR.length >= 4) {
+          const numRR = partesRR[partesRR.length - 1];
           setIdControlAutomatico(`TP-${sigla}-${aa}-${numRR}`);
           return;
         }
@@ -174,8 +174,8 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
       let max = 0;
       if (data && data.length > 0) {
         const partes = data[0].codigo_control.split('-');
-        if (partes.length === 4) {
-          const num = parseInt(partes[3], 10);
+        if (partes.length >= 4) {
+          const num = parseInt(partes[partes.length - 1], 10);
           if (!isNaN(num)) max = num;
         }
       }
@@ -557,7 +557,8 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
           .update({
             ticket_id: newTicket.id,
             status: 'Bloqueado',
-            codigo_ticket: idControlAutomatico
+            codigo_ticket: idControlAutomatico,
+            emisor_nombre: form.solicitante || `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim()
           })
           .in('id', idsRelacionados);
       }
@@ -633,8 +634,12 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
   };
 
   const anularTicket = async (t) => {
-    if (currentUser?.correo?.toLowerCase() !== 'jcontreras.totalclean@gmail.com') {
-      toast.error("Solo el SuperAdministrador (José) tiene permisos para anular tickets.");
+    const esAutorizado = currentUser?.esSuperAdmin === true ||
+                         currentUser?.esAdminReal === true ||
+                         ['jcontreras.totalclean@gmail.com', 'karincmm1@gmail.com', 'cvega@totalclean.com', 'cvega.totalclean@gmail.com'].includes(currentUser?.correo?.toLowerCase());
+
+    if (!esAutorizado) {
+      toast.error("Solo el SuperAdministrador tiene permisos para anular tickets.");
       return;
     }
 
