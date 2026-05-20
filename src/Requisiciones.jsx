@@ -1108,7 +1108,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       }
 
       // DETERMINAR SI TIENE GERENTE DE PROYECTO ASIGNADO (Solo si el solicitante es Analista/Coordinador)
-      if (rangoSolicitante < 2.5 && departamento !== 'Mantenimiento') {
+      // Doble condición: Centro de Costo de Proyecto Y la gerencia debe ser estrictamente 'Operaciones'
+      if (rangoSolicitante < 2.5 && (departamento || '').trim() === 'Operaciones') {
         try {
           const { data: gProyectos } = await supabase
             .from('perfiles')
@@ -1301,7 +1302,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
           }
 
           // DETERMINAR SI TIENE GERENTE DE PROYECTO ASIGNADO
-          if (rangoSolicitante < 2.5 && departamento !== 'Mantenimiento') {
+          // Doble condición: Centro de Costo de Proyecto Y la gerencia debe ser estrictamente 'Operaciones'
+          if (rangoSolicitante < 2.5 && (departamento || '').trim() === 'Operaciones') {
             const { data: gProyectos } = await supabase
               .from('perfiles')
               .select('id')
@@ -1457,8 +1459,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
         .contains('obras_asignadas', [centroCosto])
         .ilike('rol', '%proyecto%');
 
-      // Solo verificamos Gerente de Proyecto si NO es del departamento de Mantenimiento (donde no existen)
-      if (departamento !== 'Mantenimiento' && gProyectos && gProyectos.length > 0) {
+      // Solo asignamos a Gerente de Proyecto si la gerencia del solicitante es estrictamente 'Operaciones'
+      if ((departamento || '').trim() === 'Operaciones' && gProyectos && gProyectos.length > 0) {
         nuevaReqBD.estado_aprobacion = 'pendiente_proyecto';
         nuevaReqBD.aprobacion_nombre = 'Pendiente por Proyecto';
       }
