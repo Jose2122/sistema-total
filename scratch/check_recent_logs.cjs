@@ -6,13 +6,14 @@ const supabase = createClient(process.env.VITE_SUPABASE_URL, process.env.VITE_SU
 async function check() {
   try {
     const { data, error } = await supabase
-      .from('perfiles')
-      .select('id, nombre, apellido, rol, departamento, activo')
-      .or('nombre.ilike.%Ricardo%,apellido.ilike.%Herrera%,apellido.ilike.%Enrique%');
+      .from('requisicion_logs')
+      .select('*')
+      .order('fecha', { ascending: false })
+      .limit(10);
     if (error) throw error;
-    console.log(JSON.stringify(data, null, 2));
+    console.log('RECENT LOGS:', JSON.stringify(data, null, 2));
   } catch (e) {
-    console.error(e.message);
+    console.error('Error:', e.message);
   }
 }
 check();

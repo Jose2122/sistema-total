@@ -61,6 +61,17 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
     "Seguridad": ["Xiomara Acevedo"],
     "Recursos Humanos": ["Ider Marín"],
     "Estimación": ["Karin Machado"],
+    "Estimacion": ["Karin Machado"],
+    "Estimación y Control": ["Karin Machado"],
+    "Estimacion y Control": ["Karin Machado"],
+    "Estimación y Control Interno": ["Karin Machado"],
+    "Estimacion y Control Interno": ["Karin Machado"],
+    "Estimaciones": ["Karin Machado"],
+    "Estimaciónes": ["Karin Machado"],
+    "Estimaciones y Control": ["Karin Machado"],
+    "Estimaciónes y Control": ["Karin Machado"],
+    "Estimaciones y Control Interno": ["Karin Machado"],
+    "Estimaciónes y Control Interno": ["Karin Machado"],
     "Almacén": ["Diana García"],
     "Servicios Generales": ["Luis Fallica"],
     "Administración Maracaibo": ["Perla Delgado"],
@@ -74,6 +85,10 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
   // --- LÓGICA DE SIGLAS GERENCIA ---
   const obtenerSiglas = (nombreGerencia) => {
     if (!nombreGerencia) return '---';
+    const norm = nombreGerencia.trim().toLowerCase();
+    if (norm.startsWith('estimac') || norm.startsWith('estimación')) {
+      return 'EST';
+    }
     const mappingGerencias = {
       "Administración Maracaibo": "ADM-MCB",
       "Administración El Tigre": "ADM-TGR",
@@ -83,7 +98,17 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       "SIAHO": "SHA",
       "Recursos Humanos": "RRH",
       "Estimación": "EST",
+      "Estimacion": "EST",
       "Estimación y Control": "EST",
+      "Estimacion y Control": "EST",
+      "Estimación y Control Interno": "EST",
+      "Estimacion y Control Interno": "EST",
+      "Estimaciones": "EST",
+      "Estimaciónes": "EST",
+      "Estimaciones y Control": "EST",
+      "Estimaciónes y Control": "EST",
+      "Estimaciones y Control Interno": "EST",
+      "Estimaciónes y Control Interno": "EST",
       "Almacén": "ALM",
       "Gerencia General": "GG",
       "Servicios Generales": "SVG",
@@ -119,6 +144,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
   const [filtroGerencia, setFiltroGerencia] = useState("Todos");
   const [filtroSemana, setFiltroSemana] = useState("");
   const [filtroStatus, setFiltroStatus] = useState("Todos");
+  const [quickFilter, setQuickFilter] = useState("SemanaActual");
   const [hasChanges, setHasChanges] = useState(false);
 
   // --- FUNCIÓN PARA ELIMINAR ---
@@ -243,6 +269,56 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
     "CMP": "Compras"
   };
 
+  // --- BASE HISTORIAL PARA CONTEO DE PILLS ---
+  const baseHistorial = useMemo(() => {
+    return historial.filter(h => {
+      const matchTexto =
+        h.id.toLowerCase().includes(busqueda.toLowerCase()) ||
+        h.responsable.toLowerCase().includes(busqueda.toLowerCase());
+      const matchGerencia = filtroGerencia === "Todos" || h.id.startsWith(filtroGerencia);
+      return matchTexto && matchGerencia;
+    });
+  }, [historial, busqueda, filtroGerencia]);
+
+  const counts = useMemo(() => {
+    const semAhora = getWeek(new Date(), { weekStartsOn: 1 });
+    const añoAhora = new Date().getFullYear();
+
+    let todos = 0;
+    let semanaActual = 0;
+    let pendientesAcumulados = 0;
+
+    baseHistorial.forEach(h => {
+      todos++;
+
+      let w = 0;
+      let y = 0;
+      if (h.fecha_operativa) {
+        const dateObj = new Date(h.fecha_operativa + 'T12:00:00');
+        w = getWeek(dateObj, { weekStartsOn: 1 });
+        y = dateObj.getFullYear();
+      } else {
+        const match = h.id?.match(/SEM\s+(\d+)/i) || h.id?.match(/SEMANA\s+(\d+)/i);
+        if (match) {
+          w = parseInt(match[1], 10);
+          const yearMatch = h.id?.match(/-\s+(\d{2})$/);
+          y = yearMatch ? 2000 + parseInt(yearMatch[1], 10) : new Date().getFullYear();
+        }
+      }
+
+      const isSemanaActual = (w === semAhora && y === añoAhora);
+      const isPagado = h.total_pagado >= h.total && h.total > 0;
+
+      if (isSemanaActual) {
+        semanaActual++;
+      } else if (!isPagado) {
+        pendientesAcumulados++;
+      }
+    });
+
+    return { todos, semanaActual, pendientesAcumulados };
+  }, [baseHistorial]);
+
   const historialFiltrado = historial.filter(h => {
     const matchTexto =
       h.id.toLowerCase().includes(busqueda.toLowerCase()) ||
@@ -261,7 +337,36 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       (filtroStatus === "Pagados" && isPagado) ||
       (filtroStatus === "Pendientes" && !isPagado);
 
-    return matchTexto && matchGerencia && matchSemana && matchStatus;
+    if (!matchTexto || !matchGerencia || !matchSemana || !matchStatus) return false;
+
+    // Filtro rápido de estrategia (Quick Filter)
+    const semAhora = getWeek(new Date(), { weekStartsOn: 1 });
+    const añoAhora = new Date().getFullYear();
+
+    let w = 0;
+    let y = 0;
+    if (h.fecha_operativa) {
+      const dateObj = new Date(h.fecha_operativa + 'T12:00:00');
+      w = getWeek(dateObj, { weekStartsOn: 1 });
+      y = dateObj.getFullYear();
+    } else {
+      const match = h.id?.match(/SEM\s+(\d+)/i) || h.id?.match(/SEMANA\s+(\d+)/i);
+      if (match) {
+        w = parseInt(match[1], 10);
+        const yearMatch = h.id?.match(/-\s+(\d{2})$/);
+        y = yearMatch ? 2000 + parseInt(yearMatch[1], 10) : new Date().getFullYear();
+      }
+    }
+
+    const isSemanaActual = (w === semAhora && y === añoAhora);
+
+    if (quickFilter === "SemanaActual") {
+      return isSemanaActual;
+    } else if (quickFilter === "PendientesAcumulados") {
+      return !isSemanaActual && !isPagado;
+    }
+
+    return true; // "Todos"
   });
 
   const obtenerSesionUsuario = async () => {
@@ -1977,7 +2082,12 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
 
           <select
             value={filtroSemana}
-            onChange={(e) => setFiltroSemana(e.target.value)}
+            onChange={(e) => {
+              setFiltroSemana(e.target.value);
+              if (e.target.value !== "") {
+                setQuickFilter("Todos");
+              }
+            }}
             style={{ flex: 0.8, padding: '10px', borderRadius: '10px', border: '1px solid #e2e8f0', fontSize: '13px', backgroundColor: 'white' }}
           >
             <option value="">Semana (Todas)</option>
@@ -1986,6 +2096,105 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
               return <option key={sem} value={sem}>Semana {sem}</option>;
             })}
           </select>
+        </div>
+
+        {/* PILLS DE FILTRADO ESTRATÉGICO RÁPIDO */}
+        <div style={{
+          display: 'flex',
+          gap: '12px',
+          marginBottom: '20px',
+          alignItems: 'center',
+          flexWrap: 'wrap'
+        }}>
+          <button
+            onClick={() => setQuickFilter("Todos")}
+            style={{
+              padding: '6px 14px',
+              borderRadius: '20px',
+              border: quickFilter === "Todos" ? '2px solid #3b82f6' : '1px solid #cbd5e1',
+              backgroundColor: quickFilter === "Todos" ? '#eff6ff' : 'white',
+              color: quickFilter === "Todos" ? '#1e40af' : '#475569',
+              fontWeight: 'bold',
+              fontSize: '12px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              transition: 'all 0.15s ease',
+              boxShadow: quickFilter === "Todos" ? '0 2px 6px rgba(59, 130, 246, 0.15)' : 'none'
+            }}
+          >
+            📁 Todos <span style={{
+              backgroundColor: quickFilter === "Todos" ? '#3b82f6' : '#f1f5f9',
+              color: quickFilter === "Todos" ? 'white' : '#475569',
+              padding: '1px 6px',
+              borderRadius: '8px',
+              fontSize: '10px',
+              fontWeight: '800'
+            }}>{counts.todos}</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setQuickFilter("SemanaActual");
+              setFiltroSemana(""); // Clear week dropdown so they don't conflict
+            }}
+            style={{
+              padding: '6px 14px',
+              borderRadius: '20px',
+              border: quickFilter === "SemanaActual" ? '2px solid #10b981' : '1px solid #cbd5e1',
+              backgroundColor: quickFilter === "SemanaActual" ? '#ecfdf5' : 'white',
+              color: quickFilter === "SemanaActual" ? '#065f46' : '#475569',
+              fontWeight: 'bold',
+              fontSize: '12px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              transition: 'all 0.15s ease',
+              boxShadow: quickFilter === "SemanaActual" ? '0 2px 6px rgba(16, 185, 129, 0.15)' : 'none'
+            }}
+          >
+            📅 Semana Actual <span style={{
+              backgroundColor: quickFilter === "SemanaActual" ? '#10b981' : '#f1f5f9',
+              color: quickFilter === "SemanaActual" ? 'white' : '#475569',
+              padding: '1px 6px',
+              borderRadius: '8px',
+              fontSize: '10px',
+              fontWeight: '800'
+            }}>{counts.semanaActual}</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setQuickFilter("PendientesAcumulados");
+              setFiltroSemana(""); // Clear week dropdown so they don't conflict
+            }}
+            style={{
+              padding: '6px 14px',
+              borderRadius: '20px',
+              border: quickFilter === "PendientesAcumulados" ? '2px solid #f43f5e' : '1px solid #fecdd3',
+              backgroundColor: quickFilter === "PendientesAcumulados" ? '#fff1f2' : 'white',
+              color: quickFilter === "PendientesAcumulados" ? '#9f1239' : '#b91c1c',
+              fontWeight: 'bold',
+              fontSize: '12px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              transition: 'all 0.15s ease',
+              boxShadow: quickFilter === "PendientesAcumulados" ? '0 2px 6px rgba(244, 63, 94, 0.15)' : 'none'
+            }}
+          >
+            ⚠️ Pendientes Acumulados <span style={{
+              backgroundColor: quickFilter === "PendientesAcumulados" ? '#f43f5e' : '#ffe4e6',
+              color: quickFilter === "PendientesAcumulados" ? 'white' : '#9f1239',
+              padding: '1px 6px',
+              borderRadius: '8px',
+              fontSize: '10px',
+              fontWeight: '800'
+            }}>{counts.pendientesAcumulados}</span>
+          </button>
         </div>
 
         <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>

@@ -56,12 +56,41 @@ const Compras = () => {
   const [comentarioRetraso, setComentarioRetraso] = useState('');
   const [expandirSoportes, setExpandirSoportes] = useState(false);
   const [preciosReferencia, setPreciosReferencia] = useState({}); // { descripcion: ultimoPrecio }
+  
+  // --- ANULACIÓN DE FILA ---
+  const [showAnulacionModal, setShowAnulacionModal] = useState(false);
+  const [itemParaAnular, setItemParaAnular] = useState(null);
+  const [motivoAnulacion, setMotivoAnulacion] = useState('');
+  const [comentarioAnulacion, setComentarioAnulacion] = useState('');
 
   // --- SLA & POSTERGACIÓN ---
   const [showPostergarModal, setShowPostergarModal] = useState(false);
   const [motivoPostergacion, setMotivoPostergacion] = useState('');
   const [motivoCategoria, setMotivoCategoria] = useState('');
   const [comentarioPostergacion, setComentarioPostergacion] = useState('');
+
+  // --- ASIGNACIÓN DE COMPRAS ---
+  const [analistas, setAnalistas] = useState([]);
+  const [filtroAnalista, setFiltroAnalista] = useState('Todos');
+  const [verSoloMisAsignadas, setVerSoloMisAsignadas] = useState(true);
+  const [loadingAsignacion, setLoadingAsignacion] = useState(false);
+
+  // --- ROLES & PERMISOS COMPUTADOS ---
+  const rolUpperFinal = (currentUser?.rol || '').toUpperCase();
+  const deptoUpperFinal = (currentUser?.departamento || '').toUpperCase();
+
+  const esDeCompras = deptoUpperFinal.includes('COMPRAS') ||
+    deptoUpperFinal.includes('ADMINISTRACIÓN') ||
+    !!currentUser?.esAdminReal ||
+    rolUpperFinal === 'GERENTE GENERAL' ||
+    rolUpperFinal === 'ADMIN';
+
+  const esGerenteDeCompras = 
+    (rolUpperFinal === 'GERENTE' && deptoUpperFinal.includes('COMPRAS')) ||
+    (currentUser?.nombre === 'Ricardo' && currentUser?.apellido === 'Herrera') ||
+    !!currentUser?.esAdminReal ||
+    rolUpperFinal === 'GERENTE GENERAL' ||
+    rolUpperFinal === 'ADMIN';
 
   const obtenerSesionUsuario = useCallback(async () => {
     const { data: { session } } = await supabase.auth.getSession();
@@ -113,10 +142,72 @@ const Compras = () => {
     if (!error) setProveedores(data);
   }, []);
 
+  const cargarAnalistasCompras = useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from('perfiles')
+        .select('id, nombre, apellido, rol, departamento')
+        .eq('activo', true)
+        .eq('departamento', 'Compras');
+      if (error) throw error;
+      setAnalistas(data || []);
+    } catch (err) {
+      console.error("Error cargando analistas:", err.message);
+    }
+  }, []);
+
+  const ejecutarAsignacion = async (reqId, analistaId, analistaNombre) => {
+    setLoadingAsignacion(true);
+    try {
+      const { error } = await supabase
+        .from('requisiciones')
+        .update({
+          asignado_a: analistaId || null,
+          asignado_nombre: analistaNombre || null
+        })
+        .eq('id', reqId);
+
+      if (error) throw error;
+
+      // Registrar en logs de auditoría
+      const nombreUsuario = `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim() || 'Gerente';
+      await supabase.from('requisicion_logs').insert({
+        requisicion_id: reqId,
+        usuario_id: currentUser?.id || null,
+        usuario_nombre: nombreUsuario,
+        accion: 'ASIGNACION',
+        comentario: analistaNombre
+          ? `Requisición asignada a ${analistaNombre} por ${nombreUsuario}`
+          : `Requisición desasignada (devuelta a cola) por ${nombreUsuario}`
+      });
+
+      // Actualizar el historial localmente
+      setHistorial(prev =>
+        prev.map(r =>
+          r.id === reqId
+            ? { ...r, asignado_a: analistaId, asignado_nombre: analistaNombre }
+            : r
+        )
+      );
+
+      toast.success(
+        analistaNombre
+          ? `Requisición asignada a ${analistaNombre}`
+          : "Requisición devuelta a la cola (sin asignar)"
+      );
+    } catch (err) {
+      console.error("Error al asignar requisición:", err.message);
+      toast.error("Error al asignar: " + err.message);
+    } finally {
+      setLoadingAsignacion(false);
+    }
+  };
+
   useEffect(() => { obtenerSesionUsuario(); }, [obtenerSesionUsuario]);
   useEffect(() => {
     cargarRequisicionesAprobadas();
     cargarProveedores();
+    cargarAnalistasCompras();
 
     const channel = supabase
       .channel('compras_realtime')
@@ -125,6 +216,11 @@ const Compras = () => {
           if (req.id === payload.new.id) {
             return {
               ...req,
+              ...payload.new,
+              correlativo: payload.new.correlativo_req,
+              total: payload.new.total_bs,
+              detalles: payload.new.items,
+              fecha: payload.new.fecha_emision ? payload.new.fecha_emision.split('T')[0] : '',
               observaciones: payload.new.observaciones || '',
               facturas_url: payload.new.facturas_url || []
             };
@@ -137,7 +233,7 @@ const Compras = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [cargarRequisicionesAprobadas, cargarProveedores]);
+  }, [cargarRequisicionesAprobadas, cargarProveedores, cargarAnalistasCompras]);
 
   const historialFiltrado = useMemo(() => {
     return historial.filter(req => {
@@ -149,9 +245,21 @@ const Compras = () => {
       const matchCC = filtroCentroCosto === 'Todos' || req.centro_costo === filtroCentroCosto;
       const matchCat = filtroCategoria === 'Todos' || (req.items || []).some(it => it.categoria === filtroCategoria);
 
-      return matchTexto && matchGerencia && matchStatus && matchCC && matchCat;
+      // Filtro por analista seleccionado en la barra
+      const matchAnalista =
+        filtroAnalista === 'Todos' ||
+        (filtroAnalista === 'Sin Asignar' && !req.asignado_a) ||
+        req.asignado_a === filtroAnalista;
+
+      // Filtro para analistas: solo ver sus asignaciones si el toggle está activo
+      const matchMisAsignadas =
+        !verSoloMisAsignadas ||
+        esGerenteDeCompras || // El gerente ve todo
+        req.asignado_a === currentUser?.id;
+
+      return matchTexto && matchGerencia && matchStatus && matchCC && matchCat && matchAnalista && matchMisAsignadas;
     });
-  }, [historial, busqueda, filtroGerencia, filtroStatusCompra, filtroCentroCosto, filtroCategoria]);
+  }, [historial, busqueda, filtroGerencia, filtroStatusCompra, filtroCentroCosto, filtroCategoria, filtroAnalista, verSoloMisAsignadas, esGerenteDeCompras, currentUser]);
 
   const abrirProcesamiento = async (req) => {
     setRequisicionActiva(req);
@@ -170,17 +278,17 @@ const Compras = () => {
       setHistorial(prev => prev.map(h => h.id === req.id ? { ...h, leido_compras_at: req.leido_compras_at } : h));
     }
 
-    // Inicializar campos de control para compras fraccionadas si no existen
     const renglonesIniciados = (req.detalles || []).map(item => {
       const cantidad_pedida = item.cantidad_pedida || item.cant || 0;
       const cantidad_comprada = item.cantidad_comprada || 0;
-      const cantidad_pendiente = Math.max(0, cantidad_pedida - cantidad_comprada);
+      const cantidad_pendiente = item.anulado ? 0 : Math.max(0, cantidad_pedida - cantidad_comprada);
 
       return {
         ...item,
         cantidad_pedida,
         cantidad_comprada,
         cantidad_pendiente,
+        anulado: item.anulado || false,
         historial_compras: item.historial_compras || [],
         compra_actual_cant: 0,
         compra_actual_pu: item.pu || 0, // Iniciamos con el último PU sugerido
@@ -362,40 +470,120 @@ const Compras = () => {
   };
 
   const ejecutarEliminacionHistorial = async (idRenglon, indexHistorial) => {
-    const renglonesActualizados = renglones.map(r => {
-      if (r.id === idRenglon) {
-        const entrada = r.historial_compras[indexHistorial];
-        let nuevaCantComprada = r.cantidad_comprada;
-        let nuevaCantPendiente = r.cantidad_pendiente;
-
-        if (entrada.tipo !== 'JUSTIFICACION') {
-          nuevaCantComprada -= (entrada.cant || 0);
-          nuevaCantPendiente += (entrada.cant || 0);
-        }
-
-        const nuevoHistorial = [...r.historial_compras];
-        nuevoHistorial.splice(indexHistorial, 1);
-
-        return {
-          ...r,
-          cantidad_comprada: Math.max(0, nuevaCantComprada),
-          cantidad_pendiente: Math.max(0, nuevaCantPendiente),
-          historial_compras: nuevoHistorial,
-          status: nuevaCantComprada === 0 ? 'En Espera' : 'Parcial'
-        };
-      }
-      return r;
-    });
-
-    setRenglones(renglonesActualizados);
+    setLoading(true);
     try {
-      await supabase
+      const renglonesActualizados = renglones.map(r => {
+        if (r.id === idRenglon) {
+          const entrada = r.historial_compras[indexHistorial];
+          let nuevaCantComprada = r.cantidad_comprada;
+          let nuevaCantPendiente = r.cantidad_pendiente;
+          let esAnulado = r.anulado || false;
+
+          if (entrada.tipo === 'ANULACION') {
+            esAnulado = false;
+            nuevaCantPendiente = Math.max(0, r.cantidad_pedida - nuevaCantComprada);
+          } else if (entrada.tipo !== 'JUSTIFICACION') {
+            nuevaCantComprada -= (entrada.cant || 0);
+            if (!esAnulado) {
+              nuevaCantPendiente = Math.max(0, r.cantidad_pedida - nuevaCantComprada);
+            }
+          }
+
+          const nuevoHistorial = [...r.historial_compras];
+          nuevoHistorial.splice(indexHistorial, 1);
+
+          let nuevoStatus = r.status;
+          if (esAnulado) {
+            nuevoStatus = 'Completado';
+          } else {
+            nuevoStatus = nuevaCantComprada === 0 ? 'En Espera' : (nuevaCantPendiente === 0 ? 'Completado' : 'Parcial');
+          }
+
+          return {
+            ...r,
+            anulado: esAnulado,
+            cantidad_comprada: Math.max(0, nuevaCantComprada),
+            cantidad_pendiente: Math.max(0, nuevaCantPendiente),
+            historial_compras: nuevoHistorial,
+            status: nuevoStatus
+          };
+        }
+        return r;
+      });
+
+      // Recalcular Totales de la Requisición
+      const totalDinamicoReal = renglonesActualizados.reduce((acc, r) => {
+        const ejecutadoItem = (r.historial_compras || []).reduce((sum, t) => {
+          if (t.tipo === 'JUSTIFICACION' || t.tipo === 'ANULACION') return sum;
+          return sum + ((Number(t.cant) || 0) * (Number(t.pu) || 0));
+        }, 0);
+        const estimadoPendiente = (Number(r.cantidad_pendiente) || 0) * Number(r.pu_estimado || r.pu || 0);
+        return acc + ejecutadoItem + estimadoPendiente;
+      }, 0);
+
+      const totalEjecutadoReal = renglonesActualizados.reduce((acc, r) => {
+        const ejecutadoItem = (r.historial_compras || []).reduce((sum, t) => {
+          if (t.tipo === 'JUSTIFICACION' || t.tipo === 'ANULACION') return sum;
+          return sum + ((Number(t.cant) || 0) * (Number(t.pu) || 0));
+        }, 0);
+        return acc + ejecutadoItem;
+      }, 0);
+
+      const totalConIVA = totalDinamicoReal * 1.16;
+      const ejecutadoConIVA = totalEjecutadoReal * 1.16;
+
+      // Determinar si toda la requisición quedó completa después de esto
+      const algunoComprado = renglonesActualizados.some(r => (r.cantidad_comprada || 0) > 0);
+      const todasCompletas = renglonesActualizados.every(r => r.cantidad_pendiente === 0);
+
+      let nuevoStatusCompra = requisicionActiva.status_compra || 'En espera';
+      if (todasCompletas) nuevoStatusCompra = 'Completado';
+      else if (algunoComprado) nuevoStatusCompra = 'Parcial';
+      else nuevoStatusCompra = 'En espera';
+
+      const updatePayload = {
+        items: renglonesActualizados,
+        total_bs: totalConIVA,
+        total_ejecutado: ejecutadoConIVA,
+        status_compra: nuevoStatusCompra
+      };
+
+      if (nuevoStatusCompra === 'Completado' || nuevoStatusCompra === 'COMPLETADO') {
+        updatePayload.f_finalizado = new Date().toISOString();
+      } else {
+        updatePayload.f_finalizado = null; // Restaurar si se reabre
+      }
+
+      const { error } = await supabase
         .from('requisiciones')
-        .update({ items: renglonesActualizados })
+        .update(updatePayload)
         .eq('id', editandoId);
+
+      if (error) throw error;
+
+      setRenglones(renglonesActualizados);
+      setRequisicionActiva(prev => ({ 
+        ...prev, 
+        items: renglonesActualizados,
+        status_compra: nuevoStatusCompra,
+        f_finalizado: nuevoStatusCompra === 'Completado' ? updatePayload.f_finalizado : null
+      }));
+
+      // Sincronizar con el historial en la lista principal
+      setHistorial(prev => prev.map(h => h.id === editandoId ? {
+        ...h,
+        items: renglonesActualizados,
+        detalles: renglonesActualizados,
+        status_compra: nuevoStatusCompra,
+        f_finalizado: nuevoStatusCompra === 'Completado' ? updatePayload.f_finalizado : null
+      } : h));
+
+      await actualizarTotalesSolicitud(editandoId);
       toast.success("Entrada eliminada y saldos restaurados.");
     } catch (err) {
-      toast.error("Error al persistir eliminación: " + err.message);
+      toast.error("Error al eliminar entrada del historial: " + err.message);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -976,6 +1164,16 @@ const Compras = () => {
         .select();
       if (error) throw error;
 
+      // Registrar en logs de auditoría
+      const nombreUsuario = `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim() || 'Compras';
+      await supabase.from('requisicion_logs').insert({
+        requisicion_id: editandoId,
+        usuario_id: currentUser?.id || null,
+        usuario_nombre: nombreUsuario,
+        accion: 'OBSERVACION',
+        comentario: `Observación registrada: "${obsTemporal}"`
+      });
+
       // NOTIFICAR AL SOLICITANTE
       if (requisicionActiva?.user_id) {
         await enviarNotificacion(requisicionActiva.user_id, `Compras dejó una observación en tu REQ ${requisicionActiva.correlativo}`, 'Observación');
@@ -1043,6 +1241,116 @@ const Compras = () => {
       setLoading(false);
     }
   };
+
+  const ejecutarAnulacionFila = async () => {
+    if (!motivoAnulacion || !comentarioAnulacion) return toast.error("Por favor complete el motivo y el comentario de la anulación.");
+
+    setLoading(true);
+    try {
+      const nuevaAnulacion = {
+        fecha: new Date().toISOString(),
+        tipo: 'ANULACION',
+        motivo: motivoAnulacion,
+        comentario: comentarioAnulacion,
+        cant: itemParaAnular.cantidad_pendiente,
+        usuario_id: currentUser?.id,
+        usuario_nombre: `${currentUser?.nombre} ${currentUser?.apellido}`
+      };
+
+      const renglonesActualizados = renglones.map(r => {
+        if (r.id === itemParaAnular.id) {
+          return {
+            ...r,
+            anulado: true,
+            cantidad_pendiente: 0,
+            status: 'Completado',
+            historial_compras: [...(r.historial_compras || []), nuevaAnulacion]
+          };
+        }
+        return r;
+      });
+
+      // Recalcular Totales de la Requisición
+      const totalDinamicoReal = renglonesActualizados.reduce((acc, r) => {
+        const ejecutadoItem = (r.historial_compras || []).reduce((sum, t) => {
+          if (t.tipo === 'JUSTIFICACION' || t.tipo === 'ANULACION') return sum;
+          return sum + ((Number(t.cant) || 0) * (Number(t.pu) || 0));
+        }, 0);
+        const estimadoPendiente = (Number(r.cantidad_pendiente) || 0) * Number(r.pu_estimado || r.pu || 0);
+        return acc + ejecutadoItem + estimadoPendiente;
+      }, 0);
+
+      const totalEjecutadoReal = renglonesActualizados.reduce((acc, r) => {
+        const ejecutadoItem = (r.historial_compras || []).reduce((sum, t) => {
+          if (t.tipo === 'JUSTIFICACION' || t.tipo === 'ANULACION') return sum;
+          return sum + ((Number(t.cant) || 0) * (Number(t.pu) || 0));
+        }, 0);
+        return acc + ejecutadoItem;
+      }, 0);
+
+      const totalConIVA = totalDinamicoReal * 1.16;
+      const ejecutadoConIVA = totalEjecutadoReal * 1.16;
+
+      // Determinar si toda la requisición quedó completa después de esto
+      const algunoComprado = renglonesActualizados.some(r => (r.cantidad_comprada || 0) > 0);
+      const todasCompletas = renglonesActualizados.every(r => r.cantidad_pendiente === 0);
+
+      let nuevoStatusCompra = requisicionActiva.status_compra || 'En espera';
+      if (todasCompletas) nuevoStatusCompra = 'Completado';
+      else if (algunoComprado) nuevoStatusCompra = 'Parcial';
+
+      const updatePayload = {
+        items: renglonesActualizados,
+        total_bs: totalConIVA,
+        total_ejecutado: ejecutadoConIVA,
+        status_compra: nuevoStatusCompra
+      };
+
+      if (nuevoStatusCompra === 'Completado' || nuevoStatusCompra === 'COMPLETADO') {
+        updatePayload.f_finalizado = new Date().toISOString();
+      }
+
+      const { error } = await supabase
+        .from('requisiciones')
+        .update(updatePayload)
+        .eq('id', editandoId);
+
+      if (error) throw error;
+
+      setRenglones(renglonesActualizados);
+      setRequisicionActiva(prev => ({ 
+        ...prev, 
+        items: renglonesActualizados,
+        status_compra: nuevoStatusCompra,
+        f_finalizado: nuevoStatusCompra === 'Completado' ? updatePayload.f_finalizado : prev.f_finalizado
+      }));
+
+      // Sincronizar con el historial en la lista principal
+      setHistorial(prev => prev.map(h => h.id === editandoId ? {
+        ...h,
+        items: renglonesActualizados,
+        detalles: renglonesActualizados,
+        status_compra: nuevoStatusCompra,
+        f_finalizado: nuevoStatusCompra === 'Completado' ? updatePayload.f_finalizado : h.f_finalizado
+      } : h));
+
+      await actualizarTotalesSolicitud(editandoId);
+
+      setShowAnulacionModal(false);
+      setMotivoAnulacion('');
+      setComentarioAnulacion('');
+      toast.success("Renglón anulado / dejado sin efecto.");
+
+      if (todasCompletas && requisicionActiva?.user_id) {
+        await enviarNotificacion(requisicionActiva.user_id, `¡Tu Requisición ${requisicionActiva.correlativo} ha sido COMPLETADA! Todos los ítems fueron procesados o anulados.`, 'Compra Lista');
+      }
+    } catch (err) {
+      toast.error("Error al anular renglón: " + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const intentarCerrarModal = () => {
     const hayCambios = renglones.some(r => r.hasChanges);
     if (hayCambios) {
@@ -1112,14 +1420,16 @@ const Compras = () => {
           } : null;
 
           const nuevaCantComprada = (r.cantidad_comprada || 0) + (r.compra_actual_cant || 0);
-          const nuevaCantPendiente = Math.max(0, r.cantidad_pedida - nuevaCantComprada);
+          const nuevaCantPendiente = r.anulado ? 0 : Math.max(0, r.cantidad_pedida - nuevaCantComprada);
 
           let nuevoStatus = r.status;
-          if (nuevaCantPendiente === 0) nuevoStatus = 'Completado';
+          if (r.anulado) nuevoStatus = 'Completado';
+          else if (nuevaCantPendiente === 0) nuevoStatus = 'Completado';
           else if (nuevaCantComprada > 0) nuevoStatus = 'Parcial';
 
           return {
             ...r,
+            anulado: r.anulado || false,
             cantidad_comprada: nuevaCantComprada,
             cantidad_pendiente: nuevaCantPendiente,
             historial_compras: nuevaTransaccion ? [...(r.historial_compras || []), nuevaTransaccion] : (r.historial_compras || []),
@@ -1145,7 +1455,7 @@ const Compras = () => {
 
       const totalDinamicoReal = renglonesProcesados.reduce((acc, r) => {
         const ejecutadoItem = (r.historial_compras || []).reduce((sum, t) => {
-          if (t.tipo === 'JUSTIFICACION') return sum;
+          if (t.tipo === 'JUSTIFICACION' || t.tipo === 'ANULACION') return sum;
           return sum + ((Number(t.cant) || 0) * (Number(t.pu) || 0));
         }, 0);
         const estimadoPendiente = (Number(r.cantidad_pendiente ?? r.cant) || 0) * Number(r.pu_estimado || r.pu || 0);
@@ -1154,7 +1464,7 @@ const Compras = () => {
 
       const totalEjecutadoReal = renglonesProcesados.reduce((acc, r) => {
         const ejecutadoItem = (r.historial_compras || []).reduce((sum, t) => {
-          if (t.tipo === 'JUSTIFICACION') return sum;
+          if (t.tipo === 'JUSTIFICACION' || t.tipo === 'ANULACION') return sum;
           return sum + ((Number(t.cant) || 0) * (Number(t.pu) || 0));
         }, 0);
         return acc + ejecutadoItem;
@@ -1241,14 +1551,6 @@ const Compras = () => {
   };
 
   // --- RESTRICCIÓN DE ACCESO (VISTA) ---
-  const rolUpperFinal = (currentUser?.rol || '').toUpperCase();
-  const deptoUpperFinal = (currentUser?.departamento || '').toUpperCase();
-
-  const esDeCompras = deptoUpperFinal.includes('COMPRAS') ||
-    deptoUpperFinal.includes('ADMINISTRACIÓN') ||
-    currentUser?.esAdminReal ||
-    rolUpperFinal === 'GERENTE GENERAL' ||
-    rolUpperFinal === 'ADMIN';
 
   if (!esDeCompras && currentUser) {
     return <div style={{ padding: '40px', textAlign: 'center' }}>No tiene permisos para acceder al módulo de Compras.</div>;
@@ -1345,6 +1647,46 @@ const Compras = () => {
             <option value="Todos">Gerencia</option>
             {gerenciasUnicas.filter(g => g !== 'Todos').map(g => <option key={g} value={g}>{g}</option>)}
           </select>
+
+          {esGerenteDeCompras && (
+            <select
+              className="input-tc"
+              style={{ width: '180px', margin: 0, backgroundColor: '#f0fdf4', color: '#15803d', fontWeight: 'bold' }}
+              value={filtroAnalista}
+              onChange={(e) => setFiltroAnalista(e.target.value)}
+            >
+              <option value="Todos">👤 Todos los Analistas</option>
+              <option value="Sin Asignar">⚠️ Sin Asignar</option>
+              {analistas.map(a => (
+                <option key={a.id} value={a.id}>
+                  👤 {a.nombre} {a.apellido}
+                </option>
+              ))}
+            </select>
+          )}
+
+          {!esGerenteDeCompras && esDeCompras && (
+            <button
+              onClick={() => setVerSoloMisAsignadas(prev => !prev)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '6px 12px',
+                borderRadius: '8px',
+                border: '1px solid #cbd5e1',
+                backgroundColor: verSoloMisAsignadas ? '#e0f2fe' : 'white',
+                color: verSoloMisAsignadas ? '#0369a1' : '#475569',
+                fontSize: '0.8rem',
+                fontWeight: 'bold',
+                cursor: 'pointer',
+                transition: 'all 0.2s ease',
+                boxShadow: verSoloMisAsignadas ? '0 1px 2px rgba(14, 165, 233, 0.15)' : 'none'
+              }}
+            >
+              {verSoloMisAsignadas ? '👤 Ver Solo Mis Asignaciones' : '👥 Ver Todas'}
+            </button>
+          )}
         </div>
       </div>
 
@@ -1359,12 +1701,13 @@ const Compras = () => {
               <th style={{ textAlign: 'center', width: '120px', padding: '12px 15px' }}>PRIORIDAD</th>
               <th style={{ textAlign: 'center', width: '130px', padding: '12px 15px' }}>SLA / TIEMPO</th>
               <th style={{ textAlign: 'right', padding: '12px 15px' }}>TOTAL $</th>
+              <th style={{ textAlign: 'center', width: '160px', padding: '12px 15px' }}>RESPONSABLE</th>
               <th style={{ textAlign: 'center', width: '140px', padding: '12px 15px' }}>ESTATUS</th>
             </tr>
           </thead>
           <tbody>
             {(loading && historial.length === 0) ? (
-              <tr><td colSpan="9" style={{ textAlign: 'center', padding: '30px' }}><Loader2 className="animate-spin" /> Cargando...</td></tr>
+              <tr><td colSpan="10" style={{ textAlign: 'center', padding: '30px' }}><Loader2 className="animate-spin" /> Cargando...</td></tr>
             ) : historialFiltrado.map(req => (
               <tr key={req.id} className="hover:bg-slate-50 transition-colors" style={{ borderBottom: '1px solid #f1f5f9' }}>
                 <td
@@ -1479,6 +1822,82 @@ const Compras = () => {
                 </td>
                 <td style={{ textAlign: 'right', fontWeight: 'bold', color: '#1e293b', padding: '8px 15px' }}>
                   $ {(req.total || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                </td>
+                <td style={{ textAlign: 'center', padding: '8px 15px' }}>
+                  {esGerenteDeCompras ? (
+                    <select
+                      className="input-tc"
+                      disabled={loadingAsignacion}
+                      style={{
+                        width: '100%',
+                        margin: 0,
+                        padding: '4px 8px',
+                        fontSize: '0.8rem',
+                        fontWeight: '700',
+                        borderRadius: '8px',
+                        border: '1px solid #cbd5e1',
+                        backgroundColor: req.asignado_a ? '#f0fdf4' : '#fffbeb',
+                        color: req.asignado_a ? '#15803d' : '#b45309',
+                        cursor: 'pointer',
+                        boxShadow: '0 1px 2px rgba(0,0,0,0.02)'
+                      }}
+                      value={req.asignado_a || ''}
+                      onChange={(e) => {
+                        const selectedId = e.target.value;
+                        const selectedAnalista = analistas.find(a => a.id === selectedId);
+                        const selectedName = selectedAnalista ? `${selectedAnalista.nombre} ${selectedAnalista.apellido}` : '';
+                        ejecutarAsignacion(req.id, selectedId || null, selectedName || null);
+                      }}
+                    >
+                      <option value="" style={{ color: '#ef4444', fontWeight: 'bold' }}>⚠️ Sin Asignar</option>
+                      {analistas.map(a => {
+                        const workload = historial.filter(r => r.asignado_a === a.id && r.status_compra !== 'Completado').length;
+                        const isSuggested = (req.items || []).some(it => {
+                          const cat = it.categoria?.toLowerCase() || '';
+                          const name = a.nombre.toLowerCase();
+                          if (name.includes('marilyn') && cat.includes('almacen')) return true;
+                          if (name.includes('ricardo') && (cat.includes('compras') || cat.includes('tecnologia') || cat.includes('ferreteria'))) return true;
+                          return false;
+                        });
+
+                        return (
+                          <option key={a.id} value={a.id} style={{ color: '#1e293b' }}>
+                            👤 {a.nombre} {a.apellido} ({workload} act) {isSuggested ? '💡' : ''}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  ) : (
+                    <div>
+                      {req.asignado_a ? (
+                        <span style={{
+                          backgroundColor: req.asignado_a === currentUser?.id ? '#dcfce7' : '#f1f5f9',
+                          color: req.asignado_a === currentUser?.id ? '#15803d' : '#475569',
+                          padding: '4px 10px',
+                          borderRadius: '20px',
+                          fontSize: '0.75rem',
+                          fontWeight: '800',
+                          display: 'inline-block',
+                          border: req.asignado_a === currentUser?.id ? '1px solid #bbf7d0' : '1px solid #e2e8f0'
+                        }}>
+                          👤 {req.asignado_a === currentUser?.id ? 'Mi Asignación' : (req.asignado_nombre || 'Asignado')}
+                        </span>
+                      ) : (
+                        <span style={{
+                          backgroundColor: '#fffbeb',
+                          color: '#b45309',
+                          padding: '4px 10px',
+                          borderRadius: '20px',
+                          fontSize: '0.7rem',
+                          fontWeight: '900',
+                          display: 'inline-block',
+                          border: '1px solid #fef3c7'
+                        }}>
+                          ⚠️ SIN ASIGNAR
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </td>
                 <td style={{ textAlign: 'center', padding: '8px 15px' }}>
                   {(() => {
@@ -1761,13 +2180,14 @@ const Compras = () => {
                   {renglones.map((f, i) => (
                     <React.Fragment key={f.id}>
                       <tr style={{
-                        backgroundColor: (Number(f.cantidad_comprada || 0) + Number(f.compra_actual_cant || 0)) >= Number(f.cantidad_pedida) ? '#f0fdf4' : 'transparent',
-                        borderLeft: (Number(f.cantidad_comprada || 0) + Number(f.compra_actual_cant || 0)) >= Number(f.cantidad_pedida) ? '4px solid #16a34a' : 'none',
+                        backgroundColor: f.anulado ? '#f8fafc' : ((Number(f.cantidad_comprada || 0) + Number(f.compra_actual_cant || 0)) >= Number(f.cantidad_pedida) ? '#f0fdf4' : 'transparent'),
+                        borderLeft: f.anulado ? '4px solid #ef4444' : ((Number(f.cantidad_comprada || 0) + Number(f.compra_actual_cant || 0)) >= Number(f.cantidad_pedida) ? '4px solid #16a34a' : 'none'),
+                        opacity: f.anulado ? 0.75 : 1,
                         transition: 'all 0.3s ease'
                       }}>
                         <td style={{ fontWeight: 'bold' }}>{i + 1}</td>
                         <td style={{ verticalAlign: 'middle' }}>
-                          <div style={{ fontWeight: 'bold', color: '#1e293b', fontSize: '0.9rem' }}>{f.descripcion}</div>
+                          <div style={{ fontWeight: 'bold', color: '#1e293b', fontSize: '0.9rem', textDecoration: f.anulado ? 'line-through' : 'none' }}>{f.descripcion}</div>
                           <div style={{ fontSize: '10px', color: '#64748b', fontWeight: '600' }}>{f.categoria}</div>
                         </td>
                         <td style={{ textAlign: 'center', fontWeight: '650', color: '#64748b' }}>{f.cantidad_pedida}</td>
@@ -1806,6 +2226,7 @@ const Compras = () => {
                                   onKeyDown={(e) => handleKeyDown(e, f.id, 'doc_numero')}
                                   ref={el => { if (!inputRefs.current[f.id]) inputRefs.current[f.id] = {}; inputRefs.current[f.id].doc_numero = el; }}
                                   placeholder="000"
+                                  disabled={f.cantidad_pendiente === 0 || f.anulado}
                                 />
                               </div>
                             </div>
@@ -1819,7 +2240,7 @@ const Compras = () => {
                                   onChange={(e) => actualizarFila(f.id, 'proveedor_seleccionado_id', Number(e.target.value))}
                                   onKeyDown={(e) => handleKeyDown(e, f.id, 'proveedor')}
                                   ref={el => { if (!inputRefs.current[f.id]) inputRefs.current[f.id] = {}; inputRefs.current[f.id].proveedor = el; }}
-                                  disabled={f.cantidad_pendiente === 0}
+                                  disabled={f.cantidad_pendiente === 0 || f.anulado}
                                 >
                                   <option value="">Proveedor</option>
                                   {proveedores.map(p => <option key={p.id} value={p.id}>{p.razon_social}</option>)}
@@ -1829,6 +2250,7 @@ const Compras = () => {
                                   style={{ width: '65px', fontSize: '10px', padding: '2px', height: '32px', border: '1px solid #cbd5e1', fontWeight: '800' }}
                                   value={f.metodo_pago_actual || '$ / BS'}
                                   onChange={(e) => actualizarFila(f.id, 'metodo_pago_actual', e.target.value)}
+                                  disabled={f.cantidad_pendiente === 0 || f.anulado}
                                 >
                                   <option value="$ / BS">$ / BS</option>
                                   <option value="$ / $">$ / $</option>
@@ -1845,7 +2267,7 @@ const Compras = () => {
                               className="input-tc focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
                               type="number"
                               value={f.compra_actual_cant === 0 && f.compra_actual_cant !== '' ? '' : f.compra_actual_cant}
-                              disabled={f.cantidad_pendiente === 0}
+                              disabled={f.cantidad_pendiente === 0 || f.anulado}
                               style={{
                                 textAlign: 'right',
                                 fontWeight: '900',
@@ -1870,7 +2292,7 @@ const Compras = () => {
                                 className="input-tc focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
                                 type="number"
                                 value={f.compra_actual_pu === 0 && f.compra_actual_pu !== '' ? '' : f.compra_actual_pu}
-                                disabled={f.cantidad_pendiente === 0}
+                                disabled={f.cantidad_pendiente === 0 || f.anulado}
                                 style={{
                                   textAlign: 'right',
                                   fontWeight: '900',
@@ -1895,7 +2317,15 @@ const Compras = () => {
 
                         <td style={{ textAlign: 'right', fontWeight: '900', color: '#0f172a', fontSize: '1rem' }}>
                           $ {f.total?.toLocaleString('de-DE')}
-                          {(Number(f.cantidad_comprada || 0) + Number(f.compra_actual_cant || 0)) >= Number(f.cantidad_pedida) ? (
+                          {f.anulado ? (
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '2px', marginTop: '4px' }}>
+                              {f.cantidad_comprada > 0 ? (
+                                <span style={{ fontSize: '9px', color: '#0891b2', fontWeight: '900', backgroundColor: '#ecfeff', padding: '2px 6px', borderRadius: '4px' }}>SATISFECHO PARCIAL</span>
+                              ) : (
+                                <span style={{ fontSize: '9px', color: '#ef4444', fontWeight: '900', backgroundColor: '#fee2e2', padding: '2px 6px', borderRadius: '4px' }}>🚫 SIN EFECTO</span>
+                              )}
+                            </div>
+                          ) : (Number(f.cantidad_comprada || 0) + Number(f.compra_actual_cant || 0)) >= Number(f.cantidad_pedida) ? (
                             <div style={{ fontSize: '9px', color: '#14532d', fontWeight: '900' }}>COMPLETO ✓</div>
                           ) : (Number(f.cantidad_comprada || 0) + Number(f.compra_actual_cant || 0)) > 0 ? (
                             <div style={{ fontSize: '9px', color: '#f97316', fontWeight: '900' }}>PARCIAL</div>
@@ -1905,11 +2335,12 @@ const Compras = () => {
                         <td style={{ textAlign: 'center' }}>
                           {(() => {
                             const isEnAlmacen = f.enviado_almacen || (f.historial_compras?.length > 0 && f.historial_compras.every(h => h.enviado_almacen));
+                            const disableAlmacen = f.anulado && (f.cantidad_comprada || 0) === 0;
                             return (
                               <div
-                                onClick={() => toggleAlmacen(f.id, !isEnAlmacen)}
+                                onClick={() => { if (!disableAlmacen) toggleAlmacen(f.id, !isEnAlmacen); }}
                                 style={{
-                                  cursor: 'pointer',
+                                  cursor: disableAlmacen ? 'not-allowed' : 'pointer',
                                   display: 'inline-flex',
                                   alignItems: 'center',
                                   justifyContent: 'center',
@@ -1921,9 +2352,10 @@ const Compras = () => {
                                   borderColor: isEnAlmacen ? '#0ea5e9' : '#e2e8f0',
                                   color: isEnAlmacen ? '#0369a1' : '#94a3b8',
                                   transition: 'all 0.2s',
-                                  fontSize: '1.1rem'
+                                  fontSize: '1.1rem',
+                                  opacity: disableAlmacen ? 0.3 : 1
                                 }}
-                                title={isEnAlmacen ? 'Registrado en Almacén' : 'Marcar como enviado a Almacén'}
+                                title={disableAlmacen ? 'Renglón sin efecto' : (isEnAlmacen ? 'Registrado en Almacén' : 'Marcar como enviado a Almacén')}
                               >
                                 {isEnAlmacen ? '📦' : '📥'}
                               </div>
@@ -1946,6 +2378,18 @@ const Compras = () => {
                               </button>
                             )}
                             <div style={{ display: 'flex', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '2px', backgroundColor: '#f1f5f9' }}>
+                              {f.cantidad_pendiente > 0 && !f.anulado && (
+                                <button
+                                  onClick={() => {
+                                    setItemParaAnular(f);
+                                    setShowAnulacionModal(true);
+                                  }}
+                                  style={{ border: 'none', background: 'none', cursor: 'pointer', padding: '4px', fontSize: '1.15rem' }}
+                                  title="Anular saldo pendiente (Dejar sin efecto)"
+                                >
+                                  🚫
+                                </button>
+                              )}
                               <button
                                 onClick={() => {
                                   setItemParaJustificar(f);
@@ -1995,18 +2439,26 @@ const Compras = () => {
                                   {f.historial_compras.map((h, idx) => (
                                     <tr key={idx} style={{
                                       borderBottom: idx < f.historial_compras.length - 1 ? '1px solid #f1f5f9' : 'none',
-                                      backgroundColor: h.tipo === 'JUSTIFICACION' ? '#fffbeb' : 'transparent',
+                                      backgroundColor: h.tipo === 'ANULACION' ? '#fef2f2' : (h.tipo === 'JUSTIFICACION' ? '#fffbeb' : 'transparent'),
                                       transition: 'background-color 0.2s'
                                     }}>
                                       <td style={{ padding: '10px 12px', color: '#64748b', fontWeight: '600' }}>{new Date(h.fecha).toLocaleDateString()}</td>
-                                      <td style={{ padding: '10px 12px', fontWeight: '800', color: h.tipo === 'JUSTIFICACION' ? '#d97706' : (h.doc_tipo === 'NC' ? '#f59e0b' : '#1e293b') }}>
-                                        {h.tipo === 'JUSTIFICACION' ? '⚠️ JUSTIFICACIÓN' : (h.doc_tipo === 'NC' ? '💳 A CRÉDITO' : '✅ COMPRADO')}
+                                      <td style={{
+                                        padding: '10px 12px',
+                                        fontWeight: '800',
+                                        color: h.tipo === 'ANULACION' ? '#ef4444' : (h.tipo === 'JUSTIFICACION' ? '#d97706' : (h.doc_tipo === 'NC' ? '#f59e0b' : '#1e293b'))
+                                      }}>
+                                        {h.tipo === 'ANULACION' ? '🚫 ANULADO / SIN EFECTO' : (h.tipo === 'JUSTIFICACION' ? '⚠️ JUSTIFICACIÓN' : (h.doc_tipo === 'NC' ? '💳 A CRÉDITO' : '✅ COMPRADO'))}
                                       </td>
                                       <td style={{ padding: '10px 12px', fontSize: '0.7rem', fontWeight: '700', color: '#334155' }}>
-                                        {h.tipo !== 'JUSTIFICACION' ? (h.proveedor_nombre || 'No asignado') : '-'}
+                                        {(h.tipo !== 'JUSTIFICACION' && h.tipo !== 'ANULACION') ? (h.proveedor_nombre || 'No asignado') : '-'}
                                       </td>
                                       <td style={{ padding: '10px 12px' }}>
-                                        {h.tipo === 'JUSTIFICACION' ? (
+                                        {h.tipo === 'ANULACION' ? (
+                                          <div style={{ fontStyle: 'italic', color: '#b91c1c', fontWeight: '700', fontSize: '0.75rem' }}>
+                                            Motivo: {h.motivo}
+                                          </div>
+                                        ) : h.tipo === 'JUSTIFICACION' ? (
                                           <div style={{ fontStyle: 'italic', color: '#92400e', fontWeight: '600', fontSize: '0.7rem' }}>{h.motivo}</div>
                                         ) : (
                                           <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
@@ -2025,14 +2477,18 @@ const Compras = () => {
                                       <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: '800', color: '#1e293b' }}>{h.cant || '-'}</td>
                                       <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: '700', color: '#1e293b' }}>{h.pu ? `$ ${h.pu.toLocaleString('de-DE')}` : '-'}</td>
                                       <td style={{ padding: '10px 12px', textAlign: 'right' }}>
-                                        {h.tipo === 'JUSTIFICACION' ? (
+                                        {h.tipo === 'ANULACION' ? (
+                                          <div style={{ fontSize: '0.7rem', color: '#7f1d1d', whiteSpace: 'pre-wrap', textAlign: 'left', backgroundColor: '#fee2e2', padding: '8px', borderRadius: '6px', border: '1px solid #fca5a5' }}>
+                                            {h.comentario}
+                                          </div>
+                                        ) : h.tipo === 'JUSTIFICACION' ? (
                                           <div style={{ fontSize: '0.7rem', color: '#475569', whiteSpace: 'pre-wrap', textAlign: 'left', backgroundColor: '#fef3c7', padding: '8px', borderRadius: '6px', border: '1px solid #fde68a' }}>
                                             {h.comentario}
                                           </div>
                                         ) : <span style={{ fontWeight: '900', color: '#0ea5e9', fontSize: '0.85rem' }}>$ {(h.cant * h.pu).toLocaleString('de-DE')}</span>}
                                       </td>
                                       <td style={{ padding: '10px 12px', textAlign: 'center' }}>
-                                        {h.tipo !== 'JUSTIFICACION' && (
+                                        {h.tipo !== 'JUSTIFICACION' && h.tipo !== 'ANULACION' && (
                                           <div
                                             onClick={() => toggleAlmacenSubRow(f.id, idx, !h.enviado_almacen)}
                                             style={{
@@ -2377,6 +2833,84 @@ const Compras = () => {
                 disabled={loading || !motivoCategoria || !comentarioPostergacion.trim()}
               >
                 {loading ? <Loader2 className="animate-spin" size={16} /> : 'PAUSAR TIEMPOS'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {showAnulacionModal && itemParaAnular && (
+        <div className="modal-overlay" style={{ zIndex: 10000 }}>
+          <div className="modal-card animate-modal" style={{ maxWidth: '500px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
+              <div style={{ backgroundColor: '#fee2e2', padding: '10px', borderRadius: '50%' }}>
+                <AlertCircle size={24} color="#ef4444" />
+              </div>
+              <h2 style={{ margin: 0, color: '#ef4444', fontSize: '1.25rem' }}>Anular Saldo Pendiente</h2>
+            </div>
+
+            <p style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '20px', lineHeight: '1.4' }}>
+              Estás a punto de anular el saldo pendiente del ítem <strong>{itemParaAnular.descripcion || itemParaAnular.desc}</strong>. Esta acción reducirá la cantidad pendiente a <strong>0</strong> y liberará cualquier fondo reservado.
+            </p>
+
+            <div style={{ backgroundColor: '#f8fafc', padding: '12px', borderRadius: '8px', marginBottom: '20px', fontSize: '0.8rem', color: '#334155' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                <span>Cantidad Pedida:</span>
+                <span style={{ fontWeight: 'bold' }}>{itemParaAnular.cantidad_pedida || itemParaAnular.cant}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                <span>Cantidad Comprada:</span>
+                <span style={{ fontWeight: 'bold' }}>{itemParaAnular.cantidad_comprada || 0}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', color: '#ef4444', fontWeight: 'bold' }}>
+                <span>Cantidad a Anular:</span>
+                <span>{itemParaAnular.cantidad_pendiente}</span>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: '15px' }}>
+              <label style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#64748b', display: 'block', marginBottom: '5px' }}>
+                MOTIVO DE LA ANULACIÓN (OBLIGATORIO)
+              </label>
+              <select
+                className="input-tc"
+                style={{ width: '100%', marginBottom: '15px' }}
+                value={motivoAnulacion}
+                onChange={(e) => setMotivoAnulacion(e.target.value)}
+              >
+                <option value="">Seleccione un motivo...</option>
+                <option value="Ya se encuentra en stock">Ya se encuentra en stock</option>
+                <option value="Ya no hace falta / No requerido">Ya no hace falta / No requerido</option>
+                <option value="Duplicado">Duplicado</option>
+                <option value="Otro">Otro (Especifique en comentarios)</option>
+              </select>
+
+              <label style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#64748b', display: 'block', marginBottom: '5px' }}>
+                COMENTARIO / EXPLICACIÓN DETALLADA (OBLIGATORIO)
+              </label>
+              <textarea
+                className="input-tc"
+                style={{ width: '100%', minHeight: '100px', paddingTop: '10px' }}
+                placeholder="Por favor, explique la razón por la que se anula esta cantidad..."
+                value={comentarioAnulacion}
+                onChange={(e) => setComentarioAnulacion(e.target.value)}
+              />
+            </div>
+
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+              <button className="btn-tc btn-tc-secondary" onClick={() => {
+                setShowAnulacionModal(false);
+                setMotivoAnulacion('');
+                setComentarioAnulacion('');
+              }}>
+                Cancelar
+              </button>
+              <button
+                className="btn-tc"
+                style={{ backgroundColor: '#ef4444', color: 'white', border: 'none' }}
+                onClick={ejecutarAnulacionFila}
+                disabled={loading || !motivoAnulacion || comentarioAnulacion.trim().length < 5}
+              >
+                {loading ? <Loader2 className="animate-spin" size={16} /> : 'ANULAR SALDO'}
               </button>
             </div>
           </div>

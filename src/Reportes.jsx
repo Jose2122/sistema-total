@@ -653,10 +653,8 @@ const Reportes = () => {
                 <label className="filter-label-premium">Prioridad</label>
                 <select value={filtroPrioridad} onChange={e => setFiltroPrioridad(e.target.value)}>
                   <option value="Todos">Todas</option>
-                  <option value="Baja">Baja</option>
                   <option value="Normal">Normal</option>
-                  <option value="Alta">Alta</option>
-                  <option value="Urgente">Urgente</option>
+                  <option value="Emergencia">Emergencia</option>
                 </select>
               </div>
 

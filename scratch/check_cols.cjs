@@ -6,13 +6,18 @@ const supabase = createClient(process.env.VITE_SUPABASE_URL, process.env.VITE_SU
 async function check() {
   try {
     const { data, error } = await supabase
-      .from('perfiles')
-      .select('id, nombre, apellido, rol, departamento, activo')
-      .or('nombre.ilike.%Ricardo%,apellido.ilike.%Herrera%,apellido.ilike.%Enrique%');
+      .from('requisiciones')
+      .select('*')
+      .limit(1);
     if (error) throw error;
-    console.log(JSON.stringify(data, null, 2));
+    if (data && data.length > 0) {
+      console.log('COLUMNS:', Object.keys(data[0]));
+      console.log('SAMPLE ROW:', JSON.stringify(data[0], null, 2));
+    } else {
+      console.log('No rows found in requisiciones');
+    }
   } catch (e) {
-    console.error(e.message);
+    console.error('Error:', e.message);
   }
 }
 check();

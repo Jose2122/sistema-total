@@ -379,9 +379,9 @@ function Dashboard() {
     if (seccionActiva === 'administracion') return <Administracion />;
     if (seccionActiva === 'atributos') return <Atributos />;
     if (seccionActiva === 'almacen') return <Almacen />;
+    if (seccionActiva === 'ejecutivo') return <ResumenEjecutivo currentUser={usuario} />;
+    if (seccionActiva === 'analytics_compras') return <AnalyticsCompras usuario={usuario} />;
     if (seccionActiva === 'dashboard') return <ResumenSesion currentUser={usuario} setActiveSeccion={setSeccionActiva} />;
-    if (seccionActiva === 'ejecutivo') return <ResumenEjecutivo />;
-    if (seccionActiva === 'analytics_compras') return <AnalyticsCompras />;
 
     return (
       <div className="animate-fade">
@@ -406,6 +406,9 @@ function Dashboard() {
 
     const modulosPermitidos = usuario?.permisos_modulos || [];
     if (seccionActiva !== 'dashboard' && !modulosPermitidos.includes(seccionActiva)) {
+      if (seccionActiva === 'analytics_compras' && (usuario?.departamento || '').toUpperCase().includes('COMPRAS')) {
+        return;
+      }
       if (modulosPermitidos.length > 0) {
         setSeccionActiva(modulosPermitidos[0]);
       } else {
@@ -460,7 +463,7 @@ function Dashboard() {
         animation: 'spin 1s linear infinite',
         marginBottom: '20px'
       }}></div>
-      <h2 style={{ fontSize: '1.2rem', fontWeight: '800', letterSpacing: '2px', margin: 0 }}>SITC<span style={{ color: '#0ea5e9' }}>.</span></h2>
+      <h2 style={{ fontSize: '1.25rem', fontWeight: '800', letterSpacing: '2px', margin: 0 }}>SITC<span style={{ color: '#0ea5e9' }}>.</span></h2>
       <p style={{ fontSize: '0.7rem', color: '#64748b', marginTop: '10px', textTransform: 'uppercase', letterSpacing: '1px' }}>Iniciando sistema...</p>
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
@@ -723,11 +726,11 @@ function Dashboard() {
           <div className="sidebar-scrollable">
             {[
               { id: 'compras', icon: 'fa-cart-plus', label: 'Compras', cat: 'COMPRAS' },
-              { id: 'analytics_compras', icon: 'fa-gauge-high', label: 'Analytics Procura', cat: 'COMPRAS' },
-              { id: 'ejecutivo', icon: 'fa-chess-king', label: 'Resumen Ejecutivo', cat: 'COMPRAS' },
               { id: 'reportesmaestro', icon: 'fa-chart-line', label: 'Reportes Maestro', cat: 'COMPRAS' },
               { id: 'reportes', icon: 'fa-file-contract', label: 'Reporte de Compras', cat: 'COMPRAS' },
               { id: 'proveedores', icon: 'fa-address-book', label: 'Proveedores', cat: 'COMPRAS' },
+              { id: 'analytics_compras', icon: 'fa-gauge-high', label: 'Estadísticas y Trazabilidad', cat: 'CONTROL DE GESTIÓN' },
+              { id: 'ejecutivo', icon: 'fa-chess-king', label: 'Resumen Ejecutivo', cat: 'CONTROL DE GESTIÓN' },
               { id: 'requisiciones', icon: 'fa-file-signature', label: 'Requisiciones', cat: 'GESTIONES' },
               { id: 'fondos', icon: 'fa-hand-holding-dollar', label: 'Solicitud de Fondos', cat: 'GESTIONES' },
               { id: 'tickets', icon: 'fa-ticket', label: 'Ticket de Pago', cat: 'GESTIONES' },
@@ -735,12 +738,16 @@ function Dashboard() {
               { id: 'usuarios', icon: 'fa-users', label: 'Usuarios', cat: 'CONFIGURACIÓN' },
               { id: 'atributos', icon: 'fa-database', label: 'Atributos', cat: 'CONFIGURACIÓN' },
             ].reduce((acc, item) => {
-              const hasPerm = usuario?.correo === 'jcontreras.totalclean@gmail.com' ||
+              let hasPerm = usuario?.correo === 'jcontreras.totalclean@gmail.com' ||
                 usuario?.correo === 'cvega.totalclean@gmail.com' ||
                 usuario?.esAdminReal ||
                 usuario?.rol === 'Admin' ||
                 usuario?.rol === 'Gerente General' ||
                 usuario?.permisos_modulos?.includes(item.id);
+
+              if (item.id === 'analytics_compras' && (usuario?.departamento || '').toUpperCase().includes('COMPRAS')) {
+                hasPerm = true;
+              }
 
               if (hasPerm) {
                 if (acc.length === 0 || acc[acc.length - 1].type !== 'header' || acc[acc.length - 1].cat !== item.cat) {

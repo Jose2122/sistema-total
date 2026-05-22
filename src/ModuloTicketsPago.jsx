@@ -33,51 +33,76 @@ import {
 } from 'lucide-react';
 import './ModuloTicketsPago.css';
 
+const obtenerNombreDeUrl = (url) => {
+  if (!url) return 'Soporte';
+  try {
+    const parts = url.split('/');
+    const lastPart = parts[parts.length - 1].split('?')[0];
+    const decoded = decodeURIComponent(lastPart);
+    const cleanName = decoded.replace(/^\d+_/g, '');
+    return cleanName || 'Soporte';
+  } catch (e) {
+    return 'Soporte';
+  }
+};
+
 // Helper recursivo para des-serializar URLs de facturas mal formateadas, anidadas o serializadas múltiples veces en la BD
 const parsearFacturaUrls = (facturaUrlField) => {
   if (!facturaUrlField) return [];
   
-  if (Array.isArray(facturaUrlField)) {
-    let list = [];
-    for (const item of facturaUrlField) {
-      if (typeof item === 'string') {
-        const trimmedItem = item.trim();
-        if (trimmedItem.startsWith('[') || trimmedItem.startsWith('{')) {
-          try {
-            const parsed = JSON.parse(trimmedItem);
-            if (Array.isArray(parsed)) {
-              list = list.concat(parsearFacturaUrls(parsed));
-            } else {
-              list.push(trimmedItem);
-            }
-          } catch (e) {
-            list.push(trimmedItem);
-          }
-        } else {
-          list.push(trimmedItem);
+  let rawItems = [];
+  
+  const extractRaw = (field) => {
+    if (!field) return;
+    if (Array.isArray(field)) {
+      field.forEach(item => extractRaw(item));
+    } else if (typeof field === 'string') {
+      const trimmed = field.trim();
+      if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+        try {
+          const parsed = JSON.parse(trimmed);
+          extractRaw(parsed);
+        } catch (e) {
+          rawItems.push(trimmed);
         }
       } else {
-        list.push(item);
+        rawItems.push(trimmed);
       }
+    } else if (typeof field === 'object' && field !== null) {
+      rawItems.push(field);
     }
-    return list.flat(Infinity).filter(u => typeof u === 'string' && u.trim().length > 10);
-  }
+  };
 
-  if (typeof facturaUrlField === 'string') {
-    const trimmed = facturaUrlField.trim();
-    if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
-      try {
-        const parsed = JSON.parse(trimmed);
-        return parsearFacturaUrls(parsed);
-      } catch (e) {
-        return [trimmed];
+  extractRaw(facturaUrlField);
+
+  return rawItems.map(item => {
+    if (typeof item === 'string') {
+      const trimmed = item.trim();
+      if (trimmed.startsWith('{')) {
+        try {
+          const obj = JSON.parse(trimmed);
+          if (obj.url) {
+            return {
+              url: obj.url,
+              name: obj.name || obtenerNombreDeUrl(obj.url)
+            };
+          }
+        } catch (e) {}
       }
+      return {
+        url: trimmed,
+        name: obtenerNombreDeUrl(trimmed)
+      };
+    } else if (typeof item === 'object' && item !== null && item.url) {
+      return {
+        url: item.url,
+        name: item.name || obtenerNombreDeUrl(item.url)
+      };
     }
-    return [trimmed];
-  }
-
-  return [];
+    return null;
+  }).filter(item => item && typeof item.url === 'string' && item.url.trim().length > 10);
 };
+
 
 const ModuloTicketsPago = () => {
   const [vistaActual, setVistaActual] = useState('historial'); // 'historial' | 'nuevo' | 'detalle'
@@ -128,6 +153,7 @@ const ModuloTicketsPago = () => {
   const [obsTemporal, setObsTemporal] = useState('');
   const [imagenesArchivos, setImagenesArchivos] = useState([]); // Soporte para múltiples archivos
   const [imagenesUrlsPreview, setImagenesUrlsPreview] = useState([]);
+  const [imagenesNombres, setImagenesNombres] = useState([]); // Nombres de soportes para carga manual
   const [proveedores, setProveedores] = useState([]);
   const [preciosReferencia, setPreciosReferencia] = useState({});
   const [expandirHistorial, setExpandirHistorial] = useState({}); // { itemID: boolean }
@@ -416,6 +442,8 @@ const ModuloTicketsPago = () => {
     // Variables mutables capturadas por el toast (sin re-renderizar)
     let tempDocNum = docNum || '';
     let tempBancoId = '';
+    let tempFile = null;
+    let tempFileName = '';
 
     toast((t) => {
       const inputStyle = {
@@ -448,7 +476,7 @@ const ModuloTicketsPago = () => {
 
           {/* N° Factura */}
           <div>
-            <label style={labelStyle}>N° FACTURA / CONTROL</label>
+            <label style={labelStyle}>N° FACTURA / CONTROL <span style={{ color: '#ef4444' }}>*</span></label>
             <input
               type="text"
               defaultValue={tempDocNum}
@@ -473,7 +501,41 @@ const ModuloTicketsPago = () => {
             </select>
           </div>
 
-          <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+          {/* Adjuntar Factura Documento */}
+          <div>
+            <label style={labelStyle}>Adjuntar Factura (Obligatorio) <span style={{ color: '#ef4444' }}>*</span></label>
+            <input
+              type="file"
+              accept="image/*,application/pdf"
+              onChange={(e) => {
+                if (e.target.files && e.target.files[0]) {
+                  tempFile = e.target.files[0];
+                  const nameInput = document.getElementById('toast-invoice-name');
+                  if (nameInput && !nameInput.value) {
+                    const cleanName = tempFile.name.split('.')[0];
+                    nameInput.value = cleanName;
+                    tempFileName = cleanName;
+                  }
+                }
+              }}
+              style={{ ...inputStyle, padding: '6px', cursor: 'pointer', backgroundColor: 'white' }}
+            />
+          </div>
+
+          {/* Nombre de la Factura / Soporte */}
+          <div>
+            <label style={labelStyle}>Nombre del Documento</label>
+            <input
+              id="toast-invoice-name"
+              type="text"
+              defaultValue={tempFileName}
+              onChange={(e) => { tempFileName = e.target.value; }}
+              style={inputStyle}
+              placeholder="Ej: Factura Proveedor, Factura Mayo..."
+            />
+          </div>
+
+          <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '4px' }}>
             <button
               onClick={() => {
                 if (!tempDocNum.trim()) {
@@ -484,9 +546,20 @@ const ModuloTicketsPago = () => {
                   toast.error('Debe seleccionar el banco de origen.');
                   return;
                 }
+                if (!tempFile) {
+                  toast.error('Debe adjuntar el documento de la factura para poder marcar como pagado.');
+                  return;
+                }
                 toast.dismiss(t.id);
                 // Pasamos todo via overrideValues para evitar closure stale del state
-                guardarPagoRenglon(id, { cant, pu, docNum: tempDocNum, bancoPagoId: tempBancoId });
+                guardarPagoRenglon(id, {
+                  cant,
+                  pu,
+                  docNum: tempDocNum,
+                  bancoPagoId: tempBancoId,
+                  file: tempFile,
+                  fileName: tempFileName || tempFile.name.split('.')[0] || 'Factura'
+                });
               }}
               style={{
                 padding: '6px 14px',
@@ -520,7 +593,7 @@ const ModuloTicketsPago = () => {
           </div>
         </div>
       );
-    }, { duration: 20000, position: 'top-center' });
+    }, { duration: 40000, position: 'top-center' });
   };
 
   const actualizarFila = (id, campo, valor) => {
@@ -578,6 +651,30 @@ const ModuloTicketsPago = () => {
         return;
       }
 
+      // SUBIR FACTURA A STORAGE BUCKET tickets-evidencia
+      let uploadedFileObj = null;
+      if (overrideValues?.file) {
+        const file = overrideValues.file;
+        const customName = overrideValues.fileName || file.name.split('.')[0] || 'Factura';
+        const fileName = `recibos/${Date.now()}_${file.name}`;
+        
+        const { error: uploadError } = await supabase.storage
+          .from('tickets-evidencia')
+          .upload(fileName, file);
+
+        if (uploadError) {
+          console.error("Error al subir archivo:", uploadError);
+          toast.error(`Error al subir la factura: ${uploadError.message}`);
+          throw uploadError;
+        }
+
+        const { data: publicUrlData } = supabase.storage.from('tickets-evidencia').getPublicUrl(fileName);
+        uploadedFileObj = {
+          url: publicUrlData.publicUrl,
+          name: customName
+        };
+      }
+
       const proveedorSelec = proveedores.find(p => p.id === item.proveedor_seleccionado_id);
       const bancoSelec = bancos.find(b => b.id === bancoPagoId);
 
@@ -621,17 +718,25 @@ const ModuloTicketsPago = () => {
         return acc + ejecutadoItem + estimadoPendiente;
       }, 0);
 
+      // Obtener facturas existentes y añadir la nueva
+      let currentUrls = parsearFacturaUrls(ticketSeleccionado.factura_url);
+      if (uploadedFileObj) {
+        currentUrls.push(uploadedFileObj);
+      }
+      const serializedUrls = currentUrls.map(item => JSON.stringify(item));
+
       const { error } = await supabase
         .from('tickets_directos')
         .update({
           items: nuevosRenglones,
           total_usd: totalDinamicoReal * 1.16,
-          banco_pago_id: bancoPagoId
+          banco_pago_id: bancoPagoId,
+          factura_url: serializedUrls
         })
         .eq('id', ticketSeleccionado.id);
       if (error) throw error;
       setRenglones(nuevosRenglones);
-      setTicketSeleccionado(prev => prev ? { ...prev, items: nuevosRenglones, banco_pago_id: bancoPagoId } : null);
+      setTicketSeleccionado(prev => prev ? { ...prev, items: nuevosRenglones, banco_pago_id: bancoPagoId, factura_url: serializedUrls } : null);
       toast.success('Ítem guardado con éxito.');
       await fetchHistorial();
     } catch (err) {
@@ -707,25 +812,30 @@ const ModuloTicketsPago = () => {
       setImagenesArchivos(prev => [...prev, ...files]);
       const newUrls = files.map(file => URL.createObjectURL(file));
       setImagenesUrlsPreview(prev => [...prev, ...newUrls]);
+      const newNames = files.map(file => file.name.split('.')[0]);
+      setImagenesNombres(prev => [...prev, ...newNames]);
     }
   };
 
   const quitarArchivoTemporal = (index) => {
     setImagenesArchivos(prev => prev.filter((_, i) => i !== index));
     setImagenesUrlsPreview(prev => prev.filter((_, i) => i !== index));
+    setImagenesNombres(prev => prev.filter((_, i) => i !== index));
   };
-
   const actualizarPago = async () => {
-    if (!imagenesArchivos.length && (!ticketSeleccionado.factura_url || ticketSeleccionado.factura_url.length === 0)) {
+    const existingUrls = parsearFacturaUrls(ticketSeleccionado.factura_url);
+    if (!imagenesArchivos.length && existingUrls.length === 0) {
       return toast.error("Debe adjuntar al menos una imagen o comprobante antes de registrar y procesar el pago.");
     }
     setLoading(true);
     try {
-      let finalUrls = parsearFacturaUrls(ticketSeleccionado.factura_url);
+      let finalUrls = [...existingUrls];
 
       if (imagenesArchivos.length > 0) {
         setSubiendoImagen(true);
-        for (const file of imagenesArchivos) {
+        for (let i = 0; i < imagenesArchivos.length; i++) {
+          const file = imagenesArchivos[i];
+          const customName = imagenesNombres[i] || file.name.split('.')[0] || 'Soporte';
           const fileName = `recibos/${Date.now()}_${file.name}`;
           const { error: uploadError } = await supabase.storage
             .from('tickets-evidencia')
@@ -738,7 +848,10 @@ const ModuloTicketsPago = () => {
           }
 
           const { data: publicUrlData } = supabase.storage.from('tickets-evidencia').getPublicUrl(fileName);
-          finalUrls.push(publicUrlData.publicUrl);
+          finalUrls.push({
+            url: publicUrlData.publicUrl,
+            name: customName
+          });
         }
         setSubiendoImagen(false);
       }
@@ -794,8 +907,10 @@ const ModuloTicketsPago = () => {
         return acc + ejecutadoItem + estimadoPendiente;
       }, 0);
 
+      const serializedUrls = finalUrls.map(item => JSON.stringify(item));
+
       const updatePayload = {
-        factura_url: finalUrls,
+        factura_url: serializedUrls,
         status: estatusFinal,
         items: renglonesListos,
         total_usd: totalDinamicoReal * 1.16
@@ -814,6 +929,7 @@ const ModuloTicketsPago = () => {
 
       setImagenesArchivos([]);
       setImagenesUrlsPreview([]);
+      setImagenesNombres([]);
       setTicketSeleccionado(null);
       await fetchHistorial();
       setVistaActual('historial');
@@ -945,7 +1061,11 @@ const ModuloTicketsPago = () => {
         if (storageError) console.warn("Aviso: El archivo físico no se pudo borrar:", storageError.message);
       }
 
-      const nuevasUrls = (ticketSeleccionado.factura_url || []).filter(u => u !== url);
+      const parsedUrls = parsearFacturaUrls(ticketSeleccionado.factura_url);
+      const nuevasUrls = parsedUrls
+        .filter(item => item.url !== url)
+        .map(item => JSON.stringify(item));
+
       const { error: dbError } = await supabase
         .from('tickets_directos')
         .update({ factura_url: nuevasUrls })
@@ -1791,34 +1911,192 @@ const ModuloTicketsPago = () => {
                 </label>
               </div>
 
-              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                {parsearFacturaUrls(t.factura_url)
-                  .map((url, idx) => (
-                    <div key={idx} style={{ position: 'relative' }}>
-                      <a href={url} target="_blank" rel="noreferrer" style={{ display: 'block', width: '80px', height: '80px', borderRadius: '10px', overflow: 'hidden', border: '1px solid #e2e8f0' }}>
-                        <img src={url} alt="Soporte" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap' }}>
+                {parsearFacturaUrls(t.factura_url).map((item, idx) => {
+                  const isPdf = item.url.split('?')[0].toLowerCase().endsWith('.pdf');
+                  return (
+                    <div 
+                      key={idx} 
+                      style={{ 
+                        position: 'relative', 
+                        display: 'flex', 
+                        flexDirection: 'column', 
+                        alignItems: 'center', 
+                        width: '100px',
+                        background: 'rgba(255, 255, 255, 0.6)',
+                        border: '1px solid #e2e8f0',
+                        borderRadius: '12px',
+                        padding: '8px',
+                        boxShadow: '0 2px 6px rgba(0,0,0,0.02)',
+                        transition: 'transform 0.2s, box-shadow 0.2s',
+                      }}
+                    >
+                      <a 
+                        href={item.url} 
+                        target="_blank" 
+                        rel="noreferrer" 
+                        style={{ 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          justifyContent: 'center', 
+                          width: '84px', 
+                          height: '84px', 
+                          borderRadius: '8px', 
+                          overflow: 'hidden', 
+                          backgroundColor: '#f1f5f9',
+                          border: '1px solid #e2e8f0',
+                          position: 'relative'
+                        }}
+                      >
+                        {isPdf ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
+                            <FileText size={32} color="#ef4444" />
+                            <span style={{ fontSize: '9px', fontWeight: 'bold', color: '#ef4444' }}>PDF</span>
+                          </div>
+                        ) : (
+                          <img src={item.url} alt={item.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        )}
                       </a>
+                      
+                      <span 
+                        style={{ 
+                          fontSize: '10px', 
+                          fontWeight: '600', 
+                          color: '#334155', 
+                          marginTop: '6px', 
+                          textAlign: 'center', 
+                          width: '100%', 
+                          whiteSpace: 'nowrap', 
+                          overflow: 'hidden', 
+                          textOverflow: 'ellipsis',
+                          display: 'block'
+                        }}
+                        title={item.name}
+                      >
+                        {item.name}
+                      </span>
+
                       <button
-                        onClick={() => borrarComprobanteDB(url)}
-                        style={{ position: 'absolute', top: '-5px', right: '-5px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '50%', width: '20px', height: '20px', cursor: 'pointer', fontSize: '10px' }}
+                        onClick={() => borrarComprobanteDB(item.url)}
+                        style={{ 
+                          position: 'absolute', 
+                          top: '-6px', 
+                          right: '-6px', 
+                          backgroundColor: '#ef4444', 
+                          color: 'white', 
+                          border: 'none', 
+                          borderRadius: '50%', 
+                          width: '22px', 
+                          height: '22px', 
+                          cursor: 'pointer', 
+                          fontSize: '11px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          boxShadow: '0 2px 4px rgba(239, 68, 68, 0.3)',
+                          zIndex: 10
+                        }}
+                        title="Eliminar Soporte"
                       >
                         ×
                       </button>
                     </div>
-                  ))}
-                {imagenesUrlsPreview.map((url, idx) => (
-                  <div key={`preview-${idx}`} style={{ position: 'relative' }}>
-                    <div style={{ width: '80px', height: '80px', borderRadius: '10px', overflow: 'hidden', border: '1px dashed #94a3b8' }}>
-                      <img src={url} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                    </div>
-                    <button
-                      onClick={() => quitarArchivoTemporal(idx)}
-                      style={{ position: 'absolute', top: '-5px', right: '-5px', backgroundColor: '#64748b', color: 'white', border: 'none', borderRadius: '50%', width: '20px', height: '20px', cursor: 'pointer', fontSize: '10px' }}
+                  );
+                })}
+                {imagenesUrlsPreview.map((url, idx) => {
+                  const file = imagenesArchivos[idx];
+                  const isPdf = file?.type === 'application/pdf' || file?.name?.toLowerCase().endsWith('.pdf');
+                  return (
+                    <div 
+                      key={`preview-${idx}`} 
+                      style={{ 
+                        position: 'relative', 
+                        display: 'flex', 
+                        flexDirection: 'column', 
+                        alignItems: 'center', 
+                        width: '100px',
+                        background: 'rgba(255, 255, 255, 0.8)',
+                        border: '1px dashed #94a3b8',
+                        borderRadius: '12px',
+                        padding: '8px',
+                        boxShadow: '0 2px 6px rgba(0,0,0,0.02)'
+                      }}
                     >
-                      ×
-                    </button>
-                  </div>
-                ))}
+                      <div 
+                        style={{ 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          justifyContent: 'center', 
+                          width: '84px', 
+                          height: '84px', 
+                          borderRadius: '8px', 
+                          overflow: 'hidden', 
+                          backgroundColor: '#f8fafc',
+                          border: '1px solid #e2e8f0',
+                          position: 'relative'
+                        }}
+                      >
+                        {isPdf ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
+                            <FileText size={32} color="#ef4444" />
+                            <span style={{ fontSize: '9px', fontWeight: 'bold', color: '#ef4444' }}>PDF</span>
+                          </div>
+                        ) : (
+                          <img src={url} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        )}
+                      </div>
+
+                      <input
+                        type="text"
+                        placeholder="Nombre..."
+                        value={imagenesNombres[idx] || ''}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setImagenesNombres(prev => prev.map((n, i) => i === idx ? val : n));
+                        }}
+                        style={{
+                          width: '100%',
+                          marginTop: '6px',
+                          padding: '3px 6px',
+                          fontSize: '9px',
+                          fontWeight: '600',
+                          borderRadius: '6px',
+                          border: '1px solid #cbd5e1',
+                          boxSizing: 'border-box',
+                          textAlign: 'center',
+                          outline: 'none',
+                          backgroundColor: 'white',
+                          color: '#334155'
+                        }}
+                      />
+
+                      <button
+                        onClick={() => quitarArchivoTemporal(idx)}
+                        style={{ 
+                          position: 'absolute', 
+                          top: '-6px', 
+                          right: '-6px', 
+                          backgroundColor: '#64748b', 
+                          color: 'white', 
+                          border: 'none', 
+                          borderRadius: '50%', 
+                          width: '22px', 
+                          height: '22px', 
+                          cursor: 'pointer', 
+                          fontSize: '11px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          boxShadow: '0 2px 4px rgba(100, 116, 139, 0.3)',
+                          zIndex: 10
+                        }}
+                        title="Quitar"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from './supabaseClient';
 import { motion } from 'framer-motion';
 import {
@@ -8,8 +8,7 @@ import {
 import {
     TrendingUp, TrendingDown, Clock, ShieldCheck, AlertTriangle,
     Zap, Target, Calendar, BarChart3, Filter, Download, DollarSign,
-    CheckCircle2, AlertCircle, Clock as ClockIcon, TrendingUp as TrendingUpIcon,
-    ChevronRight, ChevronDown, Briefcase, Users
+    CheckCircle2, AlertCircle, ChevronDown, Briefcase, Users, FileText
 } from 'lucide-react';
 import { format, getWeek, parseISO as dateFnsParseISO } from 'date-fns';
 
@@ -22,6 +21,51 @@ const parseISO = (dateStr) => {
     }
 };
 
+const getWeeksForMonth = (monthVal, year = 2026) => {
+    const weeksMap = new Map();
+    const start = new Date(year, 0, 1);
+    const end = new Date(year, 11, 31);
+    
+    let current = new Date(start);
+    while (current <= end) {
+        const m = current.getMonth(); // 0-indexed
+        const w = getWeek(current);
+        
+        if (!weeksMap.has(w)) {
+            weeksMap.set(w, {
+                weekNum: w,
+                minDate: new Date(current),
+                maxDate: new Date(current),
+                months: new Set()
+            });
+        }
+        
+        const wObj = weeksMap.get(w);
+        wObj.months.add(m);
+        if (current < wObj.minDate) wObj.minDate = new Date(current);
+        if (current > wObj.maxDate) wObj.maxDate = new Date(current);
+        
+        current.setDate(current.getDate() + 1);
+    }
+    
+    const weeksList = Array.from(weeksMap.values()).map(wObj => {
+        const dStartStr = format(wObj.minDate, 'dd/MM');
+        const dEndStr = format(wObj.maxDate, 'dd/MM');
+        return {
+            weekNum: wObj.weekNum.toString(),
+            label: `Semana ${wObj.weekNum} (${dStartStr} - ${dEndStr})`,
+            months: Array.from(wObj.months)
+        };
+    });
+    
+    if (!monthVal || monthVal === 'Todos') {
+        return weeksList;
+    } else {
+        const targetMonth = parseInt(monthVal, 10);
+        return weeksList.filter(w => w.months.includes(targetMonth));
+    }
+};
+
 const COLORS_PARETO = ['#1e3a8a', '#1e40af', '#3b82f6', '#60a5fa', '#93c5fd', '#bfdbfe'];
 const COLORS_STATUS = {
     'aprobado_final': '#10b981',
@@ -30,56 +74,148 @@ const COLORS_STATUS = {
     'rechazada': '#991b1b'
 };
 
-const ResumenEjecutivo = () => {
+const ResumenEjecutivo = ({ currentUser }) => {
     const [loading, setLoading] = useState(true);
     const [rawReqs, setRawReqs] = useState([]);
     const [rawFunds, setRawFunds] = useState([]);
-    const [periodo, setPeriodo] = useState('Mes Actual');
+    const [rawPartidas, setRawPartidas] = useState([]);
+    const [rawTickets, setRawTickets] = useState([]);
     const [filtroGerenciaCC, setFiltroGerenciaCC] = useState('Todas');
     const [filtroMes, setFiltroMes] = useState(new Date().getMonth().toString());
     const [filtroSemana, setFiltroSemana] = useState('Todas');
+    const [activeTab, setActiveTab] = useState('financiero'); // 'financiero' | 'operativo'
 
-    useEffect(() => {
-        const fetchData = async () => {
-            setLoading(true);
-            try {
-                const { data: reqs } = await supabase.from('requisiciones').select('*');
-                const { data: funds } = await supabase.from('solicitudes_fondos').select('*');
-                const { data: parts } = await supabase.from('partidas_fondos').select('*');
-                setRawReqs(reqs || []);
-                setRawFunds(funds || []);
-                setRawPartidas(parts || []);
-            } catch (err) {
-                console.error("Error cargando datos ejecutivos:", err);
-            } finally {
-                setLoading(false);
+    // --- RESTRICCIÓN DE GERENTES ---
+    const userDept = currentUser?.departamento || '';
+    const userRole = currentUser?.rol || '';
+    const esAdminGlobal = currentUser?.correo === 'jcontreras.totalclean@gmail.com' ||
+        currentUser?.correo === 'cvega.totalclean@gmail.com' ||
+        currentUser?.esAdminReal ||
+        userRole === 'Admin' ||
+        userRole === 'Gerente General';
+    const restrictToDept = !esAdminGlobal;
+    const userDeptoName = userDept.trim();
+
+    // Datasets restringidos o globales según rol
+    const myReqs = useMemo(() => {
+        if (!restrictToDept || !userDeptoName) return rawReqs;
+        return rawReqs.filter(r => (r.gerencia || '').toLowerCase().includes(userDeptoName.toLowerCase()));
+    }, [rawReqs, restrictToDept, userDeptoName]);
+
+    const myFunds = useMemo(() => {
+        if (!restrictToDept || !userDeptoName) return rawFunds;
+        return rawFunds.filter(s => (s.gerencia_nombre || '').toLowerCase().includes(userDeptoName.toLowerCase()));
+    }, [rawFunds, restrictToDept, userDeptoName]);
+
+    const myTickets = useMemo(() => {
+        if (!restrictToDept || !userDeptoName) return rawTickets;
+        return rawTickets.filter(t => (t.departamento || '').toLowerCase().includes(userDeptoName.toLowerCase()));
+    }, [rawTickets, restrictToDept, userDeptoName]);
+
+    const availableWeeks = useMemo(() => {
+        return getWeeksForMonth(filtroMes, 2026);
+    }, [filtroMes]);
+
+    const handleMonthChange = (newMonth) => {
+        setFiltroMes(newMonth);
+        if (filtroSemana !== 'Todas') {
+            const validWeeks = getWeeksForMonth(newMonth, 2026);
+            const isValid = validWeeks.some(w => w.weekNum === filtroSemana);
+            if (!isValid) {
+                setFiltroSemana('Todas');
             }
-        };
-        fetchData();
+        }
+    };
+
+    const fetchData = useCallback(async () => {
+        try {
+            const [resReq, resFund, resPart, resTicket] = await Promise.all([
+                supabase.from('requisiciones').select('*'),
+                supabase.from('solicitudes_fondos').select('*'),
+                supabase.from('partidas_fondos').select('*'),
+                supabase.from('tickets_directos').select('*')
+            ]);
+            
+            setRawReqs(resReq.data || []);
+            setRawFunds(resFund.data || []);
+            setRawPartidas(resPart.data || []);
+            setRawTickets(resTicket.data || []);
+        } catch (err) {
+            console.error("Error cargando datos ejecutivos:", err);
+        } finally {
+            setLoading(false);
+        }
     }, []);
 
-    const [rawPartidas, setRawPartidas] = useState([]);
+    useEffect(() => {
+        setLoading(true);
+        fetchData();
+
+        // Suscribirse a cambios en tiempo real en las cuatro tablas
+        const channel = supabase
+            .channel('resumen_ejecutivo_realtime')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'requisiciones' }, () => {
+                fetchData();
+            })
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'solicitudes_fondos' }, () => {
+                fetchData();
+            })
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'partidas_fondos' }, () => {
+                fetchData();
+            })
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'tickets_directos' }, () => {
+                fetchData();
+            })
+            .subscribe();
+
+        return () => {
+            supabase.removeChannel(channel);
+        };
+    }, [fetchData]);
 
     const getWeekNumber = (date) => {
         if (!date) return 0;
         return getWeek(typeof date === 'string' ? parseISO(date) : date);
     };
 
-    // --- LÓGICA DE ANALISTA DE DATOS ---
+    // --- MOTOR ANALÍTICO FINANCIERO CONSOLIDADO ---
     const stats = useMemo(() => {
-        if (!rawReqs || !rawReqs.length) return {
-            gastoActual: 0, ahorroTotal: 0, solicitudesAnalisis: [], funnel: { proyecto: 0, area: 0, general: 0, compras: 0, completado: 0 },
-            stagnantCount: 0, topCC: [], recentApprovals: [], slaFunnelData: [], healthScore: 0, avgLeadTime: 0,
-            emergencyRatio: 0, plannedRatio: 0,
+        if (!myReqs || !myReqs.length) return {
+            gastoActual: 0,
+            gastoConsolidadoReal: 0,
+            totalTicketsGlobal: 0,
+            ahorroTotal: 0,
+            solicitudesAnalisis: [],
+            funnel: { proyecto: 0, area: 0, general: 0, compras: 0, completado: 0 },
+            stagnantCount: 0,
+            topCC: [],
+            recentApprovals: [],
+            slaFunnelData: [],
+            topDelayed: [],
+            healthScore: 0,
+            avgLeadTime: 0,
+            emergencyRatio: 0,
+            plannedRatio: 0,
+            totalEstimadoGlobal: 0,
+            topCategoriesGlobal: [],
+            topStagnantGerencias: [],
+            delayTrend: [],
+            paretoChartData: [],
+            heatmap: [],
+            stagnant: [],
+            reqsCount: 0,
+            ticketsCount: 0,
+            emergenciesCount: 0,
+            approvedReqsCount: 0,
+            approvedTicketsCount: 0,
+            pendingTicketsCount: 0,
             drilldownData: () => ({ cc: [], mat: [] })
         };
 
-        // --- LÓGICA DE CONSUMO POR GERENCIA (MIGRADA) ---
-        const aggregated = {};
         const meses_n = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
 
-        // --- FILTRADO POR TIEMPO ---
-        const filteredFunds = rawFunds.filter(s => {
+        // --- FILTRADO DE DATOS CON ALINEACIÓN TEMPORAL ---
+        const filteredFunds = myFunds.filter(s => {
             const fechaStr = s.fecha_operativa || s.created_at;
             if (!fechaStr) return false;
             const date = parseISO(fechaStr);
@@ -88,7 +224,7 @@ const ResumenEjecutivo = () => {
             return mMatch && wMatch;
         });
 
-        const filteredReqs = rawReqs.filter(r => {
+        const filteredReqs = myReqs.filter(r => {
             const fechaStr = r.created_at || r.fecha_emision;
             if (!fechaStr) return false;
             const date = parseISO(fechaStr);
@@ -97,43 +233,83 @@ const ResumenEjecutivo = () => {
             return mMatch && wMatch;
         });
 
-        filteredFunds.forEach(s => {
-            const fechaStr = s.fecha_operativa || s.created_at;
-            if (!fechaStr) return;
+        const filteredTickets = myTickets.filter(t => {
+            const fechaStr = t.fecha_emision || t.fecha || t.created_at;
+            if (!fechaStr) return false;
             const date = parseISO(fechaStr);
-            const mName = meses_n[date.getMonth()];
-            // Filtro de periodo si fuera necesario
+            const mMatch = filtroMes === 'Todos' || date.getMonth().toString() === filtroMes;
+            const wMatch = filtroSemana === 'Todas' || getWeek(date).toString() === filtroSemana;
+            return mMatch && wMatch && (t.status || '').toLowerCase() !== 'rechazado';
+        });
 
+        // Helper seguro para calcular el monto real de un ticket
+        const getTicketTotal = (t) => {
+            const items = Array.isArray(t.items) ? t.items : [];
+            if (items.length > 0) {
+                return items.reduce((sum, item) => sum + (Number(item.total) || (Number(item.cant || 1) * Number(item.puUsd || item.puBs || item.pu || 0))), 0);
+            }
+            return Number(t.total_usd || t.monto || 0);
+        };
+
+        // --- AGREGACIÓN CONSOLIDADA POR GERENCIA ---
+        const aggregated = {};
+
+        // 1. Incorporar Planificación y Fondos (Budget)
+        filteredFunds.forEach(s => {
             const gName = s.gerencia_nombre || 'S/G';
             if (!aggregated[gName]) {
-                aggregated[gName] = { name: gName, estimado: 0, gastado: 0, count: 0, topCategories: {} };
+                aggregated[gName] = { name: gName, estimado: 0, gastado: 0, count: 0, topCategories: {}, reqCount: 0, ticketCount: 0 };
             }
 
             const estimado = (Number(s.total_usd) || 0) + (Number(s.total_bs) || 0);
-            const linkedPartidas = rawPartidas.filter(p => p.solicitud_id === s.id);
-            const linkedReqIds = [...new Set(linkedPartidas.map(p => p.requisicion_id).filter(id => id))];
-
-            let gastado = 0;
-            linkedReqIds.forEach(reqId => {
-                const req = rawReqs.find(r => r.id === reqId);
-                if (req) {
-                    const items = Array.isArray(req.items) ? req.items : [];
-                    gastado += items.reduce((s_it, i) => {
-                        const h = Array.isArray(i.historial_compras) ? i.historial_compras : [];
-                        const m_it = h.reduce((acc, comp) => acc + (Number(comp.cant) * (Number(comp.pu) || 0)), 0);
-
-                        // Track categories for this management
-                        const cat = i.categoria || 'S/C';
-                        aggregated[gName].topCategories[cat] = (aggregated[gName].topCategories[cat] || 0) + m_it;
-
-                        return s_it + m_it;
-                    }, 0);
-                }
-            });
-
             aggregated[gName].estimado += estimado;
-            aggregated[gName].gastado += gastado;
             aggregated[gName].count += 1;
+        });
+
+        // 2. Incorporar Requisiciones en el Gasto Real (Spend)
+        filteredReqs.forEach(r => {
+            const gName = r.gerencia || 'S/G';
+            if (!aggregated[gName]) {
+                aggregated[gName] = { name: gName, estimado: 0, gastado: 0, count: 0, topCategories: {}, reqCount: 0, ticketCount: 0 };
+            }
+
+            const items = Array.isArray(r.items) ? r.items : [];
+            const ejec = Number(r.total_ejecutado) || items.reduce((s, i) => {
+                const h = Array.isArray(i.historial_compras) ? i.historial_compras : [];
+                return s + h.reduce((acc, comp) => acc + ((Number(comp.cant) || 0) * (Number(comp.pu) || 0)), 0);
+            }, 0) * 1.16;
+
+            aggregated[gName].gastado += ejec;
+            aggregated[gName].reqCount += 1;
+            aggregated[gName].count += 1;
+
+            items.forEach(i => {
+                const cat = i.categoria || 'S/C';
+                const h = Array.isArray(i.historial_compras) ? i.historial_compras : [];
+                const m_it = h.reduce((acc, comp) => acc + (Number(comp.cant) * (Number(comp.pu) || 0)), 0);
+                aggregated[gName].topCategories[cat] = (aggregated[gName].topCategories[cat] || 0) + m_it;
+            });
+        });
+
+        // 3. Incorporar Tickets Directos en el Gasto Real (Gasto sin orden previa)
+        filteredTickets.forEach(t => {
+            const gName = t.departamento || 'No asignada';
+            if (!aggregated[gName]) {
+                aggregated[gName] = { name: gName, estimado: 0, gastado: 0, count: 0, topCategories: {}, reqCount: 0, ticketCount: 0 };
+            }
+
+            const ticketTotal = getTicketTotal(t);
+            aggregated[gName].gastado += ticketTotal;
+            aggregated[gName].ticketCount += 1;
+            aggregated[gName].count += 1;
+
+            // Desglosar ítems de tickets en las categorías del departamento
+            const items = Array.isArray(t.items) ? t.items : [];
+            items.forEach(item => {
+                const cat = item.cat || item.categoria || 'S/C';
+                const totalItem = Number(item.total) || (Number(item.cant || 1) * Number(item.pu || 0));
+                aggregated[gName].topCategories[cat] = (aggregated[gName].topCategories[cat] || 0) + totalItem;
+            });
         });
 
         const solicitudesAnalisis = Object.values(aggregated).map(item => {
@@ -151,7 +327,7 @@ const ResumenEjecutivo = () => {
             };
         }).sort((a, b) => b.estimado - a.estimado);
 
-        // --- MÉTRICAS DE TRAZABILIDAD Y SLA ---
+        // --- TRAZABILIDAD Y SLA ---
         const funnel = { proyecto: 0, area: 0, general: 0, compras: 0, completado: 0 };
         const stagnant = [];
         const byCC = {};
@@ -188,6 +364,29 @@ const ResumenEjecutivo = () => {
             totalEstimadoGlobal += Number(r.total_bs) || (items.reduce((s, i) => s + ((Number(i.cant) || 0) * (Number(i.pu) || 0)), 0) * 1.16);
         });
 
+        // Sumar e integrar los Tickets de Pago en el análisis por centro de costo
+        let totalTicketsGlobal = 0;
+        filteredTickets.forEach(t => {
+            const ticketTotal = getTicketTotal(t);
+            totalTicketsGlobal += ticketTotal;
+
+            const items = Array.isArray(t.items) ? t.items : [];
+            items.forEach(item => {
+                const cc = item.cc || t.centro_costo?.split('(')[0]?.trim() || 'S/CC';
+                const totalItem = Number(item.total) || (Number(item.cant || 1) * Number(item.pu || 0));
+                if (!byCC[cc]) byCC[cc] = 0;
+                byCC[cc] += totalItem;
+            });
+
+            if (items.length === 0) {
+                const cc = t.centro_costo?.split('(')[0]?.trim() || 'S/CC';
+                if (!byCC[cc]) byCC[cc] = 0;
+                byCC[cc] += ticketTotal;
+            }
+        });
+
+        const gastoConsolidadoReal = totalEjecutadoGlobal + totalTicketsGlobal;
+
         const recentApprovals = filteredReqs
             .filter(r => r.f_aprobacion_general)
             .sort((a, b) => new Date(b.f_aprobacion_general) - new Date(a.f_aprobacion_general))
@@ -216,6 +415,7 @@ const ResumenEjecutivo = () => {
             { name: 'COMPRAS', valor: Number(avg_f(slaStats.compras)), fill: '#f59e0b' }
         ];
 
+        // --- COMPILACIÓN DE CATEGORÍAS GLOBALES ---
         const globalCategories = {};
         filteredReqs.forEach(r => {
             const items = Array.isArray(r.items) ? r.items : [];
@@ -226,10 +426,21 @@ const ResumenEjecutivo = () => {
                 globalCategories[cat] = (globalCategories[cat] || 0) + m_it;
             });
         });
+
+        filteredTickets.forEach(t => {
+            const items = Array.isArray(t.items) ? t.items : [];
+            items.forEach(item => {
+                const cat = item.cat || item.categoria || 'S/C';
+                const totalItem = Number(item.total) || (Number(item.cant || 1) * Number(item.pu || 0));
+                globalCategories[cat] = (globalCategories[cat] || 0) + totalItem;
+            });
+        });
+
         const topCategoriesGlobal = Object.entries(globalCategories)
             .map(([name, total]) => ({ name, total: Number(total) || 0 }))
             .sort((a, b) => b.total - a.total)
             .slice(0, 5);
+
         const stagnantByGerencia = {};
         stagnant.forEach(r => {
             const ger = r.gerencia || 'S/G';
@@ -242,6 +453,8 @@ const ResumenEjecutivo = () => {
 
         return {
             gastoActual: totalEjecutadoGlobal,
+            gastoConsolidadoReal,
+            totalTicketsGlobal,
             ahorroTotal: totalEstimadoGlobal - totalEjecutadoGlobal,
             solicitudesAnalisis,
             funnel,
@@ -255,43 +468,106 @@ const ResumenEjecutivo = () => {
             totalEstimadoGlobal,
             topCategoriesGlobal,
             topStagnantGerencias,
+            reqsCount: filteredReqs.length,
+            ticketsCount: filteredTickets.length,
+            emergenciesCount: filteredReqs.filter(r => (r.prioridad || '').toLowerCase() === 'emergencia').length,
+            approvedReqsCount: filteredReqs.filter(r => (r.estado_aprobacion || '').toLowerCase() === 'aprobado_final').length,
+            approvedTicketsCount: filteredTickets.filter(t => (t.status || '').toLowerCase() === 'aprobado_final' || (t.status || '').toLowerCase() === 'pagado').length,
+            pendingTicketsCount: filteredTickets.filter(t => (t.status || '').toLowerCase() === 'en_espera').length,
+            topDelayed: (() => {
+                return filteredReqs
+                    .filter(r => {
+                        const sComp = (r.status_compra || '').toLowerCase();
+                        const isCompleted = sComp === 'completado' || sComp === 'entregado' || sComp === 'facturado';
+                        const status = (r.estado_aprobacion || '').toLowerCase();
+                        return status !== 'anulada' && status !== 'rechazada' && !isCompleted;
+                    })
+                    .map(r => {
+                        const dateStr = r.created_at || r.fecha_emision;
+                        const created = parseISO(dateStr);
+                        const diffDays = Math.max(0, Math.floor((new Date() - created) / (1000 * 60 * 60 * 24)));
+                        return {
+                            correlativo: r.correlativo_req || `REQ-${r.id}`,
+                            dias: diffDays,
+                            analista: r.asignado_nombre || 'Sin Asignar'
+                        };
+                    })
+                    .sort((a, b) => b.dias - a.dias)
+                    .slice(0, 3);
+            })(),
             delayTrend: (() => {
                 const now = new Date();
                 const trend = [];
-                for (let i = 5; i >= 0; i--) {
-                    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-                    const mIdx = d.getMonth();
-                    const y = d.getFullYear();
-                    const reqsInMonth = rawReqs.filter(r => {
-                        const rd = parseISO(r.created_at || r.fecha_emision);
-                        return rd.getMonth() === mIdx && rd.getFullYear() === y;
-                    });
-                    const pCount = reqsInMonth.filter(r => {
-                        const sComp = (r.status_compra || '').toLowerCase();
-                        const sAprob = (r.estado_aprobacion || '').toLowerCase();
-                        return sAprob !== 'aprobado_final' && sAprob !== 'anulada' && sAprob !== 'rechazada';
-                    }).length;
+                if (filtroMes === 'Todos') {
+                    // Mostrar los últimos 6 meses de forma dinámica
+                    for (let i = 5; i >= 0; i--) {
+                        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+                        const mIdx = d.getMonth();
+                        const y = d.getFullYear();
+                        const reqsInMonth = myReqs.filter(r => {
+                            const dateStr = r.created_at || r.fecha_emision;
+                            if (!dateStr) return false;
+                            const rd = parseISO(dateStr);
+                            return rd.getMonth() === mIdx && rd.getFullYear() === y;
+                        });
+                        const pCount = reqsInMonth.filter(r => {
+                            const sAprob = (r.estado_aprobacion || '').toLowerCase();
+                            return sAprob !== 'aprobado_final' && sAprob !== 'anulada' && sAprob !== 'rechazada';
+                        }).length;
 
-                    const procCount = reqsInMonth.filter(r => {
-                        const sComp = (r.status_compra || '').toLowerCase();
-                        return sComp === 'parcial' || (r.estado_aprobacion === 'aprobado_final' && sComp !== 'completado');
-                    }).length;
+                        const procCount = reqsInMonth.filter(r => {
+                            const sComp = (r.status_compra || '').toLowerCase();
+                            return sComp === 'parcial' || (r.estado_aprobacion === 'aprobado_final' && sComp !== 'completado');
+                        }).length;
 
-                    const compCount = reqsInMonth.filter(r => {
-                        const sComp = (r.status_compra || '').toLowerCase();
-                        return sComp === 'completado' || sComp === 'entregado' || sComp === 'facturado';
-                    }).length;
+                        const compCount = reqsInMonth.filter(r => {
+                            const sComp = (r.status_compra || '').toLowerCase();
+                            return sComp === 'completado' || sComp === 'entregado' || sComp === 'facturado';
+                        }).length;
 
-                    trend.push({
-                        month: meses_n[mIdx].substring(0, 3),
-                        Pendientes: pCount,
-                        Proceso: procCount,
-                        Completas: compCount
+                        trend.push({
+                            month: meses_n[mIdx].substring(0, 3),
+                            Pendientes: pCount,
+                            Proceso: procCount,
+                            Completas: compCount
+                        });
+                    }
+                } else {
+                    // Mostrar las semanas del mes seleccionado reactivamente
+                    const targetWeeks = getWeeksForMonth(filtroMes, 2026);
+                    targetWeeks.forEach(wObj => {
+                        const reqsInWeek = myReqs.filter(r => {
+                            const dateStr = r.created_at || r.fecha_emision;
+                            if (!dateStr) return false;
+                            const rd = parseISO(dateStr);
+                            return getWeek(rd).toString() === wObj.weekNum && rd.getFullYear() === 2026;
+                        });
+
+                        const pCount = reqsInWeek.filter(r => {
+                            const sAprob = (r.estado_aprobacion || '').toLowerCase();
+                            return sAprob !== 'aprobado_final' && sAprob !== 'anulada' && sAprob !== 'rechazada';
+                        }).length;
+
+                        const procCount = reqsInWeek.filter(r => {
+                            const sComp = (r.status_compra || '').toLowerCase();
+                            return sComp === 'parcial' || (r.estado_aprobacion === 'aprobado_final' && sComp !== 'completado');
+                        }).length;
+
+                        const compCount = reqsInWeek.filter(r => {
+                            const sComp = (r.status_compra || '').toLowerCase();
+                            return sComp === 'completado' || sComp === 'entregado' || sComp === 'facturado';
+                        }).length;
+
+                        trend.push({
+                            month: `Sem ${wObj.weekNum}`,
+                            Pendientes: pCount,
+                            Proceso: procCount,
+                            Completas: compCount
+                        });
                     });
                 }
                 return trend;
             })(),
-            // Restoring original executive metrics
             paretoChartData: Object.entries(byCC)
                 .map(([name, value]) => ({ name, value }))
                 .sort((a, b) => b.value - a.value)
@@ -301,16 +577,7 @@ const ResumenEjecutivo = () => {
                     acc.push({ ...d, pareto: Number(((cumulative / total) * 100).toFixed(1)), cumulative });
                     return acc;
                 }, []),
-            heatmap: Array(24).fill(0).map((_, i) => {
-                const hourStr = `${i}:00`;
-                const count = rawReqs.filter(r => {
-                    if (!r.f_aprobacion_general) return false;
-                    return new Date(r.f_aprobacion_general).getHours() === i;
-                }).length;
-                return { hour: hourStr, count };
-            }),
             stagnant,
-            // Data for CC or Category drilldown
             drilldownData: () => {
                 let dataCC = [];
                 let dataMat = [];
@@ -332,6 +599,16 @@ const ResumenEjecutivo = () => {
                             allCats[cat] = (allCats[cat] || 0) + m_it;
                         });
                     });
+
+                    filteredTickets.forEach(t => {
+                        const items = Array.isArray(t.items) ? t.items : [];
+                        items.forEach(i => {
+                            const cat = i.cat || i.categoria || 'S/C';
+                            const m_it = Number(i.total) || (Number(i.cant || 1) * Number(i.pu || 0));
+                            allCats[cat] = (allCats[cat] || 0) + m_it;
+                        });
+                    });
+
                     dataMat = Object.entries(allCats)
                         .map(([name, value]) => ({ name, value }))
                         .sort((a, b) => b.value - a.value)
@@ -340,7 +617,6 @@ const ResumenEjecutivo = () => {
                     const gData = aggregated[filtroGerenciaCC];
                     if (!gData) return { cc: [], mat: [] };
 
-                    // CCs for this management
                     const gCCs = {};
                     filteredReqs.filter(r => (r.gerencia || r.departamento) === filtroGerenciaCC).forEach(r => {
                         const cc = r.centro_costo?.split('(')[0]?.trim() || 'S/CC';
@@ -350,6 +626,15 @@ const ResumenEjecutivo = () => {
                             return s + h.reduce((acc, comp) => acc + ((Number(comp.cant) || 0) * (Number(comp.pu) || 0)), 0);
                         }, 0);
                         gCCs[cc] = (gCCs[cc] || 0) + ejec;
+                    });
+
+                    filteredTickets.filter(t => (t.departamento || t.gerencia_departamento) === filtroGerenciaCC).forEach(t => {
+                        const items = Array.isArray(t.items) ? t.items : [];
+                        items.forEach(i => {
+                            const cc = i.cc || t.centro_costo?.split('(')[0]?.trim() || 'S/CC';
+                            const totalItem = Number(i.total) || (Number(i.cant || 1) * Number(i.pu || 0));
+                            gCCs[cc] = (gCCs[cc] || 0) + totalItem;
+                        });
                     });
 
                     dataCC = Object.entries(gCCs)
@@ -368,24 +653,26 @@ const ResumenEjecutivo = () => {
                 };
             }
         };
-    }, [rawReqs, rawFunds, rawPartidas, filtroGerenciaCC, filtroMes, filtroSemana]);
+    }, [myReqs, myFunds, rawPartidas, myTickets, filtroGerenciaCC, filtroMes, filtroSemana]);
 
     if (loading) return <div style={loaderStyle}>Analizando estructuras de Supabase...</div>;
 
     return (
         <div className="executive-summary" style={containerStyle}>
-            {/* HEADER EJECUTIVO */}
+            {/* HEADER EJECUTIVO GLASSMORPHIC */}
             <div style={headerStyle}>
                 <div>
                     <h1 style={titleStyle}>Resumen Ejecutivo SITC</h1>
-                    <p style={subtitleStyle}>Métricas Estratégicas y Control de Salud Operativa</p>
-                    <p style={{ ...subtitleStyle, fontSize: '0.8rem', color: '#94a3b8', fontStyle: 'italic', marginTop: '2px' }}>"Lo que no se mide no se puede mejorar"</p>
+                    <p style={subtitleStyle}>Métricas de Procura, Control de Fondos y Gasto Operativo Consolidado</p>
+                    <p style={{ ...subtitleStyle, fontSize: '0.8rem', color: '#64748b', fontStyle: 'italic', marginTop: '4px' }}>
+                        "Control absoluto en tiempo real del flujo financiero y planeación operativa"
+                    </p>
                 </div>
                 <div style={headerActionsStyle}>
                     <div style={{ display: 'flex', gap: '10px' }}>
                         <select 
                             value={filtroMes} 
-                            onChange={(e) => setFiltroMes(e.target.value)}
+                            onChange={(e) => handleMonthChange(e.target.value)}
                             style={periodoBadgeStyle}
                         >
                             <option value="Todos">Todos los Meses</option>
@@ -400,308 +687,482 @@ const ResumenEjecutivo = () => {
                             style={periodoBadgeStyle}
                         >
                             <option value="Todas">Todas las Semanas</option>
-                            {Array.from({ length: 53 }, (_, i) => i + 1).map(w => (
-                                <option key={w} value={w.toString()}>Semana {w}</option>
+                            {availableWeeks.map(w => (
+                                <option key={w.weekNum} value={w.weekNum}>{w.label}</option>
                             ))}
                         </select>
                     </div>
-                    <button style={downloadBtnStyle}><Download size={14} /> Exportar</button>
                 </div>
             </div>
 
-            {/* KPI GRID (TOP LEVEL) - INDICADORES DE IMPACTO FINANCIERO */}
-            <div style={kpiGridStyle}>
-                <ExecutiveKPI 
-                    label="Ejecución de Fondos" 
-                    value={`$ ${stats.gastoActual.toLocaleString('de-DE')}`} 
-                    sub={`Presupuesto: $ ${stats.totalEstimadoGlobal.toLocaleString('de-DE')}`} 
-                    icon={<TrendingUpIcon />} 
-                    color="#0ea5e9"
-                    trend={stats.totalEstimadoGlobal > 0 ? `${((stats.gastoActual / stats.totalEstimadoGlobal) * 100).toFixed(1)}%` : null}
-                    details={
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                            <div style={{ fontSize: '0.65rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', marginBottom: '4px', borderBottom: '1px solid #f1f5f9', paddingBottom: '4px' }}>Consumo por Categoría</div>
-                            {stats.topCategoriesGlobal.map((cat, ci) => (
-                                <div key={ci} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <span style={{ fontSize: '0.7rem', color: '#475569', fontWeight: 600, maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cat.name}</span>
-                                    <span style={{ fontSize: '0.7rem', color: '#1e293b', fontWeight: 800 }}>$ {cat.total.toLocaleString('de-DE')}</span>
-                                </div>
-                            ))}
-                        </div>
-                    }
-                />
-                <ExecutiveKPI
-                    label="Reqs. Estancadas"
-                    value={`${stats.stagnantCount}`}
-                    sub="Requieren atención"
-                    icon={<AlertCircle />}
-                    color="#f59e0b"
-                    details={
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                            <div style={{ fontSize: '0.65rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', marginBottom: '4px', borderBottom: '1px solid #f1f5f9', paddingBottom: '4px' }}>Por Gerencia / Depto</div>
-                            {stats.topStagnantGerencias.map((g, gi) => (
-                                <div key={gi} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <span style={{ fontSize: '0.7rem', color: '#475569', fontWeight: 600, maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.name}</span>
-                                    <span style={{ fontSize: '0.7rem', color: '#1e293b', fontWeight: 800 }}>{g.count} Reqs</span>
-                                </div>
-                            ))}
-                        </div>
-                    }
-                />
-                <ExecutiveKPI
-                    label="Centros de Costo"
-                    value={`${stats.topCC.length}`}
-                    sub="Activos en período"
-                    icon={<Briefcase />}
-                    color="#8b5cf6"
-                />
+            {/* TABS DE SECCIÓN PREMIUM */}
+            <div style={tabContainerStyle}>
+                <button 
+                    style={{
+                        ...tabButtonStyle, 
+                        ...(activeTab === 'financiero' ? { 
+                            backgroundColor: '#10b981', 
+                            color: 'white',
+                            boxShadow: '0 4px 14px 0 rgba(16, 185, 129, 0.4)'
+                        } : {})
+                    }}
+                    onClick={() => setActiveTab('financiero')}
+                >
+                    <DollarSign size={16} />
+                    <span>Análisis Financiero y Presupuestario</span>
+                </button>
+                <button 
+                    style={{
+                        ...tabButtonStyle, 
+                        ...(activeTab === 'operativo' ? { 
+                            backgroundColor: '#6366f1', 
+                            color: 'white',
+                            boxShadow: '0 4px 14px 0 rgba(99, 102, 241, 0.4)'
+                        } : {})
+                    }}
+                    onClick={() => setActiveTab('operativo')}
+                >
+                    <Clock size={16} />
+                    <span>Volumen Operativo y Eficiencia</span>
+                </button>
             </div>
 
-            {/* MAIN DASHBOARD CONTENT */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '20px' }}>
-
-                {/* 1. BALANCE FINANCIERO (CONSOLIDADO Y COMPACTO) */}
-                <div style={{ ...chartBoxStyle, padding: '25px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                        <div>
-                            <h3 style={{ ...chartTitleStyle, margin: 0, fontSize: '1.1rem' }}>Balance Financiero por Gerencia</h3>
-                            <p style={{ fontSize: '0.8rem', color: '#64748b' }}>Planificado vs Ejecutado (USD)</p>
-                        </div>
-                    </div>
-                    <div style={{ height: '250px' }}>
-                        <ResponsiveContainer width="100%" height="100%">
-                            <BarChart data={stats.solicitudesAnalisis} margin={{ top: 10, bottom: 20 }}>
-                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 11, fontWeight: 800, fill: '#1e293b' }} interval={0} />
-                                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#64748b', fontWeight: 600 }} tickFormatter={(v) => `$${v}`} />
-                                <Tooltip cursor={{ fill: '#f8fafc' }} contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', fontSize: '0.85rem' }} />
-                                <Legend verticalAlign="top" align="right" iconType="circle" wrapperStyle={{ fontSize: '0.8rem', fontWeight: 800, paddingBottom: '20px' }} />
-                                <Bar name="Planificado" dataKey="estimado" fill="#64748b" radius={[4, 4, 0, 0]} barSize={30} />
-                                <Bar name="Real" dataKey="gastado" fill="#1e3a8a" radius={[4, 4, 0, 0]} barSize={30} />
-                            </BarChart>
-                        </ResponsiveContainer>
-                    </div>
-                </div>
-
-                {/* 2. FILA DE CONTROL OPERATIVO (4 COLUMNAS) */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '20px' }}>
-                    {/* ESTADO DE OPERACIONES */}
-                    <div style={{ ...chartBoxStyle, padding: '15px' }}>
-                        <h3 style={{ ...chartTitleStyle, fontSize: '0.8rem', marginBottom: '10px' }}>Estado Operativo</h3>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                            {[
-                                { label: 'PENDIENTES', val: stats.funnel.proyecto + stats.funnel.area + stats.funnel.general, color: '#3b82f6' },
-                                { label: 'EN PROCESO', val: stats.funnel.compras, color: '#f59e0b' },
-                                { label: 'COMPLETADAS', val: stats.funnel.completado, color: '#10b981' }
-                            ].map((s, i) => (
-                                <div key={i}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px', fontSize: '0.55rem', fontWeight: 800 }}>
-                                        <span style={{ color: '#64748b' }}>{s.label}</span>
-                                        <span style={{ color: s.color }}>{s.val}</span>
-                                    </div>
-                                    <div style={{ height: '5px', backgroundColor: '#f1f5f9', borderRadius: '3px', overflow: 'hidden' }}>
-                                        <motion.div initial={{ width: 0 }} animate={{ width: `${(s.val / (rawReqs.length || 1)) * 100}%` }} style={{ height: '100%', backgroundColor: s.color }} />
-                                    </div>
+            {/* CONTENIDO CONDICIONAL POR TAB */}
+            {activeTab === 'financiero' ? (
+                <motion.div
+                    key="financiero"
+                    initial={{ opacity: 0, y: 15 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.3 }}
+                >
+                    {/* GRID DE KPIs FINANCIEROS */}
+                    <div style={kpiGridStyle}>
+                        <ExecutiveKPI 
+                            label="Gasto Real Consolidado" 
+                            value={`$ ${stats.gastoConsolidadoReal.toLocaleString('de-DE')}`} 
+                            sub={`Reqs: $${stats.gastoActual.toLocaleString('de-DE')} + Tickets: $${stats.totalTicketsGlobal.toLocaleString('de-DE')}`} 
+                            icon={<TrendingUp />} 
+                            color="#10b981"
+                            trend={stats.totalEstimadoGlobal > 0 ? `${((stats.gastoConsolidadoReal / stats.totalEstimadoGlobal) * 100).toFixed(0)}% de Ejecución` : null}
+                            details={
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                    <div style={{ fontSize: '0.65rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', marginBottom: '4px', borderBottom: '1px solid #f1f5f9', paddingBottom: '4px' }}>Consumo Consolidado por Categoría</div>
+                                    {stats.topCategoriesGlobal.map((cat, ci) => (
+                                        <div key={ci} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                            <span style={{ fontSize: '0.7rem', color: '#475569', fontWeight: 600, maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cat.name}</span>
+                                            <span style={{ fontSize: '0.7rem', color: '#1e293b', fontWeight: 800 }}>$ {cat.total.toLocaleString('de-DE')}</span>
+                                        </div>
+                                    ))}
                                 </div>
-                            ))}
-                        </div>
-                    </div>
+                            }
+                        />
 
-                    {/* SALUD DEL PROYECTO (GAUGE) */}
-                    <div style={{ ...chartBoxStyle, padding: '15px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-                        <h3 style={{ ...chartTitleStyle, fontSize: '0.8rem', marginBottom: '5px', textAlign: 'center' }}>Salud de Planeación</h3>
-                        <div style={{ height: '100px', width: '100%', position: 'relative' }}>
-                            <ResponsiveContainer width="100%" height="100%">
-                                <PieChart>
-                                    <Pie
-                                        data={[
-                                            { name: 'Emergencia', value: stats.emergencyRatio, fill: stats.emergencyRatio > 30 ? '#ef4444' : stats.emergencyRatio > 15 ? '#f59e0b' : '#10b981' },
-                                            { name: 'Planificadas', value: stats.plannedRatio, fill: '#f1f5f9' }
-                                        ]}
-                                        cx="50%" cy="100%" startAngle={180} endAngle={0}
-                                        innerRadius={45} outerRadius={65} paddingAngle={0} dataKey="value" stroke="none"
-                                    >
-                                        <Cell key="emergencia" />
-                                        <Cell key="planificadas" />
-                                    </Pie>
-                                    <Tooltip formatter={(v, name) => [`${v}%`, name]} />
-                                </PieChart>
-                            </ResponsiveContainer>
-                            <div style={{ position: 'absolute', bottom: 10, left: '50%', transform: 'translateX(-50%)', textAlign: 'center' }}>
-                                <div style={{ fontSize: '1rem', fontWeight: 900, color: '#1e293b' }}>{stats.emergencyRatio}%</div>
-                                <div style={{ fontSize: '0.5rem', fontWeight: 800, color: '#94a3b8' }}>EMERGENCIAS</div>
-                            </div>
-                        </div>
-                        <div style={{ fontSize: '0.55rem', fontWeight: 700, color: stats.emergencyRatio > 30 ? '#ef4444' : '#64748b', marginTop: '5px' }}>
-                            {stats.emergencyRatio > 30 ? 'CRÍTICO: Baja planeación' : stats.emergencyRatio > 15 ? 'RIESGO: Monitorear' : 'ÓPTIMO: Planeación sólida'}
-                        </div>
-                    </div>
-
-                    {/* TENDENCIA DE FLUJO (STACKED AREA) */}
-                    <div style={{ ...chartBoxStyle, padding: '15px' }}>
-                        <h3 style={{ ...chartTitleStyle, fontSize: '0.8rem', marginBottom: '10px' }}>Tendencia de Flujo</h3>
-                        <ResponsiveContainer width="100%" height={100}>
-                            <AreaChart data={stats.delayTrend}>
-                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                                <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fontSize: 7, fontWeight: 700 }} />
-                                <Tooltip contentStyle={{ fontSize: '0.6rem' }} />
-                                <Area type="monotone" dataKey="Pendientes" stackId="1" stroke="#ef4444" fill="#fee2e2" />
-                                <Area type="monotone" dataKey="Proceso" stackId="1" stroke="#f59e0b" fill="#fef3c7" />
-                                <Area type="monotone" dataKey="Completas" stackId="1" stroke="#10b981" fill="#dcfce7" />
-                            </AreaChart>
-                        </ResponsiveContainer>
-                    </div>
-
-                    {/* EFICIENCIA SLA (HORIZONTAL) */}
-                    <div style={{ ...chartBoxStyle, padding: '15px' }}>
-                        <h3 style={{ ...chartTitleStyle, fontSize: '0.8rem', marginBottom: '10px' }}>Embudo Promedio</h3>
-                        <ResponsiveContainer width="100%" height={100}>
-                            <BarChart data={stats.slaFunnelData} layout="vertical" margin={{ left: -10, right: 30 }}>
-                                <XAxis type="number" hide />
-                                <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{ fontSize: 8, fontWeight: 900, fill: '#64748b' }} width={55} />
-                                <Bar dataKey="valor" radius={[0, 4, 4, 0]} barSize={10} label={{ position: 'right', fontSize: 9, fontWeight: 900, fill: '#1e293b', formatter: (v) => `${v}d` }}>
-                                    {stats.slaFunnelData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.fill} />)}
-                                </Bar>
-                            </BarChart>
-                        </ResponsiveContainer>
-                    </div>
-                </div>
-
-                {/* 3. DISTRIBUCIÓN DE GASTO (CC Y MATERIAL) */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
-                    {/* CONSUMO POR CENTRO DE COSTO */}
-                    <div style={{ ...chartBoxStyle, padding: '20px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
-                            <h3 style={{ ...chartTitleStyle, margin: 0, fontSize: '0.9rem' }}>Consumo por Centro de Costo</h3>
-                            <select
-                                value={filtroGerenciaCC}
-                                onChange={(e) => setFiltroGerenciaCC(e.target.value)}
-                                style={{ padding: '4px 10px', borderRadius: '10px', fontSize: '0.7rem', border: '1px solid #e2e8f0', fontWeight: 700, backgroundColor: '#f8fafc' }}
-                            >
-                                <option value="Todas">Todas las Gerencias</option>
-                                {stats.solicitudesAnalisis.map(g => <option key={g.name} value={g.name}>{g.name}</option>)}
-                            </select>
-                        </div>
-                        <div style={{ height: '180px', display: 'flex', alignItems: 'center' }}>
-                            <div style={{ flex: 1, height: '100%' }}>
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <PieChart>
-                                        <Pie
-                                            data={stats.drilldownData().cc}
-                                            cx="50%" cy="50%" innerRadius={45} outerRadius={65}
-                                            paddingAngle={8} dataKey="value" stroke="none"
-                                        >
-                                            {stats.drilldownData().cc.map((entry, index) => (
-                                                <Cell key={`cell-${index}`} fill={['#1e3a8a', '#3b82f6', '#f59e0b', '#10b981', '#ef4444'][index % 5]} />
-                                            ))}
-                                        </Pie>
-                                        <Tooltip formatter={(v) => `$ ${Number(v).toLocaleString('de-DE')}`} />
-                                    </PieChart>
-                                </ResponsiveContainer>
-                            </div>
-                            <div style={{ flex: 1.2, display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                                {stats.drilldownData().cc.map((entry, index) => (
-                                    <div key={index} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                        <div style={{ width: '8px', height: '8px', borderRadius: '2px', backgroundColor: ['#1e3a8a', '#3b82f6', '#f59e0b', '#10b981', '#ef4444'][index % 5] }} />
-                                        <span style={{ fontSize: '0.6rem', fontWeight: 700, color: '#475569', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{entry.name}</span>
-                                        <span style={{ fontSize: '0.6rem', fontWeight: 800, color: '#1e293b', marginLeft: 'auto' }}>${Number(entry.value).toLocaleString('de-DE')}</span>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* CONSUMO POR TIPO DE MATERIAL */}
-                    <div style={{ ...chartBoxStyle, padding: '20px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
-                            <h3 style={{ ...chartTitleStyle, margin: 0, fontSize: '0.9rem' }}>Consumo por Tipo de Material</h3>
-                            <span style={{ fontSize: '0.65rem', color: '#94a3b8', fontWeight: 700 }}>Materiales</span>
-                        </div>
-                        <div style={{ height: '180px', display: 'flex', alignItems: 'center' }}>
-                            <div style={{ flex: 1, height: '100%' }}>
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <PieChart>
-                                        <Pie
-                                            data={stats.drilldownData().mat}
-                                            cx="50%" cy="50%" innerRadius={45} outerRadius={65}
-                                            paddingAngle={8} dataKey="value" stroke="none"
-                                        >
-                                            {stats.drilldownData().mat.map((entry, index) => (
-                                                <Cell key={`cell-${index}`} fill={['#8b5cf6', '#ec4899', '#06b6d4', '#10b981', '#f59e0b'][index % 5]} />
-                                            ))}
-                                        </Pie>
-                                        <Tooltip formatter={(v) => `$ ${Number(v).toLocaleString('de-DE')}`} />
-                                    </PieChart>
-                                </ResponsiveContainer>
-                            </div>
-                            <div style={{ flex: 1.2, display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                                {stats.drilldownData().mat.map((entry, index) => (
-                                    <div key={index} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                        <div style={{ width: '8px', height: '8px', borderRadius: '2px', backgroundColor: ['#8b5cf6', '#ec4899', '#06b6d4', '#10b981', '#f59e0b'][index % 5] }} />
-                                        <span style={{ fontSize: '0.6rem', fontWeight: 700, color: '#475569', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{entry.name}</span>
-                                        <span style={{ fontSize: '0.6rem', fontWeight: 800, color: '#1e293b', marginLeft: 'auto' }}>${Number(entry.value).toLocaleString('de-DE')}</span>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                {/* 4. AUDITORÍA RECIENTE (ANCHO COMPLETO) */}
-                <div style={{ ...chartBoxStyle, padding: '20px' }}>
-                    <h3 style={{ ...chartTitleStyle, fontSize: '0.9rem', marginBottom: '15px' }}>Auditoría de Aprobaciones Recientes</h3>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '15px' }}>
-                        {stats.recentApprovals.slice(0, 4).map((app, idx) => (
-                            <div key={idx} style={{ display: 'flex', gap: '12px', alignItems: 'center', padding: '10px', backgroundColor: '#f8fafc', borderRadius: '12px', border: '1px solid #f1f5f9' }}>
-                                <div style={{ width: '32px', height: '32px', borderRadius: '10px', backgroundColor: '#6366f115', color: '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                    <ShieldCheck size={16} />
+                        <ExecutiveKPI 
+                            label="Presupuesto de Fondos" 
+                            value={`$ ${stats.totalEstimadoGlobal.toLocaleString('de-DE')}`} 
+                            sub="Presupuesto Solicitado en Período" 
+                            icon={<DollarSign />} 
+                            color="#0ea5e9"
+                            details={
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                    <div style={{ fontSize: '0.65rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', marginBottom: '4px', borderBottom: '1px solid #f1f5f9', paddingBottom: '4px' }}>Presupuesto por Gerencia</div>
+                                    {stats.solicitudesAnalisis.map((g, gi) => (
+                                        <div key={gi} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                            <span style={{ fontSize: '0.7rem', color: '#475569', fontWeight: 600, maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.name}</span>
+                                            <span style={{ fontSize: '0.7rem', color: '#1e293b', fontWeight: 800 }}>$ {g.estimado.toLocaleString('de-DE')}</span>
+                                        </div>
+                                    ))}
                                 </div>
-                                <div style={{ flex: 1 }}>
-                                    <div style={{ fontSize: '0.65rem', fontWeight: 900, color: '#6366f1' }}>{app.correlativo}</div>
-                                    <div style={{ fontSize: '0.7rem', fontWeight: 700, color: '#1e293b' }}>{app.usuario}</div>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </div>
+                            }
+                        />
 
-                {/* 4. TABLA DE CONSUMO DETALLADO */}
-                <div style={{ ...chartBoxStyle, padding: '25px' }}>
-                    <h3 style={{ ...chartTitleStyle, fontSize: '1rem', marginBottom: '20px' }}>Consumo Detallado por Gerencia</h3>
-                    <div style={{ overflowX: 'auto' }}>
-                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                            <thead>
-                                <tr style={{ borderBottom: '2px solid #f1f5f9', textAlign: 'left' }}>
-                                    <th style={{ padding: '12px', fontSize: '0.7rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase' }}>GERENCIA</th>
-                                    <th style={{ padding: '12px', fontSize: '0.7rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase' }}>TOP CATEGORÍAS</th>
-                                    <th style={{ padding: '12px', fontSize: '0.7rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', textAlign: 'right' }}>SOLICITADO</th>
-                                    <th style={{ padding: '12px', fontSize: '0.7rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', textAlign: 'right' }}>EJECUTADO</th>
-                                    <th style={{ padding: '12px', fontSize: '0.7rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', textAlign: 'center' }}>%</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {stats.solicitudesAnalisis.map((g, i) => (
-                                    <tr key={i} style={{ borderBottom: '1px solid #f8fafc' }}>
-                                        <td style={{ padding: '14px 12px', fontSize: '0.8rem', fontWeight: 750, color: '#1e293b' }}>{g.name}</td>
-                                        <td style={{ padding: '14px 12px' }}>
-                                            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                                                {g.topCategories.map((c, ci) => (
-                                                    <span key={ci} style={{ backgroundColor: '#f1f5f9', padding: '2px 6px', borderRadius: '4px', fontSize: '0.6rem', color: '#475569', fontWeight: 600 }}>{c.name}</span>
-                                                ))}
+                        <ExecutiveKPI
+                            label="Tickets de Pago Directo"
+                            value={`$ ${stats.totalTicketsGlobal.toLocaleString('de-DE')}`}
+                            sub="Egresos directos por canal rápido"
+                            icon={<FileText />}
+                            color="#f59e0b"
+                            details={
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                    <div style={{ fontSize: '0.65rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', marginBottom: '4px', borderBottom: '1px solid #f1f5f9', paddingBottom: '4px' }}>Gasto Directo por Departamento</div>
+                                    {stats.solicitudesAnalisis.filter(g => g.gastado > 0).map((g, gi) => {
+                                        const ticketExp = myTickets.filter(t => (t.departamento || t.gerencia_departamento) === g.name && (t.status || '').toLowerCase() !== 'rechazado');
+                                        const totalTicketVal = ticketExp.reduce((sum, tk) => {
+                                            const items = Array.isArray(tk.items) ? tk.items : [];
+                                            if (items.length > 0) {
+                                                return sum + items.reduce((s_i, it) => s_i + (Number(it.total) || (Number(it.cant || 1) * Number(it.pu || 0))), 0);
+                                            }
+                                            return sum + Number(tk.total_usd || tk.monto || 0);
+                                        }, 0);
+                                        return (
+                                            <div key={gi} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                <span style={{ fontSize: '0.7rem', color: '#475569', fontWeight: 600, maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.name}</span>
+                                                <span style={{ fontSize: '0.7rem', color: '#1e293b', fontWeight: 800 }}>$ {totalTicketVal.toLocaleString('de-DE')} ({ticketExp.length} tk)</span>
                                             </div>
-                                        </td>
-                                        <td style={{ padding: '14px 12px', textAlign: 'right', fontSize: '0.8rem', color: '#64748b' }}>$ {g.estimado.toLocaleString('de-DE')}</td>
-                                        <td style={{ padding: '14px 12px', textAlign: 'right', fontSize: '0.8rem', fontWeight: 850, color: g.gastado > 0 ? '#10b981' : '#cbd5e1' }}>$ {g.gastado.toLocaleString('de-DE')}</td>
-                                        <td style={{ padding: '14px 12px', textAlign: 'center' }}>
-                                            <span style={{ fontSize: '0.7rem', fontWeight: 900, color: g.porcentaje > 100 ? '#ef4444' : '#64748b' }}>{g.porcentaje}%</span>
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
+                                        );
+                                    })}
+                                </div>
+                            }
+                        />
                     </div>
-                </div>
-            </div>
+
+                    {/* CUERPO FINANCIERO */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '20px' }}>
+                        {/* BALANCE FINANCIERO CONSOLIDADO POR GERENCIA */}
+                        <div style={chartBoxStyle}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                                <div>
+                                    <h3 style={{ ...chartTitleStyle, margin: 0, fontSize: '1.1rem' }}>Balance de Presupuesto Consolidado</h3>
+                                    <p style={{ fontSize: '0.8rem', color: '#64748b' }}>Planificado (Fondos Solicitados) vs Gasto Real en USD</p>
+                                </div>
+                            </div>
+                            <div style={{ height: '320px' }}>
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <BarChart data={stats.solicitudesAnalisis} margin={{ top: 10, bottom: 20 }}>
+                                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                                        <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 800, fill: '#1e293b' }} interval={0} />
+                                        <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#64748b', fontWeight: 600 }} tickFormatter={(v) => `$${v}`} />
+                                        <Tooltip cursor={{ fill: '#f8fafc' }} contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', fontSize: '0.85rem' }} />
+                                        <Legend verticalAlign="top" align="right" iconType="circle" wrapperStyle={{ fontSize: '0.8rem', fontWeight: 800, paddingBottom: '20px' }} />
+                                        <Bar name="Fondos Planificados" dataKey="estimado" fill="#64748b" radius={[4, 4, 0, 0]} barSize={20} />
+                                        <Bar name="Gasto Consolidado Real" dataKey="gastado" fill="#10b981" radius={[4, 4, 0, 0]} barSize={20} />
+                                    </BarChart>
+                                </ResponsiveContainer>
+                            </div>
+                        </div>
+
+                        {/* DISTRIBUCIÓN POR CC Y MATERIALES */}
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '20px' }}>
+                            {/* CONSUMO POR CENTRO DE COSTO */}
+                            <div style={{ ...chartBoxStyle, padding: '20px' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
+                                    <h3 style={{ ...chartTitleStyle, margin: 0, fontSize: '0.9rem' }}>Consumo por Centro de Costo (Consolidado)</h3>
+                                    <select
+                                        value={filtroGerenciaCC}
+                                        onChange={(e) => setFiltroGerenciaCC(e.target.value)}
+                                        style={{ padding: '4px 10px', borderRadius: '10px', fontSize: '0.7rem', border: '1px solid #e2e8f0', fontWeight: 700, backgroundColor: '#f8fafc' }}
+                                    >
+                                        <option value="Todas">Todas las Gerencias</option>
+                                        {stats.solicitudesAnalisis.map(g => <option key={g.name} value={g.name}>{g.name}</option>)}
+                                    </select>
+                                </div>
+                                <div style={{ height: '180px', display: 'flex', alignItems: 'center' }}>
+                                    <div style={{ flex: 1, height: '100%' }}>
+                                        <ResponsiveContainer width="100%" height="100%">
+                                            <PieChart>
+                                                <Pie
+                                                    data={stats.drilldownData().cc}
+                                                    cx="50%" cy="50%" innerRadius={45} outerRadius={65}
+                                                    paddingAngle={8} dataKey="value" stroke="none"
+                                                >
+                                                    {stats.drilldownData().cc.map((entry, index) => (
+                                                        <Cell key={`cell-${index}`} fill={['#1e3a8a', '#3b82f6', '#f59e0b', '#10b981', '#ef4444'][index % 5]} />
+                                                    ))}
+                                                </Pie>
+                                                <Tooltip formatter={(v) => `$ ${Number(v).toLocaleString('de-DE')}`} />
+                                            </PieChart>
+                                        </ResponsiveContainer>
+                                    </div>
+                                    <div style={{ flex: 1.2, display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                        {stats.drilldownData().cc.map((entry, index) => (
+                                            <div key={index} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                <div style={{ width: '8px', height: '8px', borderRadius: '2px', backgroundColor: ['#1e3a8a', '#3b82f6', '#f59e0b', '#10b981', '#ef4444'][index % 5] }} />
+                                                <span style={{ fontSize: '0.6rem', fontWeight: 700, color: '#475569', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '120px' }}>{entry.name}</span>
+                                                <span style={{ fontSize: '0.6rem', fontWeight: 800, color: '#1e293b', marginLeft: 'auto' }}>${Number(entry.value).toLocaleString('de-DE')}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* CONSUMO POR TIPO DE MATERIAL */}
+                            <div style={{ ...chartBoxStyle, padding: '20px' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
+                                    <h3 style={{ ...chartTitleStyle, margin: 0, fontSize: '0.9rem' }}>Consumo por Tipo de Material (Consolidado)</h3>
+                                    <span style={{ fontSize: '0.65rem', color: '#94a3b8', fontWeight: 700 }}>Categorías</span>
+                                </div>
+                                <div style={{ height: '180px', display: 'flex', alignItems: 'center' }}>
+                                    <div style={{ flex: 1, height: '100%' }}>
+                                        <ResponsiveContainer width="100%" height="100%">
+                                            <PieChart>
+                                                <Pie
+                                                    data={stats.drilldownData().mat}
+                                                    cx="50%" cy="50%" innerRadius={45} outerRadius={65}
+                                                    paddingAngle={8} dataKey="value" stroke="none"
+                                                >
+                                                    {stats.drilldownData().mat.map((entry, index) => (
+                                                        <Cell key={`cell-${index}`} fill={['#8b5cf6', '#ec4899', '#06b6d4', '#10b981', '#f59e0b'][index % 5]} />
+                                                    ))}
+                                                </Pie>
+                                                <Tooltip formatter={(v) => `$ ${Number(v).toLocaleString('de-DE')}`} />
+                                            </PieChart>
+                                        </ResponsiveContainer>
+                                    </div>
+                                    <div style={{ flex: 1.2, display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                        {stats.drilldownData().mat.map((entry, index) => (
+                                            <div key={index} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                <div style={{ width: '8px', height: '8px', borderRadius: '2px', backgroundColor: ['#8b5cf6', '#ec4899', '#06b6d4', '#10b981', '#f59e0b'][index % 5] }} />
+                                                <span style={{ fontSize: '0.6rem', fontWeight: 700, color: '#475569', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '120px' }}>{entry.name}</span>
+                                                <span style={{ fontSize: '0.6rem', fontWeight: 800, color: '#1e293b', marginLeft: 'auto' }}>${Number(entry.value).toLocaleString('de-DE')}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* TABLA DE CONSUMO DETALLADO POR GERENCIA */}
+                        <div style={{ ...chartBoxStyle, padding: '25px' }}>
+                            <h3 style={{ ...chartTitleStyle, fontSize: '1rem', marginBottom: '20px' }}>Consumo Consolidado Detallado por Gerencia</h3>
+                            <div style={{ overflowX: 'auto' }}>
+                                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                    <thead>
+                                        <tr style={{ borderBottom: '2px solid #f1f5f9', textAlign: 'left' }}>
+                                            <th style={{ padding: '12px', fontSize: '0.7rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase' }}>GERENCIA</th>
+                                            <th style={{ padding: '12px', fontSize: '0.7rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase' }}>TOP CATEGORÍAS DE GASTO</th>
+                                            <th style={{ padding: '12px', fontSize: '0.7rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', textAlign: 'right' }}>FONDOS ASIGNADOS</th>
+                                            <th style={{ padding: '12px', fontSize: '0.7rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', textAlign: 'right' }}>GASTO REAL EJECUTADO</th>
+                                            <th style={{ padding: '12px', fontSize: '0.7rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', textAlign: 'center' }}>% EJECUCION</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {stats.solicitudesAnalisis.map((g, i) => (
+                                            <tr key={i} style={{ borderBottom: '1px solid #f8fafc' }}>
+                                                <td style={{ padding: '14px 12px', fontSize: '0.8rem', fontWeight: 750, color: '#1e293b' }}>{g.name}</td>
+                                                <td style={{ padding: '14px 12px' }}>
+                                                    <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                                                        {g.topCategories.map((c, ci) => (
+                                                            <span key={ci} style={{ backgroundColor: '#f1f5f9', padding: '2px 6px', borderRadius: '4px', fontSize: '0.6rem', color: '#475569', fontWeight: 600 }}>{c.name}</span>
+                                                        ))}
+                                                    </div>
+                                                </td>
+                                                <td style={{ padding: '14px 12px', textAlign: 'right', fontSize: '0.8rem', color: '#64748b' }}>$ {g.estimado.toLocaleString('de-DE')}</td>
+                                                <td style={{ padding: '14px 12px', textAlign: 'right', fontSize: '0.8rem', fontWeight: 850, color: g.gastado > 0 ? '#10b981' : '#cbd5e1' }}>$ {g.gastado.toLocaleString('de-DE')}</td>
+                                                <td style={{ padding: '14px 12px', textAlign: 'center' }}>
+                                                    <span style={{ fontSize: '0.7rem', fontWeight: 900, color: g.porcentaje > 100 ? '#ef4444' : '#10b981' }}>{g.porcentaje}%</span>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </motion.div>
+            ) : (
+                <motion.div
+                    key="operativo"
+                    initial={{ opacity: 0, y: 15 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.3 }}
+                >
+                    {/* GRID DE KPIs OPERATIVOS */}
+                    <div style={kpiGridStyle}>
+                        <ExecutiveKPI
+                            label="Salud y Lead Time"
+                            value={`${stats.avgLeadTime} días`}
+                            sub={`Ratio Emergencias: ${stats.emergencyRatio}%`}
+                            icon={<Clock />}
+                            color="#8b5cf6"
+                            trend={stats.emergencyRatio > 30 ? "Planeación Crítica" : stats.emergencyRatio > 15 ? "Monitorear" : "Planeación Óptima"}
+                            details={
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                    <div style={{ fontSize: '0.65rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', marginBottom: '4px', borderBottom: '1px solid #f1f5f9', paddingBottom: '4px' }}>SLA de Procura por Fase</div>
+                                    {stats.slaFunnelData.map((fase, fi) => (
+                                        <div key={fi} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                            <span style={{ fontSize: '0.7rem', color: '#475569', fontWeight: 600 }}>Fase: {fase.name}</span>
+                                            <span style={{ fontSize: '0.7rem', color: '#1e293b', fontWeight: 800 }}>{fase.valor} días promedio</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            }
+                        />
+
+                        <ExecutiveKPI
+                            label="Requisiciones Solicitadas"
+                            value={`${stats.reqsCount} Reqs`}
+                            sub={`Eficiencia de Compras: ${stats.reqsCount > 0 ? Math.round((stats.funnel.completado / stats.reqsCount) * 100) : 0}%`}
+                            icon={<Zap />}
+                            color="#6366f1"
+                            details={
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                    <div style={{ fontSize: '0.65rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', marginBottom: '4px', borderBottom: '1px solid #f1f5f9', paddingBottom: '4px' }}>Detalle de Requisiciones</div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                        <span style={{ fontSize: '0.7rem', color: '#475569' }}>Total de Emergencias</span>
+                                        <span style={{ fontSize: '0.7rem', fontWeight: 800, color: '#ef4444' }}>{stats.emergenciesCount}</span>
+                                    </div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                        <span style={{ fontSize: '0.7rem', color: '#475569' }}>Total de Aprobadas</span>
+                                        <span style={{ fontSize: '0.7rem', fontWeight: 800, color: '#10b981' }}>{stats.approvedReqsCount}</span>
+                                    </div>
+                                </div>
+                            }
+                        />
+
+                        <ExecutiveKPI
+                            label="Tickets de Pago Procesados"
+                            value={`${stats.ticketsCount} Tickets`}
+                            sub="Registros rápidos en período"
+                            icon={<FileText />}
+                            color="#f59e0b"
+                            details={
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                    <div style={{ fontSize: '0.65rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', marginBottom: '4px', borderBottom: '1px solid #f1f5f9', paddingBottom: '4px' }}>Detalle de Tickets</div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                        <span style={{ fontSize: '0.7rem', color: '#475569' }}>Tickets Aprobados</span>
+                                        <span style={{ fontSize: '0.7rem', fontWeight: 800, color: '#10b981' }}>{stats.approvedTicketsCount}</span>
+                                    </div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                        <span style={{ fontSize: '0.7rem', color: '#475569' }}>Tickets en Proceso</span>
+                                        <span style={{ fontSize: '0.7rem', fontWeight: 800, color: '#f59e0b' }}>{stats.pendingTicketsCount}</span>
+                                    </div>
+                                </div>
+                            }
+                        />
+                    </div>
+
+                    {/* CUERPO OPERATIVO */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '20px' }}>
+                        {/* VOLUMEN OPERATIVO POR GERENCIA */}
+                        <div style={chartBoxStyle}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                                <div>
+                                    <h3 style={{ ...chartTitleStyle, margin: 0, fontSize: '1.1rem' }}>Volumen Operativo por Gerencia</h3>
+                                    <p style={{ fontSize: '0.8rem', color: '#64748b' }}>Cantidad de Requisiciones y Tickets de Pago Procesados</p>
+                                </div>
+                            </div>
+                            <div style={{ height: '320px' }}>
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <BarChart data={stats.solicitudesAnalisis} margin={{ top: 10, bottom: 20 }}>
+                                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                                        <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 800, fill: '#1e293b' }} interval={0} />
+                                        <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#64748b', fontWeight: 600 }} />
+                                        <Tooltip cursor={{ fill: '#f8fafc' }} contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', fontSize: '0.85rem' }} />
+                                        <Legend verticalAlign="top" align="right" iconType="circle" wrapperStyle={{ fontSize: '0.8rem', fontWeight: 800, paddingBottom: '20px' }} />
+                                        <Bar name="Requisiciones" dataKey="reqCount" fill="#6366f1" radius={[4, 4, 0, 0]} barSize={20} />
+                                        <Bar name="Tickets de Pago" dataKey="ticketCount" fill="#f59e0b" radius={[4, 4, 0, 0]} barSize={20} />
+                                    </BarChart>
+                                </ResponsiveContainer>
+                            </div>
+                        </div>
+
+                        {/* METRICAS OPERATIVAS DETALLADAS EN GRID DE 4 COLUMNAS */}
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '20px' }}>
+                            {/* ESTADO OPERATIVO */}
+                            <div style={{ ...chartBoxStyle, padding: '20px' }}>
+                                <h3 style={{ ...chartTitleStyle, fontSize: '0.9rem', marginBottom: '15px' }}>Embudo Operativo</h3>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                                    {[
+                                        { label: 'PENDIENTES', val: stats.funnel.proyecto + stats.funnel.area + stats.funnel.general, color: '#3b82f6' },
+                                        { label: 'EN PROCESO', val: stats.funnel.compras, color: '#f59e0b' },
+                                        { label: 'COMPLETADAS', val: stats.funnel.completado, color: '#10b981' }
+                                    ].map((s, i) => (
+                                        <div key={i}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px', fontSize: '0.65rem', fontWeight: 800 }}>
+                                                <span style={{ color: '#64748b' }}>{s.label}</span>
+                                                <span style={{ color: s.color }}>{s.val}</span>
+                                            </div>
+                                            <div style={{ height: '6px', backgroundColor: '#f1f5f9', borderRadius: '3px', overflow: 'hidden' }}>
+                                                <motion.div initial={{ width: 0 }} animate={{ width: `${(s.val / (stats.reqsCount || 1)) * 100}%` }} style={{ height: '100%', backgroundColor: s.color }} />
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* SALUD DE PLANEACIÓN */}
+                            <div style={{ ...chartBoxStyle, padding: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                                <h3 style={{ ...chartTitleStyle, fontSize: '0.9rem', marginBottom: '10px', textAlign: 'center' }}>Salud de Planeación</h3>
+                                <div style={{ height: '100px', width: '100%', position: 'relative' }}>
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <PieChart>
+                                            <Pie
+                                                data={[
+                                                    { name: 'Emergencia', value: stats.emergencyRatio, fill: stats.emergencyRatio > 30 ? '#ef4444' : stats.emergencyRatio > 15 ? '#f59e0b' : '#10b981' },
+                                                    { name: 'Planificadas', value: stats.plannedRatio, fill: '#f1f5f9' }
+                                                ]}
+                                                cx="50%" cy="100%" startAngle={180} endAngle={0}
+                                                innerRadius={45} outerRadius={65} paddingAngle={0} dataKey="value" stroke="none"
+                                            >
+                                                <Cell key="emergencia" />
+                                                <Cell key="planificadas" />
+                                            </Pie>
+                                            <Tooltip formatter={(v, name) => [`${v}%`, name]} />
+                                        </PieChart>
+                                    </ResponsiveContainer>
+                                    <div style={{ position: 'absolute', bottom: 5, left: '50%', transform: 'translateX(-50%)', textAlign: 'center' }}>
+                                        <div style={{ fontSize: '1.1rem', fontWeight: 900, color: '#1e293b' }}>{stats.emergencyRatio}%</div>
+                                        <div style={{ fontSize: '0.55rem', fontWeight: 800, color: '#94a3b8' }}>EMERGENCIAS</div>
+                                    </div>
+                                </div>
+                                <div style={{ fontSize: '0.6rem', fontWeight: 700, color: stats.emergencyRatio > 30 ? '#ef4444' : '#64748b', marginTop: '10px' }}>
+                                    {stats.emergencyRatio > 30 ? 'CRÍTICO: Baja planeación' : stats.emergencyRatio > 15 ? 'RIESGO: Monitorear' : 'ÓPTIMO: Planeación sólida'}
+                                </div>
+                            </div>
+
+                            {/* TENDENCIA DE FLUJO */}
+                            <div style={{ ...chartBoxStyle, padding: '20px' }}>
+                                <h3 style={{ ...chartTitleStyle, fontSize: '0.9rem', marginBottom: '15px' }}>Tendencia de Flujo</h3>
+                                <div style={{ height: '110px' }}>
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <AreaChart data={stats.delayTrend}>
+                                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                                            <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fontSize: 8, fontWeight: 700 }} />
+                                            <Tooltip contentStyle={{ fontSize: '0.65rem' }} />
+                                            <Area type="monotone" dataKey="Pendientes" stackId="1" stroke="#ef4444" fill="#fee2e2" />
+                                            <Area type="monotone" dataKey="Proceso" stackId="1" stroke="#f59e0b" fill="#fef3c7" />
+                                            <Area type="monotone" dataKey="Completas" stackId="1" stroke="#10b981" fill="#dcfce7" />
+                                        </AreaChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            </div>
+
+                            {/* REQUISICIONES CRÍTICAS CON MAYOR RETRASO */}
+                            <div style={{ ...chartBoxStyle, padding: '20px' }}>
+                                <h3 style={{ ...chartTitleStyle, fontSize: '0.9rem', marginBottom: '15px', color: '#ef4444' }}>Requisiciones Críticas</h3>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', minHeight: '110px', justifyContent: 'center' }}>
+                                    {stats.topDelayed && stats.topDelayed.length > 0 ? (
+                                        stats.topDelayed.map((req, idx) => (
+                                            <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.72rem', padding: '6px 0', borderBottom: idx < 2 ? '1px solid #f1f5f9' : 'none' }}>
+                                                <span style={{ fontWeight: 800, color: '#ef4444' }}>{req.correlativo}</span>
+                                                <span style={{ color: '#475569', fontWeight: 700, maxWidth: '100px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{req.analista}</span>
+                                                <span style={{ fontWeight: 900, color: '#b91c1c', backgroundColor: '#fee2e2', padding: '2px 6px', borderRadius: '6px', fontSize: '0.65rem' }}>{req.dias}d</span>
+                                            </div>
+                                        ))
+                                    ) : (
+                                        <div style={{ textAlign: 'center', fontSize: '0.72rem', color: '#94a3b8' }}>
+                                            No hay requisiciones críticas con retraso en el período
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* AUDITORÍA DE APROBACIONES RECIENTES */}
+                        <div style={{ ...chartBoxStyle, padding: '25px' }}>
+                            <h3 style={{ ...chartTitleStyle, fontSize: '1rem', marginBottom: '20px' }}>Auditoría de Aprobaciones de Procura Recientes</h3>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '15px' }}>
+                                {stats.recentApprovals.map((app, idx) => (
+                                    <div key={idx} style={{ display: 'flex', gap: '12px', alignItems: 'center', padding: '12px', backgroundColor: '#f8fafc', borderRadius: '12px', border: '1px solid #f1f5f9' }}>
+                                        <div style={{ width: '36px', height: '36px', borderRadius: '10px', backgroundColor: '#6366f115', color: '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                            <ShieldCheck size={18} />
+                                        </div>
+                                        <div style={{ flex: 1 }}>
+                                            <div style={{ fontSize: '0.7rem', fontWeight: 900, color: '#6366f1' }}>{app.correlativo}</div>
+                                            <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#1e293b' }}>{app.usuario}</div>
+                                        </div>
+                                    </div>
+                                ))}
+                                {stats.recentApprovals.length === 0 && (
+                                    <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '20px', color: '#94a3b8', fontSize: '0.85rem' }}>
+                                        No hay aprobaciones recientes registradas en el período seleccionado.
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </motion.div>
+            )}
         </div>
     );
 };
@@ -717,7 +1178,8 @@ const ExecutiveKPI = ({ label, value, sub, icon, color, trend, details }) => {
                 flexDirection: 'column', 
                 alignItems: 'stretch',
                 cursor: details ? 'pointer' : 'default',
-                transition: 'all 0.3s ease'
+                transition: 'all 0.3s ease',
+                borderLeft: `5px solid ${color}`
             }}
             onClick={() => details && setIsOpen(!isOpen)}
         >
@@ -733,8 +1195,8 @@ const ExecutiveKPI = ({ label, value, sub, icon, color, trend, details }) => {
                                 <span style={{ 
                                     fontSize: '0.65rem', 
                                     fontWeight: 900, 
-                                    color: trend.startsWith('-') ? '#ef4444' : '#10b981',
-                                    backgroundColor: trend.startsWith('-') ? '#fee2e2' : '#dcfce7',
+                                    color: trend.includes('Crítica') || trend.includes('Baja') ? '#ef4444' : '#10b981',
+                                    backgroundColor: trend.includes('Crítica') || trend.includes('Baja') ? '#fee2e2' : '#dcfce7',
                                     padding: '2px 6px',
                                     borderRadius: '6px'
                                 }}>
@@ -796,15 +1258,9 @@ const periodoBadgeStyle = {
     fontSize: '0.8rem', fontWeight: 700, color: '#1e293b'
 };
 
-const downloadBtnStyle = {
-    display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 18px',
-    backgroundColor: '#1e3a8a', color: 'white', border: 'none', borderRadius: '10px',
-    fontSize: '0.8rem', fontWeight: 700, cursor: 'pointer'
-};
-
 const kpiGridStyle = {
     display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
     gap: '20px',
     marginBottom: '35px'
 };
@@ -833,12 +1289,6 @@ const kpiLabelStyle = { display: 'block', fontSize: '0.75rem', fontWeight: 800, 
 const kpiValueStyle = { margin: '4px 0', fontSize: '1.75rem', fontWeight: 950, color: '#0f172a' };
 const kpiSubStyle = { fontSize: '0.75rem', color: '#64748b', fontWeight: 500 };
 
-const mainContentGrid = {
-    display: 'grid',
-    gridTemplateColumns: '1fr 1fr',
-    gap: '25px'
-};
-
 const chartBoxStyle = {
     backgroundColor: 'white',
     padding: '30px',
@@ -847,43 +1297,39 @@ const chartBoxStyle = {
     boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02)'
 };
 
-const chartTitleStyle = { margin: '0 0 25px 0', fontSize: '1.1rem', fontWeight: 850, color: '#1e293b', letterSpacing: '-0.3px' };
-
-const tableStyle = { width: '100%' };
-const tableHeaderStyle = {
-    display: 'flex', padding: '12px 20px', backgroundColor: '#f8fafc', borderRadius: '10px',
-    fontSize: '0.75rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase'
-};
-const tableRowStyle = {
-    display: 'flex', padding: '18px 20px', borderBottom: '1px solid #f1f5f9', alignItems: 'center'
-};
-
-const badgeStyle = (status) => ({
-    padding: '4px 10px', borderRadius: '6px', fontSize: '0.65rem', fontWeight: 900,
-    backgroundColor: `${COLORS_STATUS[status] || '#64748b'}15`,
-    color: COLORS_STATUS[status] || '#64748b',
-    textTransform: 'uppercase'
-});
-
-const trafficLightStyle = (days) => {
-    let color = '#10b981';
-    if (days > 3) color = '#f59e0b';
-    if (days > 7) color = '#ef4444';
-    return {
-        width: '12px', height: '12px', borderRadius: '50%', backgroundColor: color,
-        boxShadow: `0 0 10px ${color}80`, margin: '0 auto'
-    };
-};
-
-const alertBadgeStyle = {
-    display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px',
-    backgroundColor: '#fff7ed', color: '#c2410c', borderRadius: '8px',
-    fontSize: '0.75rem', fontWeight: 800
-};
+const chartTitleStyle = { margin: '0 0 5px 0', fontSize: '1.1rem', fontWeight: 850, color: '#1e293b', letterSpacing: '-0.3px' };
 
 const loaderStyle = {
     height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
     fontSize: '1rem', fontWeight: 800, color: '#1e3a8a'
+};
+
+const tabContainerStyle = {
+    display: 'flex',
+    gap: '12px',
+    marginBottom: '35px',
+    padding: '6px',
+    backgroundColor: 'rgba(255, 255, 255, 0.4)',
+    backdropFilter: 'blur(10px)',
+    border: '1px solid rgba(226, 232, 240, 0.8)',
+    borderRadius: '16px',
+    width: 'fit-content',
+    boxShadow: '0 4px 6px -1px rgba(0,0,0,0.01)'
+};
+
+const tabButtonStyle = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    padding: '10px 20px',
+    borderRadius: '12px',
+    border: 'none',
+    backgroundColor: 'transparent',
+    color: '#64748b',
+    fontSize: '0.85rem',
+    fontWeight: 800,
+    cursor: 'pointer',
+    transition: 'all 0.3s ease'
 };
 
 export default ResumenEjecutivo;

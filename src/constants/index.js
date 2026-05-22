@@ -14,7 +14,7 @@ export const UNIDADES_MEDIDA = [
 
 export const SEDES = ['MARACAIBO', 'CARACAS', 'MATURIN', 'VALENCIA', 'BARCELONA'];
 
-export const PRIORIDADES = ['Normal', 'Alta', 'Urgente'];
+export const PRIORIDADES = ['Normal', 'Emergencia'];
 
 export const ESTADOS_REQUISICION = {
   PENDIENTE_PROYECTO: 'pendiente_proyecto',

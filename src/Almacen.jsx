@@ -50,7 +50,7 @@ const Almacen = () => {
               .filter(rec => rec.requisicion_id === r.id && rec.item_index === idx)
               .reduce((acc, curr) => acc + (curr.cantidad_recibida || 0), 0);
 
-            const total = parseFloat(it.cant) || 0;
+            const total = it.anulado ? (parseFloat(it.cantidad_comprada) || 0) : (parseFloat(it.cant) || 0);
             if (total - recibidos > 0) {
               todosLosItems.push({
                 ...it,

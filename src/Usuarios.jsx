@@ -41,14 +41,19 @@ const Usuarios = () => {
   const [uploadingFoto, setUploadingFoto] = useState(false);
 
   const MODULOS_DISPONIBLES = [
+    { id: 'dashboard', label: 'Resumen General' },
     { id: 'requisiciones', label: 'Requisiciones' },
     { id: 'fondos', label: 'Solicitud de Fondos' },
     { id: 'tickets', label: 'Ticket de Pago' },
     { id: 'almacen', label: 'Almacén' },
     { id: 'compras', label: 'Compras' },
+    { id: 'reportesmaestro', label: 'Reportes Maestro' },
     { id: 'reportes', label: 'Reporte de Compras' },
     { id: 'proveedores', label: 'Proveedores' },
+    { id: 'analytics_compras', label: 'Estadísticas y Trazabilidad' },
+    { id: 'ejecutivo', label: 'Resumen Ejecutivo' },
     { id: 'usuarios', label: 'Gestión de Usuarios' },
+    { id: 'atributos', label: 'Atributos' },
     { id: 'administracion', label: 'Administración' }
   ];
 

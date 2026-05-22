@@ -334,9 +334,9 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
 
       return matchTexto && matchDepto && matchStatus && matchCategoria && matchCC && matchStatusCompra && matchFecha && matchSolicitante;
     }).sort((a, b) => {
-      // Prioridad Alta primero
-      if (a.prioridad === 'Alta' && b.prioridad !== 'Alta') return -1;
-      if (a.prioridad !== 'Alta' && b.prioridad === 'Alta') return 1;
+      // Prioridad Emergencia primero
+      if (a.prioridad === 'Emergencia' && b.prioridad !== 'Emergencia') return -1;
+      if (a.prioridad !== 'Emergencia' && b.prioridad === 'Emergencia') return 1;
       // Luego por fecha desc (ya viene ordenado de BD, pero por si acaso)
       return new Date(b.fecha) - new Date(a.fecha);
     });
@@ -398,12 +398,31 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     "SIAHO": "SHA",
     "Recursos Humanos": "RRH",
     "Estimación": "EST",
+    "Estimacion": "EST",
     "Estimación y Control": "EST",
+    "Estimacion y Control": "EST",
+    "Estimación y Control Interno": "EST",
+    "Estimacion y Control Interno": "EST",
+    "Estimaciones": "EST",
+    "Estimaciónes": "EST",
+    "Estimaciones y Control": "EST",
+    "Estimaciónes y Control": "EST",
+    "Estimaciones y Control Interno": "EST",
+    "Estimaciónes y Control Interno": "EST",
     "Almacén": "ALM",
     "Gerencia General": "GG",
     "Servicios Generales": "SVG",
     "Contabilidad": "CNT",
     "Compras": "CMP"
+  };
+
+  const obtenerSiglaGerencia = (depto) => {
+    if (!depto) return 'GER';
+    const norm = depto.trim().toLowerCase();
+    if (norm.startsWith('estimac') || norm.startsWith('estimación')) {
+      return 'EST';
+    }
+    return mappingSiglasGerencia[depto] || 'GER';
   };
 
   const GERENCIAS_ESTATICAS = [
@@ -428,7 +447,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     const subTotalEjecutado = arraySeguro.reduce((acc, r) => {
       const historialArray = Array.isArray(r.historial_compras) ? r.historial_compras : [];
       const ejecutadoItem = historialArray.reduce((sum, h) => {
-        if (h.tipo === 'JUSTIFICACION') return sum;
+        if (h.tipo === 'JUSTIFICACION' || h.tipo === 'ANULACION') return sum;
         return sum + ((Number(h.cant) || 0) * (Number(h.pu) || 0));
       }, 0);
       return acc + ejecutadoItem;
@@ -496,7 +515,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
   useEffect(() => {
     const actualizarPreview = async () => {
       if (!showModal || editandoId) return;
-      const sigla = mappingSiglasGerencia[departamento] || 'GER';
+      const sigla = obtenerSiglaGerencia(departamento);
       const aa = new Date().getFullYear().toString().slice(-2);
 
       const { data } = await supabase
@@ -1348,7 +1367,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       return;
     }
 
-    const siglaGerencia = mappingSiglasGerencia[departamento] || 'GER';
+    const siglaGerencia = obtenerSiglaGerencia(departamento);
     const aa = new Date().getFullYear().toString().slice(-2);
 
     // --- LÓGICA DE CORRELATIVO INDEPENDIENTE CON RESETEO ANUAL ---
@@ -1753,14 +1772,14 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       
       // Calcular valores acumulados de pago (Bs o USD) para el ítem
       const historial = Array.isArray(item.historial_compras) ? item.historial_compras : [];
-      const tieneCompras = historial.some(h => h.tipo !== 'JUSTIFICACION');
+      const tieneCompras = historial.some(h => h.tipo !== 'JUSTIFICACION' && h.tipo !== 'ANULACION');
       
       let totalPaidBs = 0;
       let totalPaidUsd = 0;
       
       if (tieneCompras) {
         historial.forEach(h => {
-          if (h.tipo === 'JUSTIFICACION') return;
+          if (h.tipo === 'JUSTIFICACION' || h.tipo === 'ANULACION') return;
           const monto = (Number(h.cant) || 0) * (Number(h.pu) || 0);
           const esBs = h.metodo_pago && (h.metodo_pago.toUpperCase().includes('BS') || h.metodo_pago.toUpperCase().includes('B/S'));
           if (esBs) {
@@ -1812,14 +1831,14 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     
     items.forEach(item => {
       const historial = Array.isArray(item.historial_compras) ? item.historial_compras : [];
-      const tieneCompras = historial.some(h => h.tipo !== 'JUSTIFICACION');
+      const tieneCompras = historial.some(h => h.tipo !== 'JUSTIFICACION' && h.tipo !== 'ANULACION');
       
       let itemBs = 0;
       let itemUsd = 0;
       
       if (tieneCompras) {
         historial.forEach(h => {
-          if (h.tipo === 'JUSTIFICACION') return;
+          if (h.tipo === 'JUSTIFICACION' || h.tipo === 'ANULACION') return;
           const monto = (Number(h.cant) || 0) * (Number(h.pu) || 0);
           const esBs = h.metodo_pago && (h.metodo_pago.toUpperCase().includes('BS') || h.metodo_pago.toUpperCase().includes('B/S'));
           if (esBs) {
@@ -2128,7 +2147,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                           width: '6px',
                           height: '6px',
                           borderRadius: '50%',
-                          backgroundColor: req.prioridad === 'Alta' ? '#ef4444' : '#0ea5e9',
+                          backgroundColor: req.prioridad === 'Emergencia' ? '#ef4444' : '#0ea5e9',
                           flexShrink: 0
                         }}
                       />
@@ -2885,20 +2904,48 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                             animate={{ opacity: 1, height: 'auto', scaleY: 1 }}
                             exit={{ opacity: 0, height: 0, scaleY: 0.8, overflow: 'hidden' }}
                             transition={{ duration: 0.3 }}
-                            style={{ minHeight: '60px' }}
+                            style={{ 
+                              minHeight: '60px',
+                              backgroundColor: f.anulado ? '#f8fafc' : 'transparent',
+                              borderLeft: f.anulado ? '4px solid #ef4444' : 'none',
+                              opacity: f.anulado ? 0.75 : 1
+                            }}
                           >
                             <td style={{ textAlign: 'center', fontSize: '0.75rem', fontWeight: 'bold', color: '#64748b', padding: '12px 4px' }}>{index + 1}</td>
-                            <td style={{ padding: '12px 4px' }}><input className="input-tc" value={f.clasificacion} onChange={(e) => actualizarFila(f.id, 'clasificacion', e.target.value)} disabled={!!editandoId} /></td>
-                            <td style={{ padding: '12px 4px' }}><input className="input-tc" value={f.categoria} onChange={(e) => actualizarFila(f.id, 'categoria', e.target.value)} disabled={!!editandoId} /></td>
-                            <td style={{ padding: '12px 4px' }}><input className="input-tc" type="number" value={f.cant === '' ? '' : Number(f.cant)} onChange={(e) => actualizarFila(f.id, 'cant', e.target.value)} disabled={editandoId && !modoEdicion} /></td>
+                            <td style={{ padding: '12px 4px' }}><input className="input-tc" value={f.clasificacion} onChange={(e) => actualizarFila(f.id, 'clasificacion', e.target.value)} disabled={!!editandoId || f.anulado} /></td>
+                            <td style={{ padding: '12px 4px' }}><input className="input-tc" value={f.categoria} onChange={(e) => actualizarFila(f.id, 'categoria', e.target.value)} disabled={!!editandoId || f.anulado} /></td>
+                            <td style={{ padding: '12px 4px' }}><input className="input-tc" type="number" value={f.cant === '' ? '' : Number(f.cant)} onChange={(e) => actualizarFila(f.id, 'cant', e.target.value)} disabled={(editandoId && !modoEdicion) || f.anulado} /></td>
                             <td style={{ padding: '12px 4px' }}>
-                              <select className="input-tc" value={f.uni} onChange={(e) => actualizarFila(f.id, 'uni', e.target.value)} disabled={editandoId && !modoEdicion}>
+                              <select className="input-tc" value={f.uni} onChange={(e) => actualizarFila(f.id, 'uni', e.target.value)} disabled={(editandoId && !modoEdicion) || f.anulado}>
                                 {unidades.map(u => <option key={u} value={u}>{u}</option>)}
                               </select>
                             </td>
-                            <td style={{ padding: '12px 4px' }}><textarea className="input-tc" value={f.descripcion} onChange={(e) => actualizarFila(f.id, 'descripcion', e.target.value)} style={{ resize: 'vertical', minHeight: '48px', paddingTop: '10px', width: '100%', boxSizing: 'border-box', lineHeight: '1.4' }} rows="1" disabled={editandoId && !modoEdicion} /></td>
-                            <td style={{ padding: '12px 4px' }}><input className="input-tc" value={f.beneficiario} onChange={(e) => actualizarFila(f.id, 'beneficiario', e.target.value)} placeholder="Beneficiario" disabled={editandoId && !modoEdicion} /></td>
-                            <td style={{ padding: '12px 4px' }}><input className="input-tc" type="number" value={f.pu === '' ? '' : Number(f.pu)} style={{ textAlign: 'right' }} onChange={(e) => actualizarFila(f.id, 'pu', e.target.value)} disabled={!!editandoId} /></td>
+                            <td style={{ padding: '12px 4px' }}>
+                              <textarea 
+                                className="input-tc" 
+                                value={f.descripcion} 
+                                onChange={(e) => actualizarFila(f.id, 'descripcion', e.target.value)} 
+                                style={{ 
+                                  resize: 'vertical', 
+                                  minHeight: '48px', 
+                                  paddingTop: '10px', 
+                                  width: '100%', 
+                                  boxSizing: 'border-box', 
+                                  lineHeight: '1.4',
+                                  textDecoration: f.anulado ? 'line-through' : 'none',
+                                  color: f.anulado ? '#94a3b8' : 'inherit'
+                                }} 
+                                rows="1" 
+                                disabled={(editandoId && !modoEdicion) || f.anulado} 
+                              />
+                              {f.anulado && (
+                                <div style={{ marginTop: '4px', display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.6rem', color: '#ef4444', backgroundColor: '#fee2e2', padding: '2px 6px', borderRadius: '4px', fontWeight: 'bold' }}>
+                                  🚫 SIN EFECTO / SALDO ANULADO
+                                </div>
+                              )}
+                            </td>
+                            <td style={{ padding: '12px 4px' }}><input className="input-tc" value={f.beneficiario} onChange={(e) => actualizarFila(f.id, 'beneficiario', e.target.value)} placeholder="Beneficiario" disabled={(editandoId && !modoEdicion) || f.anulado} /></td>
+                            <td style={{ padding: '12px 4px' }}><input className="input-tc" type="number" value={f.pu === '' ? '' : Number(f.pu)} style={{ textAlign: 'right' }} onChange={(e) => actualizarFila(f.id, 'pu', e.target.value)} disabled={!!editandoId || f.anulado} /></td>
                             <td style={{ textAlign: 'right', fontWeight: 'bold', padding: '12px 4px' }}>{f.total.toLocaleString('de-DE')}</td>
                             <td style={{ textAlign: 'center', verticalAlign: 'middle' }}>
                               <div style={{ 
@@ -2949,17 +2996,19 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                                       {(Array.isArray(f.historial_compras) ? f.historial_compras : []).map((h, idx) => (
                                         <tr key={idx} style={{
                                           borderBottom: idx < f.historial_compras.length - 1 ? '1px solid #f1f5f9' : 'none',
-                                          backgroundColor: h.tipo === 'JUSTIFICACION' ? '#fffbeb' : 'transparent'
+                                          backgroundColor: h.tipo === 'ANULACION' ? '#fef2f2' : (h.tipo === 'JUSTIFICACION' ? '#fffbeb' : 'transparent')
                                         }}>
                                           <td style={{ padding: '8px', color: '#64748b' }}>{new Date(h.fecha).toLocaleDateString()}</td>
-                                          <td style={{ padding: '8px', fontWeight: 'bold', color: h.tipo === 'JUSTIFICACION' ? '#d97706' : '#16a34a' }}>
-                                            {h.tipo === 'JUSTIFICACION' ? '⚠️ JUSTIFICACIÓN' : '✅ COMPRA'}
+                                          <td style={{ padding: '8px', fontWeight: 'bold', color: h.tipo === 'ANULACION' ? '#ef4444' : (h.tipo === 'JUSTIFICACION' ? '#d97706' : '#16a34a') }}>
+                                            {h.tipo === 'ANULACION' ? '🚫 SIN EFECTO' : (h.tipo === 'JUSTIFICACION' ? '⚠️ JUSTIFICACIÓN' : '✅ COMPRA')}
                                           </td>
                                           <td style={{ padding: '8px', fontSize: '0.65rem', fontWeight: 'bold', color: '#64748b' }}>
-                                            {h.tipo !== 'JUSTIFICACION' ? (h.proveedor_nombre || 'No asignado') : '-'}
+                                            {(h.tipo !== 'JUSTIFICACION' && h.tipo !== 'ANULACION') ? (h.proveedor_nombre || 'No asignado') : '-'}
                                           </td>
                                           <td style={{ padding: '8px' }}>
-                                            {h.tipo === 'JUSTIFICACION' ? (
+                                            {h.tipo === 'ANULACION' ? (
+                                              <span style={{ fontStyle: 'italic', color: '#b91c1c', fontWeight: '600' }}>Motivo: {h.motivo}</span>
+                                            ) : h.tipo === 'JUSTIFICACION' ? (
                                               <span style={{ fontStyle: 'italic', color: '#92400e', fontWeight: '600' }}>{h.motivo}</span>
                                             ) : (
                                               <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
@@ -2977,7 +3026,11 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                                           <td style={{ padding: '8px', textAlign: 'center', fontWeight: '700' }}>{h.cant || '-'}</td>
                                           <td style={{ padding: '8px', textAlign: 'right' }}>{h.pu ? `$ ${h.pu.toLocaleString('de-DE')}` : '-'}</td>
                                           <td style={{ padding: '8px', textAlign: 'right' }}>
-                                            {h.tipo === 'JUSTIFICACION' ? (
+                                            {h.tipo === 'ANULACION' ? (
+                                              <div style={{ fontSize: '0.7rem', color: '#7f1d1d', whiteSpace: 'pre-wrap', textAlign: 'left', backgroundColor: '#fee2e2', padding: '6px', borderRadius: '4px', border: '1px solid #fca5a5' }}>
+                                                {h.comentario}
+                                              </div>
+                                            ) : h.tipo === 'JUSTIFICACION' ? (
                                               <div style={{ fontSize: '0.7rem', color: '#475569', whiteSpace: 'pre-wrap', textAlign: 'left', backgroundColor: '#fef3c7', padding: '6px', borderRadius: '4px' }}>
                                                 {h.comentario}
                                               </div>

@@ -64,6 +64,10 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
   // --- LÓGICA DE SIGLAS GERENCIA ---
   const obtenerSiglas = (nombreGerencia) => {
     if (!nombreGerencia) return '---';
+    const norm = nombreGerencia.trim().toLowerCase();
+    if (norm.startsWith('estimac') || norm.startsWith('estimación')) {
+      return 'EST';
+    }
     const mapeo = {
       "Administración Maracaibo": "ADM-MCB",
       "Administración El Tigre": "ADM-TGR",
@@ -73,7 +77,17 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
       "SIAHO": "SHA",
       "Recursos Humanos": "RRH",
       "Estimación": "EST",
+      "Estimacion": "EST",
       "Estimación y Control": "EST",
+      "Estimacion y Control": "EST",
+      "Estimación y Control Interno": "EST",
+      "Estimacion y Control Interno": "EST",
+      "Estimaciones": "EST",
+      "Estimaciónes": "EST",
+      "Estimaciones y Control": "EST",
+      "Estimaciónes y Control": "EST",
+      "Estimaciones y Control Interno": "EST",
+      "Estimaciónes y Control Interno": "EST",
       "Almacén": "ALM",
       "Gerencia General": "GG",
       "Servicios Generales": "SVG",
