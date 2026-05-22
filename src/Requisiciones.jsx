@@ -34,6 +34,32 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     return 0;
   };
 
+  const obtenerAprobadorProyecto = (cc) => {
+    if (!cc) return null;
+    const ccUpper = cc.toString().toUpperCase().trim();
+    
+    // Si contiene "MTTO", "MAYOR" o "GRANDE"
+    if (
+      ccUpper.includes("MTTO") || 
+      ccUpper.includes("MAYOR") || 
+      ccUpper.includes("GRANDE")
+    ) {
+      return "Hilda Colina";
+    }
+    
+    // Si contiene "EXCELENCIA", "VAC" o "VACCUM"
+    if (
+      ccUpper.includes("EXCELENCIA") || 
+      ccUpper.includes("VAC") || 
+      ccUpper.includes("VACCUM")
+    ) {
+      return "Johannel García";
+    }
+    
+    return null;
+  };
+
+
   const enviarNotificacion = async (usuario_id, mensaje, tipo = 'Sistema', requisicion_id = null) => {
     if (!usuario_id || usuario_id === currentUser?.id) return;
     try {
@@ -151,7 +177,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
 
       const esAdminRealOCarlos = esAdminReal ||
         (currentUser.correo || '').toLowerCase() === 'cvega@totalclean.com' ||
-        (currentUser.nombre || '').toLowerCase().includes('carlos');
+        (currentUser.nombre || '').toLowerCase().includes('carlos') ||
+        currentUser.capacidades?.ver_requisiciones_global === true;
 
       if (!esAdminRealOCarlos) {
         const rawUserId = currentUser.id || '';
@@ -712,7 +739,37 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
   };
 
   const manejarRechazarGerenteProyecto = () => {
-    if (!editandoId || !currentUser?.rol?.toLowerCase()?.includes('proyecto')) return;
+    if (!editandoId) return;
+    const reqActual = historial.find(h => String(h.id) === String(editandoId));
+    if (!reqActual) return;
+
+    const rolUser = (currentUser?.rol || '').toLowerCase();
+    const cc = reqActual.centro_costo || '';
+    const gerenteEsperado = obtenerAprobadorProyecto(cc);
+    const esAdmin = currentUser?.esAdminReal ||
+      rolUser.includes('admin') ||
+      rolUser.includes('general') ||
+      (currentUser?.correo || '').toLowerCase() === 'cvega@totalclean.com' ||
+      (currentUser?.correo || '').toLowerCase() === 'cvega.totalclean@gmail.com';
+
+    let puedeRechazar = false;
+    if (esAdmin) {
+      puedeRechazar = true;
+    } else {
+      if (gerenteEsperado === 'Johannel García') {
+        puedeRechazar = currentUser?.nombre?.toUpperCase().includes('JOHANNEL');
+      } else if (gerenteEsperado === 'Hilda Colina') {
+        puedeRechazar = currentUser?.nombre?.toUpperCase().includes('HILDA');
+      } else {
+        puedeRechazar = rolUser.includes('proyecto');
+      }
+    }
+
+    if (!puedeRechazar) {
+      toast.error('Solo el Gerente de Proyecto correspondiente tiene permisos para rechazar esta requisición.');
+      return;
+    }
+
     setMotivoRechazo('');
     setRechazoAction('proyecto');
     setShowRechazoModal(true);
@@ -890,14 +947,14 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
   };
 
   const subirArchivos = async (files) => {
-    if (!editandoId) return toast.error("Guarde la requisición primero para poder adjuntar documentos.");
     try {
       setUploading(true);
       if (!files || files.length === 0) return;
 
       const uploadPromises = files.map(async (file, index) => {
         const fileExt = file.name.split('.').pop();
-        const fileName = `factura_${editandoId}_${Date.now()}_${index}.${fileExt}`;
+        const prefix = editandoId ? editandoId : `nueva_${Date.now()}`;
+        const fileName = `factura_${prefix}_${Date.now()}_${index}.${fileExt}`;
         const filePath = `${fileName}`;
 
         const { error: uploadError } = await supabase.storage.from('facturas').upload(filePath, file);
@@ -908,16 +965,25 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       });
 
       const nuevasDescargas = await Promise.all(uploadPromises);
-      const { data: currentReq } = await supabase.from('requisiciones').select('facturas_url').eq('id', editandoId).single();
-      const urlsActuales = currentReq?.facturas_url || [];
-      const nuevasUrls = [...urlsActuales, ...nuevasDescargas.map(url => ({ url, etiqueta: 'Archivo sin etiqueta' }))];
 
-      setFacturasUrls(nuevasUrls);
-      const { error: updateError } = await supabase.from('requisiciones').update({ facturas_url: nuevasUrls }).eq('id', editandoId);
-      if (updateError) throw updateError;
+      if (!editandoId) {
+        // Modo creación: añadir a las urls locales
+        const nuevasUrls = [...facturasUrls, ...nuevasDescargas.map(url => ({ url, etiqueta: 'Archivo sin etiqueta' }))];
+        setFacturasUrls(nuevasUrls);
+        toast.success("Documentos adjuntados correctamente.");
+      } else {
+        // Modo edición: obtener de base de datos y actualizar
+        const { data: currentReq } = await supabase.from('requisiciones').select('facturas_url').eq('id', editandoId).single();
+        const urlsActuales = currentReq?.facturas_url || [];
+        const nuevasUrls = [...urlsActuales, ...nuevasDescargas.map(url => ({ url, etiqueta: 'Archivo sin etiqueta' }))];
 
-      toast.success("Documentos adjuntados correctamente.");
-      cargarHistorialDesdeBD();
+        setFacturasUrls(nuevasUrls);
+        const { error: updateError } = await supabase.from('requisiciones').update({ facturas_url: nuevasUrls }).eq('id', editandoId);
+        if (updateError) throw updateError;
+
+        toast.success("Documentos adjuntados correctamente.");
+        cargarHistorialDesdeBD();
+      }
     } catch (error) {
       toast.error("Error al subir: " + error.message);
     } finally {
@@ -938,16 +1004,37 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
   };
 
   const eliminarSoporteDefinitivo = async (index) => {
-    if (!editandoId) return;
-
     const confirmacion = window.confirm("¿Está seguro de que desea eliminar este documento permanentemente?");
     if (!confirmacion) return;
 
     try {
       const nuevasUrls = [...facturasUrls];
+      const itemAEliminar = nuevasUrls[index];
       nuevasUrls.splice(index, 1);
-
       setFacturasUrls(nuevasUrls);
+
+      // Si el archivo físico se subió a Storage, intentar removerlo
+      const url = typeof itemAEliminar === 'string' ? itemAEliminar : itemAEliminar?.url;
+      if (url) {
+        let bucketName = 'facturas';
+        let filePath = '';
+        const searchStr = bucketName + '/';
+        const bIndex = url.indexOf(searchStr);
+        if (bIndex !== -1) {
+          filePath = url.substring(bIndex + searchStr.length).split('?')[0];
+        } else {
+          filePath = url.split('?')[0];
+        }
+        if (filePath) {
+          const { error: storageError } = await supabase.storage.from(bucketName).remove([filePath]);
+          if (storageError) console.warn("Aviso storage:", storageError.message);
+        }
+      }
+
+      if (!editandoId) {
+        toast.success("Documento eliminado.");
+        return;
+      }
 
       const { error } = await supabase
         .from('requisiciones')
@@ -964,10 +1051,37 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
   };
 
   const manejarAprobarGerenteProyecto = async () => {
-    if (!editandoId || !currentUser?.rol?.toLowerCase()?.includes('proyecto')) {
-      toast.error('Solo el Gerente de Proyecto puede realizar esta aprobación.');
+    if (!editandoId) return;
+    const reqActual = historial.find(h => String(h.id) === String(editandoId));
+    if (!reqActual) return;
+
+    const rolUser = (currentUser?.rol || '').toLowerCase();
+    const cc = reqActual.centro_costo || '';
+    const gerenteEsperado = obtenerAprobadorProyecto(cc);
+    const esAdmin = currentUser?.esAdminReal ||
+      rolUser.includes('admin') ||
+      rolUser.includes('general') ||
+      (currentUser?.correo || '').toLowerCase() === 'cvega@totalclean.com' ||
+      (currentUser?.correo || '').toLowerCase() === 'cvega.totalclean@gmail.com';
+
+    let puedeAprobar = false;
+    if (esAdmin) {
+      puedeAprobar = true;
+    } else {
+      if (gerenteEsperado === 'Johannel García') {
+        puedeAprobar = currentUser?.nombre?.toUpperCase().includes('JOHANNEL');
+      } else if (gerenteEsperado === 'Hilda Colina') {
+        puedeAprobar = currentUser?.nombre?.toUpperCase().includes('HILDA');
+      } else {
+        puedeAprobar = rolUser.includes('proyecto');
+      }
+    }
+
+    if (!puedeAprobar) {
+      toast.error('Solo el Gerente de Proyecto correspondiente tiene permisos para aprobar esta requisición.');
       return;
     }
+
     setLoading(true);
     try {
       const { error } = await supabase.from('requisiciones').update({
@@ -1129,19 +1243,36 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       // DETERMINAR SI TIENE GERENTE DE PROYECTO ASIGNADO (Solo si el solicitante es Analista/Coordinador)
       // Doble condición: Centro de Costo de Proyecto Y la gerencia debe ser estrictamente 'Operaciones'
       if (rangoSolicitante < 2.5 && (departamento || '').trim() === 'Operaciones') {
-        try {
-          const { data: gProyectos } = await supabase
-            .from('perfiles')
-            .select('id')
-            .contains('obras_asignadas', [centroCosto])
-            .ilike('rol', '%proyecto%');
+        let requiereProyecto = false;
+        const ccUpper = (centroCosto || '').toString().toUpperCase();
+        if (
+          ccUpper.includes("MTTO") || 
+          ccUpper.includes("MAYOR") || 
+          ccUpper.includes("GRANDE") || 
+          ccUpper.includes("EXCELENCIA") || 
+          ccUpper.includes("VAC") || 
+          ccUpper.includes("VACCUM")
+        ) {
+          requiereProyecto = true;
+        } else {
+          try {
+            const { data: gProyectos } = await supabase
+              .from('perfiles')
+              .select('id')
+              .contains('obras_asignadas', [centroCosto])
+              .ilike('rol', '%proyecto%');
 
-          if (gProyectos && gProyectos.length > 0) {
-            estadoInicial = 'pendiente_proyecto';
-            nombreEstado = 'Re-enviada (Pendiente Proyecto)';
+            if (gProyectos && gProyectos.length > 0) {
+              requiereProyecto = true;
+            }
+          } catch (err) {
+            console.error("Error verificando gerente de proyecto:", err);
           }
-        } catch (err) {
-          console.error("Error verificando gerente de proyecto:", err);
+        }
+
+        if (requiereProyecto) {
+          estadoInicial = 'pendiente_proyecto';
+          nombreEstado = 'Re-enviada (Pendiente Proyecto)';
         }
       }
 
@@ -1323,13 +1454,34 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
           // DETERMINAR SI TIENE GERENTE DE PROYECTO ASIGNADO
           // Doble condición: Centro de Costo de Proyecto Y la gerencia debe ser estrictamente 'Operaciones'
           if (rangoSolicitante < 2.5 && (departamento || '').trim() === 'Operaciones') {
-            const { data: gProyectos } = await supabase
-              .from('perfiles')
-              .select('id')
-              .contains('obras_asignadas', [centroCosto])
-              .ilike('rol', '%proyecto%');
+            let requiereProyecto = false;
+            const ccUpper = (centroCosto || '').toString().toUpperCase();
+            if (
+              ccUpper.includes("MTTO") || 
+              ccUpper.includes("MAYOR") || 
+              ccUpper.includes("GRANDE") || 
+              ccUpper.includes("EXCELENCIA") || 
+              ccUpper.includes("VAC") || 
+              ccUpper.includes("VACCUM")
+            ) {
+              requiereProyecto = true;
+            } else {
+              try {
+                const { data: gProyectos } = await supabase
+                  .from('perfiles')
+                  .select('id')
+                  .contains('obras_asignadas', [centroCosto])
+                  .ilike('rol', '%proyecto%');
 
-            if (gProyectos && gProyectos.length > 0) {
+                if (gProyectos && gProyectos.length > 0) {
+                  requiereProyecto = true;
+                }
+              } catch (err) {
+                console.error("Error verificando gerente de proyecto:", err);
+              }
+            }
+
+            if (requiereProyecto) {
               estadoInicial = 'pendiente_proyecto';
               nombreEstado = 'Re-enviada (Pendiente Proyecto)';
             }
@@ -1471,20 +1623,38 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     }
 
     // DETERMINAR SI TIENE GERENTE DE PROYECTO ASIGNADO
-    try {
-      const { data: gProyectos } = await supabase
-        .from('perfiles')
-        .select('id')
-        .contains('obras_asignadas', [centroCosto])
-        .ilike('rol', '%proyecto%');
+    if (rangoSolicitante < 2.5 && (departamento || '').trim() === 'Operaciones') {
+      let requiereProyecto = false;
+      const ccUpper = (centroCosto || '').toString().toUpperCase();
+      if (
+        ccUpper.includes("MTTO") || 
+        ccUpper.includes("MAYOR") || 
+        ccUpper.includes("GRANDE") || 
+        ccUpper.includes("EXCELENCIA") || 
+        ccUpper.includes("VAC") || 
+        ccUpper.includes("VACCUM")
+      ) {
+        requiereProyecto = true;
+      } else {
+        try {
+          const { data: gProyectos } = await supabase
+            .from('perfiles')
+            .select('id')
+            .contains('obras_asignadas', [centroCosto])
+            .ilike('rol', '%proyecto%');
 
-      // Solo asignamos a Gerente de Proyecto si la gerencia del solicitante es estrictamente 'Operaciones'
-      if ((departamento || '').trim() === 'Operaciones' && gProyectos && gProyectos.length > 0) {
+          if (gProyectos && gProyectos.length > 0) {
+            requiereProyecto = true;
+          }
+        } catch (err) {
+          console.error("Error verificando gerente de proyecto:", err);
+        }
+      }
+
+      if (requiereProyecto) {
         nuevaReqBD.estado_aprobacion = 'pendiente_proyecto';
         nuevaReqBD.aprobacion_nombre = 'Pendiente por Proyecto';
       }
-    } catch (err) {
-      console.error("Error verificando gerente de proyecto:", err);
     }
 
     await ejecutarGuardarNueva(nuevaReqBD);
@@ -3056,122 +3226,120 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                 <div style={{ display: 'flex', gap: '20px', marginTop: '20px', alignItems: 'stretch' }}>
                   {/* IZQUIERDA: SOPORTES COMPACTOS */}
                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-                    {editandoId && (
-                      <>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
-                          <button
-                            onClick={() => setMostrarSoportes(!mostrarSoportes)}
+                    <>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
+                        <button
+                          onClick={() => setMostrarSoportes(!mostrarSoportes)}
+                          style={{
+                            padding: '6px 14px', borderRadius: '8px',
+                            display: 'flex', alignItems: 'center', gap: '8px',
+                            cursor: 'pointer', transition: 'all 0.2s',
+                            backgroundColor: mostrarSoportes ? '#10b981' : '#f8fafc',
+                            color: mostrarSoportes ? 'white' : '#64748b',
+                            border: '1px solid #e2e8f0',
+                            fontSize: '0.7rem',
+                            fontWeight: '900'
+                          }}
+                        >
+                          <Camera size={14} /> {mostrarSoportes ? 'OCULTAR SOPORTES' : 'VER SOPORTES'}
+                        </button>
+
+                        {mostrarSoportes && (!editandoId || modoEdicion) && (
+                          <label
                             style={{
                               padding: '6px 14px', borderRadius: '8px',
                               display: 'flex', alignItems: 'center', gap: '8px',
-                              cursor: 'pointer', transition: 'all 0.2s',
-                              backgroundColor: mostrarSoportes ? '#10b981' : '#f8fafc',
-                              color: mostrarSoportes ? 'white' : '#64748b',
-                              border: '1px solid #e2e8f0',
+                              cursor: uploading ? 'not-allowed' : 'pointer',
+                              backgroundColor: '#0ea5e9',
+                              color: 'white',
+                              border: 'none',
                               fontSize: '0.7rem',
-                              fontWeight: '900'
+                              fontWeight: '900',
+                              boxShadow: '0 2px 4px rgba(14, 165, 233, 0.2)'
                             }}
                           >
-                            <Camera size={14} /> {mostrarSoportes ? 'OCULTAR SOPORTES' : 'VER SOPORTES'}
-                          </button>
+                            {uploading ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                            {uploading ? 'SUBIENDO...' : 'AÑADIR'}
+                            <input type="file" multiple style={{ display: 'none' }} onChange={subirFactura} disabled={uploading || (editandoId && !modoEdicion)} accept="image/*,application/pdf" />
+                          </label>
+                        )}
+                      </div>
 
-                          {mostrarSoportes && (!editandoId || modoEdicion) && (
-                            <label
+                      <AnimatePresence>
+                        {mostrarSoportes && (
+                          <motion.div
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: 'auto', opacity: 1 }}
+                            exit={{ height: 0, opacity: 0 }}
+                            style={{ overflow: 'hidden' }}
+                          >
+                            <div
+                              onDragOver={(e) => e.preventDefault()}
+                              onDrop={(e) => {
+                                if (editandoId && !modoEdicion) {
+                                  toast.error("Debe activar el modo edición para subir archivos.");
+                                  return;
+                                }
+                                handleDrop(e);
+                              }}
                               style={{
-                                padding: '6px 14px', borderRadius: '8px',
-                                display: 'flex', alignItems: 'center', gap: '8px',
-                                cursor: uploading ? 'not-allowed' : 'pointer',
-                                backgroundColor: '#0ea5e9',
-                                color: 'white',
-                                border: 'none',
-                                fontSize: '0.7rem',
-                                fontWeight: '900',
-                                boxShadow: '0 2px 4px rgba(14, 165, 233, 0.2)'
+                                padding: '15px',
+                                backgroundColor: '#f8fafc',
+                                borderRadius: '12px',
+                                border: '1px dashed #cbd5e1',
+                                minHeight: '135px',
+                                flex: 1
                               }}
                             >
-                              {uploading ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
-                              {uploading ? 'SUBIENDO...' : 'AÑADIR'}
-                              <input type="file" multiple style={{ display: 'none' }} onChange={subirFactura} disabled={uploading || (editandoId && !modoEdicion)} accept="image/*,application/pdf" />
-                            </label>
-                          )}
-                        </div>
-
-                        <AnimatePresence>
-                          {mostrarSoportes && (
-                            <motion.div
-                              initial={{ height: 0, opacity: 0 }}
-                              animate={{ height: 'auto', opacity: 1 }}
-                              exit={{ height: 0, opacity: 0 }}
-                              style={{ overflow: 'hidden' }}
-                            >
-                              <div
-                                onDragOver={(e) => e.preventDefault()}
-                                onDrop={(e) => {
-                                  if (editandoId && !modoEdicion) {
-                                    toast.error("Debe activar el modo edición para subir archivos.");
-                                    return;
-                                  }
-                                  handleDrop(e);
-                                }}
-                                style={{
-                                  padding: '15px',
-                                  backgroundColor: '#f8fafc',
-                                  borderRadius: '12px',
-                                  border: '1px dashed #cbd5e1',
-                                  minHeight: '135px',
-                                  flex: 1
-                                }}
-                              >
-                                {facturasUrls.length === 0 ? (
-                                  <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: '0.75rem', padding: '20px' }}>
-                                    No hay archivos. Arrastre aquí para subir.
-                                  </div>
-                                ) : (
-                                  <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                                    {facturasUrls.map((item, idx) => {
-                                      const url = (() => {
-                                        if (typeof item === 'string') {
-                                          if (item.trim().startsWith('{')) {
-                                            try { return JSON.parse(item).url; } catch (e) { return item; }
-                                          }
-                                          return item;
+                              {facturasUrls.length === 0 ? (
+                                <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: '0.75rem', padding: '20px' }}>
+                                  No hay archivos. Arrastre aquí para subir.
+                                </div>
+                              ) : (
+                                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                                  {facturasUrls.map((item, idx) => {
+                                    const url = (() => {
+                                      if (typeof item === 'string') {
+                                        if (item.trim().startsWith('{')) {
+                                          try { return JSON.parse(item).url; } catch (e) { return item; }
                                         }
-                                        return item?.url;
-                                      })();
-                                      if (!url) return null;
-                                      const isImg = /\.(jpg|jpeg|png|webp|avif|gif)$/i.test(url.split('?')[0]);
-                                      return (
-                                        <div key={idx} style={{ position: 'relative', width: '70px', height: '70px' }}>
-                                          <a href={url} target="_blank" rel="noreferrer" style={{
-                                            display: 'block', width: '100%', height: '100%',
-                                            borderRadius: '8px', overflow: 'hidden', border: '1px solid #e2e8f0',
-                                            backgroundColor: 'white'
-                                          }}>
-                                            {isImg ? (
-                                              <img src={url} alt={`Soporte ${idx}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                                            ) : (
-                                              <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#fef2f2', color: '#ef4444' }}>
-                                                <FileText size={18} />
-                                              </div>
-                                            )}
-                                          </a>
-                                          <button
-                                            onClick={() => eliminarSoporteDefinitivo(idx)}
-                                            style={{ position: 'absolute', top: '-5px', right: '-5px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '50%', width: '18px', height: '18px', fontSize: '9px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}
-                                          >
-                                            ✕
-                                          </button>
-                                        </div>
-                                      );
-                                    })}
-                                  </div>
-                                )}
-                              </div>
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
-                      </>
-                    )}
+                                        return item;
+                                      }
+                                      return item?.url;
+                                    })();
+                                    if (!url) return null;
+                                    const isImg = /\.(jpg|jpeg|png|webp|avif|gif)$/i.test(url.split('?')[0]);
+                                    return (
+                                      <div key={idx} style={{ position: 'relative', width: '70px', height: '70px' }}>
+                                        <a href={url} target="_blank" rel="noreferrer" style={{
+                                          display: 'block', width: '100%', height: '100%',
+                                          borderRadius: '8px', overflow: 'hidden', border: '1px solid #e2e8f0',
+                                          backgroundColor: 'white'
+                                        }}>
+                                          {isImg ? (
+                                            <img src={url} alt={`Soporte ${idx}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                          ) : (
+                                            <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#fef2f2', color: '#ef4444' }}>
+                                              <FileText size={18} />
+                                            </div>
+                                          )}
+                                        </a>
+                                        <button
+                                          onClick={() => eliminarSoporteDefinitivo(idx)}
+                                          style={{ position: 'absolute', top: '-5px', right: '-5px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '50%', width: '18px', height: '18px', fontSize: '9px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}
+                                        >
+                                          ✕
+                                        </button>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </>
                   </div>
 
                   <div className="totals-container" style={{ width: '100%', maxWidth: '350px', minWidth: '350px', marginTop: 0 }}>
@@ -3342,7 +3510,30 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                             const rolUser = (currentUser?.rol || '').toLowerCase();
                             const reqActual = historial.find(h => String(h.id) === String(editandoId));
 
-                            if (reqActual?.estado_aprobacion === 'pendiente_proyecto' && (rolUser.includes('proyecto') || (rolUser.includes('gerente') && currentUser?.departamento === reqActual?.gerencia))) {
+                            let puedeVerBotonesProyecto = false;
+                            if (reqActual?.estado_aprobacion === 'pendiente_proyecto') {
+                              const cc = reqActual.centro_costo || '';
+                              const gerenteEsperado = obtenerAprobadorProyecto(cc);
+                              const esAdmin = currentUser?.esAdminReal ||
+                                rolUser.includes('admin') ||
+                                rolUser.includes('general') ||
+                                (currentUser?.correo || '').toLowerCase() === 'cvega@totalclean.com' ||
+                                (currentUser?.correo || '').toLowerCase() === 'cvega.totalclean@gmail.com';
+                              
+                              if (esAdmin) {
+                                puedeVerBotonesProyecto = true;
+                              } else {
+                                if (gerenteEsperado === 'Johannel García') {
+                                  puedeVerBotonesProyecto = currentUser?.nombre?.toUpperCase().includes('JOHANNEL');
+                                } else if (gerenteEsperado === 'Hilda Colina') {
+                                  puedeVerBotonesProyecto = currentUser?.nombre?.toUpperCase().includes('HILDA');
+                                } else {
+                                  puedeVerBotonesProyecto = rolUser.includes('proyecto') || (rolUser.includes('gerente') && currentUser?.departamento === reqActual?.gerencia);
+                                }
+                              }
+                            }
+
+                            if (puedeVerBotonesProyecto) {
                               return (
                                 <>
                                   <button className="btn-tc btn-tc-danger" onClick={manejarRechazarGerenteProyecto} disabled={loading}>

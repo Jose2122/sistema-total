@@ -17,6 +17,7 @@ import Almacen from './Almacen';
 import ResumenSesion from './ResumenSesion';
 import ResumenEjecutivo from './ResumenEjecutivo';
 import AnalyticsCompras from './AnalyticsCompras';
+import AsistenteAyuda from './components/AsistenteAyuda';
 import { Menu, X as CloseIcon, Search, Cloud, Sun, ChevronDown, Power, LayoutDashboard, BarChartBig, Gauge } from 'lucide-react';
 
 function Dashboard() {
@@ -802,6 +803,9 @@ function Dashboard() {
           {renderContenido()}
         </div>
       </div>
+      
+      {/* Widget de Asistencia Virtual e Interactiva */}
+      <AsistenteAyuda />
     </div>
   );
 }

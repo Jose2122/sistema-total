@@ -8,6 +8,51 @@ import { motion } from 'framer-motion';
 import { Loader2, Upload, FileText, Printer, FileSpreadsheet, BarChart3, Clock, Activity, CheckCircle2, DollarSign, Copy, AlertCircle, X, ChevronDown } from 'lucide-react';
 import './SolicitudFondos.css';
 
+const getWeeksForMonth = (monthVal, year = 2026) => {
+  const weeksMap = new Map();
+  const start = new Date(year, 0, 1);
+  const end = new Date(year, 11, 31);
+  
+  let current = new Date(start);
+  while (current <= end) {
+    const m = current.getMonth(); // 0-indexed
+    const w = getWeek(current, { weekStartsOn: 1 });
+    
+    if (!weeksMap.has(w)) {
+      weeksMap.set(w, {
+        weekNum: w,
+        minDate: new Date(current),
+        maxDate: new Date(current),
+        months: new Set()
+      });
+    }
+    
+    const wObj = weeksMap.get(w);
+    wObj.months.add(m);
+    if (current < wObj.minDate) wObj.minDate = new Date(current);
+    if (current > wObj.maxDate) wObj.maxDate = new Date(current);
+    
+    current.setDate(current.getDate() + 1);
+  }
+  
+  const weeksList = Array.from(weeksMap.values()).map(wObj => {
+    const dStartStr = format(wObj.minDate, 'dd/MM');
+    const dEndStr = format(wObj.maxDate, 'dd/MM');
+    return {
+      weekNum: wObj.weekNum.toString(),
+      label: `Semana ${wObj.weekNum} (${dStartStr} - ${dEndStr})`,
+      months: Array.from(wObj.months)
+    };
+  });
+  
+  if (!monthVal || monthVal === '') {
+    return weeksList;
+  } else {
+    const targetMonth = parseInt(monthVal, 10);
+    return weeksList.filter(w => w.months.includes(targetMonth));
+  }
+};
+
 const StockSmartTotalClean = ({ currentUserProp }) => {
   const [showModal, setShowModal] = useState(false);
   const [historial, setHistorial] = useState([]);
@@ -142,8 +187,23 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
   // --- ESTADO PARA FILTROS ---
   const [busqueda, setBusqueda] = useState("");
   const [filtroGerencia, setFiltroGerencia] = useState("Todos");
+  const [filtroMes, setFiltroMes] = useState("");
   const [filtroSemana, setFiltroSemana] = useState("");
   const [filtroStatus, setFiltroStatus] = useState("Todos");
+
+  const handleMonthChange = (newMonth) => {
+    setFiltroMes(newMonth);
+    if (filtroSemana !== "") {
+      const validWeeks = getWeeksForMonth(newMonth, 2026);
+      const isValid = validWeeks.some(w => {
+        const semValue = w.weekNum.padStart(2, '0');
+        return semValue === filtroSemana;
+      });
+      if (!isValid) {
+        setFiltroSemana("");
+      }
+    }
+  };
   const [quickFilter, setQuickFilter] = useState("SemanaActual");
   const [hasChanges, setHasChanges] = useState(false);
 
@@ -276,9 +336,14 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         h.id.toLowerCase().includes(busqueda.toLowerCase()) ||
         h.responsable.toLowerCase().includes(busqueda.toLowerCase());
       const matchGerencia = filtroGerencia === "Todos" || h.id.startsWith(filtroGerencia);
-      return matchTexto && matchGerencia;
+      const matchMes = !filtroMes || (() => {
+        if (!h.fecha_operativa) return false;
+        const dateObj = new Date(h.fecha_operativa + 'T12:00:00');
+        return dateObj.getMonth().toString() === filtroMes;
+      })();
+      return matchTexto && matchGerencia && matchMes;
     });
-  }, [historial, busqueda, filtroGerencia]);
+  }, [historial, busqueda, filtroGerencia, filtroMes]);
 
   const counts = useMemo(() => {
     const semAhora = getWeek(new Date(), { weekStartsOn: 1 });
@@ -326,6 +391,12 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
 
     const matchGerencia = filtroGerencia === "Todos" || h.id.startsWith(filtroGerencia);
 
+    const matchMes = !filtroMes || (() => {
+      if (!h.fecha_operativa) return false;
+      const dateObj = new Date(h.fecha_operativa + 'T12:00:00');
+      return dateObj.getMonth().toString() === filtroMes;
+    })();
+
     // Filtro por semana (usar el número de semana calculado de la fecha o del ID)
     const matchSemana = !filtroSemana ||
       h.id.includes(`SEM ${filtroSemana}`) ||
@@ -337,7 +408,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       (filtroStatus === "Pagados" && isPagado) ||
       (filtroStatus === "Pendientes" && !isPagado);
 
-    if (!matchTexto || !matchGerencia || !matchSemana || !matchStatus) return false;
+    if (!matchTexto || !matchGerencia || !matchMes || !matchSemana || !matchStatus) return false;
 
     // Filtro rápido de estrategia (Quick Filter)
     const semAhora = getWeek(new Date(), { weekStartsOn: 1 });
@@ -398,10 +469,13 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
           emailLower === 'cvega@totalclean.com' ||
           emailLower === 'karincmm1@gmail.com';
 
+        const esPerlaDelgado = (perfil.nombre || '').trim().toLowerCase() === 'perla' && (perfil.apellido || '').trim().toLowerCase() === 'delgado';
+
         const userData = {
           ...perfil,
           esSuperAdmin,
           esAdminReal,
+          esPerlaDelgado,
           correo: emailLower,
           departamento: (perfil.departamento || '').trim(),
           rol: (perfil.rol || '').trim()
@@ -451,10 +525,13 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
             emailLower === 'cvega@totalclean.com' ||
             emailLower === 'karincmm1@gmail.com';
 
+          const esPerlaDelgado = (perfil.nombre || '').trim().toLowerCase() === 'perla' && (perfil.apellido || '').trim().toLowerCase() === 'delgado';
+
           userContext = {
             ...perfil,
             esSuperAdmin,
             esAdminReal,
+            esPerlaDelgado,
             correo: emailLower,
             departamento: (perfil.departamento || '').trim(),
             rol: (perfil.rol || '').trim()
@@ -486,7 +563,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
     console.log(`[VISIBILIDAD FONDOS] Usuario: ${userContext.correo} | Depto: ${userContext.departamento} | Rol: ${rolUpper} | Permiso Especial: ${tienePermisoDepto}`);
 
     // REGLAS DE JERARQUÍA
-    if (!userContext.esAdminReal && rolUpper !== 'GERENTE GENERAL' && rolUpper !== 'ADMIN') {
+    if (!userContext.esAdminReal && rolUpper !== 'GERENTE GENERAL' && rolUpper !== 'ADMIN' && !userContext.esPerlaDelgado && !userContext.capacidades?.ver_solicitudes_global) {
       const puedeVerDepto = tienePermisoDepto || ['GERENTE', 'COORDINADOR', 'ANALISTA', 'COMPRAS'].includes(rolUpper) || deptoUpper.includes('COMPRAS');
       const misObras = userContext.obras_asignadas || [];
       const esRestringidoObra = rolUpper.includes('PROYECTO') || (rolUpper.includes('ANALISTA') && misObras.length > 0);
@@ -539,11 +616,20 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       setHistorial(dataHist.map(h => {
         const misPartidas = (pagosData || []).filter(p => p.solicitud_id === h.id);
         
-        // Calcular total_bs y total_usd directamente de las partidas reales de la solicitud
-        const calculatedTotalBs = misPartidas.reduce((acc, p) => acc + (parseFloat(p.pu_bs) || 0) * (p.cantidad || 1), 0);
-        const calculatedTotalUsd = misPartidas.reduce((acc, p) => acc + (parseFloat(p.pu_usd) || 0) * (p.cantidad || 1), 0);
+        let calculatedTotalBs = 0;
+        let calculatedTotalUsd = 0;
+        let totalPagado = 0;
+
+        if (misPartidas.length > 0) {
+          calculatedTotalBs = misPartidas.reduce((acc, p) => acc + (parseFloat(p.pu_bs) || 0) * (p.cantidad || 1), 0);
+          calculatedTotalUsd = misPartidas.reduce((acc, p) => acc + (parseFloat(p.pu_usd) || 0) * (p.cantidad || 1), 0);
+          totalPagado = misPartidas.reduce((acc, p) => acc + (p.pago_realizado ? (parseFloat(p.pu_bs) || parseFloat(p.pu_usd) || 0) * (p.cantidad || 1) : 0), 0);
+        } else {
+          calculatedTotalBs = parseFloat(h.total_bs || 0);
+          calculatedTotalUsd = parseFloat(h.total_usd || 0);
+          totalPagado = h.pago_realizado ? (calculatedTotalBs + calculatedTotalUsd) : 0;
+        }
         
-        const totalPagado = misPartidas.reduce((acc, p) => acc + (p.pago_realizado ? (parseFloat(p.pu_bs) || parseFloat(p.pu_usd) || 0) * (p.cantidad || 1) : 0), 0);
         const total = calculatedTotalBs + calculatedTotalUsd;
 
         return {
@@ -988,7 +1074,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
 
     // --- EXCEPCIÓN DE ADMINISTRADOR / GERENTE GENERAL ---
     const rolUpper = (currentUser?.rol || '').toUpperCase();
-    const isPrivileged = currentUser?.esAdminReal || rolUpper === 'GERENTE GENERAL' || rolUpper === 'ADMIN';
+    const isPrivileged = currentUser?.esAdminReal || rolUpper === 'GERENTE GENERAL' || rolUpper === 'ADMIN' || currentUser?.esPerlaDelgado || currentUser?.capacidades?.ver_solicitudes_global;
     setEsAdminBypass(isPrivileged);
 
     setLoadingCheck(true);
@@ -1063,7 +1149,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
     const ws = wb.addWorksheet('Solicitud de Fondos');
 
     // Estilo de Título
-    ws.mergeCells('A1:I1');
+    ws.mergeCells('A1:H1');
     const titleCell = ws.getCell('A1');
     titleCell.value = 'TOTAL CLEAN C.A. - SOLICITUD DE FONDOS OPERATIVOS';
     titleCell.font = { name: 'Arial Black', size: 14, color: { argb: 'FFFFFFFF' } };
@@ -1072,7 +1158,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
     ws.getRow(1).height = 35;
 
     // Encabezados
-    const headers = ['ID CONTROL', 'SEMANA', 'PERÍODO', 'RESPONSABLE', 'GERENCIA', 'PAGO BS ($)', 'PAGO USD ($)', 'TOTAL ($)', 'ESTADO'];
+    const headers = ['ID CONTROL', 'SEMANA', 'PERÍODO', 'RESPONSABLE', 'GERENCIA', 'PAGO BS ($)', 'PAGO USD ($)', 'TOTAL ($)'];
     ws.addRow(headers);
     const headerRow = ws.getRow(2);
     headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
@@ -1089,8 +1175,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         h.gerencia,
         parseFloat(h.total_bs || 0),
         parseFloat(h.total_usd || 0),
-        parseFloat(h.total || 0),
-        h.pago_realizado ? 'PAGADO' : 'PENDIENTE'
+        parseFloat(h.total || 0)
       ]);
     });
 
@@ -1298,7 +1383,14 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
             <div class="info-section">
                 <div>
                     <b>Gerencia:</b> ${solicitud.gerencia_nombre}<br>
-                    <b>Responsable:</b> ${solicitud.responsable_nombre}
+                    <b>Responsable:</b> ${solicitud.responsable_nombre}<br>
+                    ${(() => {
+                      const respUpper = (solicitud.responsable_nombre || '').toUpperCase();
+                      const esHilda = respUpper.includes('HILDA') && respUpper.includes('COLINA');
+                      const esJohannel = respUpper.includes('JOHANNEL');
+                      return esHilda ? '<b>Contrato:</b> Mtto Mayor<br>' : esJohannel ? '<b>Contrato:</b> Excelencia Y Vacumm<br>' : '';
+                    })()}
+                    <b>Período Semanal:</b> ${extractPeriodoFromId(solicitud.codigo_control)}
                 </div>
                 <div class="text-right">
                     <b>Fecha Operativa:</b> ${new Date(solicitud.fecha_operativa + 'T12:00:00').toLocaleDateString('es-ES')}<br>
@@ -1309,29 +1401,43 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
             <table class="data-table">
               <thead>
                 <tr>
-                  <th style="width: 15%">C. COSTO</th>
-                  <th style="width: 25%">CLASIFICACIÓN</th>
-                  <th style="width: 35%">DESCRIPCIÓN</th>
-                  <th style="width: 10%" class="text-center">CANT.</th>
-                  <th style="width: 15%" class="text-right">MONTO ($)</th>
+                  <th style="width: 12%">C. COSTO</th>
+                  <th style="width: 13%">CLASIF.</th>
+                  <th style="width: 13%">CATEGORIA</th>
+                  <th style="width: 22%">DESCRIPCIÓN</th>
+                  <th style="width: 8%" class="text-center">CANT.</th>
+                  <th style="width: 11%" class="text-right">P.U. Bs ($)</th>
+                  <th style="width: 11%" class="text-right">P.U. USD ($)</th>
+                  <th style="width: 10%" class="text-right">TOTAL ($)</th>
                 </tr>
               </thead>
               <tbody>
                 ${partidas.map(p => {
-        const totalRenglon = (p.pu_bs || 0) * (p.cantidad || 1) + (p.pu_usd || 0) * (p.cantidad || 1);
-        return `
+                  const unitBs = p.pu_bs || 0;
+                  const unitUsd = p.pu_usd || 0;
+                  const totalRenglon = (unitBs + unitUsd) * (p.cantidad || 1);
+                  
+                  const formatMonto = (val) => {
+                    if (!val || val === 0) return '-';
+                    return val.toLocaleString('de-DE', { minimumFractionDigits: 2 });
+                  };
+                  
+                  return `
                     <tr>
-                      <td>${p.centro_costo}</td>
-                      <td>${p.clasificacion}</td>
+                      <td>${p.centro_costo || ''}</td>
+                      <td>${p.clasificacion || ''}</td>
+                      <td>${p.categoria || ''}</td>
                       <td>
-                        ${p.descripcion}<br>
-                        <span style="font-size: 10px; color: #555;">Beneficiario: ${p.beneficiario}</span>
+                        ${p.descripcion || ''}<br>
+                        <span style="font-size: 10px; color: #555;">Beneficiario: ${p.beneficiario || ''}</span>
                       </td>
-                      <td class="text-center">${p.cantidad}</td>
+                      <td class="text-center">${p.cantidad || 1}</td>
+                      <td class="text-right">${formatMonto(unitBs)}</td>
+                      <td class="text-right">${formatMonto(unitUsd)}</td>
                       <td class="text-right">${totalRenglon.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
                     </tr>
                   `;
-      }).join('')}
+                }).join('')}
               </tbody>
             </table>
 
@@ -1350,15 +1456,6 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                   <span>$ ${(solicitud.total_bs + solicitud.total_usd).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span>
                 </div>
               </div>
-            </div>
-            
-            <div style="margin-top: 50px; display: flex; justify-content: space-around;">
-               <div style="text-align: center; border-top: 1px solid #000; width: 250px; padding-top: 5px; font-weight: bold;">
-                  Preparado Por<br><span style="font-size: 10px; font-weight: normal;">${solicitud.responsable_nombre}</span>
-               </div>
-               <div style="text-align: center; border-top: 1px solid #000; width: 250px; padding-top: 5px; font-weight: bold;">
-                  Aprobado Por<br><span style="font-size: 10px; font-weight: normal;">Gerencia General</span>
-               </div>
             </div>
 
             <script>setTimeout(() => { window.print(); }, 800);</script>
@@ -1810,13 +1907,11 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       {/* --- DASHBOARD UNIFICADO PREMIUM (KPICards) --- */}
       <div style={{
         display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+        gridTemplateColumns: 'minmax(220px, 350px)',
         gap: '20px',
         marginBottom: '32px'
       }}>
         {[
-          { label: 'Pendientes por procesar', val: `${totalesVisibles.pendienteCount} Sols ($ ${totalesVisibles.pendienteMonto.toLocaleString('de-DE', { minimumFractionDigits: 2 })})`, icon: <Clock size={20} />, col: '#f59e0b', bg: '#fef3c7' },
-          { label: 'Solicitudes Pagadas', val: `${totalesVisibles.pagadoCount} Sols ($ ${totalesVisibles.pagadoMonto.toLocaleString('de-DE', { minimumFractionDigits: 2 })})`, icon: <CheckCircle2 size={20} />, col: '#10b981', bg: '#dcfce7' },
           { label: 'Gasto Total Acumulado', val: `$ ${totalesVisibles.general.toLocaleString('de-DE', { minimumFractionDigits: 2 })}`, icon: <DollarSign size={20} />, col: '#0ea5e9', bg: '#e0f2fe' },
         ].map((x, i) => (
           <div
@@ -1946,69 +2041,74 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                          </div>
 
                          <div class="info-section">
-                             <div>
-                               <b>Gerencia:</b> ${sol.gerencia_nombre}<br>
-                               <b>Responsable:</b> ${sol.responsable_nombre}
-                             </div>
-                             <div class="text-right">
-                               <b>Fecha Operativa:</b> ${new Date(sol.fecha_operativa + 'T12:00:00').toLocaleDateString('es-ES')}<br>
-                               <b>Sede:</b> ${sol.sede || 'N/A'}
-                             </div>
-                         </div>
+                              <div>
+                                <b>Gerencia:</b> ${sol.gerencia_nombre}<br>
+                                <b>Responsable:</b> ${sol.responsable_nombre}<br>
+                                ${(() => {
+                                  const respUpper = (sol.responsable_nombre || '').toUpperCase();
+                                  const esHilda = respUpper.includes('HILDA') && respUpper.includes('COLINA');
+                                  const esJohannel = respUpper.includes('JOHANNEL');
+                                  return esHilda ? '<b>Contrato:</b> Mtto Mayor<br>' : esJohannel ? '<b>Contrato:</b> Excelencia Y Vacumm<br>' : '';
+                                })()}
+                                <b>Período Semanal:</b> ${extractPeriodoFromId(sol.codigo_control)}
+                              </div>
+                              <div class="text-right">
+                                <b>Fecha Operativa:</b> ${new Date(sol.fecha_operativa + 'T12:00:00').toLocaleDateString('es-ES')}<br>
+                                <b>Sede:</b> ${sol.sede || 'N/A'}
+                              </div>
+                          </div>
 
-                         <table class="data-table">
-                           <thead>
-                             <tr>
-                               <th style="width: 10%">C.COSTO</th>
-                               <th style="width: 12%">CLASIF.</th>
-                               <th style="width: 38%">DESCRIPCIÓN</th>
-                               <th style="width: 8%" class="text-center">CANT.</th>
-                               <th style="width: 16%" class="text-right">PAGO Bs ($)</th>
-                               <th style="width: 16%" class="text-right">PAGO USD ($)</th>
-                             </tr>
-                           </thead>
-                           <tbody>
-                             ${partidas.map(p => {
-                    const montoBs = (p.pu_bs || 0) * (p.cantidad || 1);
-                    const montoUsd = (p.pu_usd || 0) * (p.cantidad || 1);
-                    return `
-                                 <tr>
-                                   <td style="font-size: 8px;">${p.centro_costo}</td>
-                                   <td style="font-size: 8px;">${p.clasificacion}</td>
-                                   <td style="font-size: 8.5px; line-height: 1.1;">
-                                     <b>${p.descripcion}</b><br>
-                                     <span style="color: #555; font-size: 7.5px;">Benef: ${p.beneficiario}</span>
-                                   </td>
-                                   <td class="text-center" style="font-size: 9px;">${p.cantidad}</td>
-                                   <td class="text-right" style="font-size: 9.5px; font-weight: 600;">
-                                     ${montoBs > 0 ? montoBs.toLocaleString('de-DE', { minimumFractionDigits: 2 }) : '-'}
-                                   </td>
-                                   <td class="text-right" style="font-size: 9.5px; font-weight: 600;">
-                                     ${montoUsd > 0 ? montoUsd.toLocaleString('de-DE', { minimumFractionDigits: 2 }) : '-'}
-                                   </td>
-                                 </tr>
-                               `;
-                  }).join('')}
-                           </tbody>
-                         </table>
+                          <table class="data-table">
+                            <thead>
+                              <tr>
+                                <th style="width: 10%">C.COSTO</th>
+                                <th style="width: 12%">CLASIF.</th>
+                                <th style="width: 12%">CATEGORIA</th>
+                                <th style="width: 26%">DESCRIPCIÓN</th>
+                                <th style="width: 8%" class="text-center">CANT.</th>
+                                <th style="width: 11%" class="text-right">P.U. Bs ($)</th>
+                                <th style="width: 11%" class="text-right">P.U. USD ($)</th>
+                                <th style="width: 10%" class="text-right">TOTAL ($)</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              ${partidas.map(p => {
+                                const unitBs = p.pu_bs || 0;
+                                const unitUsd = p.pu_usd || 0;
+                                const totalRenglon = (unitBs + unitUsd) * (p.cantidad || 1);
+                                return `
+                                  <tr>
+                                    <td style="font-size: 8px;">${p.centro_costo || ''}</td>
+                                    <td style="font-size: 8px;">${p.clasificacion || ''}</td>
+                                    <td style="font-size: 8px;">${p.categoria || ''}</td>
+                                    <td style="font-size: 8.5px; line-height: 1.1;">
+                                      <b>${p.descripcion || ''}</b><br>
+                                      <span style="color: #555; font-size: 7.5px;">Benef: ${p.beneficiario || ''}</span>
+                                    </td>
+                                    <td class="text-center" style="font-size: 9px;">${p.cantidad || 1}</td>
+                                    <td class="text-right" style="font-size: 9.5px; font-weight: 600;">
+                                      ${unitBs > 0 ? unitBs.toLocaleString('de-DE', { minimumFractionDigits: 2 }) : '-'}
+                                    </td>
+                                    <td class="text-right" style="font-size: 9.5px; font-weight: 600;">
+                                      ${unitUsd > 0 ? unitUsd.toLocaleString('de-DE', { minimumFractionDigits: 2 }) : '-'}
+                                    </td>
+                                    <td class="text-right" style="font-size: 9.5px; font-weight: 600;">
+                                      ${totalRenglon.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                                    </td>
+                                  </tr>
+                                `;
+                              }).join('')}
+                            </tbody>
+                          </table>
 
-                         <div class="totals-section">
-                           <div class="totals-box">
-                             <div class="totals-row"><span>Pago Bs ($)</span> <span>$ ${sol.total_bs.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span></div>
-                             <div class="totals-row"><span>Pago USD ($)</span> <span>$ ${sol.total_usd.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span></div>
-                             <div class="totals-row bold"><span>TOTAL ($)</span> <span>$ ${(sol.total_bs + sol.total_usd).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span></div>
-                           </div>
-                         </div>
-
-                         <div style="margin-top: 30px; display: flex; justify-content: space-around; font-size: 10px;">
-                            <div style="text-align: center; border-top: 1px solid #000; width: 180px; padding-top: 5px;">
-                               <b>Preparado Por:</b><br>${sol.responsable_nombre}
+                          <div class="totals-section">
+                            <div class="totals-box">
+                              <div class="totals-row"><span>Pago Bs ($)</span> <span>$ ${sol.total_bs.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span></div>
+                              <div class="totals-row"><span>Pago USD ($)</span> <span>$ ${sol.total_usd.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span></div>
+                              <div class="totals-row bold"><span>TOTAL ($)</span> <span>$ ${(sol.total_bs + sol.total_usd).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span></div>
                             </div>
-                            <div style="text-align: center; border-top: 1px solid #000; width: 180px; padding-top: 5px;">
-                               <b>Aprobado Por:</b><br>Gerencia General
-                            </div>
-                         </div>
-                       </div>
+                          </div>
+                        </div>
                      `;
                 });
 
@@ -2081,6 +2181,17 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
           </select>
 
           <select
+            value={filtroMes}
+            onChange={(e) => handleMonthChange(e.target.value)}
+            style={{ flex: 0.8, padding: '10px', borderRadius: '10px', border: '1px solid #e2e8f0', fontSize: '13px', backgroundColor: 'white' }}
+          >
+            <option value="">Mes (Todos)</option>
+            {["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"].map((m, i) => (
+              <option key={i} value={i.toString()}>{m}</option>
+            ))}
+          </select>
+
+          <select
             value={filtroSemana}
             onChange={(e) => {
               setFiltroSemana(e.target.value);
@@ -2088,12 +2199,12 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                 setQuickFilter("Todos");
               }
             }}
-            style={{ flex: 0.8, padding: '10px', borderRadius: '10px', border: '1px solid #e2e8f0', fontSize: '13px', backgroundColor: 'white' }}
+            style={{ flex: 1.2, padding: '10px', borderRadius: '10px', border: '1px solid #e2e8f0', fontSize: '13px', backgroundColor: 'white' }}
           >
             <option value="">Semana (Todas)</option>
-            {Array.from({ length: 52 }, (_, i) => {
-              const sem = String(i + 1).padStart(2, '0');
-              return <option key={sem} value={sem}>Semana {sem}</option>;
+            {getWeeksForMonth(filtroMes, 2026).map(w => {
+              const semValue = w.weekNum.padStart(2, '0');
+              return <option key={w.weekNum} value={semValue}>{w.label}</option>;
             })}
           </select>
         </div>
@@ -2549,7 +2660,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
 
                 <div style={{ display: 'flex', flexDirection: 'column' }}>
                   <label style={{ fontSize: '10px', fontWeight: 'bold', color: '#363636', marginBottom: '5px' }}>GERENCIA SOLICITANTE</label>
-                  {(currentUser?.esAdminReal || currentUser?.rol === 'Gerente General' || currentUser?.rol === 'Admin') ? (
+                  {(currentUser?.esAdminReal || currentUser?.rol === 'Gerente General' || currentUser?.rol === 'Admin' || currentUser?.esPerlaDelgado || currentUser?.capacidades?.ver_solicitudes_global) ? (
                     <select
                       className="sf-input"
                       value={form.gerencia}

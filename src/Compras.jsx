@@ -887,46 +887,188 @@ const Compras = () => {
     }
   };
 
-  const guardarUnicoRenglon = async (id) => {
+  const guardarUnicoRenglon = async (id, overrideValues = null) => {
     if (loading) return;
     const item = renglones.find(r => r.id === id);
-    if (!item || !item.hasChanges) return;
+    if (!item) return;
+    if (!overrideValues && !item.hasChanges) return;
 
-    // VALIDACIÓN: Si está comprando, debe tener Factura y Proveedor
-    if (item.compra_actual_cant > 0) {
-      if (item.compra_actual_cant > item.cantidad_pendiente) {
-        toast.error(`No puede comprar más de la cantidad pendiente (${item.cantidad_pendiente})`, { id: 'error-cantidad' });
-        return;
-      }
-      if (!item.doc_numero_actual?.trim() || !item.proveedor_seleccionado_id) {
-        toast.error("Debe indicar Número de Factura y Proveedor para procesar este ítem.", { id: 'error-campos' });
-        return;
-      }
+    // VALIDACIÓN DE DATOS OBLIGATORIOS (CANTIDAD, NÚMERO Y PROVEEDOR)
+    const cantProcesar = Number(item.compra_actual_cant || 0);
+    if (cantProcesar <= 0) {
+      toast.error("Error: Debe ingresar una CANTIDAD REAL mayor a 0 para procesar la compra.");
+      return;
+    }
+    if (cantProcesar > item.cantidad_pendiente) {
+      toast.error(`No puede comprar más de la cantidad pendiente (${item.cantidad_pendiente})`, { id: 'error-cantidad' });
+      return;
+    }
+    if (!item.doc_numero_actual || !item.doc_numero_actual.trim()) {
+      toast.error("Error: El número de " + (item.doc_tipo_actual || 'FAC/NC') + " es obligatorio para procesar la compra.");
+      return;
+    }
+    if (!item.proveedor_seleccionado_id) {
+      toast.error("Error: Debe seleccionar un PROVEEDOR para procesar la compra.");
+      return;
+    }
+
+    // Si no tenemos el soporte adjunto ni su nombre/etiqueta, lo pedimos con un toast interactivo
+    if (!overrideValues) {
+      let tempFile = null;
+      let tempFileName = '';
+
+      toast((t) => {
+        const inputStyle = {
+          padding: '8px 12px',
+          border: '1px solid #cbd5e1',
+          borderRadius: '8px',
+          fontSize: '12px',
+          width: '100%',
+          outline: 'none',
+          boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+          backgroundColor: '#f8fafc',
+          boxSizing: 'border-box',
+          color: '#1e293b'
+        };
+        const labelStyle = {
+          fontSize: '11px',
+          fontWeight: '700',
+          color: '#64748b',
+          textTransform: 'uppercase',
+          letterSpacing: '0.5px',
+          marginBottom: '4px',
+          display: 'block'
+        };
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '5px', minWidth: '280px' }}>
+            <p style={{ margin: 0, fontSize: '0.85rem', fontWeight: '700', color: '#1e293b', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <FileText size={16} color="#22c55e" />
+              Adjuntar Soporte de Compra
+            </p>
+
+            {/* Info de la compra */}
+            <div style={{ fontSize: '11px', color: '#475569', backgroundColor: '#f1f5f9', padding: '8px', borderRadius: '6px' }}>
+              <strong>Cant:</strong> {cantProcesar} | <strong>Doc:</strong> {item.doc_numero_actual}
+            </div>
+
+            {/* Adjuntar Soporte */}
+            <div>
+              <label style={labelStyle}>Adjuntar Soporte (Obligatorio) <span style={{ color: '#ef4444' }}>*</span></label>
+              <input
+                type="file"
+                accept="image/*,application/pdf"
+                onChange={(e) => {
+                  if (e.target.files && e.target.files[0]) {
+                    tempFile = e.target.files[0];
+                    const nameInput = document.getElementById('toast-compras-name');
+                    if (nameInput && !nameInput.value) {
+                      const cleanName = tempFile.name.split('.')[0];
+                      nameInput.value = cleanName;
+                      tempFileName = cleanName;
+                    }
+                  }
+                }}
+                style={{ ...inputStyle, padding: '6px', cursor: 'pointer', backgroundColor: 'white' }}
+              />
+            </div>
+
+            {/* Nombre del Soporte */}
+            <div>
+              <label style={labelStyle}>Nombre del Documento <span style={{ color: '#ef4444' }}>*</span></label>
+              <input
+                id="toast-compras-name"
+                type="text"
+                defaultValue={tempFileName}
+                onChange={(e) => { tempFileName = e.target.value; }}
+                style={inputStyle}
+                placeholder="Ej: Factura Compra, Recibo..."
+              />
+            </div>
+
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '4px' }}>
+              <button
+                onClick={() => {
+                  if (!tempFile) {
+                    toast.error('Debe adjuntar el documento de soporte.');
+                    return;
+                  }
+                  if (!tempFileName.trim()) {
+                    toast.error('Debe ingresar un nombre para el soporte.');
+                    return;
+                  }
+                  toast.dismiss(t.id);
+                  guardarUnicoRenglon(id, {
+                    file: tempFile,
+                    fileName: tempFileName.trim()
+                  });
+                }}
+                style={{
+                  padding: '6px 14px',
+                  backgroundColor: '#22c55e',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  fontSize: '0.75rem',
+                  fontWeight: 'bold',
+                  boxShadow: '0 2px 4px rgba(34, 197, 94, 0.2)'
+                }}
+              >
+                CONFIRMAR
+              </button>
+              <button
+                onClick={() => toast.dismiss(t.id)}
+                style={{
+                  padding: '6px 12px',
+                  backgroundColor: '#f1f5f9',
+                  color: '#64748b',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  fontSize: '0.75rem'
+                }}
+              >
+                CANCELAR
+              </button>
+            </div>
+          </div>
+        );
+      }, { duration: 60000 });
+      return;
     }
 
     setLoading(true);
     try {
-      // VALIDACIÓN DE DATOS OBLIGATORIOS (NÚMERO, CANTIDAD Y PROVEEDOR)
-      if (!item.doc_numero_actual || !item.doc_numero_actual.trim()) {
-        toast.error("Error: El número de " + (item.doc_tipo_actual || 'FAC/NC') + " es obligatorio para procesar la compra.");
-        setLoading(false);
-        return;
-      }
-      if (Number(item.compra_actual_cant || 0) <= 0) {
-        toast.error("Error: Debe ingresar una CANTIDAD REAL mayor a 0 para procesar la compra.");
-        setLoading(false);
-        return;
-      }
-      if (!item.proveedor_seleccionado_id) {
-        toast.error("Error: Debe seleccionar un PROVEEDOR para procesar la compra.");
-        setLoading(false);
-        return;
+      // SUBIR SOPORTE AL STORAGE BUCKET facturas
+      let uploadedFileObj = null;
+      if (overrideValues?.file) {
+        const file = overrideValues.file;
+        const customName = overrideValues.fileName || file.name.split('.')[0] || 'Soporte';
+        const fileExt = file.name.split('.').pop();
+        const fileName = `factura_${editandoId}_${Date.now()}.${fileExt}`;
+        const filePath = `${fileName}`;
+
+        const { error: uploadError } = await supabase.storage
+          .from('facturas')
+          .upload(filePath, file);
+
+        if (uploadError) {
+          console.error("Error al subir archivo:", uploadError);
+          toast.error(`Error al subir el soporte: ${uploadError.message}`);
+          throw uploadError;
+        }
+
+        const { data: { publicUrl } } = supabase.storage.from('facturas').getPublicUrl(filePath);
+        uploadedFileObj = {
+          url: publicUrl,
+          etiqueta: customName
+        };
       }
 
-      // 1. Preparar la nueva transacción si hay cantidad
-      const nuevaTransaccion = item.compra_actual_cant > 0 ? {
+      // Preparar la nueva transacción
+      const nuevaTransaccion = {
         fecha: new Date().toISOString(),
-        cant: item.compra_actual_cant,
+        cant: cantProcesar,
         pu: item.compra_actual_pu,
         metodo_pago: item.metodo_pago_actual || '$ / BS',
         proveedor_id: item.proveedor_seleccionado_id || null,
@@ -936,9 +1078,9 @@ const Compras = () => {
         doc_tipo: item.doc_tipo_actual,
         doc_numero: item.doc_numero_actual,
         enviado_almacen: false
-      } : null;
+      };
 
-      const nuevaCantComprada = (item.cantidad_comprada || 0) + (item.compra_actual_cant || 0);
+      const nuevaCantComprada = (item.cantidad_comprada || 0) + cantProcesar;
       const nuevaCantPendiente = Math.max(0, item.cantidad_pedida - nuevaCantComprada);
 
       // LÓGICA DE STATUS CON CRÉDITO (NC)
@@ -956,7 +1098,7 @@ const Compras = () => {
         }
       }
 
-      if (nuevaTransaccion && esCredito) {
+      if (esCredito) {
         nuevaTransaccion.metodo_pago = 'CRÉDITO (NC)';
       }
 
@@ -964,7 +1106,7 @@ const Compras = () => {
         ...item,
         cantidad_comprada: nuevaCantComprada,
         cantidad_pendiente: nuevaCantPendiente,
-        historial_compras: nuevaTransaccion ? [...(item.historial_compras || []), nuevaTransaccion] : (item.historial_compras || []),
+        historial_compras: [...(item.historial_compras || []), nuevaTransaccion],
         status: nuevoStatus,
         pu: item.compra_actual_pu || item.pu,
         compra_actual_cant: 0,
@@ -975,10 +1117,10 @@ const Compras = () => {
         hasChanges: false
       };
 
-      // 2. Actualizar en el estado local todos los renglones
+      // Actualizar en el estado local todos los renglones
       const nuevosRenglones = renglones.map(r => r.id === id ? renglonProcesado : r);
 
-      // 3. Recalcular Totales de la Requisición (para la DB)
+      // Recalcular Totales de la Requisición (para la DB)
       const totalDinamicoReal = nuevosRenglones.reduce((acc, r) => {
         const ejecutadoItem = (r.historial_compras || []).reduce((sum, t) => sum + ((Number(t.cant) || 0) * (Number(t.pu) || 0)), 0);
         const estimadoPendiente = (Number(r.cantidad_pendiente) || 0) * Number(r.pu_estimado || 0);
@@ -993,13 +1135,27 @@ const Compras = () => {
         return acc + ejecutadoItem;
       }, 0);
 
+      // Obtener facturas existentes y añadir la nueva
+      let nuevasUrls = [...facturasUrls];
+      if (uploadedFileObj) {
+        const { data: currentReq } = await supabase.from('requisiciones').select('facturas_url').eq('id', editandoId).single();
+        const urlsActuales = currentReq?.facturas_url || [];
+        nuevasUrls = [...urlsActuales, uploadedFileObj];
+        setFacturasUrls(nuevasUrls);
+      }
+
+      const updatePayload = {
+        items: nuevosRenglones,
+        total_bs: totalDinamicoReal * 1.16,
+        total_ejecutado: totalEjecutadoReal * 1.16
+      };
+      if (uploadedFileObj) {
+        updatePayload.facturas_url = nuevasUrls;
+      }
+
       const { error } = await supabase
         .from('requisiciones')
-        .update({
-          items: nuevosRenglones,
-          total_bs: totalDinamicoReal * 1.16,
-          total_ejecutado: totalEjecutadoReal * 1.16
-        })
+        .update(updatePayload)
         .eq('id', editandoId);
 
       if (error) throw error;

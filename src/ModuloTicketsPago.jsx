@@ -312,7 +312,8 @@ const ModuloTicketsPago = () => {
           rolUpper.includes('CONTABIL') ||
           rolUpper.includes('ADMINISTRA') ||
           deptoUpper.includes('ADMINISTRA') ||
-          deptoUpper.includes('CONTABIL');
+          deptoUpper.includes('CONTABIL') ||
+          activeUser.capacidades?.ver_tickets_global === true;
 
         if (!tieneVisibilidadGlobal) {
           const rawUserId = activeUser.id || '';
@@ -524,7 +525,7 @@ const ModuloTicketsPago = () => {
 
           {/* Nombre de la Factura / Soporte */}
           <div>
-            <label style={labelStyle}>Nombre del Documento</label>
+            <label style={labelStyle}>Nombre del Documento <span style={{ color: '#ef4444' }}>*</span></label>
             <input
               id="toast-invoice-name"
               type="text"
@@ -550,6 +551,10 @@ const ModuloTicketsPago = () => {
                   toast.error('Debe adjuntar el documento de la factura para poder marcar como pagado.');
                   return;
                 }
+                if (!tempFileName || !tempFileName.trim()) {
+                  toast.error('Debe ingresar un nombre o etiqueta para el soporte de pago.');
+                  return;
+                }
                 toast.dismiss(t.id);
                 // Pasamos todo via overrideValues para evitar closure stale del state
                 guardarPagoRenglon(id, {
@@ -558,7 +563,7 @@ const ModuloTicketsPago = () => {
                   docNum: tempDocNum,
                   bancoPagoId: tempBancoId,
                   file: tempFile,
-                  fileName: tempFileName || tempFile.name.split('.')[0] || 'Factura'
+                  fileName: tempFileName.trim()
                 });
               }}
               style={{
@@ -826,6 +831,11 @@ const ModuloTicketsPago = () => {
     const existingUrls = parsearFacturaUrls(ticketSeleccionado.factura_url);
     if (!imagenesArchivos.length && existingUrls.length === 0) {
       return toast.error("Debe adjuntar al menos una imagen o comprobante antes de registrar y procesar el pago.");
+    }
+    for (let i = 0; i < imagenesArchivos.length; i++) {
+      if (!imagenesNombres[i] || !imagenesNombres[i].trim()) {
+        return toast.error(`Debe asignar un nombre al soporte "${imagenesArchivos[i].name}" antes de guardar.`);
+      }
     }
     setLoading(true);
     try {

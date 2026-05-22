@@ -66,6 +66,13 @@ const getWeeksForMonth = (monthVal, year = 2026) => {
     }
 };
 
+const formatCurrency = (val) => {
+    return Number(val || 0).toLocaleString('de-DE', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+    });
+};
+
 const COLORS_PARETO = ['#1e3a8a', '#1e40af', '#3b82f6', '#60a5fa', '#93c5fd', '#bfdbfe'];
 const COLORS_STATUS = {
     'aprobado_final': '#10b981',
@@ -81,6 +88,7 @@ const ResumenEjecutivo = ({ currentUser }) => {
     const [rawPartidas, setRawPartidas] = useState([]);
     const [rawTickets, setRawTickets] = useState([]);
     const [filtroGerenciaCC, setFiltroGerenciaCC] = useState('Todas');
+    const [filtroGerenciaGlobal, setFiltroGerenciaGlobal] = useState('Todas');
     const [filtroMes, setFiltroMes] = useState(new Date().getMonth().toString());
     const [filtroSemana, setFiltroSemana] = useState('Todas');
     const [activeTab, setActiveTab] = useState('financiero'); // 'financiero' | 'operativo'
@@ -88,29 +96,45 @@ const ResumenEjecutivo = ({ currentUser }) => {
     // --- RESTRICCIÓN DE GERENTES ---
     const userDept = currentUser?.departamento || '';
     const userRole = currentUser?.rol || '';
+    const esPerlaDelgado = currentUser?.esPerlaDelgado || 
+        ((currentUser?.nombre || '').trim().toLowerCase() === 'perla' && 
+         (currentUser?.apellido || '').trim().toLowerCase() === 'delgado');
+
     const esAdminGlobal = currentUser?.correo === 'jcontreras.totalclean@gmail.com' ||
         currentUser?.correo === 'cvega.totalclean@gmail.com' ||
         currentUser?.esAdminReal ||
         userRole === 'Admin' ||
-        userRole === 'Gerente General';
+        userRole === 'Gerente General' ||
+        esPerlaDelgado;
     const restrictToDept = !esAdminGlobal;
     const userDeptoName = userDept.trim();
 
-    // Datasets restringidos o globales según rol
+    // Datasets restringidos o globales según rol/capacidades
     const myReqs = useMemo(() => {
-        if (!restrictToDept || !userDeptoName) return rawReqs;
+        const canViewGlobalReqs = esAdminGlobal || currentUser?.capacidades?.ver_requisiciones_global === true;
+        if (canViewGlobalReqs || !userDeptoName) return rawReqs;
         return rawReqs.filter(r => (r.gerencia || '').toLowerCase().includes(userDeptoName.toLowerCase()));
-    }, [rawReqs, restrictToDept, userDeptoName]);
+    }, [rawReqs, esAdminGlobal, currentUser, userDeptoName]);
 
     const myFunds = useMemo(() => {
-        if (!restrictToDept || !userDeptoName) return rawFunds;
+        const canViewGlobalFunds = esAdminGlobal || currentUser?.capacidades?.ver_solicitudes_global === true;
+        if (canViewGlobalFunds || !userDeptoName) return rawFunds;
         return rawFunds.filter(s => (s.gerencia_nombre || '').toLowerCase().includes(userDeptoName.toLowerCase()));
-    }, [rawFunds, restrictToDept, userDeptoName]);
+    }, [rawFunds, esAdminGlobal, currentUser, userDeptoName]);
 
     const myTickets = useMemo(() => {
-        if (!restrictToDept || !userDeptoName) return rawTickets;
+        const canViewGlobalTickets = esAdminGlobal || currentUser?.capacidades?.ver_tickets_global === true;
+        if (canViewGlobalTickets || !userDeptoName) return rawTickets;
         return rawTickets.filter(t => (t.departamento || '').toLowerCase().includes(userDeptoName.toLowerCase()));
-    }, [rawTickets, restrictToDept, userDeptoName]);
+    }, [rawTickets, esAdminGlobal, currentUser, userDeptoName]);
+
+    const gerenciasDisponibles = useMemo(() => {
+        const setGerencias = new Set();
+        myReqs.forEach(r => { if (r.gerencia) setGerencias.add(r.gerencia); });
+        myFunds.forEach(s => { if (s.gerencia_nombre) setGerencias.add(s.gerencia_nombre); });
+        myTickets.forEach(t => { if (t.departamento) setGerencias.add(t.departamento); });
+        return Array.from(setGerencias).sort();
+    }, [myReqs, myFunds, myTickets]);
 
     const availableWeeks = useMemo(() => {
         return getWeeksForMonth(filtroMes, 2026);
@@ -221,7 +245,8 @@ const ResumenEjecutivo = ({ currentUser }) => {
             const date = parseISO(fechaStr);
             const mMatch = filtroMes === 'Todos' || date.getMonth().toString() === filtroMes;
             const wMatch = filtroSemana === 'Todas' || getWeek(date).toString() === filtroSemana;
-            return mMatch && wMatch;
+            const gMatch = filtroGerenciaGlobal === 'Todas' || s.gerencia_nombre === filtroGerenciaGlobal;
+            return mMatch && wMatch && gMatch;
         });
 
         const filteredReqs = myReqs.filter(r => {
@@ -230,7 +255,8 @@ const ResumenEjecutivo = ({ currentUser }) => {
             const date = parseISO(fechaStr);
             const mMatch = filtroMes === 'Todos' || date.getMonth().toString() === filtroMes;
             const wMatch = filtroSemana === 'Todas' || getWeek(date).toString() === filtroSemana;
-            return mMatch && wMatch;
+            const gMatch = filtroGerenciaGlobal === 'Todas' || r.gerencia === filtroGerenciaGlobal;
+            return mMatch && wMatch && gMatch;
         });
 
         const filteredTickets = myTickets.filter(t => {
@@ -239,16 +265,19 @@ const ResumenEjecutivo = ({ currentUser }) => {
             const date = parseISO(fechaStr);
             const mMatch = filtroMes === 'Todos' || date.getMonth().toString() === filtroMes;
             const wMatch = filtroSemana === 'Todas' || getWeek(date).toString() === filtroSemana;
-            return mMatch && wMatch && (t.status || '').toLowerCase() !== 'rechazado';
+            const gMatch = filtroGerenciaGlobal === 'Todas' || t.departamento === filtroGerenciaGlobal;
+            return mMatch && wMatch && gMatch && (t.status || '').toLowerCase() !== 'rechazado';
         });
 
-        // Helper seguro para calcular el monto real de un ticket
+        // Helper seguro para calcular el monto real de un ticket (prioriza total_usd y monto de cabecera)
         const getTicketTotal = (t) => {
+            if (Number(t.total_usd) > 0) return Number(t.total_usd);
+            if (Number(t.monto) > 0) return Number(t.monto);
             const items = Array.isArray(t.items) ? t.items : [];
             if (items.length > 0) {
                 return items.reduce((sum, item) => sum + (Number(item.total) || (Number(item.cant || 1) * Number(item.puUsd || item.puBs || item.pu || 0))), 0);
             }
-            return Number(t.total_usd || t.monto || 0);
+            return 0;
         };
 
         // --- AGREGACIÓN CONSOLIDADA POR GERENCIA ---
@@ -258,7 +287,7 @@ const ResumenEjecutivo = ({ currentUser }) => {
         filteredFunds.forEach(s => {
             const gName = s.gerencia_nombre || 'S/G';
             if (!aggregated[gName]) {
-                aggregated[gName] = { name: gName, estimado: 0, gastado: 0, count: 0, topCategories: {}, reqCount: 0, ticketCount: 0 };
+                aggregated[gName] = { name: gName, estimado: 0, gastado: 0, count: 0, topCategories: {}, reqCount: 0, ticketCount: 0, gastoReqs: 0, gastoTickets: 0 };
             }
 
             const estimado = (Number(s.total_usd) || 0) + (Number(s.total_bs) || 0);
@@ -270,7 +299,7 @@ const ResumenEjecutivo = ({ currentUser }) => {
         filteredReqs.forEach(r => {
             const gName = r.gerencia || 'S/G';
             if (!aggregated[gName]) {
-                aggregated[gName] = { name: gName, estimado: 0, gastado: 0, count: 0, topCategories: {}, reqCount: 0, ticketCount: 0 };
+                aggregated[gName] = { name: gName, estimado: 0, gastado: 0, count: 0, topCategories: {}, reqCount: 0, ticketCount: 0, gastoReqs: 0, gastoTickets: 0 };
             }
 
             const items = Array.isArray(r.items) ? r.items : [];
@@ -280,6 +309,7 @@ const ResumenEjecutivo = ({ currentUser }) => {
             }, 0) * 1.16;
 
             aggregated[gName].gastado += ejec;
+            aggregated[gName].gastoReqs += ejec;
             aggregated[gName].reqCount += 1;
             aggregated[gName].count += 1;
 
@@ -295,11 +325,12 @@ const ResumenEjecutivo = ({ currentUser }) => {
         filteredTickets.forEach(t => {
             const gName = t.departamento || 'No asignada';
             if (!aggregated[gName]) {
-                aggregated[gName] = { name: gName, estimado: 0, gastado: 0, count: 0, topCategories: {}, reqCount: 0, ticketCount: 0 };
+                aggregated[gName] = { name: gName, estimado: 0, gastado: 0, count: 0, topCategories: {}, reqCount: 0, ticketCount: 0, gastoReqs: 0, gastoTickets: 0 };
             }
 
             const ticketTotal = getTicketTotal(t);
             aggregated[gName].gastado += ticketTotal;
+            aggregated[gName].gastoTickets += ticketTotal;
             aggregated[gName].ticketCount += 1;
             aggregated[gName].count += 1;
 
@@ -315,10 +346,14 @@ const ResumenEjecutivo = ({ currentUser }) => {
         const solicitudesAnalisis = Object.values(aggregated).map(item => {
             const est = Number(item.estimado) || 0;
             const gas = Number(item.gastado) || 0;
+            const gr = Number(item.gastoReqs) || 0;
+            const gt = Number(item.gastoTickets) || 0;
             return {
                 ...item,
-                estimado: Number(est.toFixed(0)),
-                gastado: Number(gas.toFixed(0)),
+                estimado: est,
+                gastado: gas,
+                gastoReqs: gr,
+                gastoTickets: gt,
                 porcentaje: est > 0 ? Math.round((gas / est) * 100) : 0,
                 topCategories: Object.entries(item.topCategories)
                     .map(([name, total]) => ({ name, total: Number(total) || 0 }))
@@ -332,7 +367,6 @@ const ResumenEjecutivo = ({ currentUser }) => {
         const stagnant = [];
         const byCC = {};
         let totalEjecutadoGlobal = 0;
-        let totalEstimadoGlobal = 0;
 
         filteredReqs.forEach(r => {
             const status = (r.estado_aprobacion || '').toLowerCase();
@@ -361,7 +395,6 @@ const ResumenEjecutivo = ({ currentUser }) => {
             
             byCC[cc] += ejec;
             totalEjecutadoGlobal += ejec;
-            totalEstimadoGlobal += Number(r.total_bs) || (items.reduce((s, i) => s + ((Number(i.cant) || 0) * (Number(i.pu) || 0)), 0) * 1.16);
         });
 
         // Sumar e integrar los Tickets de Pago en el análisis por centro de costo
@@ -384,6 +417,9 @@ const ResumenEjecutivo = ({ currentUser }) => {
                 byCC[cc] += ticketTotal;
             }
         });
+
+        // Alinear totalEstimadoGlobal con la suma de la planificación en filteredFunds
+        const totalEstimadoGlobal = filteredFunds.reduce((sum, s) => sum + (Number(s.total_usd) || 0) + (Number(s.total_bs) || 0), 0);
 
         const gastoConsolidadoReal = totalEjecutadoGlobal + totalTicketsGlobal;
 
@@ -653,7 +689,7 @@ const ResumenEjecutivo = ({ currentUser }) => {
                 };
             }
         };
-    }, [myReqs, myFunds, rawPartidas, myTickets, filtroGerenciaCC, filtroMes, filtroSemana]);
+    }, [myReqs, myFunds, rawPartidas, myTickets, filtroGerenciaCC, filtroGerenciaGlobal, filtroMes, filtroSemana]);
 
     if (loading) return <div style={loaderStyle}>Analizando estructuras de Supabase...</div>;
 
@@ -670,6 +706,17 @@ const ResumenEjecutivo = ({ currentUser }) => {
                 </div>
                 <div style={headerActionsStyle}>
                     <div style={{ display: 'flex', gap: '10px' }}>
+                        <select 
+                            value={filtroGerenciaGlobal} 
+                            onChange={(e) => setFiltroGerenciaGlobal(e.target.value)}
+                            style={periodoBadgeStyle}
+                        >
+                            <option value="Todas">Todas las Gerencias</option>
+                            {gerenciasDisponibles.map(g => (
+                                <option key={g} value={g}>{g}</option>
+                            ))}
+                        </select>
+
                         <select 
                             value={filtroMes} 
                             onChange={(e) => handleMonthChange(e.target.value)}
@@ -739,8 +786,8 @@ const ResumenEjecutivo = ({ currentUser }) => {
                     <div style={kpiGridStyle}>
                         <ExecutiveKPI 
                             label="Gasto Real Consolidado" 
-                            value={`$ ${stats.gastoConsolidadoReal.toLocaleString('de-DE')}`} 
-                            sub={`Reqs: $${stats.gastoActual.toLocaleString('de-DE')} + Tickets: $${stats.totalTicketsGlobal.toLocaleString('de-DE')}`} 
+                            value={`$ ${formatCurrency(stats.gastoConsolidadoReal)}`} 
+                            sub={`Reqs: $${formatCurrency(stats.gastoActual)} + Tickets: $${formatCurrency(stats.totalTicketsGlobal)}`} 
                             icon={<TrendingUp />} 
                             color="#10b981"
                             trend={stats.totalEstimadoGlobal > 0 ? `${((stats.gastoConsolidadoReal / stats.totalEstimadoGlobal) * 100).toFixed(0)}% de Ejecución` : null}
@@ -750,7 +797,7 @@ const ResumenEjecutivo = ({ currentUser }) => {
                                     {stats.topCategoriesGlobal.map((cat, ci) => (
                                         <div key={ci} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                             <span style={{ fontSize: '0.7rem', color: '#475569', fontWeight: 600, maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cat.name}</span>
-                                            <span style={{ fontSize: '0.7rem', color: '#1e293b', fontWeight: 800 }}>$ {cat.total.toLocaleString('de-DE')}</span>
+                                            <span style={{ fontSize: '0.7rem', color: '#1e293b', fontWeight: 800 }}>$ {formatCurrency(cat.total)}</span>
                                         </div>
                                     ))}
                                 </div>
@@ -759,7 +806,7 @@ const ResumenEjecutivo = ({ currentUser }) => {
 
                         <ExecutiveKPI 
                             label="Presupuesto de Fondos" 
-                            value={`$ ${stats.totalEstimadoGlobal.toLocaleString('de-DE')}`} 
+                            value={`$ ${formatCurrency(stats.totalEstimadoGlobal)}`} 
                             sub="Presupuesto Solicitado en Período" 
                             icon={<DollarSign />} 
                             color="#0ea5e9"
@@ -769,7 +816,7 @@ const ResumenEjecutivo = ({ currentUser }) => {
                                     {stats.solicitudesAnalisis.map((g, gi) => (
                                         <div key={gi} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                             <span style={{ fontSize: '0.7rem', color: '#475569', fontWeight: 600, maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.name}</span>
-                                            <span style={{ fontSize: '0.7rem', color: '#1e293b', fontWeight: 800 }}>$ {g.estimado.toLocaleString('de-DE')}</span>
+                                            <span style={{ fontSize: '0.7rem', color: '#1e293b', fontWeight: 800 }}>$ {formatCurrency(g.estimado)}</span>
                                         </div>
                                     ))}
                                 </div>
@@ -778,26 +825,18 @@ const ResumenEjecutivo = ({ currentUser }) => {
 
                         <ExecutiveKPI
                             label="Tickets de Pago Directo"
-                            value={`$ ${stats.totalTicketsGlobal.toLocaleString('de-DE')}`}
+                            value={`$ ${formatCurrency(stats.totalTicketsGlobal)}`}
                             sub="Egresos directos por canal rápido"
                             icon={<FileText />}
                             color="#f59e0b"
                             details={
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                     <div style={{ fontSize: '0.65rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', marginBottom: '4px', borderBottom: '1px solid #f1f5f9', paddingBottom: '4px' }}>Gasto Directo por Departamento</div>
-                                    {stats.solicitudesAnalisis.filter(g => g.gastado > 0).map((g, gi) => {
-                                        const ticketExp = myTickets.filter(t => (t.departamento || t.gerencia_departamento) === g.name && (t.status || '').toLowerCase() !== 'rechazado');
-                                        const totalTicketVal = ticketExp.reduce((sum, tk) => {
-                                            const items = Array.isArray(tk.items) ? tk.items : [];
-                                            if (items.length > 0) {
-                                                return sum + items.reduce((s_i, it) => s_i + (Number(it.total) || (Number(it.cant || 1) * Number(it.pu || 0))), 0);
-                                            }
-                                            return sum + Number(tk.total_usd || tk.monto || 0);
-                                        }, 0);
+                                    {stats.solicitudesAnalisis.filter(g => g.gastoTickets > 0).map((g, gi) => {
                                         return (
                                             <div key={gi} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                                 <span style={{ fontSize: '0.7rem', color: '#475569', fontWeight: 600, maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.name}</span>
-                                                <span style={{ fontSize: '0.7rem', color: '#1e293b', fontWeight: 800 }}>$ {totalTicketVal.toLocaleString('de-DE')} ({ticketExp.length} tk)</span>
+                                                <span style={{ fontSize: '0.7rem', color: '#1e293b', fontWeight: 800 }}>$ {formatCurrency(g.gastoTickets)} ({g.ticketCount} tk)</span>
                                             </div>
                                         );
                                     })}
@@ -813,9 +852,39 @@ const ResumenEjecutivo = ({ currentUser }) => {
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                                 <div>
                                     <h3 style={{ ...chartTitleStyle, margin: 0, fontSize: '1.1rem' }}>Balance de Presupuesto Consolidado</h3>
-                                    <p style={{ fontSize: '0.8rem', color: '#64748b' }}>Planificado (Fondos Solicitados) vs Gasto Real en USD</p>
+                                    <p style={{ fontSize: '0.8rem', color: '#64748b' }}>Planificado (Fondos Solicitados) vs Gasto Real en USD (Requisiciones y Tickets)</p>
                                 </div>
                             </div>
+
+                            {/* Barra de Totales Premium */}
+                            <div style={{
+                                display: 'grid',
+                                gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                                gap: '15px',
+                                padding: '15px',
+                                backgroundColor: '#f8fafc',
+                                borderRadius: '16px',
+                                border: '1px solid #e2e8f0',
+                                marginBottom: '20px'
+                            }}>
+                                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                    <span style={{ fontSize: '0.65rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Total Planificado (Presupuesto)</span>
+                                    <span style={{ fontSize: '1.1rem', fontWeight: 900, color: '#64748b' }}>$ {formatCurrency(stats.totalEstimadoGlobal)}</span>
+                                </div>
+                                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                    <span style={{ fontSize: '0.65rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Total Requisiciones</span>
+                                    <span style={{ fontSize: '1.1rem', fontWeight: 900, color: '#10b981' }}>$ {formatCurrency(stats.gastoActual)}</span>
+                                </div>
+                                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                    <span style={{ fontSize: '0.65rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Total Tickets</span>
+                                    <span style={{ fontSize: '1.1rem', fontWeight: 900, color: '#f59e0b' }}>$ {formatCurrency(stats.totalTicketsGlobal)}</span>
+                                </div>
+                                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                    <span style={{ fontSize: '0.65rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Gasto Consolidado Real</span>
+                                    <span style={{ fontSize: '1.1rem', fontWeight: 950, color: '#0f172a' }}>$ {formatCurrency(stats.gastoConsolidadoReal)}</span>
+                                </div>
+                            </div>
+
                             <div style={{ height: '320px' }}>
                                 <ResponsiveContainer width="100%" height="100%">
                                     <BarChart data={stats.solicitudesAnalisis} margin={{ top: 10, bottom: 20 }}>
@@ -825,7 +894,8 @@ const ResumenEjecutivo = ({ currentUser }) => {
                                         <Tooltip cursor={{ fill: '#f8fafc' }} contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', fontSize: '0.85rem' }} />
                                         <Legend verticalAlign="top" align="right" iconType="circle" wrapperStyle={{ fontSize: '0.8rem', fontWeight: 800, paddingBottom: '20px' }} />
                                         <Bar name="Fondos Planificados" dataKey="estimado" fill="#64748b" radius={[4, 4, 0, 0]} barSize={20} />
-                                        <Bar name="Gasto Consolidado Real" dataKey="gastado" fill="#10b981" radius={[4, 4, 0, 0]} barSize={20} />
+                                        <Bar name="Gasto en Requisiciones" dataKey="gastoReqs" stackId="gasto" fill="#10b981" radius={[4, 4, 0, 0]} barSize={20} />
+                                        <Bar name="Gasto en Tickets" dataKey="gastoTickets" stackId="gasto" fill="#f59e0b" radius={[4, 4, 0, 0]} barSize={20} />
                                     </BarChart>
                                 </ResponsiveContainer>
                             </div>
@@ -859,7 +929,7 @@ const ResumenEjecutivo = ({ currentUser }) => {
                                                         <Cell key={`cell-${index}`} fill={['#1e3a8a', '#3b82f6', '#f59e0b', '#10b981', '#ef4444'][index % 5]} />
                                                     ))}
                                                 </Pie>
-                                                <Tooltip formatter={(v) => `$ ${Number(v).toLocaleString('de-DE')}`} />
+                                                <Tooltip formatter={(v) => `$ ${formatCurrency(v)}`} />
                                             </PieChart>
                                         </ResponsiveContainer>
                                     </div>
@@ -868,7 +938,7 @@ const ResumenEjecutivo = ({ currentUser }) => {
                                             <div key={index} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                 <div style={{ width: '8px', height: '8px', borderRadius: '2px', backgroundColor: ['#1e3a8a', '#3b82f6', '#f59e0b', '#10b981', '#ef4444'][index % 5] }} />
                                                 <span style={{ fontSize: '0.6rem', fontWeight: 700, color: '#475569', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '120px' }}>{entry.name}</span>
-                                                <span style={{ fontSize: '0.6rem', fontWeight: 800, color: '#1e293b', marginLeft: 'auto' }}>${Number(entry.value).toLocaleString('de-DE')}</span>
+                                                <span style={{ fontSize: '0.6rem', fontWeight: 800, color: '#1e293b', marginLeft: 'auto' }}>${formatCurrency(entry.value)}</span>
                                             </div>
                                         ))}
                                     </div>
@@ -894,7 +964,7 @@ const ResumenEjecutivo = ({ currentUser }) => {
                                                         <Cell key={`cell-${index}`} fill={['#8b5cf6', '#ec4899', '#06b6d4', '#10b981', '#f59e0b'][index % 5]} />
                                                     ))}
                                                 </Pie>
-                                                <Tooltip formatter={(v) => `$ ${Number(v).toLocaleString('de-DE')}`} />
+                                                <Tooltip formatter={(v) => `$ ${formatCurrency(v)}`} />
                                             </PieChart>
                                         </ResponsiveContainer>
                                     </div>
@@ -903,7 +973,7 @@ const ResumenEjecutivo = ({ currentUser }) => {
                                             <div key={index} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                 <div style={{ width: '8px', height: '8px', borderRadius: '2px', backgroundColor: ['#8b5cf6', '#ec4899', '#06b6d4', '#10b981', '#f59e0b'][index % 5] }} />
                                                 <span style={{ fontSize: '0.6rem', fontWeight: 700, color: '#475569', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '120px' }}>{entry.name}</span>
-                                                <span style={{ fontSize: '0.6rem', fontWeight: 800, color: '#1e293b', marginLeft: 'auto' }}>${Number(entry.value).toLocaleString('de-DE')}</span>
+                                                <span style={{ fontSize: '0.6rem', fontWeight: 800, color: '#1e293b', marginLeft: 'auto' }}>${formatCurrency(entry.value)}</span>
                                             </div>
                                         ))}
                                     </div>
@@ -936,8 +1006,8 @@ const ResumenEjecutivo = ({ currentUser }) => {
                                                         ))}
                                                     </div>
                                                 </td>
-                                                <td style={{ padding: '14px 12px', textAlign: 'right', fontSize: '0.8rem', color: '#64748b' }}>$ {g.estimado.toLocaleString('de-DE')}</td>
-                                                <td style={{ padding: '14px 12px', textAlign: 'right', fontSize: '0.8rem', fontWeight: 850, color: g.gastado > 0 ? '#10b981' : '#cbd5e1' }}>$ {g.gastado.toLocaleString('de-DE')}</td>
+                                                <td style={{ padding: '14px 12px', textAlign: 'right', fontSize: '0.8rem', color: '#64748b' }}>$ {formatCurrency(g.estimado)}</td>
+                                                <td style={{ padding: '14px 12px', textAlign: 'right', fontSize: '0.8rem', fontWeight: 850, color: g.gastado > 0 ? '#10b981' : '#cbd5e1' }}>$ {formatCurrency(g.gastado)}</td>
                                                 <td style={{ padding: '14px 12px', textAlign: 'center' }}>
                                                     <span style={{ fontSize: '0.7rem', fontWeight: 900, color: g.porcentaje > 100 ? '#ef4444' : '#10b981' }}>{g.porcentaje}%</span>
                                                 </td>

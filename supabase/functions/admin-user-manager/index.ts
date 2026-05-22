@@ -16,7 +16,6 @@ serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || Deno.env.get('ADMIN_SERVICE_KEY') || Deno.env.get('admin_service_key') || '';
-    const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY') || '';
 
     console.log('--- Inicia Proceso admin-user-manager ---');
     if (!supabaseServiceKey) console.error('ADVERTENCIA: No se encontró la clave de servicio (SUPABASE_SERVICE_ROLE_KEY ni ADMIN_SERVICE_KEY) en las variables de entorno.');
@@ -26,16 +25,27 @@ serve(async (req) => {
       auth: { autoRefreshToken: false, persistSession: false }
     })
 
-    // 2. Cliente para validar al usuario que llama (con su propio JWT)
-    const authHeader = req.headers.get('Authorization') ?? ''
-    const userClient = createClient(supabaseUrl, supabaseAnonKey, {
-      global: { headers: { Authorization: authHeader } }
-    })
+    // 2. Validar al usuario que llama (con su propio JWT)
+    const authHeader = req.headers.get('Authorization') ?? req.headers.get('authorization') ?? ''
+    console.log('Cabecera Authorization recibida:', authHeader ? `${authHeader.substring(0, 20)}...` : '(vacía)');
 
-    const { data: { user }, error: authError } = await userClient.auth.getUser()
+    if (!authHeader) {
+      console.error('No se recibió cabecera de autorización');
+      return new Response(JSON.stringify({ error: 'No autorizado: Falta cabecera de autorización' }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 401,
+      })
+    }
+
+    const token = authHeader.replace('Bearer ', '').trim();
+    const { data: { user }, error: authError } = await adminClient.auth.getUser(token)
     if (authError || !user) {
       console.error('Error de autenticación JWT:', authError?.message);
-      return new Response(JSON.stringify({ error: 'No autorizado: Sesión inválida' }), {
+      return new Response(JSON.stringify({ 
+        error: 'No autorizado: Sesión inválida', 
+        details: authError?.message || 'Usuario no encontrado en la sesión',
+        header_received: authHeader ? 'SÍ' : 'NO'
+      }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         status: 401,
       })
@@ -43,21 +53,26 @@ serve(async (req) => {
 
     console.log('Usuario solicitante:', user.email);
 
-    // 3. Validar Rol (Solo Admin o Gerente General)
+    // 3. Validar Rol (Solo Admin o Gerente General o usuarios autorizados)
     const { data: perfil, error: perfilError } = await adminClient
       .from('perfiles')
-      .select('rol')
+      .select('rol, departamento, capacidades')
       .eq('id', user.id)
       .maybeSingle()
 
     const rol = perfil?.rol?.toLowerCase() || ''
     const emailLower = user.email?.toLowerCase() || ''
+    const capacidades = perfil?.capacidades || {}
     
     // Lista de correos maestros (SIEMPRE tienen acceso)
-    const esMasterEmail = emailLower === 'jcontreras.totalclean@gmail.com' || emailLower === 'cvega.totalclean@gmail.com';
+    const esMasterEmail = emailLower === 'jcontreras.totalclean@gmail.com' || 
+                          emailLower === 'cvega.totalclean@gmail.com' ||
+                          emailLower === 'karincmm1@gmail.com';
+    
     const esAdmin = rol === 'admin' || rol === 'gerente general' || esMasterEmail;
+    const tienePrivilegioClave = (capacidades as Record<string, any>)?.puede_cambiar_contrasenas === true;
 
-    console.log('Validación:', { rol, esAdmin, esMasterEmail });
+    console.log('Validación:', { rol, esAdmin, esMasterEmail, tienePrivilegioClave });
 
     // Procesar Acción
     const body = await req.json();
@@ -97,10 +112,20 @@ serve(async (req) => {
       });
     }
 
-    // --- ACCIONES RESTRINGIDAS A ADMINS ---
-    if (!esAdmin) {
+    // --- ACCIONES RESTRINGIDAS A ADMINS/PRIVILEGIADOS ---
+    const actionRequiresFullAdmin = ['create_user', 'delete_user'].includes(action);
+    const actionRequiresPasswordPrivilege = ['update_password'].includes(action);
+    
+    let isAuthorized = false;
+    if (actionRequiresFullAdmin && esAdmin) {
+      isAuthorized = true;
+    } else if (actionRequiresPasswordPrivilege && (esAdmin || tienePrivilegioClave)) {
+      isAuthorized = true;
+    }
+    
+    if (!isAuthorized) {
       console.error('Permiso denegado para:', emailLower);
-      return new Response(JSON.stringify({ error: 'Permisos insuficientes: Se requiere rol Admin o Gerente para esta acción' }), {
+      return new Response(JSON.stringify({ error: 'Permisos insuficientes para realizar esta acción' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         status: 403,
       })

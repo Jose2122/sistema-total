@@ -9,6 +9,24 @@ import { formatDistanceToNow } from 'date-fns';
 import { es } from 'date-fns/locale';
 
 const Usuarios = () => {
+  const invokeEdgeFunction = async (functionName, options = {}) => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      const headers = { ...options.headers };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+      return await supabase.functions.invoke(functionName, {
+        ...options,
+        headers
+      });
+    } catch (err) {
+      console.error("Error in invokeEdgeFunction:", err);
+      return await supabase.functions.invoke(functionName, options);
+    }
+  };
+
   const [usuarios, setUsuarios] = useState([]);
   const [usuariosFiltrados, setUsuariosFiltrados] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -63,6 +81,10 @@ const Usuarios = () => {
   const CAPACIDADES_DISPONIBLES = [
     { id: 'ver_global', label: 'Ver Historial Global', desc: 'Acceso a todas las sedes' },
     { id: 'ver_departamento', label: 'Ver Historial de Depto.', desc: 'Acceso a su propio departamento' },
+    { id: 'ver_requisiciones_global', label: 'Ver Requisiciones de todos los Deptos.', desc: 'Ver requisiciones de todos los departamentos sin restricciones' },
+    { id: 'ver_tickets_global', label: 'Ver todos los Tickets', desc: 'Ver todos los tickets de pago sin restricciones' },
+    { id: 'ver_solicitudes_global', label: 'Ver todas las Solicitudes de Fondos', desc: 'Ver todas las solicitudes de fondos sin restricciones' },
+    { id: 'puede_cambiar_contrasenas', label: 'Cambiar Contraseñas de Usuarios', desc: 'Permite cambiar o restablecer contraseñas de acceso al sistema de otros usuarios' },
     { id: 'puede_aprobar_proyecto', label: 'Aprobación Nivel 0 (Proyecto)', desc: 'Gerente de Proyecto' },
     { id: 'puede_aprobar_area', label: 'Aprobación Nivel 1 (Área)', desc: 'Gerente de Área' },
     { id: 'puede_aprobar_final', label: 'Aprobación Nivel 2 (General)', desc: 'Gerencia General' },
@@ -129,7 +151,7 @@ const Usuarios = () => {
       } else {
         // NO-ADMINS: Usar el PUENTE (Edge Function) para evitar bloqueos de RLS
         console.log("[OBTENER USUARIOS] Usando Puente de Visibilidad (Edge Function)...");
-        const { data: fnData, error: fnError } = await supabase.functions.invoke('admin-user-manager', {
+        const { data: fnData, error: fnError } = await invokeEdgeFunction('admin-user-manager', {
           body: { action: 'get_department_users' }
         });
 
@@ -255,10 +277,24 @@ const Usuarios = () => {
     setUsuariosFiltrados(resultado);
   }, [busqueda, filtroDpto, filtroCargo, usuarios, currentUser]);
 
+  const esAdminCompleto = currentUser?.esAdminReal || 
+                          ['ADMIN', 'GERENTE GENERAL', 'GERENCIA GENERAL'].includes((currentUser?.rol || '').toUpperCase()) ||
+                          (currentUser?.departamento || '').toUpperCase().includes('ADMINISTRACIÓN');
+
+  const puedeCambiarClaves = esAdminCompleto || currentUser?.capacidades?.puede_cambiar_contrasenas === true;
+
   const guardarUsuario = async () => {
-    const rolUpper = (currentUser?.rol || '').toUpperCase();
-    if (!currentUser?.esAdminReal && rolUpper !== 'GERENTE GENERAL' && rolUpper !== 'ADMIN') return;
-    if(!formData.rol || !formData.gerencia_id) return toast.error("Asigne Cargo y Gerencia.");
+    if (!puedeCambiarClaves) return toast.error("No tienes permisos para realizar esta acción.");
+    
+    // Si no es admin completo pero sí puede cambiar claves, validar que esté editando y haya puesto clave
+    if (!esAdminCompleto && puedeCambiarClaves) {
+      if (!formData.id) return toast.error("Solo los administradores completos pueden crear usuarios.");
+      if (!formData.password || formData.password.length < 6) {
+        return toast.error("Debe ingresar una nueva contraseña de al menos 6 caracteres.");
+      }
+    } else {
+      if(!formData.rol || !formData.gerencia_id) return toast.error("Asigne Cargo y Gerencia.");
+    }
     
     setLoading(true);
     try {
@@ -266,7 +302,6 @@ const Usuarios = () => {
       const gerenciaObj = gerencias.find(g => g.id === formData.gerencia_id);
       
       // Limpieza del payload para evitar errores 400 (Bad Request) en PostgREST
-      // Eliminamos campos que no pertenecen a la tabla 'perfiles' o que son redundantes
       const payloadPerfil = {
         nombre: datosForm.nombre,
         apellido: datosForm.apellido,
@@ -287,36 +322,42 @@ const Usuarios = () => {
 
       if (formData.id) {
         // --- MODO ACTUALIZAR ---
+        let passwordCambiada = false;
         if (password && password.length >= 6) {
-           console.log("[USUARIOS] Actualizando contraseña...");
-           const { data: fnData, error: fnError } = await supabase.functions.invoke('admin-user-manager', {
-             body: { action: 'update_password', data: { id: formData.id, password } }
-           });
+            console.log("[USUARIOS] Actualizando contraseña...");
+            const { data: fnData, error: fnError } = await invokeEdgeFunction('admin-user-manager', {
+              body: { action: 'update_password', data: { id: formData.id, password } }
+            });
            
-           if (fnError || fnData?.error) {
-             const detailedMsg = fnData?.error || fnError?.message || "Error al actualizar contraseña";
-             throw new Error(detailedMsg);
-           }
-           toast.success("Contraseña actualizada vía Admin");
+            if (fnError || fnData?.error) {
+              const detailedMsg = fnData?.error || fnError?.message || "Error al actualizar contraseña";
+              throw new Error(detailedMsg);
+            }
+            passwordCambiada = true;
+            toast.success("Contraseña actualizada con éxito");
         }
 
-        // ACTUALIZAR PERFIL (Excluimos gerencia_id si falla, por compatibilidad)
-        const { error } = await supabase.from('perfiles').update(payloadPerfil).eq('id', formData.id);
-        
-        if (error) {
-            // Manejo de error de columna inexistente (fallback)
-            if (error.code === '42703') {
-                const { gerencia_id, ...payloadSafe } = payloadPerfil;
-                const { error: retryError } = await supabase.from('perfiles').update(payloadSafe).eq('id', formData.id);
-                if (retryError) throw retryError;
-            } else throw error;
+        if (esAdminCompleto) {
+          // ACTUALIZAR PERFIL (Excluimos gerencia_id si falla, por compatibilidad)
+          const { error } = await supabase.from('perfiles').update(payloadPerfil).eq('id', formData.id);
+          
+          if (error) {
+              // Manejo de error de columna inexistente (fallback)
+              if (error.code === '42703') {
+                  const { gerencia_id, ...payloadSafe } = payloadPerfil;
+                  const { error: retryError } = await supabase.from('perfiles').update(payloadSafe).eq('id', formData.id);
+                  if (retryError) throw retryError;
+              } else throw error;
+          }
+          toast.success("Perfil actualizado con éxito");
+          await registrarActividad('UPDATE_PROFILE', `Cambios en perfil de ${formData.nombre}`);
+        } else if (passwordCambiada) {
+          await registrarActividad('UPDATE_PASSWORD', `Cambio de contraseña para ${formData.nombre} ${formData.apellido}`);
         }
-        toast.success("Perfil actualizado con éxito");
-        await registrarActividad('UPDATE_PROFILE', `Cambios en perfil de ${formData.nombre}`);
       } else {
         // --- MODO CREAR ---
         console.log("[USUARIOS] Creando cuenta en Auth vía Edge Function...");
-        const { data: fnData, error: fnError } = await supabase.functions.invoke('admin-user-manager', {
+        const { data: fnData, error: fnError } = await invokeEdgeFunction('admin-user-manager', {
           body: { 
             action: 'create_user', 
             data: { 
@@ -352,13 +393,7 @@ const Usuarios = () => {
       }
 
       obtenerUsuarios();
-      
-      // SOLO CERRAR SI ES EDICIÓN. SI ES CREACIÓN, PERMITIR SEGUIR CREANDO.
-      if (formData.id) {
-        setShowModal(false);
-      } else {
-        toast.success("Puedes registrar otro integrante ahora.");
-      }
+      setShowModal(false);
 
       setFormData({ 
         id: null, nombre: '', apellido: '', correo: '', rol: '', departamento: '', gerencia_id: '',
@@ -407,7 +442,7 @@ const Usuarios = () => {
   };
 
   const manejarResetPassword = async (id, correo) => {
-    if (!currentUser?.esAdminReal) return;
+    if (!puedeCambiarClaves) return;
     toast((t) => (
       <div>
         <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: 'bold', color: '#f59e0b' }}>⚠️ ¿Seguro que deseas restablecer la contraseña para {correo}?</p>
@@ -418,8 +453,8 @@ const Usuarios = () => {
             onClick={async () => {
               toast.dismiss(t.id);
               const toastLoading = toast.loading('Restableciendo contraseña...');
-              const { data, error } = await supabase.functions.invoke('admin-user-manager', {
-                body: { action: 'reset_password', userId: id, newPassword: 'TotalClean123!' }
+              const { data, error } = await invokeEdgeFunction('admin-user-manager', {
+                body: { action: 'update_password', data: { id, password: 'TotalClean123!' } }
               });
               if (error || data?.error) {
                 toast.error(error?.message || data?.error, { id: toastLoading });
@@ -461,7 +496,7 @@ const Usuarios = () => {
   const ejecutarEliminacionDefinitiva = async (id) => {
     setLoading(true);
     try {
-      const { data: fnData, error: fnError } = await supabase.functions.invoke('admin-user-manager', {
+      const { data: fnData, error: fnError } = await invokeEdgeFunction('admin-user-manager', {
         body: { action: 'delete_user', data: { id } }
       });
       if (fnError || fnData?.error) throw new Error(fnError?.message || fnData?.error || "Error eliminando acceso");
@@ -587,10 +622,8 @@ const Usuarios = () => {
                   </td>
                   <td style={estilos.td}>
                     <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                      {/* Solo Admins o Gerentes pueden editar */}
-                      {(currentUser?.esAdminReal || 
-                        ['ADMIN', 'GERENTE GENERAL', 'GERENCIA GENERAL'].includes((currentUser?.rol || '').toUpperCase()) ||
-                        (currentUser?.departamento || '').toUpperCase().includes('ADMINISTRACIÓN')) && (
+                      {/* Solo Admins, Gerentes o autorizados a cambiar claves pueden editar */}
+                      {puedeCambiarClaves && (
                         <button onClick={() => { 
                           setFormData({ 
                             ...u, 
@@ -606,11 +639,11 @@ const Usuarios = () => {
                         }} style={{ color: '#0ea5e9', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>Editar</button>
                       )}
                       
+                      {puedeCambiarClaves && (
+                        <Key size={16} color="#f59e0b" style={{ cursor: 'pointer' }} onClick={() => manejarResetPassword(u.id, u.correo)} title="Restablecer Contraseña" />
+                      )}
                       {currentUser?.esAdminReal && (
-                        <>
-                          <Key size={16} color="#f59e0b" style={{ cursor: 'pointer' }} onClick={() => manejarResetPassword(u.id, u.correo)} title="Restablecer Contraseña" />
-                          <Trash2 size={16} color="#ef4444" style={{ cursor: 'pointer' }} onClick={() => eliminarUsuarioTotal(u.id, u.correo)} title="Eliminar Usuario" />
-                        </>
+                        <Trash2 size={16} color="#ef4444" style={{ cursor: 'pointer' }} onClick={() => eliminarUsuarioTotal(u.id, u.correo)} title="Eliminar Usuario" />
                       )}
                     </div>
                   </td>
@@ -679,12 +712,16 @@ const Usuarios = () => {
               <div style={estilos.tab(tabActiva === 'general')} onClick={() => setTabActiva('general')}>
                 <Layout size={18} /> General
               </div>
-              <div style={estilos.tab(tabActiva === 'modulos')} onClick={() => setTabActiva('modulos')}>
-                <Activity size={18} /> Módulos
-              </div>
-              <div style={estilos.tab(tabActiva === 'privilegios')} onClick={() => setTabActiva('privilegios')}>
-                <ShieldCheck size={18} /> Privilegios
-              </div>
+              {esAdminCompleto && (
+                <>
+                  <div style={estilos.tab(tabActiva === 'modulos')} onClick={() => setTabActiva('modulos')}>
+                    <Activity size={18} /> Módulos
+                  </div>
+                  <div style={estilos.tab(tabActiva === 'privilegios')} onClick={() => setTabActiva('privilegios')}>
+                    <ShieldCheck size={18} /> Privilegios
+                  </div>
+                </>
+              )}
               <div style={estilos.tab(tabActiva === 'seguridad')} onClick={() => setTabActiva('seguridad')}>
                 <Shield size={18} /> Seguridad
               </div>
@@ -696,14 +733,14 @@ const Usuarios = () => {
                   <div>
                     <label style={{ fontSize: '0.65rem', fontWeight: '800', color: '#64748b', display: 'block', marginBottom: '10px' }}>INFORMACIÓN PERSONAL</label>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
-                      <input className="input-style" placeholder="Nombre" value={formData.nombre} onChange={e => setFormData({...formData, nombre: e.target.value})} />
-                      <input className="input-style" placeholder="Apellido" value={formData.apellido} onChange={e => setFormData({...formData, apellido: e.target.value})} />
+                      <input className="input-style" placeholder="Nombre" value={formData.nombre} disabled={!esAdminCompleto} onChange={e => setFormData({...formData, nombre: e.target.value})} />
+                      <input className="input-style" placeholder="Apellido" value={formData.apellido} disabled={!esAdminCompleto} onChange={e => setFormData({...formData, apellido: e.target.value})} />
                     </div>
-                    <input className="input-style" style={{ width: '100%', marginBottom: '25px' }} placeholder="Correo Electrónico" value={formData.correo} onChange={e => setFormData({...formData, correo: e.target.value})} />
+                    <input className="input-style" style={{ width: '100%', marginBottom: '25px' }} placeholder="Correo Electrónico" value={formData.correo} disabled={!esAdminCompleto} onChange={e => setFormData({...formData, correo: e.target.value})} />
 
                     <label style={{ fontSize: '0.65rem', fontWeight: '800', color: '#64748b', display: 'block', marginBottom: '10px' }}>ESTRUCTURA Y CARGO</label>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
-                      <select className="input-style" style={{ width: '100%' }} value={formData.rol} onChange={e => setFormData({...formData, rol: e.target.value})}>
+                      <select className="input-style" style={{ width: '100%' }} value={formData.rol} disabled={!esAdminCompleto} onChange={e => setFormData({...formData, rol: e.target.value})}>
                         <option value="">Seleccione Cargo...</option>
                         {cargos
                           .filter(c => c.nombre !== "Gerente de Proyecto")
@@ -711,7 +748,7 @@ const Usuarios = () => {
                         }
                         <option value="Gerente de Proyecto">Gerente de Proyecto</option>
                       </select>
-                      <select className="input-style" value={formData.gerencia_id} onChange={e => setFormData({...formData, gerencia_id: e.target.value})}>
+                      <select className="input-style" value={formData.gerencia_id} disabled={!esAdminCompleto} onChange={e => setFormData({...formData, gerencia_id: e.target.value})}>
                         <option value="">Departamento...</option>
                         {gerencias.map(g => <option key={g.id} value={g.id}>{g.nombre}</option>)}
                       </select>
@@ -733,7 +770,7 @@ const Usuarios = () => {
 
                   <div>
                     <label style={{ fontSize: '0.65rem', fontWeight: '800', color: '#64748b', display: 'block', marginBottom: '10px' }}>ASIGNACIÓN DE COSTOS (OBRA PRINCIPAL)</label>
-                    <select className="input-style" style={{ width: '100%' }} value={formData.contrato} onChange={e => setFormData({...formData, contrato: e.target.value})}>
+                    <select className="input-style" style={{ width: '100%' }} value={formData.contrato} disabled={!esAdminCompleto} onChange={e => setFormData({...formData, contrato: e.target.value})}>
                       <option value="">Centro de Costo...</option>
                       {centrosCosto.map(cc => <option key={cc.id} value={cc.nombre}>{cc.nombre}</option>)}
                     </select>
@@ -751,6 +788,7 @@ const Usuarios = () => {
                         <label key={cc.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '5px', fontSize: '0.8rem', cursor: 'pointer' }}>
                           <input
                             type="checkbox"
+                            disabled={!esAdminCompleto}
                             checked={formData.obras_asignadas?.includes(cc.nombre)}
                             onChange={(e) => {
                               const list = formData.obras_asignadas || [];
@@ -784,6 +822,7 @@ const Usuarios = () => {
                           id="avatar-upload"
                           accept="image/*"
                           style={{ display: 'none' }}
+                          disabled={!esAdminCompleto}
                           onChange={async (e) => {
                             const file = e.target.files?.[0];
                             if (!file) return;
@@ -830,7 +869,7 @@ const Usuarios = () => {
                         <button
                           type="button"
                           onClick={() => document.getElementById('avatar-upload')?.click()}
-                          disabled={uploadingFoto}
+                          disabled={uploadingFoto || !esAdminCompleto}
                           style={{
                             padding: '6px 14px',
                             backgroundColor: '#0ea5e9',
@@ -888,6 +927,7 @@ const Usuarios = () => {
                         className="input-style" 
                         style={{ width: '100%', marginBottom: '20px' }}
                         value={formData.delegado_id}
+                        disabled={!esAdminCompleto}
                         onChange={e => setFormData({...formData, delegado_id: e.target.value})}
                       >
                         <option value="">Ninguno</option>
@@ -902,11 +942,11 @@ const Usuarios = () => {
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
                         <div>
                           <label style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#94a3b8', display: 'block', marginBottom: '8px' }}>DESDE</label>
-                          <input type="date" className="input-style" style={{ width: '100%' }} value={formData.delegacion_desde} onChange={e => setFormData({...formData, delegacion_desde: e.target.value})} />
+                          <input type="date" className="input-style" style={{ width: '100%' }} value={formData.delegacion_desde} disabled={!esAdminCompleto} onChange={e => setFormData({...formData, delegacion_desde: e.target.value})} />
                         </div>
                         <div>
                           <label style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#94a3b8', display: 'block', marginBottom: '8px' }}>HASTA</label>
-                          <input type="date" className="input-style" style={{ width: '100%' }} value={formData.delegacion_hasta} onChange={e => setFormData({...formData, delegacion_hasta: e.target.value})} />
+                          <input type="date" className="input-style" style={{ width: '100%' }} value={formData.delegacion_hasta} disabled={!esAdminCompleto} onChange={e => setFormData({...formData, delegacion_hasta: e.target.value})} />
                         </div>
                       </div>
                     </div>
