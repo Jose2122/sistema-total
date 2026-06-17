@@ -24,6 +24,30 @@ import {
 import toast from 'react-hot-toast';
 import './Atributos.css';
 
+const PERMISOS_DISPONIBLES = [
+  { id: 'ver_global', label: 'Ver Historial Global (Todas las Sedes)', desc: 'Registros de todos los departamentos sin restricciones.' },
+  { id: 'ver_departamento', label: 'Ver Historial de Departamento', desc: 'Registros del propio departamento.' },
+  { id: 'puede_aprobar_area', label: 'Aprobación Nivel 1 (Gerente de Área)', desc: 'Primera aprobación a requisiciones.' },
+  { id: 'puede_aprobar_final', label: 'Aprobación Final (Gerencia General)', desc: 'Validación final del gasto.' },
+  { id: 'gestionar_usuarios', label: 'Gestión de Usuarios', desc: 'Cerrar sesión, editar y dar de baja usuarios.' },
+  { id: 'acceso_compras', label: 'Módulo de Compras', desc: 'Procesamiento de compras y trazabilidad.' },
+  { id: 'gestionar_atributos', label: 'Configuración de Atributos', desc: 'Modificar listas maestras y permisos.' }
+];
+
+const LISTAS = [
+  { id: 'centros_costo', label: 'Centros de Costo', icon: <LayoutGrid size={20} />, table: 'maestros_centros_costo' },
+  { id: 'gerencias', label: 'Gerencias / Depto.', icon: <Database size={20} />, table: 'cat_gerencias' },
+  { id: 'clasificaciones', label: 'Clasificaciones', icon: <Tags size={20} />, table: 'maestros_clasificaciones' },
+  { id: 'categorias', label: 'Categorías / Equipos', icon: <Truck size={20} />, table: 'maestros_sub_clasificaciones' },
+  { id: 'cargos', label: 'Cargos y Roles', icon: <ShieldCheck size={20} />, table: 'cat_cargos' }
+];
+
+const GRUPOS_ATRIBUTOS = [
+  { titulo: 'Estructura de Costos', listas: ['centros_costo', 'clasificaciones', 'categorias'] },
+  { titulo: 'Estructura Organizativa', listas: ['gerencias'] },
+  { titulo: 'Seguridad y Accesos', listas: ['cargos'] }
+];
+
 const Atributos = () => {
   const [listaActiva, setListaActiva] = useState('centros_costo');
   const [datos, setDatos] = useState([]);
@@ -40,7 +64,6 @@ const Atributos = () => {
   const [centrosCosto, setCentrosCosto] = useState([]);
   const [clasificaciones, setClasificaciones] = useState([]);
   const [gruposExpandidos, setGruposExpandidos] = useState({});
-  const [recienAgregados, setRecienAgregados] = useState([]);
   const [filtroCC, setFiltroCC] = useState('');
   const [filasExpandidas, setFilasExpandidas] = useState({});
   const [seleccionados, setSeleccionados] = useState([]); // Array de IDs seleccionados para borrar
@@ -48,30 +71,6 @@ const Atributos = () => {
   const [copiaOrigen, setCopiaOrigen] = useState('');
   const [copiaDestino, setCopiaDestino] = useState('');
   const inputNombreRef = useRef(null);
-
-  const PERMISOS_DISPONIBLES = [
-    { id: 'ver_global', label: 'Ver Historial Global (Todas las Sedes)', desc: 'Registros de todos los departamentos sin restricciones.' },
-    { id: 'ver_departamento', label: 'Ver Historial de Departamento', desc: 'Registros del propio departamento.' },
-    { id: 'puede_aprobar_area', label: 'Aprobación Nivel 1 (Gerente de Área)', desc: 'Primera aprobación a requisiciones.' },
-    { id: 'puede_aprobar_final', label: 'Aprobación Final (Gerencia General)', desc: 'Validación final del gasto.' },
-    { id: 'gestionar_usuarios', label: 'Gestión de Usuarios', desc: 'Cerrar sesión, editar y dar de baja usuarios.' },
-    { id: 'acceso_compras', label: 'Módulo de Compras', desc: 'Procesamiento de compras y trazabilidad.' },
-    { id: 'gestionar_atributos', label: 'Configuración de Atributos', desc: 'Modificar listas maestras y permisos.' }
-  ];
-
-  const LISTAS = [
-    { id: 'centros_costo', label: 'Centros de Costo', icon: <LayoutGrid size={20} />, table: 'maestros_centros_costo' },
-    { id: 'gerencias', label: 'Gerencias / Depto.', icon: <Database size={20} />, table: 'cat_gerencias' },
-    { id: 'clasificaciones', label: 'Clasificaciones', icon: <Tags size={20} />, table: 'maestros_clasificaciones' },
-    { id: 'categorias', label: 'Categorías / Equipos', icon: <Truck size={20} />, table: 'maestros_sub_clasificaciones' },
-    { id: 'cargos', label: 'Cargos y Roles', icon: <ShieldCheck size={20} />, table: 'cat_cargos' }
-  ];
-
-  const GRUPOS_ATRIBUTOS = [
-    { titulo: 'Estructura de Costos', listas: ['centros_costo', 'clasificaciones', 'categorias'] },
-    { titulo: 'Estructura Organizativa', listas: ['gerencias'] },
-    { titulo: 'Seguridad y Accesos', listas: ['cargos'] }
-  ];
 
   const cargarDatos = useCallback(async () => {
     setLoading(true);
@@ -84,7 +83,7 @@ const Atributos = () => {
       if (listaActiva === 'clasificaciones') {
         query = supabase.from(config.table).select('*, maestros_centros_costo!centro_costo_id(nombre)').order('nombre');
       } else if (listaActiva === 'categorias') {
-        query = supabase.from(config.table).select('*, maestros_clasificaciones(nombre)').order('nombre');
+        query = supabase.from(config.table).select('*, maestros_clasificaciones(nombre, centro_costo_id, maestros_centros_costo!centro_costo_id(nombre))').order('nombre');
       } else if (listaActiva === 'cargos') {
         query = supabase.from(config.table).select('*').order('nivel');
       }
@@ -128,6 +127,7 @@ const Atributos = () => {
       toast.success(`Ítem ${item.activo ? 'desactivado' : 'activado'} correctamente`);
       cargarDatos();
     } catch (err) {
+      console.error(err);
       toast.error('Error al actualizar estado');
     }
   };
@@ -193,6 +193,7 @@ const Atributos = () => {
       toast.success(`Se eliminaron ${total} registros de "${nombre}"`);
       cargarDatos();
     } catch (err) {
+      console.error(err);
       toast.error('Error al eliminar grupo');
     } finally {
       setLoading(false);
@@ -230,6 +231,7 @@ const Atributos = () => {
       setSeleccionados([]);
       cargarDatos();
     } catch (err) {
+      console.error(err);
       toast.error('Error al realizar la eliminación masiva');
     } finally {
       setLoading(false);
@@ -416,9 +418,6 @@ const Atributos = () => {
       const idColumn = listaActiva === 'clasificaciones' ? 'centro_costo_id' : 
                       listaActiva === 'categorias' ? 'clasificacion_id' : null;
       
-      const textColumn = null; 
-      const itemsAux = listaActiva === 'clasificaciones' ? centrosCosto : clasificaciones;
-
       const nombreGuardado = formData.nombre.trim();
 
       if (editandoItem) {
@@ -460,14 +459,10 @@ const Atributos = () => {
       
       toast.success(editandoItem ? 'Actualizado con éxito' : 'Guardado con éxito');
       
-      // Historial de la sesión actual del modal
-      setRecienAgregados(prev => [nombreGuardado, ...prev.slice(0, 4)]);
-
       if (cerrarDespues) {
         setModalAbierto(false);
         setEditandoItem(null);
         setFormData({ nombre: '', padre_ids: [], nivel: 99, permisos_default: {} });
-        setRecienAgregados([]);
       } else {
         setFormData(prev => ({ ...prev, nombre: '' }));
         // Devolver el foco
@@ -518,10 +513,14 @@ const Atributos = () => {
 
   return (
     <div className="atributos-container">
-      <div className="atributos-header">
-        <div>
-          <h1 className="atributos-title">Configuración de Atributos</h1>
-          <p className="atributos-subtitle">Gestiona las listas maestras y parámetros globales del sistema de compras.</p>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px', flexWrap: 'wrap', gap: '15px' }}>
+        <div style={{ borderLeft: '6px solid #0ea5e9', paddingLeft: '16px' }}>
+          <h1 style={{ margin: 0, color: '#0f172a', fontSize: '1.8rem', fontWeight: '900', fontFamily: 'Inter, sans-serif', letterSpacing: '-0.5px' }}>
+            Configuración de Atributos
+          </h1>
+          <p style={{ margin: '4px 0 0 0', color: '#64748b', fontSize: '0.9rem', fontWeight: '500', fontFamily: 'Inter, sans-serif' }}>
+            Gestiona las listas maestras y parámetros globales del sistema de compras
+          </p>
         </div>
         <div style={{ display: 'flex', gap: '10px' }}>
           {listaActiva === 'centros_costo' && (
@@ -726,7 +725,7 @@ const Atributos = () => {
                                 items.slice(0, 5).map(it => {
                                   const textPadre = listaActiva === 'clasificaciones' 
                                     ? (it.maestros_centros_costo?.nombre || 'General')
-                                    : (it.maestros_clasificaciones?.nombre || 'General');
+                                    : `${it.maestros_clasificaciones?.nombre || 'General'} (${it.maestros_clasificaciones?.maestros_centros_costo?.nombre || 'Sin Sede'})`;
                                   return (
                                     <span key={it.id} className="badge-sede">
                                       {textPadre}
@@ -816,7 +815,11 @@ const Atributos = () => {
                                           <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569' }}>
                                             {padreActual}
                                           </span>
-                                          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>ID DB: #{it.id}</span>
+                                          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>
+                                            {listaActiva === 'clasificaciones' 
+                                              ? `Sede: ${it.maestros_centros_costo?.nombre || 'General'}`
+                                              : `Sede: ${it.maestros_clasificaciones?.maestros_centros_costo?.nombre || 'General'}`}
+                                          </span>
                                         </div>
                                       </div>
                                       <div style={{ display: 'flex', gap: '4px' }}>
@@ -993,7 +996,6 @@ const Atributos = () => {
                         const allIds = items.map(i => i.id);
                         const estanTodosSeleccionados = allIds.every(id => formData.padre_ids.includes(id));
                         const estaExpandido = gruposExpandidos[nombre];
-                        const tieneHijos = items.some(i => i.maestros_centros_costo?.nombre);
 
                         return (
                           <div key={nombre} className="parent-group-wrapper" style={{ marginBottom: '8px' }}>
@@ -1082,7 +1084,6 @@ const Atributos = () => {
               <div className="modal-actions">
                 <button type="button" className="btn-cancel" onClick={() => {
                   setModalAbierto(false);
-                  setRecienAgregados([]);
                 }}>Cancelar</button>
                 
                 {!editandoItem && (

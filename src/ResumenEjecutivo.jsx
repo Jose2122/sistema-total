@@ -306,7 +306,7 @@ const ResumenEjecutivo = ({ currentUser }) => {
             const ejec = Number(r.total_ejecutado) || items.reduce((s, i) => {
                 const h = Array.isArray(i.historial_compras) ? i.historial_compras : [];
                 return s + h.reduce((acc, comp) => acc + ((Number(comp.cant) || 0) * (Number(comp.pu) || 0)), 0);
-            }, 0) * 1.16;
+            }, 0) * (r.con_iva !== false ? 1.16 : 1.00);
 
             aggregated[gName].gastado += ejec;
             aggregated[gName].gastoReqs += ejec;
@@ -391,7 +391,7 @@ const ResumenEjecutivo = ({ currentUser }) => {
             const ejec = Number(r.total_ejecutado) || items.reduce((s, i) => {
                 const h = Array.isArray(i.historial_compras) ? i.historial_compras : [];
                 return s + h.reduce((acc, comp) => acc + ((Number(comp.cant) || 0) * (Number(comp.pu) || 0)), 0);
-            }, 0) * 1.16;
+            }, 0) * (r.con_iva !== false ? 1.16 : 1.00);
             
             byCC[cc] += ejec;
             totalEjecutadoGlobal += ejec;
@@ -697,11 +697,12 @@ const ResumenEjecutivo = ({ currentUser }) => {
         <div className="executive-summary" style={containerStyle}>
             {/* HEADER EJECUTIVO GLASSMORPHIC */}
             <div style={headerStyle}>
-                <div>
-                    <h1 style={titleStyle}>Resumen Ejecutivo SITC</h1>
-                    <p style={subtitleStyle}>Métricas de Procura, Control de Fondos y Gasto Operativo Consolidado</p>
-                    <p style={{ ...subtitleStyle, fontSize: '0.8rem', color: '#64748b', fontStyle: 'italic', marginTop: '4px' }}>
-                        "Control absoluto en tiempo real del flujo financiero y planeación operativa"
+                <div style={{ borderLeft: '6px solid #0ea5e9', paddingLeft: '16px' }}>
+                    <h1 style={{ margin: 0, color: '#0f172a', fontSize: '1.8rem', fontWeight: '900', fontFamily: 'Inter, sans-serif', letterSpacing: '-0.5px' }}>
+                        Resumen Ejecutivo SITC
+                    </h1>
+                    <p style={{ margin: '4px 0 0 0', color: '#64748b', fontSize: '0.9rem', fontWeight: '500', fontFamily: 'Inter, sans-serif' }}>
+                        Métricas de Procura, Control de Fondos y Gasto Operativo Consolidado
                     </p>
                 </div>
                 <div style={headerActionsStyle}>

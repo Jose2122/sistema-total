@@ -202,11 +202,18 @@ const Administracion = () => {
   return (
     <div className="admin-container">
       
-      {/* Header */}
-      <div className="admin-header">
-        <div>
-          <h1 className="admin-title">Panel de Administración</h1>
-          <p className="admin-subtitle">Gestiona bancos de la empresa y visualiza reportes financieros en tiempo real.</p>
+      {/* --- ENCABECERA UNIFICADA PREMIUM --- */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px' }}>
+        <div style={{
+          borderLeft: '6px solid #0ea5e9',
+          paddingLeft: '16px'
+        }}>
+          <h1 style={{ margin: 0, color: '#0f172a', fontSize: '1.8rem', fontWeight: '900', fontFamily: 'Inter, sans-serif', letterSpacing: '-0.5px' }}>
+            Panel de Administración
+          </h1>
+          <p style={{ margin: '4px 0 0 0', color: '#64748b', fontSize: '0.9rem', fontWeight: '500', fontFamily: 'Inter, sans-serif' }}>
+            Gestiona bancos de la empresa y visualiza reportes financieros en tiempo real
+          </p>
         </div>
         <button onClick={cargarDatos} className="btn-update">
           <RefreshCw size={18} /> Actualizar Datos

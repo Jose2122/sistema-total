@@ -42,11 +42,80 @@ import {
   Hash,
   MessageSquare,
   FileDown,
-  X
+  Diamond,
+  X,
+  Camera
 } from 'lucide-react';
 import { format, getWeek } from 'date-fns';
 import toast from 'react-hot-toast';
 import './TicketExpress.css';
+
+const obtenerNombreDeUrl = (url) => {
+  if (!url) return '';
+  try {
+    const parts = url.split('/');
+    const last = parts[parts.length - 1];
+    return decodeURIComponent(last.split('?')[0]);
+  } catch (e) {
+    return 'Soporte';
+  }
+};
+
+const parsearFacturaUrls = (facturaUrlField) => {
+  if (!facturaUrlField) return [];
+  
+  let rawItems = [];
+  
+  const extractRaw = (field) => {
+    if (!field) return;
+    if (Array.isArray(field)) {
+      field.forEach(item => extractRaw(item));
+    } else if (typeof field === 'string') {
+      const trimmed = field.trim();
+      if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+        try {
+          const parsed = JSON.parse(trimmed);
+          extractRaw(parsed);
+        } catch (e) {
+          rawItems.push(trimmed);
+        }
+      } else {
+        rawItems.push(trimmed);
+      }
+    } else if (typeof field === 'object' && field !== null) {
+      rawItems.push(field);
+    }
+  };
+
+  extractRaw(facturaUrlField);
+
+  return rawItems.map(item => {
+    if (typeof item === 'string') {
+      const trimmed = item.trim();
+      if (trimmed.startsWith('{')) {
+        try {
+          const obj = JSON.parse(trimmed);
+          if (obj.url) {
+            return {
+              url: obj.url,
+              name: obj.name || obj.etiqueta || obtenerNombreDeUrl(obj.url)
+            };
+          }
+        } catch (e) {}
+      }
+      return {
+        url: trimmed,
+        name: obtenerNombreDeUrl(trimmed)
+      };
+    } else if (typeof item === 'object' && item !== null && item.url) {
+      return {
+        url: item.url,
+        name: item.name || item.etiqueta || obtenerNombreDeUrl(item.url)
+      };
+    }
+    return null;
+  }).filter(item => item && typeof item.url === 'string' && item.url.trim().length > 10);
+};
 
 const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = null, onSuccess = null }) => {
   // --- ESTADOS DE CONTROL ---
@@ -58,6 +127,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
   const [verTodos, setVerTodos] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [verJustificacion, setVerJustificacion] = useState(false);
+  const [mostrarSoportes, setMostrarSoportes] = useState(true);
   const [filtroStatus, setFiltroStatus] = useState('Todos');
   const [filtroGerencia, setFiltroGerencia] = useState('Todos');
 
@@ -89,6 +159,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
       "Estimaciones y Control Interno": "EST",
       "Estimaciónes y Control Interno": "EST",
       "Almacén": "ALM",
+      "Dirección Corporativa": "DC",
       "Gerencia General": "GG",
       "Servicios Generales": "SVG",
       "Contabilidad": "CNT",
@@ -137,6 +208,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
     centro_costo: '',
     justificacion: '',
     justificacion_detallada: '',
+    con_iva: true,
     partidas: [{
       id: Date.now(),
       cc: '',
@@ -213,40 +285,67 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
     if (datosPredefinidos && isOpen && !datosCargadosRef.current) {
       try {
         console.log("[TicketExpress] Aplicando datos predefinidos:", datosPredefinidos);
-        setForm(prev => {
-          const partidas = (datosPredefinidos.partidasSeleccionadas && Array.isArray(datosPredefinidos.partidasSeleccionadas))
-            ? datosPredefinidos.partidasSeleccionadas.map(p => {
-              const cant = (p.cantidad !== undefined) ? Number(p.cantidad) : (p.cant !== undefined ? Number(p.cant) : 1);
-              return {
-                id: p.id || Date.now() + Math.random(),
-                cc: p.cc || p.centro_costo || '',
-                clasificacion: p.clasificacion || p.clasif || '',
-                categoria: p.categoria || p.cat || '',
-                cantidad: cant,
-                cantidad_pedida: cant,
-                cantidad_comprada: 0,
-                cantidad_pendiente: cant,
-                unidad: p.unidad || p.uni || 'UNID',
-                descripcion: p.descripcion || p.desc || '',
-                beneficiario: p.beneficiario || p.ben || '',
-                pu: Number(p.puUsd || p.puBs || p.pu || 0),
-                total: (Number(p.puUsd || p.puBs || p.pu || 0)) * cant,
-                pago_realizado: false
-              };
-            })
-            : prev.partidas;
+        if (datosPredefinidos.isExistingTicket) {
+          setIsEditing(true);
+          const t = datosPredefinidos.ticket;
+          setForm({
+            id: t.id,
+            fecha: t.fecha_emision,
+            gerente: t.gerente_nombre,
+            solicitante: t.gerente_nombre,
+            departamento: t.departamento,
+            usuario_id: t.usuario_id,
+            partidas: t.items || [],
+            facturas_url: Array.isArray(t.factura_url) ? t.factura_url : (t.factura_url ? [t.factura_url] : []),
+            status: t.status,
+            id_control: t.codigo_control,
+            solicitud_ref: t.solicitud_ref || '',
+            clasificacion_admin: t.clasificacion_admin || '',
+            justificacion: t.justificacion || '',
+            justificacion_detallada: t.items?.[0]?.justificacion_detallada || '',
+            centro_costo: t.centro_costo || t.items?.[0]?.cc || '',
+            con_iva: t.con_iva !== false
+          });
+        } else {
+          setIsEditing(false);
+          setForm(prev => {
+            const partidas = (datosPredefinidos.partidasSeleccionadas && Array.isArray(datosPredefinidos.partidasSeleccionadas))
+              ? datosPredefinidos.partidasSeleccionadas.map(p => {
+                const cant = (p.cantidad !== undefined) ? Number(p.cantidad) : (p.cant !== undefined ? Number(p.cant) : 1);
+                return {
+                  id: p.id || Date.now() + Math.random(),
+                  cc: p.cc || p.centro_costo || '',
+                  clasificacion: p.clasificacion || p.clasif || '',
+                  categoria: p.categoria || p.cat || '',
+                  cantidad: cant,
+                  cantidad_pedida: cant,
+                  cantidad_comprada: 0,
+                  cantidad_pendiente: cant,
+                  unidad: p.unidad || p.uni || 'UNID',
+                  descripcion: p.descripcion || p.desc || '',
+                  beneficiario: p.beneficiario || p.ben || '',
+                  pu: Number(p.puUsd || p.puBs || p.pu || 0),
+                  puBs: Number(p.puBs || 0),
+                  puUsd: Number(p.puUsd || 0),
+                  metodo_pago_actual: p.puBs > 0 ? '$ / BS' : '$ / $',
+                  total: (Number(p.puUsd || p.puBs || p.pu || 0)) * cant,
+                  pago_realizado: false
+                };
+              })
+              : prev.partidas;
 
-          return {
-            ...prev,
-            fecha: datosPredefinidos.fecha || prev.fecha,
-            departamento: datosPredefinidos.gerencia || prev.departamento,
-            solicitante: datosPredefinidos.solicitante || prev.solicitante,
-            solicitud_ref: datosPredefinidos.solicitud_ref || '',
-            centro_costo: partidas[0]?.cc || '',
-            justificacion: datosPredefinidos.observaciones || datosPredefinidos.justificacion || '',
-            partidas
-          };
-        });
+            return {
+              ...prev,
+              fecha: datosPredefinidos.fecha || prev.fecha,
+              departamento: datosPredefinidos.gerencia || prev.departamento,
+              solicitante: datosPredefinidos.solicitante || prev.solicitante,
+              solicitud_ref: datosPredefinidos.solicitud_ref || '',
+              centro_costo: partidas[0]?.cc || '',
+              justificacion: datosPredefinidos.observaciones || datosPredefinidos.justificacion || '',
+              partidas
+            };
+          });
+        }
         datosCargadosRef.current = true;
       } catch (err) {
         console.error("[TicketExpress] Error al mapear datos predefinidos:", err);
@@ -473,6 +572,11 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
     const file = e.target.files[0];
     if (!file) return;
 
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("El archivo supera el límite de 5MB. Por favor, redúzcalo antes de subirlo.");
+      return;
+    }
+
     setLoading(true);
     const fileExt = file.name.split('.').pop();
     const fileName = `${Date.now()}.${fileExt}`;
@@ -512,12 +616,33 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
     }
   };
 
+  const eliminarSoporte = async (index) => {
+    const nuevasUrls = form.facturas_url.filter((_, idx) => idx !== index);
+    setForm(prev => ({ ...prev, facturas_url: nuevasUrls }));
+
+    if (isEditing && form.id) {
+      try {
+        const { error } = await supabase
+          .from('tickets_directos')
+          .update({ factura_url: nuevasUrls })
+          .eq('id', form.id);
+        if (error) throw error;
+        toast.success("Soporte eliminado");
+        cargarHistorial();
+      } catch (err) {
+        toast.error("Error al eliminar soporte de BD: " + err.message);
+      }
+    } else {
+      toast.success("Soporte quitado");
+    }
+  };
+
   // --- CALCULAR TOTALES ---
   const subtotalTotal = useMemo(() => {
     return form.partidas.reduce((acc, p) => acc + (parseFloat(p.total) || 0), 0);
   }, [form.partidas]);
 
-  const totalGeneral = subtotalTotal * 1.16;
+  const totalGeneral = subtotalTotal * (form.con_iva !== false ? 1.16 : 1.00);
 
   // --- EMITIR TICKET ---
   const emitirTicket = async () => {
@@ -555,13 +680,41 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
         solicitud_ref: form.solicitud_ref || null,
         clasificacion_admin: form.clasificacion_admin || null,
         justificacion: form.justificacion || form.justificacion_detallada || null,
-        centro_costo: form.centro_costo || form.partidas?.[0]?.cc || null
+        centro_costo: form.centro_costo || form.partidas?.[0]?.cc || null,
+        con_iva: form.con_iva !== false
       };
 
       console.log("[TicketExpress] Payload de inserción:", payload);
 
       const { data: newTicket, error } = await supabase.from('tickets_directos').insert([payload]).select().single();
       if (error) throw error;
+
+      // NOTIFICAR A ADMINISTRACIÓN
+      try {
+        const { data: perfiles } = await supabase
+          .from('perfiles')
+          .select('id, rol, departamento');
+        if (perfiles) {
+          const admins = perfiles.filter(p => {
+            const rol = (p.rol || '').toLowerCase();
+            const depto = (p.departamento || '').toLowerCase();
+            return rol.includes('administra') || rol.includes('contabil') || depto.includes('administra') || depto.includes('contabil');
+          });
+          for (const admin of admins) {
+            if (admin.id !== currentUser?.id) {
+              await supabase.from('notificaciones').insert([{
+                usuario_id: admin.id,
+                mensaje: `Nuevo Ticket de Pago ${newTicket.codigo_control} en cola creado por ${newTicket.gerente_nombre || 'un usuario'}.`,
+                tipo: 'Ticket Nuevo',
+                leido: false,
+                requisicion_id: null
+              }]);
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Error al notificar a administración:", err);
+      }
 
       // ACTUALIZAR PARTIDAS FONDOS SI EXISTEN
       const idsRelacionados = form.partidas.map(p => p.id).filter(id => typeof id === 'number' || (typeof id === 'string' && id.length > 10)); // Los IDs de Supabase son largos
@@ -598,7 +751,8 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
           pago_realizado: false
         }],
         facturas_url: [],
-        status: 'EMITIDO'
+        status: 'EMITIDO',
+        con_iva: true
       });
     } catch (err) {
       toast.error("Error al emitir ticket: " + err.message);
@@ -621,7 +775,9 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
           total_usd: totalGeneral,
           factura_url: form.facturas_url || [],
           status: form.status,
-          clasificacion_admin: form.clasificacion_admin
+          clasificacion_admin: form.clasificacion_admin,
+          justificacion: form.justificacion || form.justificacion_detallada || null,
+          con_iva: form.con_iva !== false
         })
         .eq('id', form.id);
 
@@ -649,8 +805,8 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
 
   const anularTicket = async (t) => {
     const esAutorizado = currentUser?.esSuperAdmin === true ||
-                         currentUser?.esAdminReal === true ||
-                         ['jcontreras.totalclean@gmail.com', 'karincmm1@gmail.com', 'cvega@totalclean.com', 'cvega.totalclean@gmail.com'].includes(currentUser?.correo?.toLowerCase());
+      currentUser?.esAdminReal === true ||
+      ['jcontreras.totalclean@gmail.com', 'karincmm1@gmail.com', 'cvega@totalclean.com', 'cvega.totalclean@gmail.com'].includes(currentUser?.correo?.toLowerCase());
 
     if (!esAutorizado) {
       toast.error("Solo el SuperAdministrador tiene permisos para anular tickets.");
@@ -719,9 +875,10 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
       id_control: t.codigo_control,
       solicitud_ref: t.solicitud_ref || '',
       clasificacion_admin: t.clasificacion_admin || '',
-      justificacion: t.observaciones || '',
+      justificacion: t.justificacion || '',
       justificacion_detallada: t.items?.[0]?.justificacion_detallada || '',
-      centro_costo: t.centro_costo || t.items?.[0]?.cc || ''
+      centro_costo: t.centro_costo || t.items?.[0]?.cc || '',
+      con_iva: t.con_iva !== false
     });
     setShowModal(true);
   };
@@ -729,7 +886,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
   // --- FILTRADO HISTORIAL ---
   const historialFiltrado = useMemo(() => {
     let result = historial;
-    
+
     if (busqueda.trim()) {
       const b = busqueda.toLowerCase();
       result = result.filter(t =>
@@ -739,15 +896,15 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
         t.solicitud_ref?.toLowerCase().includes(b)
       );
     }
-    
+
     if (filtroStatus !== 'Todos') {
       result = result.filter(t => t.status === filtroStatus);
     }
-    
+
     if (filtroGerencia !== 'Todos') {
       result = result.filter(t => t.departamento === filtroGerencia);
     }
-    
+
     return result;
   }, [historial, busqueda, filtroStatus, filtroGerencia]);
 
@@ -791,7 +948,8 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
                   facturas_url: [],
                   status: 'EMITIDO',
                   id_control: '',
-                  solicitud_ref: ''
+                  solicitud_ref: '',
+                  con_iva: true
                 });
                 setShowModal(true);
               }}
@@ -839,10 +997,10 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
                 onChange={(e) => setBusqueda(e.target.value)}
               />
             </div>
-            
-            <select 
-              className="te-input" 
-              value={filtroStatus} 
+
+            <select
+              className="te-input"
+              value={filtroStatus}
               onChange={(e) => setFiltroStatus(e.target.value)}
               style={{ flex: 0.8 }}
             >
@@ -852,9 +1010,9 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
               <option value="ANULADO">ANULADO</option>
             </select>
 
-            <select 
-              className="te-input" 
-              value={filtroGerencia} 
+            <select
+              className="te-input"
+              value={filtroGerencia}
               onChange={(e) => setFiltroGerencia(e.target.value)}
               style={{ flex: 1 }}
             >
@@ -921,9 +1079,9 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
                     <td className="te-td" style={{ textAlign: 'center' }}>
                       <div style={{ display: 'flex', gap: '5px', justifyContent: 'center' }}>
                         {(() => {
-                          const list = Array.isArray(t.factura_url) ? t.factura_url : (t.factura_url ? [t.factura_url] : []);
-                          return list.map((url, idx) => (
-                            <a key={idx} href={url} target="_blank" rel="noopener noreferrer" style={{ color: '#d97706' }}>
+                          const list = parsearFacturaUrls(t.factura_url);
+                          return list.map((item, idx) => (
+                            <a key={idx} href={item.url} target="_blank" rel="noopener noreferrer" style={{ color: '#d97706' }} title={item.name}>
                               <FileImage size={18} />
                             </a>
                           ));
@@ -977,47 +1135,96 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
               boxShadow: '0 30px 60px -12px rgba(0, 0, 0, 0.35)'
             }}>
               {/* --- CABECERA FIJA --- */}
-              <div style={{ flexShrink: 0, padding: '25px 35px', borderBottom: '1px solid rgba(226, 232, 240, 0.5)', backgroundColor: 'rgba(255, 255, 255, 0.3)', position: 'relative' }}>
+              <div style={{
+                flexShrink: 0,
+                background: 'rgba(235, 245, 255, 0.95)',
+                backdropFilter: 'blur(12px)',
+                padding: '20px 40px',
+                borderBottom: '1px solid rgba(0,0,0,0.05)',
+                position: 'relative'
+              }}>
                 <button
                   onClick={() => setShowModal(false)}
                   style={{
                     position: 'absolute',
-                    top: '25px',
-                    right: '35px',
-                    background: 'none',
+                    top: '15px',
+                    right: '15px',
                     border: 'none',
+                    background: 'rgba(255,255,255,0.8)',
+                    borderRadius: '50%',
+                    width: '32px',
+                    height: '32px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
                     cursor: 'pointer',
                     color: '#64748b',
-                    transition: 'color 0.2s'
+                    transition: 'all 0.2s',
+                    zIndex: 100
                   }}
-                  onMouseOver={(e) => e.currentTarget.style.color = '#0f172a'}
-                  onMouseOut={(e) => e.currentTarget.style.color = '#64748b'}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = 'white'; e.currentTarget.style.color = '#0f172a'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.8)'; e.currentTarget.style.color = '#64748b'; }}
                 >
-                  <X size={24} />
+                  <X size={18} />
                 </button>
 
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <div>
-                    <h1 style={{ margin: 0, fontSize: '1.8rem', fontWeight: '950', color: '#0f172a', letterSpacing: '-0.5px' }}>
-                      Ticket de Pago
-                    </h1>
-                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '5px' }}>
-                      <div style={{ background: '#0f172a', color: 'white', padding: '3px 10px', borderRadius: '6px', fontSize: '10px', fontWeight: 'bold' }}>ID TICKET: {idControlAutomatico}</div>
-                      {form.solicitud_ref && (
-                        <div style={{ background: '#3b82f6', color: 'white', padding: '3px 10px', borderRadius: '6px', fontSize: '10px', fontWeight: 'bold' }}>REF: {form.solicitud_ref}</div>
-                      )}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  {/* IZQUIERDA: TÍTULO Y REF */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+                      <h1 style={{
+                        margin: 0,
+                        fontSize: '1.15rem',
+                        fontWeight: '800',
+                        color: '#1e293b',
+                        letterSpacing: '-0.02em',
+                        textTransform: 'uppercase'
+                      }}>
+                        TICKET DE PAGO
+                      </h1>
                     </div>
+                    {form.solicitud_ref && (
+                      <div style={{
+                        background: 'white',
+                        color: '#475569',
+                        padding: '2px 10px',
+                        borderRadius: '6px',
+                        fontSize: '0.65rem',
+                        fontWeight: '900',
+                        border: '1px solid #cbd5e1',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '5px',
+                        width: 'fit-content',
+                        boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
+                      }}>
+                        <Diamond size={12} /> REF: {form.solicitud_ref}
+                      </div>
+                    )}
                   </div>
 
-                  {/* DASHBOARD INDICATORS */}
-                  <div style={{ display: 'flex', gap: '15px' }}>
-                    <div style={{ backgroundColor: 'white', border: '1px solid rgba(226, 232, 240, 0.8)', padding: '10px 20px', borderRadius: '16px', minWidth: '150px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)' }}>
-                      <div style={{ fontSize: '9px', fontWeight: '900', color: '#64748b', marginBottom: '2px' }}>SUB-TOTAL ESTIMADO</div>
-                      <div style={{ fontSize: '1.2rem', fontWeight: '950', color: '#0f172a' }}>$ {subtotalTotal.toLocaleString('de-DE')}</div>
-                    </div>
-                    <div style={{ backgroundColor: 'white', border: '1px solid rgba(226, 232, 240, 0.8)', padding: '10px 20px', borderRadius: '16px', minWidth: '150px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)', borderLeft: '5px solid #10b981' }}>
-                      <div style={{ fontSize: '9px', fontWeight: '900', color: '#10b981', marginBottom: '2px' }}>TOTAL CON IVA (1.16)</div>
-                      <div style={{ fontSize: '1.2rem', fontWeight: '950', color: '#10b981' }}>$ {totalGeneral.toLocaleString('de-DE')}</div>
+                  {/* DERECHA: ID TICKET */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '20px', marginRight: '40px' }}>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{
+                        fontSize: '1.8rem',
+                        fontWeight: '1000',
+                        color: '#1e3a8a',
+                        lineHeight: '1',
+                        letterSpacing: '0.05em'
+                      }}>
+                        {idControlAutomatico}
+                      </div>
+                      <div style={{
+                        fontSize: '0.6rem',
+                        fontWeight: '900',
+                        color: '#64748b',
+                        marginTop: '3px',
+                        letterSpacing: '0.1em',
+                        opacity: 0.8
+                      }}>
+                        ID TICKET
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1025,73 +1232,356 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
 
               {/* --- CUERPO DESPLAZABLE --- */}
               <div style={{ flexGrow: 1, overflowY: 'auto', padding: '30px', backgroundColor: 'rgba(241, 245, 249, 0.4)' }}>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '20px', background: 'white', padding: '20px', borderRadius: '20px', border: '1px solid #e2e8f0', marginBottom: '25px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(140px, 160px) 1.5fr 1fr 1fr', gap: '20px', marginBottom: '25px' }}>
                   <div>
-                    <label style={{ fontSize: '10px', fontWeight: '800', color: '#64748b', display: 'block', marginBottom: '5px' }}>FECHA EMISIÓN</label>
-                    <input type="date" className="te-input" value={form.fecha} onChange={(e) => setForm({ ...form, fecha: e.target.value })} disabled={isEditing} style={{ width: '100%' }} />
+                    <label className="te-label" style={{ color: '#1e293b', fontSize: '10px', fontWeight: '800', display: 'block', marginBottom: '5px' }}>FECHA EMISIÓN <span style={{ color: '#ef4444' }}>*</span></label>
+                    <div style={{ position: 'relative' }}>
+                      <Calendar size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
+                      <input
+                        className="te-input"
+                        type="date"
+                        value={form.fecha}
+                        onChange={(e) => setForm({ ...form, fecha: e.target.value })}
+                        disabled={isEditing}
+                        style={{ width: '100%', paddingLeft: '38px', height: '42px', boxSizing: 'border-box', backgroundColor: '#f8fafc' }}
+                        required
+                      />
+                    </div>
                   </div>
                   <div>
-                    <label style={{ fontSize: '10px', fontWeight: '800', color: '#64748b', display: 'block', marginBottom: '5px' }}>SOLICITANTE</label>
-                    <input className="te-input" value={form.solicitante} readOnly style={{ width: '100%', backgroundColor: '#f8fafc' }} />
+                    <label className="te-label" style={{ color: '#1e293b', fontSize: '10px', fontWeight: '800', display: 'block', marginBottom: '5px' }}>SOLICITANTE</label>
+                    <div className="te-input" style={{ display: 'flex', alignItems: 'center', gap: '10px', backgroundColor: '#f8fafc', height: '42px', boxSizing: 'border-box', border: '1px solid #cbd5e1' }}>
+                      <div style={{
+                        width: '28px', height: '28px', borderRadius: '50%',
+                        backgroundColor: '#0ea5e9', color: 'white',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: '0.7rem', fontWeight: 'bold'
+                      }}>
+                        {form.solicitante ? form.solicitante.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase() : 'TC'}
+                      </div>
+                      <span style={{ fontSize: '0.9rem', fontWeight: '600', color: '#1e293b' }}>
+                        {form.solicitante}
+                      </span>
+                    </div>
                   </div>
                   <div>
-                    <label style={{ fontSize: '10px', fontWeight: '800', color: '#64748b', display: 'block', marginBottom: '5px' }}>CENTRO DE COSTOS</label>
-                    <input className="te-input" value={form.centro_costo} readOnly style={{ width: '100%', backgroundColor: '#f8fafc' }} />
+                    <label className="te-label" style={{ color: '#1e293b', fontSize: '10px', fontWeight: '800', display: 'block', marginBottom: '5px' }}>CENTRO DE COSTOS</label>
+                    <div className="te-input" style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      backgroundColor: '#f8fafc',
+                      height: '42px',
+                      boxSizing: 'border-box',
+                      border: '1px solid #cbd5e1'
+                    }}>
+                      <span style={{ fontSize: '0.9rem', fontWeight: '600', color: '#1e293b' }}>
+                        {form.centro_costo || 'Sin asignar'}
+                      </span>
+                    </div>
                   </div>
                   <div>
-                    <label style={{ fontSize: '10px', fontWeight: '800', color: '#64748b', display: 'block', marginBottom: '5px' }}>GERENCIA</label>
-                    <input className="te-input" value={form.departamento} readOnly style={{ width: '100%', backgroundColor: '#f8fafc' }} />
+                    <label className="te-label" style={{ color: '#1e293b', fontSize: '10px', fontWeight: '800', display: 'block', marginBottom: '5px' }}>GERENCIA</label>
+                    <div className="te-input" style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      backgroundColor: '#f8fafc',
+                      height: '42px',
+                      boxSizing: 'border-box',
+                      border: '1px solid #cbd5e1'
+                    }}>
+                      <span style={{ fontSize: '0.9rem', fontWeight: '600', color: '#1e293b' }}>
+                        {form.departamento || 'Sin asignar'}
+                      </span>
+                    </div>
                   </div>
                 </div>
 
                 <div style={{ background: 'white', padding: '25px', borderRadius: '24px', border: '1px solid #e2e8f0' }}>
-                  <div style={{ marginBottom: '25px' }}>
-                    <label style={{ fontSize: '10px', fontWeight: '900', color: '#0f172a', marginBottom: '8px', display: 'block' }}>JUSTIFICACIÓN DEL PAGO (OBLIGATORIO)</label>
-                    <textarea className="te-input" value={form.justificacion_detallada} onChange={(e) => setForm({ ...form, justificacion_detallada: e.target.value })} placeholder="Motivo del pago..." style={{ width: '100%', minHeight: '60px', borderRadius: '15px' }} disabled={isEditing} />
+                  <div style={{ marginBottom: '15px' }}>
+                    <label className="stat-label" style={{
+                      color: '#1e293b',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      background: 'linear-gradient(90deg, #f1f5f9 0%, transparent 100%)',
+                      padding: '6px 12px',
+                      borderRadius: '8px',
+                      borderLeft: '4px solid #0ea5e9',
+                      width: 'fit-content',
+                      marginBottom: '10px',
+                      boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+                      fontSize: '11px',
+                      fontWeight: '800',
+                      textTransform: 'uppercase'
+                    }}>
+                      <FileText size={16} color="#0ea5e9" />
+                      DESCRIPCIÓN DE LA SOLICITUD <span style={{ color: '#ef4444', fontWeight: 'bold' }}>*</span>
+                    </label>
+                    <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                      <input
+                        className="te-input"
+                        type="text"
+                        value={form.justificacion_detallada}
+                        onChange={(e) => setForm({ ...form, justificacion_detallada: e.target.value })}
+                        placeholder="Explique el motivo de la requisición (Obligatorio)"
+                        required
+                        disabled={isEditing}
+                        style={{
+                          flex: 1,
+                          border: '1px solid',
+                          borderColor: !form.justificacion_detallada ? 'rgba(14, 165, 233, 0.4)' : '#cbd5e1',
+                          boxShadow: !form.justificacion_detallada ? '0 0 0 2px rgba(14, 165, 233, 0.1)' : 'none',
+                          transition: 'all 0.3s ease',
+                          height: '42px',
+                          borderRadius: '12px',
+                          backgroundColor: '#f8fafc',
+                          padding: '0 12px',
+                          boxSizing: 'border-box'
+                        }}
+                      />
+                      <button
+                        onClick={() => setVerJustificacion(!verJustificacion)}
+                        style={{
+                          width: '42px', height: '42px', borderRadius: '12px',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          cursor: 'pointer', transition: 'all 0.2s',
+                          backgroundColor: verJustificacion ? '#8b5cf6' : 'white',
+                          color: verJustificacion ? 'white' : '#64748b',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
+                          border: '1px solid #cbd5e1'
+                        }}
+                        title="Ver Observaciones"
+                      >
+                        <MessageSquare size={20} />
+                      </button>
+                    </div>
                   </div>
 
-                  <div style={{ overflowX: 'auto', borderRadius: '15px', border: '1px solid #f1f5f9' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                      <thead style={{ backgroundColor: '#f8fafc' }}>
+                  {verJustificacion && (
+                    <div style={{ padding: '15px', backgroundColor: '#f8fafc', borderRadius: '12px', border: '1px solid #cbd5e1', marginTop: '10px', marginBottom: '20px' }}>
+                      <label style={{ fontSize: '10px', fontWeight: '900', color: '#0f172a', marginBottom: '8px', display: 'block' }}>OBSERVACIONES Y NOTAS</label>
+                      <textarea
+                        className="te-input"
+                        value={form.justificacion}
+                        onChange={(e) => setForm({ ...form, justificacion: e.target.value })}
+                        placeholder="Observaciones o notas adicionales..."
+                        style={{ width: '100%', minHeight: '60px', borderRadius: '12px', backgroundColor: 'white', border: '1px solid #cbd5e1', boxSizing: 'border-box', padding: '10px 12px' }}
+                        disabled={isEditing}
+                      />
+                    </div>
+                  )}
+
+                  <div className="te-table-wrapper" style={{ border: '1px solid #cbd5e1' }}>
+                    <table className="te-table">
+                      <thead className="te-thead">
                         <tr>
-                          <th style={{ padding: '12px', textAlign: 'left', fontSize: '9px' }}>#</th>
-                          <th style={{ padding: '12px', textAlign: 'left', fontSize: '9px' }}>CLASIFICACIÓN</th>
-                          <th style={{ padding: '12px', textAlign: 'left', fontSize: '9px' }}>CATEGORÍA</th>
-                          <th style={{ padding: '12px', textAlign: 'center', fontSize: '9px' }}>CANT.</th>
-                          <th style={{ padding: '12px', textAlign: 'center', fontSize: '9px' }}>UNI.</th>
-                          <th style={{ padding: '12px', textAlign: 'left', fontSize: '9px' }}>DESCRIPCIÓN</th>
-                          <th style={{ padding: '12px', textAlign: 'left', fontSize: '9px' }}>BENEFICIARIO</th>
-                          <th style={{ padding: '12px', textAlign: 'right', fontSize: '9px' }}>P.U.</th>
-                          <th style={{ padding: '12px', textAlign: 'right', fontSize: '9px' }}>TOTAL</th>
+                          <th className="te-th" style={{ width: '50px' }}>#</th>
+                          <th className="te-th">CLASIFICACIÓN</th>
+                          <th className="te-th">CATEGORÍA</th>
+                          <th className="te-th" style={{ textAlign: 'center', width: '80px' }}>CANT.</th>
+                          <th className="te-th" style={{ textAlign: 'center', width: '90px' }}>UNI.</th>
+                          <th className="te-th">DESCRIPCIÓN</th>
+                          <th className="te-th">BENEFICIARIO</th>
+                          <th className="te-th" style={{ textAlign: 'right', width: '100px' }}>P.U.</th>
+                          <th className="te-th" style={{ textAlign: 'right', width: '120px' }}>TOTAL</th>
                         </tr>
                       </thead>
-                      <tbody>
+                      <tbody className="te-tbody">
                         {form.partidas.map((p, i) => (
-                          <tr key={p.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                            <td style={{ padding: '12px', fontSize: '11px' }}>{i + 1}</td>
-                            <td style={{ padding: '8px', fontSize: '11px' }}>{p.clasificacion}</td>
-                            <td style={{ padding: '8px', fontSize: '11px' }}>{p.categoria}</td>
-                            <td style={{ padding: '8px', textAlign: 'center', fontSize: '11px' }}>{p.cantidad}</td>
-                            <td style={{ padding: '8px', textAlign: 'center', fontSize: '11px' }}>{p.unidad}</td>
-                            <td style={{ padding: '8px', fontSize: '11px' }}>{p.descripcion}</td>
-                            <td style={{ padding: '8px' }}>
-                              <input className="te-input" value={p.beneficiario} onChange={(e) => manejarCambioPartida(i, 'beneficiario', e.target.value)} disabled={isEditing} style={{ width: '100%', border: 'none', background: 'transparent', fontWeight: '600', fontSize: '11px' }} />
+                          <tr key={p.id}>
+                            <td className="te-td" style={{ fontSize: '11px', textAlign: 'center', fontWeight: 'bold', color: '#64748b', padding: '12px 8px' }}>{i + 1}</td>
+                            <td className="te-td" style={{ padding: '12px 8px', fontSize: '11px', color: '#1e293b' }}>{p.clasificacion}</td>
+                            <td className="te-td" style={{ padding: '12px 8px', fontSize: '11px', color: '#1e293b' }}>{p.categoria}</td>
+                            <td className="te-td" style={{ padding: '12px 8px', textAlign: 'center', fontSize: '11px', color: '#1e293b' }}>{p.cantidad}</td>
+                            <td className="te-td" style={{ padding: '12px 8px', textAlign: 'center', fontSize: '11px', color: '#1e293b' }}>{p.unidad}</td>
+                            <td className="te-td" style={{ padding: '12px 8px', fontSize: '11px', color: '#1e293b' }}>{p.descripcion}</td>
+                            <td className="te-td" style={{ padding: '8px 4px' }}>
+                              <input
+                                className="te-input"
+                                value={p.beneficiario || ''}
+                                onChange={(e) => manejarCambioPartida(i, 'beneficiario', e.target.value)}
+                                disabled={isEditing}
+                                placeholder="Beneficiario"
+                                style={{
+                                  width: '100%',
+                                  border: '1px solid #cbd5e1',
+                                  borderRadius: '8px',
+                                  padding: '6px 10px',
+                                  fontSize: '11px',
+                                  fontWeight: '600',
+                                  backgroundColor: 'white',
+                                  boxSizing: 'border-box'
+                                }}
+                              />
                             </td>
-                            <td style={{ padding: '8px', textAlign: 'right', fontSize: '11px' }}>$ {p.pu.toLocaleString()}</td>
-                            <td style={{ padding: '8px', textAlign: 'right', fontSize: '11px', fontWeight: '800' }}>$ {p.total.toLocaleString()}</td>
+                            <td className="te-td" style={{ padding: '12px 8px', textAlign: 'right', fontSize: '11px', color: '#1e293b' }}>$ {p.pu?.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
+                            <td className="te-td" style={{ textAlign: 'right', fontWeight: 'bold', fontSize: '11px', paddingRight: '10px', color: '#1e293b' }}>
+                              $ {p.total.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                            </td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
                   </div>
+
+                  {/* SECCIÓN DE SOPORTES Y TOTALES */}
+                  <div style={{ display: 'flex', gap: '20px', marginTop: '20px', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+                    {/* IZQUIERDA: SOPORTES COMPACTOS */}
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
+                        <button
+                          onClick={() => setMostrarSoportes(!mostrarSoportes)}
+                          style={{
+                            padding: '6px 14px', borderRadius: '8px',
+                            display: 'flex', alignItems: 'center', gap: '8px',
+                            cursor: 'pointer', transition: 'all 0.2s',
+                            backgroundColor: mostrarSoportes ? '#10b981' : '#f8fafc',
+                            color: mostrarSoportes ? 'white' : '#64748b',
+                            border: '1px solid #cbd5e1',
+                            fontSize: '0.7rem',
+                            fontWeight: '900'
+                          }}
+                        >
+                          <Camera size={14} /> {mostrarSoportes ? 'OCULTAR SOPORTES' : 'VER SOPORTES'}
+                        </button>
+
+                        {mostrarSoportes && (
+                          <label
+                            style={{
+                              padding: '6px 14px', borderRadius: '8px',
+                              display: 'flex', alignItems: 'center', gap: '8px',
+                              cursor: loading ? 'not-allowed' : 'pointer',
+                              backgroundColor: '#0ea5e9',
+                              color: 'white',
+                              border: 'none',
+                              fontSize: '0.7rem',
+                              fontWeight: '900',
+                              boxShadow: '0 2px 4px rgba(14, 165, 233, 0.2)'
+                            }}
+                          >
+                            {loading ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                            {loading ? 'SUBIENDO...' : 'AÑADIR'}
+                            <input type="file" style={{ display: 'none' }} onChange={manejarSubidaSoporte} disabled={loading} accept="image/*,application/pdf" />
+                          </label>
+                        )}
+                      </div>
+
+                      {mostrarSoportes && (
+                        <div
+                          style={{
+                            padding: '15px',
+                            backgroundColor: '#f8fafc',
+                            borderRadius: '12px',
+                            border: '1px dashed #cbd5e1',
+                            minHeight: '80px',
+                            boxSizing: 'border-box'
+                          }}
+                        >
+                          {parsearFacturaUrls(form.facturas_url).length === 0 ? (
+                            <div style={{ color: '#94a3b8', fontSize: '0.75rem', padding: '10px' }}>
+                              No hay soportes adjuntos. Haz clic en AÑADIR para subir.
+                            </div>
+                          ) : (
+                            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                              {parsearFacturaUrls(form.facturas_url).map((item, idx) => {
+                                if (!item || !item.url) return null;
+                                const isImg = /\.(jpg|jpeg|png|webp|avif|gif)$/i.test(item.url.split('?')[0]);
+                                return (
+                                  <div key={idx} style={{ position: 'relative', width: '60px', height: '60px' }}>
+                                    <a href={item.url} target="_blank" rel="noreferrer" style={{
+                                      display: 'block', width: '100%', height: '100%',
+                                      borderRadius: '8px', overflow: 'hidden', border: '1px solid #cbd5e1',
+                                      backgroundColor: 'white'
+                                    }} title={item.name}>
+                                      {isImg ? (
+                                        <img src={item.url} alt={item.name || `Soporte ${idx}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                      ) : (
+                                        <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#fef2f2', color: '#ef4444' }}>
+                                          <FileText size={18} />
+                                        </div>
+                                      )}
+                                    </a>
+                                    <button
+                                      onClick={() => eliminarSoporte(idx)}
+                                      style={{ position: 'absolute', top: '-5px', right: '-5px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '50%', width: '18px', height: '18px', fontSize: '9px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}
+                                    >
+                                      ✕
+                                    </button>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* DERECHA: TOTALES */}
+                    <div className="totals-container" style={{ width: '100%', maxWidth: '350px', minWidth: '350px', marginTop: 0 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', color: '#64748b' }}>
+                        <span style={{ fontSize: '12px', fontWeight: 'bold' }}>SUB-TOTAL ESTIMADO:</span>
+                        <span style={{ fontSize: '12px', fontWeight: 'bold' }}>$ {subtotalTotal.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '2px solid #e2e8f0', paddingTop: '10px', color: '#1e3a8a' }}>
+                        <span style={{ fontWeight: '900', fontSize: '1rem' }}>TOTAL ESTIMADO {form.con_iva !== false ? "(C/IVA)" : "(S/IVA)"}:</span>
+                        <span style={{ fontSize: '1.2rem', fontWeight: '900' }}>$ {totalGeneral.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
 
               {/* --- PIE DE PÁGINA FIJO --- */}
-              <div style={{ flexShrink: 0, padding: '20px 35px', borderTop: '1px solid rgba(226, 232, 240, 0.5)', backgroundColor: 'rgba(255, 255, 255, 0.3)', display: 'flex', justifyContent: 'flex-end', gap: '15px' }}>
-                <button onClick={() => setShowModal(false)} style={{ padding: '10px 25px', borderRadius: '12px', border: '1px solid #cbd5e1', background: 'white', fontWeight: 'bold' }}>CERRAR</button>
-                <button onClick={emitirTicket} disabled={loading} style={{ padding: '10px 35px', borderRadius: '12px', border: 'none', background: '#1d4ed8', color: 'white', fontWeight: 'bold' }}>
-                  {loading ? 'PROCESANDO...' : 'EMITIR Y FINALIZAR TICKET'}
+              <div style={{ flexShrink: 0, padding: '20px 35px', borderTop: '1px solid rgba(226, 232, 240, 0.5)', backgroundColor: 'rgba(255, 255, 255, 0.3)', display: 'flex', justifyContent: 'flex-end', gap: '15px', alignItems: 'center' }}>
+                {!isEditing ? (
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', fontWeight: 'bold', color: '#475569', cursor: 'pointer', userSelect: 'none', marginRight: '6px' }}>
+                    <input
+                      type="checkbox"
+                      checked={form.con_iva !== false}
+                      onChange={(e) => setForm({ ...form, con_iva: e.target.checked })}
+                      style={{ width: '15px', height: '15px', accentColor: '#0ea5e9', cursor: 'pointer' }}
+                    />
+                    ¿Con IVA (16%)?
+                  </label>
+                ) : (
+                  <span style={{ fontSize: '0.7rem', fontWeight: '800', color: (form.con_iva !== false) ? '#16a34a' : '#ef4444', backgroundColor: (form.con_iva !== false) ? '#f0fdf4' : '#fef2f2', padding: '3px 8px', borderRadius: '6px', marginRight: '6px' }}>
+                    {(form.con_iva !== false) ? 'CON IVA (16%)' : 'SIN IVA'}
+                  </span>
+                )}
+                <button
+                  onClick={() => setShowModal(false)}
+                  style={{
+                    padding: '10px 25px',
+                    borderRadius: '12px',
+                    border: '1px solid #cbd5e1',
+                    background: 'white',
+                    fontWeight: 'bold',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    cursor: 'pointer',
+                    color: '#1e293b',
+                    fontSize: '0.85rem'
+                  }}
+                >
+                  <ArrowLeft size={16} /> VOLVER
+                </button>
+                <button
+                  onClick={emitirTicket}
+                  disabled={loading}
+                  style={{
+                    padding: '10px 35px',
+                    borderRadius: '12px',
+                    border: 'none',
+                    background: '#2563eb',
+                    color: 'white',
+                    fontWeight: 'bold',
+                    cursor: 'pointer',
+                    boxShadow: '0 4px 12px rgba(37, 99, 235, 0.2)',
+                    fontSize: '0.85rem'
+                  }}
+                >
+                  {loading ? 'PROCESANDO...' : (isEditing ? 'ACTUALIZAR TICKET' : 'EMITIR Y FINALIZAR TICKET')}
                 </button>
               </div>
             </div>

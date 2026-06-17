@@ -74,7 +74,6 @@ const Auth = () => {
                 type="email" 
                 name="email" 
                 value={loginData.email} 
-                placeholder="ejemplo@totalclean.com" 
                 onChange={handleChange} 
                 required 
               />
@@ -88,7 +87,6 @@ const Auth = () => {
               <input 
                 type={showPassword ? "text" : "password"} 
                 name="password" 
-                placeholder="••••••••" 
                 onChange={handleChange} 
                 required 
               />
@@ -108,7 +106,7 @@ const Auth = () => {
         </form>
 
         <footer className="auth-footer">
-          Total Clean C.A. &copy; 2026 
+         
         </footer>
       </div>
     </div>

@@ -1,6 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
 import fs from 'fs';
-import path from 'path';
 
 const envContent = fs.readFileSync('.env.local', 'utf-8');
 const env = {};
@@ -15,9 +14,15 @@ envContent.split('\n').forEach(line => {
 
 const supabase = createClient(env.VITE_SUPABASE_URL, env.VITE_SUPABASE_ANON_KEY);
 
-async function checkJarlen() {
-    const { data: jarlen } = await supabase.from('perfiles').select('*').ilike('nombre', '%Jarlen%').maybeSingle();
-    console.log("Perfil de Jarlen:", jarlen);
+async function test() {
+  const columns = ['solicitud_ref', 'clasificacion_admin', 'centro_costo', 'departamento', 'codigo_control'];
+  for (const col of columns) {
+    const { data, error } = await supabase.from('tickets_directos').select(col).limit(1);
+    if (error) {
+      console.log(`Column ${col}: ERROR -> ${error.message}`);
+    } else {
+      console.log(`Column ${col}: SUCCESS`);
+    }
+  }
 }
-
-checkJarlen();
+test();

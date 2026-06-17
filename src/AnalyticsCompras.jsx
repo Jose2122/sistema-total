@@ -190,7 +190,7 @@ const AnalyticsCompras = ({ usuario }) => {
                 let deadline = r.fecha_limite_compra;
                 if (!deadline && r.fecha_emision) {
                     const base = new Date(r.fecha_emision);
-                    const dias = r.prioridad === 'Emergencia' ? 1 : 5;
+                    const dias = r.prioridad === 'Emergencia' ? 2 : 5;
                     deadline = new Date(base.getTime() + (dias * 24 * 60 * 60 * 1000));
                 } else if (deadline) {
                     deadline = new Date(deadline);
@@ -506,10 +506,12 @@ const AnalyticsCompras = ({ usuario }) => {
     return (
         <div style={styles.wrapper}>
             {/* ENCABEZADO Y SELECTOR DE VISTAS (TABS PREMIUM) */}
-            <div style={styles.header}>
-                <div>
-                    <h1 style={styles.title}>Estadísticas y Trazabilidad</h1>
-                    <p style={styles.subtitle}>
+            <div style={{ ...styles.header, borderBottom: 'none', paddingBottom: 0, marginBottom: '30px' }}>
+                <div style={{ borderLeft: '6px solid #0ea5e9', paddingLeft: '16px' }}>
+                    <h1 style={{ margin: 0, color: '#0f172a', fontSize: '1.8rem', fontWeight: '900', fontFamily: 'Inter, sans-serif', letterSpacing: '-0.5px' }}>
+                        Estadísticas y Trazabilidad
+                    </h1>
+                    <p style={{ margin: '4px 0 0 0', color: '#64748b', fontSize: '0.9rem', fontWeight: '500', fontFamily: 'Inter, sans-serif' }}>
                         {esGerenteDeCompras 
                             ? `Panel de Control de Gestión para Ricardo Herrera (Gerente de Compras)`
                             : `Mi Panel de Autogestión de Compras (Analista: ${usuario?.nombre} ${usuario?.apellido})`

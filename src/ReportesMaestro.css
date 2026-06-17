@@ -962,3 +962,59 @@
     color: #0f172a;
 }
 
+
+/* Harmonious style overrides for ReportesMaestro */
+.rm-table-link {
+    color: #3b82f6;
+    font-weight: 700;
+    text-decoration: none;
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: color 0.15s ease;
+    display: inline-block;
+}
+
+.rm-table-link:hover {
+    color: #1d4ed8;
+    text-decoration: underline;
+}
+
+.rm-table-subtext {
+    color: #64748b;
+    font-size: 0.75rem;
+    font-weight: 500;
+    margin-top: 2px;
+    display: block;
+}
+
+.rm-td-invoice {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    color: #64748b;
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
+.rm-td-solicitante {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #334155;
+}
+
+.rm-badge-pago {
+    display: inline-block;
+    padding: 3px 8px;
+    border-radius: 6px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.rm-badge-pago.usd {
+    background-color: #dcfce7;
+    color: #15803d;
+}
+
+.rm-badge-pago.bs {
+    background-color: #e0f2fe;
+    color: #0369a1;
+}

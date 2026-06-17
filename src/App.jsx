@@ -59,7 +59,7 @@ function App() {
   return (
     <Router>
       <Toaster 
-        position="top-right" 
+        position="top-center" 
         containerStyle={{ zIndex: 999999 }}
         toastOptions={{ 
           duration: 5000,

@@ -50,6 +50,7 @@ export const obtenerSiglasGerencia = (gerencia) => {
     return 'ADM';
   }
   const mapping = {
+    'Dirección Corporativa': 'DC',
     'Gerencia General': 'GG',
     'Administración': 'ADM',
     'Contabilidad': 'CONT',

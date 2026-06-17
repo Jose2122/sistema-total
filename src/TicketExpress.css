@@ -242,3 +242,29 @@
   border: 1px solid #e2e8f0;
   box-shadow: inset 0 2px 4px rgba(0,0,0,0.02);
 }
+
+.te-table-input {
+  width: 100%;
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  padding: 8px 12px;
+  outline: none;
+  font-family: inherit;
+  font-size: 0.85rem;
+  color: #0f172a;
+  background-color: white;
+  box-sizing: border-box;
+  transition: all 0.2s;
+}
+
+.te-table-input:focus {
+  border-color: #0ea5e9;
+  box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.15);
+}
+
+.te-table-input:disabled {
+  background-color: #f8fafc;
+  color: #64748b;
+  cursor: not-allowed;
+  border-color: #cbd5e1;
+}

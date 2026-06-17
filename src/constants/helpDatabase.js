@@ -1,57 +1,99 @@
 export const helpDatabase = [
   {
-    id: "solicitud-fondos",
-    titulo: "Guía de Solicitud de Fondos",
-    categoria: "Solicitud de Fondos",
-    keywords: ["fondos", "dinero", "caja chica", "pago", "solicitud", "aprobar", "transferencia", "moneda", "banco", "dolar", "bs", "bolivar"],
-    descripcion: "Procedimiento detallado para solicitar fondos destinados a gastos operativos, viáticos o compras urgentes, y entender su ciclo de aprobación.",
+    id: "usuarios-permisos",
+    titulo: "Acceso al Sistema y Panel Principal",
+    categoria: "Usuarios",
+    keywords: ["acceso", "login", "contraseña", "dashboard", "resumen", "menu", "sidebar", "permisos", "roles"],
+    descripcion: "Guía oficial para ingresar al SITC, gestionar incidencias de acceso y comprender el menú lateral adaptativo por roles corporativos.",
     flujoEstatus: [
-      { nombre: "BORRADOR", bg: "#f1f5f9", col: "#475569", desc: "La solicitud está siendo editada por el usuario y aún no se ha enviado al flujo de revisión." },
-      { nombre: "PENDIENTE REGISTRO", bg: "#fef3c7", col: "#d97706", desc: "La solicitud fue enviada y está siendo revisada por Administración para su registro contable." },
-      { nombre: "PENDIENTE FIRMA", bg: "#eff6ff", col: "#1d4ed8", desc: "La solicitud fue registrada y requiere la firma digital de autorización de tu Gerente de Departamento." },
-      { nombre: "PENDIENTE APROBACIÓN", bg: "#f5f3ff", col: "#6d28d9", desc: "Autorizada por el departamento. Espera por la aprobación financiera final de la Gerencia General." },
-      { nombre: "APROBADO", bg: "#dcfce7", col: "#15803d", desc: "Solicitud aprobada por completo. Lista para la emisión de pago o transferencia bancaria." },
-      { nombre: "RECHAZADO", bg: "#fee2e2", col: "#b91c1c", desc: "La solicitud fue rechazada debido a observaciones. Revisa los comentarios para corregir y reenviar." }
+      { nombre: "ROL ESTÁNDAR", bg: "#eff6ff", col: "#1d4ed8", desc: "Disponible para Gerencias y Analistas Solicitantes. Módulos básicos de Resumen, Requisiciones, Fondos y Perfil." },
+      { nombre: "ROL ADMINISTRADOR", bg: "#f5f3ff", col: "#6d28d9", desc: "Permite manejar funciones globales del sistema, configuración de atributos y control de usuarios." },
+      { nombre: "ROL COMPRAS", bg: "#dcfce7", col: "#15803d", desc: "Habilita herramientas adicionales de procesamiento de compras, reportes avanzados, directorio de proveedores y estadísticas de SLA." }
     ],
     pasos: [
       {
         paso: 1,
-        titulo: "Abrir Formulario de Solicitud",
-        detalle: "Navega a 'Solicitud de Fondos' en el menú izquierdo y haz clic en el botón sutil '+ NUEVA SOLICITUD' situado arriba de la tabla."
+        titulo: "Ingresar Credenciales Corporativas",
+        detalle: "Escribe tu correo institucional (ej. usuario@totalclean.com) y contraseña privada. Puedes alternar la visibilidad de la clave con el icono del ojo."
       },
       {
         paso: 2,
-        titulo: "Ingresar Datos de Cabecera",
-        detalle: "Completa el nombre del Beneficiario, selecciona el Departamento solicitante, añade un Concepto General descriptivo y define la Moneda (USD / BS)."
+        titulo: "Validación y Entrada",
+        detalle: "Haz clic en el botón [ Entrar al Sistema ➔ ] para autenticar la sesión a través de Supabase y acceder al panel."
       },
       {
         paso: 3,
-        titulo: "Agregar Renglones Detallados",
-        detalle: "Escribe la descripción del gasto específico, introduce el monto y selecciona la Cuenta Contable de gasto correspondiente. Presiona el botón '+' para añadirlo a la tabla. Puedes agregar múltiples conceptos."
+        titulo: "Interpretar Stats Cards de Cabecera",
+        detalle: "Revisa los indicadores rápidos en la cabecera: Mis Requisiciones, Gasto Acumulado, Pendientes Aprobación y Equipo de Trabajo."
       },
       {
         paso: 4,
-        titulo: "Cargar Soportes Obligatorios",
-        detalle: "Sube las facturas, cotizaciones o justificaciones digitalizadas en el campo de adjuntos. Toda solicitud de fondos requiere un soporte legible para ser registrada."
+        titulo: "Revisar Distribución de Gastos",
+        detalle: "Examina el gráfico circular de donut a la izquierda y su leyenda de impacto (los montos mayores a cero se destacan en negrita negra para auditoría)."
       },
       {
         paso: 5,
-        titulo: "Guardar y Enviar",
-        detalle: "Presiona el botón 'GUARDAR SOLICITUD'. Su estatus pasará inmediatamente a 'PENDIENTE REGISTRO' y se notificará al departamento administrativo para iniciar el flujo."
+        titulo: "Monitorear Trazabilidad en Vivo",
+        detalle: "Usa el historial dinámico a la derecha alternando entre 'Mis Requisiciones' y 'Colegas' para ver el estatus en tiempo real sin recargar."
       }
     ],
     faq: [
       {
-        pregunta: "¿Por qué no me deja editar una solicitud de fondos?",
-        respuesta: "Por razones de auditoría y seguridad, las solicitudes de fondos solo pueden ser editadas o eliminadas mientras se encuentren en estatus 'BORRADOR'. Una vez enviadas a 'PENDIENTE REGISTRO', su contenido queda bloqueado."
+        pregunta: "¿Qué hago si tengo problemas de bloqueo o falta de acceso?",
+        respuesta: "Debes ponerte en contacto inmediato con el Administrador del Sistema para solicitar la creación, desbloqueo o restablecimiento de tu contraseña."
       },
       {
-        pregunta: "¿Qué hacer si mi solicitud fue RECHAZADA?",
-        respuesta: "Abre la solicitud desde la tabla principal del módulo. En la parte superior aparecerá un recuadro rojo con el motivo detallado de rechazo provisto por el revisor. Deberás duplicar o ajustar los datos y volver a guardarla para reiniciar el flujo."
+        pregunta: "¿Por qué no veo ciertos módulos en mi menú lateral?",
+        respuesta: "El menú lateral (Sidebar) es adaptativo y evalúa estrictamente los permisos guardados en tu perfil en tiempo real. Si un módulo no está marcado en tus permisos, no aparecerá en el menú."
+      }
+    ]
+  },
+  {
+    id: "solicitud-fondos",
+    titulo: "Solicitud de Fondos y Gestión Semanal",
+    categoria: "Solicitud de Fondos",
+    keywords: ["fondos", "presupuesto", "semanal", "borrador", "nueva solicitud", "imputar", "banco", "dolar", "bs", "bolivar"],
+    descripcion: "Procedimiento para proyectar, presupuestar y controlar los gastos semanales imputados a tus frentes de trabajo.",
+    flujoEstatus: [
+      { nombre: "VIGENCIA SEMANAL", bg: "#eff6ff", col: "#1d4ed8", desc: "El ciclo presupuestario inicia el Lunes y expira el Domingo a las 11:59 PM de forma inmutable." },
+      { nombre: "MONEDA PAGO BS/$", bg: "#fef3c7", col: "#d97706", desc: "Indica dólares presupuestados pero pagaderos en Bolívares." },
+      { nombre: "MONEDA PAGO $/$", bg: "#dcfce7", col: "#15803d", desc: "Indica divisas líquidas pagaderas estrictamente en efectivo o transferencia internacional." }
+    ],
+    pasos: [
+      {
+        paso: 1,
+        titulo: "Crear Nueva Solicitud Semanal",
+        detalle: "Presiona '+ Nueva Solicitud', selecciona la fecha en el calendario interactivo para comprobar disponibilidad y presiona 'Crear Nueva'."
       },
       {
-        pregunta: "¿Cuánto tiempo toma el procesamiento de un pago?",
-        respuesta: "Una vez que la solicitud alcanza el estatus 'APROBADO', el departamento de Tesorería procesa el pago dentro de las siguientes 24 a 48 horas hábiles, según la disponibilidad bancaria."
+        paso: 2,
+        titulo: "Identificar ID de Control",
+        detalle: "El sistema genera un código inteligente (ej. MTT-SEM-20-26) basado en la gerencia, número de semana y año en curso."
+      },
+      {
+        paso: 3,
+        titulo: "Añadir Renglones e Imputar Gastos",
+        detalle: "Presiona '+ Añadir Renglón' y rellena de izquierda a derecha: Centro de Costo, Clasificación, Categoría, Detalle, Cantidad y P.Unitario."
+      },
+      {
+        paso: 4,
+        titulo: "Uso de Borradores",
+        detalle: "Puedes cargar el presupuesto de forma progresiva. Usa 'Guardar Borrador' para resguardar los cambios en la nube sin enviarlos a revisión final."
+      },
+      {
+        paso: 5,
+        titulo: "Accionar Orden de Abastecimiento",
+        detalle: "Marca la casilla (columna N) del renglón que requieras procesar e inmediatamente presiona 'Crear Requisición' para iniciar el proceso de aprobacion hasta ser despachado a compras."
+      }
+    ],
+    faq: [
+      {
+        pregunta: "¿Qué miden las tarjetas de control estadístico (Stats Cards)?",
+        respuesta: "Calculan en tiempo real el presupuesto Estimado, lo Comprado físicamente, lo Pendiente en cola y la diferencia o Salud Presupuestaria."
+      },
+      {
+        pregunta: "¿Qué pasa con mis fondos no ejecutados al finalizar la semana?",
+        respuesta: "El ciclo presupuestario expira inmutablemente cada Domingo a las 11:59 PM, por lo que toda planificación remanente debe ser renovada para la siguiente semana."
       }
     ]
   },
@@ -59,203 +101,190 @@ export const helpDatabase = [
     id: "requisiciones-guia",
     titulo: "Ciclo de Requisición de Materiales",
     categoria: "Requisiciones",
-    keywords: ["requisicion", "material", "compra", "pedido", "almacen", "insumos", "solicitar", "aprobar", "anular"],
-    descripcion: "Guía paso a paso para crear requisiciones internas de insumos de limpieza, oficina y materiales especializados.",
+    keywords: ["requisicion", "material", "compra", "pedido", "trazabilidad", "sla", "vencido", "timeline", "pdf", "furc"],
+    descripcion: "Procedimiento para auditar y monitorear requisiciones creadas desde los fondos presupuestarios, controlando firmas y tiempos (SLA).",
     flujoEstatus: [
-      { nombre: "CREADA", bg: "#f1f5f9", col: "#475569", desc: "La requisición ha sido registrada en el sistema por el solicitante." },
-      { nombre: "PENDIENTE", bg: "#fef3c7", col: "#d97706", desc: "Espera por la firma de autorización del Gerente o Supervisor a cargo." },
-      { nombre: "APROBADA", bg: "#dcfce7", col: "#15803d", desc: "Aprobada por completo. El equipo de compras procederá a cotizar y emitir órdenes." },
-      { nombre: "ANULADA", bg: "#fee2e2", col: "#b91c1c", desc: "Requisición cancelada por el usuario o rechazada por la gerencia debido a duplicaciones o presupuesto." }
+      { nombre: "TIMELINE EN VERDE", bg: "#dcfce7", col: "#15803d", desc: "Cada hito o firma digital completada se ilumina en verde, registrando inmutablemente nombre, fecha y hora." },
+      { nombre: "SLA EN TIEMPO", bg: "#eff6ff", col: "#1d4ed8", desc: "El indicador de tiempo se encuentra dentro de los rangos óptimos de procesamiento logístico." },
+      { nombre: "SLA VENCIDO", bg: "#fee2e2", col: "#b91c1c", desc: "Alerta crítica en mapa de calor que denota retrasos en la cotización o compra del ticket." }
     ],
     pasos: [
       {
         paso: 1,
-        titulo: "Iniciar Nueva Requisición",
-        detalle: "Haz clic en 'Requisiciones' en el menú y presiona '+ NUEVA REQUISICIÓN'. El sistema asignará un correlativo automático."
+        titulo: "Monitorear Resumen Logístico",
+        detalle: "Examina las tarjetas del panel superior: Total Requisiciones, Aprobada Global, Pendientes, Rechazadas y Anuladas."
       },
       {
         paso: 2,
-        titulo: "Añadir Ítems del Catálogo",
-        detalle: "Busca los productos requeridos por código o nombre en el buscador interno, ingresa la cantidad necesaria y presiona 'Añadir'. Puedes especificar renglones personalizados si el ítem no está catalogado."
+        titulo: "Filtrar y Auditar el Historial",
+        detalle: "Utiliza la barra de búsqueda y filtros avanzados (por C.Costo, Categoría, Gerencia o Estatus) para localizar requisiciones específicas."
       },
       {
         paso: 3,
-        titulo: "Justificar el Requerimiento",
-        detalle: "Escribe en el campo de observaciones el destino o uso de los materiales. Esto facilita la aprobación oportuna por parte de la Gerencia."
+        titulo: "Verificar Firmas e Timeline",
+        detalle: "Haz clic en 'Ver Detalle' y comprueba la línea de tiempo interactiva de firmas digitales en la parte superior."
       },
       {
         paso: 4,
-        titulo: "Enviar a Firma",
-        detalle: "Haz clic en 'Guardar'. Tu requisición quedará registrada en estatus 'PENDIENTE' hasta que tu supervisor firme el documento digitalmente."
+        titulo: "Corregir o Modificar Ítems",
+        detalle: "Usa el botón [ Habilitar Edición ] para corregir descripciones, cantidades o datos antes de que se proceda a la orden de despacho final."
+      },
+      {
+        paso: 5,
+        titulo: "Ingresar Comentarios u Observaciones",
+        detalle: "Accede al panel colapsable de observaciones para anexar notas aclaratorias o especificaciones técnicas sin alterar el requerimiento original."
+      },
+      {
+        paso: 6,
+        titulo: "Exportar Ficha Oficial (FURC)",
+        detalle: "Presiona el botón [ PDF ] para compilar las firmas y datos en la Ficha Única de Requisición Corporativa (FURC), formato estándar de soporte físico."
       }
     ],
     faq: [
       {
-        pregunta: "¿Cómo anular una fila de requisición sin cancelar todo el documento?",
-        respuesta: "Si la requisición está 'PENDIENTE', haz clic en el botón 'Ver Detalle', ubica la fila específica que deseas cancelar, presiona el icono de papelera y confirma. Esto guardará el historial con el estatus 'ANULADA' únicamente para ese ítem."
+        pregunta: "¿Qué es el Módulo de Eventos por ítem?",
+        respuesta: "Es una subtabla interactiva al final de cada fila de insumo que expone si el ítem está en estado COMPRA (con su factura y proveedor), SIN EFECTO (anulado con motivo formal) o JUSTIFICACIÓN (observación técnica de compra)."
       },
       {
-        pregunta: "¿Dónde veo el estatus de entrega de mis materiales?",
-        respuesta: "En la tabla de requisiciones, cada ítem muestra un porcentaje de despacho. Si está al 100%, significa que Almacén ya entregó todos los materiales solicitados."
+        pregunta: "¿Cómo sé quién aprobó mi requisición?",
+        respuesta: "Al abrir la requisición, la línea de tiempo superior detalla cronológicamente qué usuarios estamparon su firma (Jefe de Proyecto, Supervisor de Área, Gerencia General) junto con la fecha y hora exacta del evento."
       }
     ]
   },
   {
     id: "tickets-pago",
-    titulo: "Gestión de Tickets de Pago",
+    titulo: "Tickets de Pago y Gastos Fijos",
     categoria: "Tickets de pago",
-    keywords: ["ticket", "pago", "factura", "proveedor", "comprobante", "retencion", "iva", "islr", "conciliacion"],
-    descripcion: "Aprende a registrar y hacer seguimiento a los pagos a proveedores mediante la carga y aprobación de tickets de pago.",
+    keywords: ["ticket", "pago", "factura", "proveedor", "viaticos", "gastos fijos", "arrendamiento", "servicios"],
+    descripcion: "Guía para el registro de facturas de gastos fijos recurrentes de la empresa que no pasan por procesos logísticos de cotización.",
     flujoEstatus: [
-      { nombre: "RECIBIDO", bg: "#eff6ff", col: "#1d4ed8", desc: "El ticket y la factura del proveedor fueron cargados en el sistema." },
-      { nombre: "EN REVISIÓN", bg: "#fef3c7", col: "#d97706", desc: "Administración está verificando los montos, facturas y datos fiscales." },
-      { nombre: "PROGRAMADO", bg: "#f5f3ff", col: "#6d28d9", desc: "Factura validada y programada en el cronograma semanal de pagos." },
-      { nombre: "PAGADO", bg: "#dcfce7", col: "#15803d", desc: "Transferencia efectuada. El comprobante de pago está disponible para el proveedor." }
+      { nombre: "ENTORNO AMARILLO", bg: "#fef3c7", col: "#d97706", desc: "Visualización de alerta que se activa en el sistema al entrar en modo Ticket de Pago." },
+      { nombre: "GASTOS DIRECTOS", bg: "#eff6ff", col: "#1d4ed8", desc: "Imputaciones directas de tesorería y caja chica sin cotizaciones ni licitaciones." }
     ],
     pasos: [
       {
         paso: 1,
-        titulo: "Crear Ticket",
-        detalle: "Ingresa al módulo 'Ticket de Pago' y presiona '+ REGISTRAR TICKET'. Elige el proveedor de la lista homologada."
+        titulo: "Cambiar Interfaz a Tickets de Pago",
+        detalle: "Dentro del módulo de Solicitud de Fondos, haz clic en el botón 'Mostrar Ticket de Pago'. La tabla adquirirá un tono amarillo de advertencia."
       },
       {
         paso: 2,
-        titulo: "Cargar Factura y Montos",
-        detalle: "Escribe el número de control y factura, la fecha de emisión, base imponible, e IVA. El sistema calculará automáticamente las retenciones de ley."
+        titulo: "Seleccionar Imputación Directa",
+        detalle: "Completa la fila rellenando obligatoriamente Centro de Costo, Proveedor homologado, Número de Factura o Documento de soporte."
       },
       {
         paso: 3,
-        titulo: "Adjuntar PDF/XML de Factura",
-        detalle: "Es obligatorio subir la factura digitalizada y la cotización relacionada. Los tickets sin soporte adjunto serán devueltos inmediatamente."
+        titulo: "Definir Monto y Moneda de Pago",
+        detalle: "Introduce el precio unitario y elige si el pago se programará en dólares pagaderos en bolívares o en divisas líquidas ($/$)."
       },
       {
         paso: 4,
-        titulo: "Enviar a Programación",
-        detalle: "Presiona 'Enviar'. Administración validará el ticket y lo incorporará a la cola de pagos semanales."
+        titulo: "Retorno a Requisiciones",
+        detalle: "Para volver a la interfaz estándar de requisiciones logísticas, pulsa el botón 'Mostrar Requisiciones' en la base inferior del módulo."
       }
     ],
     faq: [
       {
-        pregunta: "¿Qué hacer si los montos calculados de retención son incorrectos?",
-        respuesta: "El sistema calcula las retenciones basándose en la ficha del proveedor (ej. 75% o 100% de IVA). Si consideras que hay un error, contacta a Administración para que actualice la configuración del proveedor en el módulo de 'Proveedores'."
-      },
-      {
-        pregunta: "¿Dónde descargo mi comprobante de retención?",
-        respuesta: "Una vez que el ticket de pago cambia a estatus 'PAGADO', podrás hacer clic en el botón 'Ver PDF Retención' de esa fila para descargar el comprobante oficial."
+        pregunta: "¿Para qué tipo de gastos se utiliza este modo?",
+        respuesta: "Se utiliza exclusivamente para gastos fijos ya contratados o recurrentes que no requieren gestión de compras, tales como arrendamientos, viáticos fijos, servicios públicos y tasas tributarias."
       }
     ]
   },
   {
     id: "compras-guia",
-    titulo: "Órdenes de Compra y Proveedores",
+    titulo: "Compras y Gestión de Proveedores",
     categoria: "Compras",
-    keywords: ["compra", "orden", "proveedor", "cotizar", "aprobar", "moneda", "despacho"],
-    descripcion: "Guía para el equipo de compras para la generación de Órdenes de Compra (OC) basadas en requisiciones aprobadas.",
+    keywords: ["compras", "proveedores", "homologacion", "almacen", "factura", "excel", "faltantes", "completadas", "trazabilidad"],
+    descripcion: "Manual de control logístico para delegar requisiciones aprobadas, registrar compras, controlar ingresos a Almacén e historiales de proveedores.",
     flujoEstatus: [
-      { nombre: "BORRADOR", bg: "#f1f5f9", col: "#475569", desc: "La orden está en elaboración por el comprador." },
-      { nombre: "PENDIENTE", bg: "#fef3c7", col: "#d97706", desc: "Esperando firma autorizada del Gerente de Compras o Director General." },
-      { nombre: "EMITIDA", bg: "#dcfce7", col: "#15803d", desc: "Orden aprobada y enviada oficialmente al proveedor para su despacho." },
-      { nombre: "COMPLETADA", bg: "#eff6ff", col: "#1d4ed8", desc: "Mercancía recibida e ingresada a inventario. Factura procesada." }
+      { nombre: "COMPRAS EN PROCESO", bg: "#fef3c7", col: "#d97706", desc: "El analista de compras ha registrado transacciones de forma parcial para la requisición." },
+      { nombre: "COMPRAS FINALIZADAS", bg: "#dcfce7", col: "#15803d", desc: "Todos los insumos solicitados en la orden han sido adquiridos al 100% y cerrados." },
+      { nombre: "SIN ASIGNAR", bg: "#fee2e2", col: "#b91c1c", desc: "Requisiciones aprobadas que acaban de ingresar a Compras y requieren la delegación de un comprador responsable." }
     ],
     pasos: [
       {
         paso: 1,
-        titulo: "Seleccionar Requisición Aprobada",
-        detalle: "En el módulo 'Órdenes de Compra', presiona 'Generar desde Requisición'. Selecciona el correlativo de la requisición aprobada."
+        titulo: "Delegar Requisición a Comprador",
+        detalle: "El Gerente de Compras selecciona al analista responsable usando el desplegable en la columna Responsable (los tickets nuevos inician como ⚠️ Sin Asignar)."
       },
       {
         paso: 2,
-        titulo: "Asignar Proveedor y Precios",
-        detalle: "Elige al proveedor idóneo y carga los precios unitarios negociados de la cotización ganadora. Configura la forma de pago (crédito, contado)."
+        titulo: "Monitorear Variables de Inventario",
+        detalle: "Al abrir el modal, comprueba las variables: Pedidas (Ped.), Compradas (Comp.) y Pendientes (Pend.). Si hay saldos en cola se destaca en naranja bold."
       },
       {
         paso: 3,
-        titulo: "Definir Lugar y Fecha de Entrega",
-        detalle: "Completa la dirección de entrega (Almacén Central o directo en obra/cliente) y la fecha estimada de despacho pactada."
+        titulo: "Registrar Transacción de Procura",
+        detalle: "Ingresa obligatoriamente el Número de Factura, Proveedor homologado, Moneda de Pago, Cantidad y el P.U. Real negociado."
       },
       {
         paso: 4,
-        titulo: "Enviar para Aprobación",
-        detalle: "Presiona 'Guardar'. Dependiendo del monto total de la OC, requerirá firmas de la Gerencia de Operaciones o Dirección General."
+        titulo: "Confirmar Ingreso a Almacén",
+        detalle: "Presiona el icono de casa (columna ALM) en la fila para certificar que la mercancía ingresó físicamente y está resguardada en stock."
+      },
+      {
+        paso: 5,
+        titulo: "Anular Saldos Pendientes (Cierre)",
+        detalle: "Si ya no se requiere comprar el remanente de un ítem, presiona el icono de bloqueo, selecciona el Motivo de Anulación y justifica el Cierre de Efecto."
+      },
+      {
+        paso: 6,
+        titulo: "Administrar Máster de Proveedores",
+        detalle: "Gestiona el directorio inmutable desde 'Proveedores'. Usa RIF (J-12345678-0), razón social, categorías (multi-tags) y activa/desactiva según corresponda."
+      },
+      {
+        paso: 7,
+        titulo: "Exportación Contextual Inteligente",
+        detalle: "Usa los botones de exportación dinámica en el reporte para descargar en Excel lo que ves en pantalla: Excel General, Faltantes o Completadas."
       }
     ],
     faq: [
       {
-        pregunta: "¿Cómo sé si una Orden de Compra ya fue pagada?",
-        respuesta: "En la pestaña de seguimiento de compras, las órdenes enlazadas a un Ticket de Pago en estatus 'PAGADO' mostrarán un check verde en la columna 'Finanzas'."
-      }
-    ]
-  },
-  {
-    id: "usuarios-permisos",
-    titulo: "Administración de Usuarios y Permisos",
-    categoria: "Usuarios",
-    keywords: ["usuario", "permiso", "rol", "crear", "bloquear", "contraseña", "departamento"],
-    descripcion: "Información para administradores sobre cómo gestionar el acceso del personal al sistema SITC.",
-    flujoEstatus: [
-      { nombre: "ACTIVO", bg: "#dcfce7", col: "#15803d", desc: "El usuario tiene acceso completo a los módulos permitidos en su perfil." },
-      { nombre: "INACTIVO", bg: "#fee2e2", col: "#b91c1c", desc: "Acceso bloqueado. El usuario no puede iniciar sesión en la plataforma." }
-    ],
-    pasos: [
-      {
-        paso: 1,
-        titulo: "Crear Nuevo Usuario",
-        detalle: "Ve a 'Gestión de Usuarios' y presiona '+ NUEVO USUARIO'. Ingresa el correo corporativo, nombre, apellido y cargo."
+        pregunta: "¿Cómo se enteran los departamentos del estatus de sus compras?",
+        respuesta: "El sistema SITC conecta ambos módulos. Al actualizar las facturas o almacén, los solicitantes pueden visualizarlo al instante haciendo clic en el icono de hoja (📄) de la columna TR (Trazabilidad) en su historial de requisiciones."
       },
       {
-        paso: 2,
-        titulo: "Asignar Rol y Departamento",
-        detalle: "Selecciona el Rol jerárquico (Admin, Gerente, Comprador, Solicitante) y el departamento al que pertenece. Esto rige las firmas del flujo de fondos."
-      },
-      {
-        paso: 3,
-        titulo: "Configurar Permisos de Módulos",
-        detalle: "Marca los casilleros de los módulos específicos a los que este usuario debe tener acceso en su panel lateral. Puedes restringir vistas enteras."
-      },
-      {
-        paso: 4,
-        titulo: "Guardar e Invitar",
-        detalle: "Haz clic en 'Guardar'. Se enviará un correo automático de Supabase para que el usuario configure su contraseña de acceso."
-      }
-    ],
-    faq: [
-      {
-        pregunta: "¿Cómo desactivo a un usuario que ya no labora en la empresa?",
-        respuesta: "Busca al usuario en la lista del módulo 'Usuarios', haz clic en 'Editar', cambia su interruptor de estatus a 'Inactivo' y guarda. Esto cerrará sus sesiones activas de inmediato e impedirá futuros accesos."
+        pregunta: "¿Por qué no puedo guardar un nuevo proveedor?",
+        respuesta: "Asegúrate de haber ingresado el formato RIF oficial (RIF obligatorio) y de que los datos de contacto y Razón Social estén completos antes de presionar Guardar."
       }
     ]
   },
   {
     id: "errores-comunes",
-    titulo: "Solución de Errores Frecuentes",
+    titulo: "Solución de Errores e Incidencias",
     categoria: "Errores Comunes",
-    keywords: ["error", "falla", "sesion", "archivo", "sincronizar", "no carga", "guardar", "adjunto"],
-    descripcion: "Respuestas y soluciones rápidas para los problemas técnicos más reportados por los usuarios en el sistema.",
+    keywords: ["error", "falla", "sesion", "archivo", "limite", "sincronizar", "cache", "f5"],
+    descripcion: "Soluciones rápidas a los inconvenientes operativos y técnicos reportados con mayor frecuencia en la plataforma SITC.",
     flujoEstatus: [
-      { nombre: "CRÍTICO", bg: "#fee2e2", col: "#b91c1c", desc: "Errores que impiden el flujo (ej. sesión vencida o base de datos caída)." },
-      { nombre: "ADVERTENCIA", bg: "#fef3c7", col: "#d97706", desc: "Falta de datos u omisiones del usuario (ej. archivos muy pesados)." }
+      { nombre: "ERROR CRÍTICO", bg: "#fee2e2", col: "#b91c1c", desc: "Fallas que interrumpen el uso, como desconexión de red o token de sesión vencido." },
+      { nombre: "FALLA DE ADVERTENCIA", bg: "#fef3c7", col: "#d97706", desc: "Omisiones en formatos o carga de datos (ej. subir archivos de tamaño excesivo)." }
     ],
     pasos: [
       {
         paso: 1,
-        titulo: "Error: 'Sesión Expired' o Cierre Inesperado",
-        detalle: "Por seguridad, el token de acceso de Supabase dura 24 horas continuas. Si el sistema te saca, simplemente inicia sesión de nuevo en la pantalla principal."
+        titulo: "Incidencia: Sesión Expirada (Session Expired)",
+        detalle: "Por seguridad, el token de sesión en la nube de Supabase dura 24 horas continuas. Si expira o se cierra inesperadamente, simplemente inicia sesión de nuevo en la pantalla inicial."
       },
       {
         paso: 2,
-        titulo: "Error: 'El archivo adjunto no pudo cargarse'",
-        detalle: "El límite de carga por archivo es de 10MB. Asegúrate de que tus facturas o soportes estén en formato PDF, JPG o PNG y no superen este peso. Evita caracteres especiales en el nombre del archivo."
+        titulo: "Incidencia: El archivo adjunto no carga",
+        detalle: "El límite estricto de carga es de 10MB por archivo. Comprueba que las facturas estén digitalizadas en PDF, JPG o PNG y que el nombre del archivo no contenga caracteres especiales."
       },
       {
         paso: 3,
-        titulo: "Error: 'El botón Guardar está deshabilitado'",
-        detalle: "Verifica que todos los campos marcados como obligatorios estén completos, y que hayas agregado al menos un renglón a la tabla de detalles con montos mayores a cero."
+        titulo: "Incidencia: El botón Guardar está bloqueado",
+        detalle: "Revisa que todos los campos requeridos estén completos y que hayas agregado al menos un renglón a la tabla de detalles con un monto unitario y cantidad mayor a cero."
+      },
+      {
+        paso: 4,
+        titulo: "Incidencia: Los cambios no se ven reflejados",
+        detalle: "El sistema utiliza caché local para optimizar la velocidad. Presiona CTRL + F5 (en Windows) o CMD + Shift + R (en Mac) para forzar la recarga limpia de la página."
       }
     ],
     faq: [
       {
-        pregunta: "¿Qué hago si los cambios no se ven reflejados en mi pantalla?",
-        respuesta: "El sistema implementa caché local para velocidad. Presiona CTRL + F5 (en Windows) o CMD + Shift + R (en Mac) para forzar la recarga limpia de los scripts en tu navegador."
+        pregunta: "¿Qué hago si el sistema sigue sin guardar mis datos?",
+        respuesta: "Verifica tu conexión a internet. Si el problema persiste, copia los datos cargados temporalmente en un bloc de notas y comunícate con el Administrador para validar que no haya bloqueos en las políticas de seguridad de Supabase."
       }
     ]
   }

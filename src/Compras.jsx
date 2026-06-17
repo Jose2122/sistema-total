@@ -190,6 +190,17 @@ const Compras = () => {
         )
       );
 
+      if (analistaId) {
+        const req = historial.find(r => r.id === reqId);
+        const correlativoStr = req?.correlativo || req?.correlativo_req || 'N/A';
+        await enviarNotificacion(
+          analistaId,
+          `Se te ha asignado la Requisición ${correlativoStr} para realizar su compra.`,
+          'Asignación Compra',
+          reqId
+        );
+      }
+
       toast.success(
         analistaNombre
           ? `Requisición asignada a ${analistaNombre}`
@@ -222,6 +233,7 @@ const Compras = () => {
               detalles: payload.new.items,
               fecha: payload.new.fecha_emision ? payload.new.fecha_emision.split('T')[0] : '',
               observaciones: payload.new.observaciones || '',
+              observaciones_direccion: payload.new.observaciones_direccion || '',
               facturas_url: payload.new.facturas_url || []
             };
           }
@@ -374,28 +386,63 @@ const Compras = () => {
   const ejecutarCambioPausa = async (req, nuevaPausa, comentario) => {
     try {
       setLoading(true);
+      const now = new Date().toISOString();
       const fullComentario = nuevaPausa ? `[${motivoCategoria}] ${comentario}` : comentario;
+      
+      const updatePayload = {
+        is_pausada: nuevaPausa,
+        motivo_postergacion: nuevaPausa ? fullComentario : req.motivo_postergacion
+      };
+
+      if (nuevaPausa) {
+        updatePayload.paused_at = now;
+      } else {
+        // Manual resume - calculate SLA compensation
+        updatePayload.resumed_at = now;
+        if (req.paused_at) {
+          const pausedAt = new Date(req.paused_at);
+          const deltaMs = new Date(now).getTime() - pausedAt.getTime();
+          
+          let baseDeadline = req.fecha_limite_compra;
+          if (!baseDeadline && req.fecha_emision) {
+            const base = new Date(req.fecha_emision);
+            const dias = req.prioridad === 'Emergencia' ? 2 : 5;
+            baseDeadline = new Date(base.getTime() + (dias * 24 * 60 * 60 * 1000)).toISOString();
+          }
+          
+          if (baseDeadline) {
+            updatePayload.fecha_limite_compra = new Date(new Date(baseDeadline).getTime() + deltaMs).toISOString();
+          }
+        }
+      }
+
       const { error } = await supabase
         .from('requisiciones')
-        .update({
-          is_pausada: nuevaPausa,
-          motivo_postergacion: nuevaPausa ? fullComentario : req.motivo_postergacion
-        })
+        .update(updatePayload)
         .eq('id', req.id);
 
       if (error) throw error;
 
       // Registrar en logs de auditoría
+      const nombreUsuario = `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim() || 'Comprador';
       await supabase.from('requisicion_logs').insert({
         requisicion_id: req.id,
         usuario_id: currentUser?.id,
-        usuario_nombre: currentUser?.nombre,
+        usuario_nombre: nombreUsuario,
         accion: nuevaPausa ? 'PAUSA' : 'REANUDACIÓN',
-        comentario: fullComentario
+        comentario: nuevaPausa ? fullComentario : `SLA reactivado manualmente. Comentario: ${comentario}`
       });
 
       toast.success(nuevaPausa ? 'Tiempos pausados correctamente' : 'Tiempos reanudados');
-      setRequisicionActiva({ ...req, is_pausada: nuevaPausa, motivo_postergacion: nuevaPausa ? fullComentario : req.motivo_postergacion });
+      
+      const updatedReq = { 
+        ...req, 
+        is_pausada: nuevaPausa, 
+        motivo_postergacion: nuevaPausa ? fullComentario : req.motivo_postergacion,
+        ...(nuevaPausa ? { paused_at: now } : { resumed_at: now, fecha_limite_compra: updatePayload.fecha_limite_compra || req.fecha_limite_compra })
+      };
+      setRequisicionActiva(updatedReq);
+      
       cargarRequisicionesAprobadas();
       setShowPostergarModal(false);
       setMotivoCategoria('');
@@ -529,8 +576,8 @@ const Compras = () => {
         return acc + ejecutadoItem;
       }, 0);
 
-      const totalConIVA = totalDinamicoReal * 1.16;
-      const ejecutadoConIVA = totalEjecutadoReal * 1.16;
+      const totalConIVA = totalDinamicoReal * (requisicionActiva?.con_iva !== false ? 1.16 : 1.00);
+      const ejecutadoConIVA = totalEjecutadoReal * (requisicionActiva?.con_iva !== false ? 1.16 : 1.00);
 
       // Determinar si toda la requisición quedó completa después de esto
       const algunoComprado = renglonesActualizados.some(r => (r.cantidad_comprada || 0) > 0);
@@ -959,7 +1006,14 @@ const Compras = () => {
                 accept="image/*,application/pdf"
                 onChange={(e) => {
                   if (e.target.files && e.target.files[0]) {
-                    tempFile = e.target.files[0];
+                    const selectedFile = e.target.files[0];
+                    if (selectedFile.size > 5 * 1024 * 1024) {
+                      toast.error("El archivo supera el límite de 5MB. Por favor, redúzcalo antes de subirlo.");
+                      e.target.value = '';
+                      tempFile = null;
+                      return;
+                    }
+                    tempFile = selectedFile;
                     const nameInput = document.getElementById('toast-compras-name');
                     if (nameInput && !nameInput.value) {
                       const cleanName = tempFile.name.split('.')[0];
@@ -1077,7 +1131,8 @@ const Compras = () => {
         usuario_nombre: `${currentUser?.nombre} ${currentUser?.apellido}`,
         doc_tipo: item.doc_tipo_actual,
         doc_numero: item.doc_numero_actual,
-        enviado_almacen: false
+        enviado_almacen: false,
+        factura_url: uploadedFileObj?.url || null
       };
 
       const nuevaCantComprada = (item.cantidad_comprada || 0) + cantProcesar;
@@ -1146,8 +1201,8 @@ const Compras = () => {
 
       const updatePayload = {
         items: nuevosRenglones,
-        total_bs: totalDinamicoReal * 1.16,
-        total_ejecutado: totalEjecutadoReal * 1.16
+        total_bs: totalDinamicoReal * (requisicionActiva?.con_iva !== false ? 1.16 : 1.00),
+        total_ejecutado: totalEjecutadoReal * (requisicionActiva?.con_iva !== false ? 1.16 : 1.00)
       };
       if (uploadedFileObj) {
         updatePayload.facturas_url = nuevasUrls;
@@ -1161,6 +1216,31 @@ const Compras = () => {
       if (error) throw error;
 
       setRenglones(nuevosRenglones);
+
+      // Sincronizar en historial y requisicionActiva
+      setHistorial(prev => prev.map(req => {
+        if (req.id === editandoId) {
+          return {
+            ...req,
+            items: nuevosRenglones,
+            facturas_url: nuevasUrls,
+            total_bs: totalDinamicoReal * (requisicionActiva?.con_iva !== false ? 1.16 : 1.00),
+            total_ejecutado: totalEjecutadoReal * (requisicionActiva?.con_iva !== false ? 1.16 : 1.00)
+          };
+        }
+        return req;
+      }));
+
+      if (requisicionActiva) {
+        setRequisicionActiva(prev => prev ? {
+          ...prev,
+          items: nuevosRenglones,
+          facturas_url: nuevasUrls,
+          total_bs: totalDinamicoReal * (requisicionActiva?.con_iva !== false ? 1.16 : 1.00),
+          total_ejecutado: totalEjecutadoReal * (requisicionActiva?.con_iva !== false ? 1.16 : 1.00)
+        } : null);
+      }
+
       await actualizarTotalesSolicitud(editandoId);
       toast.success("Ítem guardado con éxito.");
     } catch (err) {
@@ -1184,6 +1264,19 @@ const Compras = () => {
     setFacturasUrls(nuevasUrls);
     try {
       await supabase.from('requisiciones').update({ facturas_url: nuevasUrls }).eq('id', editandoId);
+      setHistorial(prev => prev.map(req => {
+        if (req.id === editandoId) {
+          return {
+            ...req,
+            facturas_url: nuevasUrls
+          };
+        }
+        return req;
+      }));
+      setRequisicionActiva(prev => prev ? {
+        ...prev,
+        facturas_url: nuevasUrls
+      } : null);
     } catch (err) { console.error(err); }
   };
 
@@ -1239,6 +1332,19 @@ const Compras = () => {
       if (dbError) throw dbError;
 
       setFacturasUrls(nuevasUrls);
+      setHistorial(prev => prev.map(req => {
+        if (req.id === editandoId) {
+          return {
+            ...req,
+            facturas_url: nuevasUrls
+          };
+        }
+        return req;
+      }));
+      setRequisicionActiva(prev => prev ? {
+        ...prev,
+        facturas_url: nuevasUrls
+      } : null);
       toast.success("Soporte eliminado físicamente.");
     } catch (err) {
       toast.error("Error al eliminar soporte: " + err.message);
@@ -1252,6 +1358,15 @@ const Compras = () => {
       setUploading(true);
       const files = Array.from(event.target.files);
       if (!files || files.length === 0) return;
+
+      for (const file of files) {
+        if (file.size > 5 * 1024 * 1024) {
+          toast.error(`El archivo "${file.name}" supera el límite de 5MB. Por favor, redúzcalo antes de subirlo.`);
+          setUploading(false);
+          event.target.value = '';
+          return;
+        }
+      }
 
       const uploadPromises = files.map(async (file, index) => {
         const fileExt = file.name.split('.').pop();
@@ -1286,6 +1401,20 @@ const Compras = () => {
 
       if (updateError) throw updateError;
 
+      setHistorial(prev => prev.map(req => {
+        if (req.id === editandoId) {
+          return {
+            ...req,
+            facturas_url: nuevasUrls
+          };
+        }
+        return req;
+      }));
+      setRequisicionActiva(prev => prev ? {
+        ...prev,
+        facturas_url: nuevasUrls
+      } : null);
+
       toast.success("Facturas/Soportes cargados y guardados correctamente.");
       event.target.value = ''; // Limpiar el input
     } catch (error) {
@@ -1295,14 +1424,15 @@ const Compras = () => {
     }
   };
 
-  const enviarNotificacion = async (usuario_id, mensaje, tipo = 'Sistema') => {
+  const enviarNotificacion = async (usuario_id, mensaje, tipo = 'Sistema', requisicion_id = null) => {
     if (!usuario_id || usuario_id === currentUser?.id) return;
     try {
       await supabase.from('notificaciones').insert([{
         usuario_id,
         mensaje,
         tipo,
-        leido: false
+        leido: false,
+        requisicion_id
       }]);
     } catch (err) {
       console.error("Error enviando notificación:", err);
@@ -1444,8 +1574,8 @@ const Compras = () => {
         return acc + ejecutadoItem;
       }, 0);
 
-      const totalConIVA = totalDinamicoReal * 1.16;
-      const ejecutadoConIVA = totalEjecutadoReal * 1.16;
+      const totalConIVA = totalDinamicoReal * (requisicionActiva?.con_iva !== false ? 1.16 : 1.00);
+      const ejecutadoConIVA = totalEjecutadoReal * (requisicionActiva?.con_iva !== false ? 1.16 : 1.00);
 
       // Determinar si toda la requisición quedó completa después de esto
       const algunoComprado = renglonesActualizados.some(r => (r.cantidad_comprada || 0) > 0);
@@ -1626,8 +1756,8 @@ const Compras = () => {
         return acc + ejecutadoItem;
       }, 0);
 
-      const totalConIVA = totalDinamicoReal * 1.16;
-      const ejecutadoConIVA = totalEjecutadoReal * 1.16;
+      const totalConIVA = totalDinamicoReal * (requisicionActiva?.con_iva !== false ? 1.16 : 1.00);
+      const ejecutadoConIVA = totalEjecutadoReal * (requisicionActiva?.con_iva !== false ? 1.16 : 1.00);
 
       const updatePayload = {
         items: renglonesProcesados,
@@ -1638,6 +1768,41 @@ const Compras = () => {
 
       if (nuevoStatusCompra === 'Completado' || nuevoStatusCompra === 'COMPLETADO') {
         updatePayload.f_finalizado = new Date().toISOString();
+      }
+
+      // SLA Reactivation / Compensation logic
+      let resumedAt = null;
+      let newDeadline = requisicionActiva?.fecha_limite_compra;
+      const isPurchasedNow = !esBorrador && renglones.some(r => r.compra_actual_cant > 0);
+      
+      if (isPurchasedNow && requisicionActiva?.is_pausada) {
+        resumedAt = new Date().toISOString();
+        const pausedAt = requisicionActiva.paused_at ? new Date(requisicionActiva.paused_at) : new Date(requisicionActiva.fecha_emision);
+        const deltaMs = new Date(resumedAt).getTime() - pausedAt.getTime();
+        
+        let baseDeadline = requisicionActiva.fecha_limite_compra;
+        if (!baseDeadline && requisicionActiva.fecha_emision) {
+          const base = new Date(requisicionActiva.fecha_emision);
+          const dias = requisicionActiva.prioridad === 'Emergencia' ? 2 : 5;
+          baseDeadline = new Date(base.getTime() + (dias * 24 * 60 * 60 * 1000)).toISOString();
+        }
+        
+        if (baseDeadline) {
+          newDeadline = new Date(new Date(baseDeadline).getTime() + deltaMs).toISOString();
+        }
+        
+        updatePayload.is_pausada = false;
+        updatePayload.resumed_at = resumedAt;
+        updatePayload.fecha_limite_compra = newDeadline;
+        
+        // Log reactivation in background
+        supabase.from('requisicion_logs').insert({
+          requisicion_id: editandoId,
+          usuario_id: currentUser?.id,
+          usuario_nombre: `${currentUser?.nombre} ${currentUser?.apellido}`.trim(),
+          accion: 'REANUDACIÓN',
+          comentario: `SLA reactivado por COMPRADO. Compensación de ${Math.round(deltaMs / (1000 * 60 * 60))} horas aplicada.`
+        }).then();
       }
 
       const { error } = await supabase
@@ -1651,7 +1816,15 @@ const Compras = () => {
 
       if (esBorrador) {
         toast.success("Borrador guardado correctamente.");
-        setRequisicionActiva(prev => ({ ...prev, items: renglonesProcesados }));
+        setRequisicionActiva(prev => ({ 
+          ...prev, 
+          items: renglonesProcesados,
+          ...(resumedAt ? {
+            is_pausada: false,
+            resumed_at: resumedAt,
+            fecha_limite_compra: newDeadline
+          } : {})
+        }));
       } else {
         toast.success(todasCompletas ? "Requisición Finalizada / Comprada al 100%." : "Compra parcial registrada con éxito.");
 
@@ -1696,11 +1869,11 @@ const Compras = () => {
 
     return {
       subTotalCalculado: totals.subTotal,
-      totalCalculado: totals.subTotal * 1.16,
+      totalCalculado: totals.subTotal * (requisicionActiva?.con_iva !== false ? 1.16 : 1.00),
       montoPagadoF: totals.totalF,
       montoPendienteNE: totals.totalNE
     };
-  }, [renglones]);
+  }, [renglones, requisicionActiva]);
 
   const getInitials = (nombre, apellido) => {
     return `${nombre?.charAt(0) || ''}${apellido?.charAt(0) || ''}`.toUpperCase();
@@ -1719,6 +1892,20 @@ const Compras = () => {
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
     >
+      {/* --- ENCABECERA UNIFICADA PREMIUM --- */}
+      <div style={{
+        borderLeft: '6px solid #0ea5e9',
+        paddingLeft: '16px',
+        marginBottom: '30px'
+      }}>
+        <h1 style={{ margin: 0, color: '#0f172a', fontSize: '1.8rem', fontWeight: '900', fontFamily: 'Inter, sans-serif', letterSpacing: '-0.5px' }}>
+          Gestión de Compras
+        </h1>
+        <p style={{ margin: '4px 0 0 0', color: '#64748b', fontSize: '0.9rem', fontWeight: '500', fontFamily: 'Inter, sans-serif' }}>
+          Procesamiento de requisiciones con aprobación de Gerencia General
+        </p>
+      </div>
+
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '15px', marginBottom: '25px' }}>
         {[
           { label: 'REQUISICIONES EN ESPERA', val: `${historial.filter(r => (r.status_compra || 'En espera') === 'En espera').length} No leídas`, col: '#030712', filter: 'En espera' },
@@ -1940,7 +2127,7 @@ const Compras = () => {
                     let deadline = req.fecha_limite_compra;
                     if (!deadline && req.fecha_emision) {
                       const base = new Date(req.fecha_emision);
-                      const dias = req.prioridad === 'Emergencia' ? 1 : 5;
+                      const dias = req.prioridad === 'Emergencia' ? 2 : 5;
                       deadline = new Date(base.getTime() + (dias * 24 * 60 * 60 * 1000)).toISOString();
                     }
 
@@ -1950,7 +2137,21 @@ const Compras = () => {
                       const diff = limite.getTime() - hoy.getTime();
                       const isPausada = req.is_pausada;
 
-                      if (isPausada) return <span style={{ color: '#f59e0b', fontSize: '0.7rem', fontWeight: '900' }}>⏸️ PAUSADO</span>;
+                      if (isPausada) return (
+                        <div style={{
+                          fontSize: '0.65rem',
+                          fontWeight: '800',
+                          backgroundColor: '#fef3c7',
+                          color: '#d97706',
+                          padding: '4px 8px',
+                          borderRadius: '6px',
+                          border: '1px solid #fde68a',
+                          display: 'inline-block',
+                          whiteSpace: 'nowrap'
+                        }}>
+                          ⏸️ SLA Pausado - Espera de Precios
+                        </div>
+                      );
 
                       const horasTotales = Math.floor(diff / (1000 * 60 * 60));
                       const color = horasTotales < 0 ? '#ef4444' : (horasTotales < 24 ? '#f59e0b' : '#16a34a');
@@ -2176,7 +2377,7 @@ const Compras = () => {
                     let limiteDate = requisicionActiva.fecha_limite_compra;
                     if (!limiteDate && requisicionActiva.fecha_emision) {
                       const base = new Date(requisicionActiva.fecha_emision);
-                      const dias = requisicionActiva.prioridad === 'Emergencia' ? 1 : 5;
+                      const dias = requisicionActiva.prioridad === 'Emergencia' ? 2 : 5;
                       limiteDate = new Date(base.getTime() + (dias * 24 * 60 * 60 * 1000));
                     } else if (limiteDate) {
                       limiteDate = new Date(limiteDate);
@@ -2202,7 +2403,7 @@ const Compras = () => {
                         {isPausada ? <AlertCircle size={16} color="#d97706" /> : <Clock size={16} color="#64748b" />}
                         <div style={{ display: 'flex', flexDirection: 'column' }}>
                           <span style={{ fontSize: '0.65rem', fontWeight: '900', color: '#64748b', textTransform: 'uppercase' }}>
-                            {isPausada ? 'SLA PAUSADO' : 'Tiempo Límite'}
+                            {isPausada ? 'SLA Pausado - Espera de Precios' : 'Tiempo Límite'}
                           </span>
                           <span style={{
                             fontSize: '0.9rem',
@@ -2214,7 +2415,7 @@ const Compras = () => {
                           }}>
                             {(() => {
                               if (diff < 0 && !isPausada) return 'PLAZO VENCIDO';
-                              if (isPausada) return 'EN PAUSA';
+                              if (isPausada) return 'Espera de Precios';
                               const d = Math.floor(diff / (1000 * 60 * 60 * 24));
                               const h = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
                               return `${d}d ${h}h restantes`;
@@ -2254,6 +2455,24 @@ const Compras = () => {
               <div className="req-header-line" style={{ margin: '15px 0' }}></div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
+                {requisicionActiva?.observaciones_direccion && (
+                  <div style={{
+                    backgroundColor: '#faf5ff',
+                    padding: '12px 18px',
+                    borderRadius: '10px',
+                    borderLeft: '4px solid #7c3aed',
+                    gridColumn: '1 / -1',
+                    marginBottom: '5px'
+                  }}>
+                    <label style={{ fontSize: '0.65rem', fontWeight: '900', color: '#6d28d9', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: '6px', margin: 0, marginBottom: '4px' }}>
+                      🏛️ Directrices de la Dirección
+                    </label>
+                    <p style={{ margin: 0, color: '#4c1d95', fontSize: '0.9rem', fontWeight: '600', lineHeight: '1.4' }}>
+                      {requisicionActiva.observaciones_direccion}
+                    </p>
+                  </div>
+                )}
+
                 <div style={{
                   backgroundColor: '#f1f5f9',
                   padding: '12px 18px',
@@ -2582,7 +2801,7 @@ const Compras = () => {
                                     <th style={{ padding: '10px 12px', textAlign: 'left' }}>FECHA</th>
                                     <th style={{ padding: '10px 12px', textAlign: 'left' }}>EVENTO</th>
                                     <th style={{ padding: '10px 12px', textAlign: 'left' }}>PROVEEDOR</th>
-                                    <th style={{ padding: '10px 12px', textAlign: 'left' }}>DETALLE / DOCUMENTO</th>
+                              <th style={{ padding: '10px 12px', textAlign: 'left' }}>DETALLE / DOCUMENTO</th>
                                     <th style={{ padding: '10px 12px', textAlign: 'center' }}>CANT.</th>
                                     <th style={{ padding: '10px 12px', textAlign: 'right' }}>P.U. REAL</th>
                                     <th style={{ padding: '10px 12px', textAlign: 'right' }}>TOTAL / COMENTARIO</th>
@@ -2595,19 +2814,19 @@ const Compras = () => {
                                   {f.historial_compras.map((h, idx) => (
                                     <tr key={idx} style={{
                                       borderBottom: idx < f.historial_compras.length - 1 ? '1px solid #f1f5f9' : 'none',
-                                      backgroundColor: h.tipo === 'ANULACION' ? '#fef2f2' : (h.tipo === 'JUSTIFICACION' ? '#fffbeb' : 'transparent'),
+                                      backgroundColor: h.tipo === 'ANULACION' ? '#fef2f2' : (h.tipo === 'JUSTIFICACION' ? '#fffbeb' : (h.tipo === 'DIRECTRIZ' ? '#faf5ff' : 'transparent')),
                                       transition: 'background-color 0.2s'
                                     }}>
                                       <td style={{ padding: '10px 12px', color: '#64748b', fontWeight: '600' }}>{new Date(h.fecha).toLocaleDateString()}</td>
                                       <td style={{
                                         padding: '10px 12px',
                                         fontWeight: '800',
-                                        color: h.tipo === 'ANULACION' ? '#ef4444' : (h.tipo === 'JUSTIFICACION' ? '#d97706' : (h.doc_tipo === 'NC' ? '#f59e0b' : '#1e293b'))
+                                        color: h.tipo === 'ANULACION' ? '#ef4444' : (h.tipo === 'JUSTIFICACION' ? '#d97706' : (h.tipo === 'DIRECTRIZ' ? '#7c3aed' : (h.doc_tipo === 'NC' ? '#f59e0b' : '#1e293b')))
                                       }}>
-                                        {h.tipo === 'ANULACION' ? '🚫 ANULADO / SIN EFECTO' : (h.tipo === 'JUSTIFICACION' ? '⚠️ JUSTIFICACIÓN' : (h.doc_tipo === 'NC' ? '💳 A CRÉDITO' : '✅ COMPRADO'))}
+                                        {h.tipo === 'ANULACION' ? '🚫 ANULADO / SIN EFECTO' : (h.tipo === 'JUSTIFICACION' ? '⚠️ JUSTIFICACIÓN' : (h.tipo === 'DIRECTRIZ' ? '🏛️ DIRECTRIZ DIRECCIÓN' : (h.doc_tipo === 'NC' ? '💳 A CRÉDITO' : '✅ COMPRADO')))}
                                       </td>
                                       <td style={{ padding: '10px 12px', fontSize: '0.7rem', fontWeight: '700', color: '#334155' }}>
-                                        {(h.tipo !== 'JUSTIFICACION' && h.tipo !== 'ANULACION') ? (h.proveedor_nombre || 'No asignado') : '-'}
+                                        {(h.tipo !== 'JUSTIFICACION' && h.tipo !== 'ANULACION' && h.tipo !== 'DIRECTRIZ') ? (h.proveedor_nombre || 'No asignado') : '-'}
                                       </td>
                                       <td style={{ padding: '10px 12px' }}>
                                         {h.tipo === 'ANULACION' ? (
@@ -2616,11 +2835,20 @@ const Compras = () => {
                                           </div>
                                         ) : h.tipo === 'JUSTIFICACION' ? (
                                           <div style={{ fontStyle: 'italic', color: '#92400e', fontWeight: '600', fontSize: '0.7rem' }}>{h.motivo}</div>
+                                        ) : h.tipo === 'DIRECTRIZ' ? (
+                                          <div style={{ fontStyle: 'italic', color: '#6d28d9', fontWeight: '600', fontSize: '0.75rem' }}>{h.motivo}</div>
                                         ) : (
                                           <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                                               <span style={{ fontSize: '0.6rem', backgroundColor: '#e2e8f0', color: '#475569', padding: '2px 6px', borderRadius: '4px', fontWeight: '900' }}>{h.metodo_pago}</span>
-                                              <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#1e293b' }}>{h.doc_tipo}: {h.doc_numero}</span>
+                                              <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#1e293b' }}>
+                                                {h.doc_tipo}: {h.doc_numero}
+                                                {h.factura_url && (
+                                                  <a href={h.factura_url} target="_blank" rel="noreferrer" title="Ver Soporte" style={{ marginLeft: '8px', textDecoration: 'none', cursor: 'pointer', fontSize: '1rem' }}>
+                                                    📎
+                                                  </a>
+                                                )}
+                                              </span>
                                             </div>
                                             {h.fecha_pago && (
                                               <div style={{ fontSize: '9px', color: '#16a34a', fontWeight: '800', textTransform: 'uppercase' }}>
@@ -2630,8 +2858,8 @@ const Compras = () => {
                                           </div>
                                         )}
                                       </td>
-                                      <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: '800', color: '#1e293b' }}>{h.cant || '-'}</td>
-                                      <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: '700', color: '#1e293b' }}>{h.pu ? `$ ${h.pu.toLocaleString('de-DE')}` : '-'}</td>
+                                      <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: '800', color: '#1e293b' }}>{(h.tipo === 'JUSTIFICACION' || h.tipo === 'ANULACION' || h.tipo === 'DIRECTRIZ') ? '-' : (h.cant || '-')}</td>
+                                      <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: '700', color: '#1e293b' }}>{(h.tipo === 'JUSTIFICACION' || h.tipo === 'ANULACION' || h.tipo === 'DIRECTRIZ') ? '-' : (h.pu ? `$ ${h.pu.toLocaleString('de-DE')}` : '-')}</td>
                                       <td style={{ padding: '10px 12px', textAlign: 'right' }}>
                                         {h.tipo === 'ANULACION' ? (
                                           <div style={{ fontSize: '0.7rem', color: '#7f1d1d', whiteSpace: 'pre-wrap', textAlign: 'left', backgroundColor: '#fee2e2', padding: '8px', borderRadius: '6px', border: '1px solid #fca5a5' }}>
@@ -2641,10 +2869,14 @@ const Compras = () => {
                                           <div style={{ fontSize: '0.7rem', color: '#475569', whiteSpace: 'pre-wrap', textAlign: 'left', backgroundColor: '#fef3c7', padding: '8px', borderRadius: '6px', border: '1px solid #fde68a' }}>
                                             {h.comentario}
                                           </div>
+                                        ) : h.tipo === 'DIRECTRIZ' ? (
+                                          <div style={{ fontSize: '0.7rem', color: '#4c1d95', whiteSpace: 'pre-wrap', textAlign: 'left', backgroundColor: '#f3e8ff', padding: '8px', borderRadius: '6px', border: '1px solid #ddd6fe' }}>
+                                            {h.comentario}
+                                          </div>
                                         ) : <span style={{ fontWeight: '900', color: '#0ea5e9', fontSize: '0.85rem' }}>$ {(h.cant * h.pu).toLocaleString('de-DE')}</span>}
                                       </td>
                                       <td style={{ padding: '10px 12px', textAlign: 'center' }}>
-                                        {h.tipo !== 'JUSTIFICACION' && h.tipo !== 'ANULACION' && (
+                                        {h.tipo !== 'JUSTIFICACION' && h.tipo !== 'ANULACION' && h.tipo !== 'DIRECTRIZ' && (
                                           <div
                                             onClick={() => toggleAlmacenSubRow(f.id, idx, !h.enviado_almacen)}
                                             style={{
@@ -2907,6 +3139,7 @@ const Compras = () => {
                 <option value="Ítem no Localizado">Ítem no Localizado</option>
                 <option value="Definición Técnica Insuficiente">Definición Técnica Insuficiente</option>
                 <option value="En Espera de Aprobación Precios">En Espera de Aprobación Precios</option>
+                <option value="Otros">Otros</option>
               </select>
             </div>
 

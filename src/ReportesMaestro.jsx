@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from './supabaseClient';
+// eslint-disable-next-line no-unused-vars
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     BarChart3,
@@ -37,8 +38,66 @@ import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
-import { format, getWeek, parseISO } from 'date-fns';
+import { format, parseISO } from 'date-fns';
 import './ReportesMaestro.css';
+
+const parsearFacturaUrls = (facturaUrlField) => {
+    if (!facturaUrlField) return [];
+
+    let rawItems = [];
+
+    const extractRaw = (field) => {
+        if (!field) return;
+        if (Array.isArray(field)) {
+            field.forEach(item => extractRaw(item));
+        } else if (typeof field === 'string') {
+            const trimmed = field.trim();
+            if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+                try {
+                    const parsed = JSON.parse(trimmed);
+                    extractRaw(parsed);
+                } catch {
+                    rawItems.push(trimmed);
+                }
+            } else {
+                rawItems.push(trimmed);
+            }
+        } else if (typeof field === 'object' && field !== null) {
+            rawItems.push(field);
+        }
+    };
+
+    extractRaw(facturaUrlField);
+
+    return rawItems.map(item => {
+        if (typeof item === 'string') {
+            const trimmed = item.trim();
+            if (trimmed.startsWith('{')) {
+                try {
+                    const obj = JSON.parse(trimmed);
+                    if (obj.url) {
+                        return {
+                            url: obj.url,
+                            name: obj.name || (obj.url.split('/').pop().split('?')[0])
+                        };
+                    }
+                } catch {
+                    // Ignore JSON parsing errors for malformed string entries
+                }
+            }
+            return {
+                url: trimmed,
+                name: trimmed.split('/').pop().split('?')[0]
+            };
+        } else if (typeof item === 'object' && item !== null && item.url) {
+            return {
+                url: item.url,
+                name: item.name || (item.url.split('/').pop().split('?')[0])
+            };
+        }
+        return null;
+    }).filter(item => item && typeof item.url === 'string' && item.url.trim().length > 10);
+};
 
 const COLORS = ['#0ea5e9', '#6366f1', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#ef4444', '#64748b'];
 
@@ -66,14 +125,13 @@ const ReportesMaestro = () => {
     const [filtroCategoria, setFiltroCategoria] = useState('Todos');
     const [filtroCC_Tab, setFiltroCC_Tab] = useState('Todos');
 
-    const [filtroGerenciaDash, setFiltroGerenciaDash] = useState(null); // Para interactividad dashboard
-    const [incluirTickets, setIncluirTickets] = useState(true);
-    const [incluirReqs, setIncluirReqs] = useState(true);
     const [busqueda, setBusqueda] = useState('');
     const [reqSeleccionada, setReqSeleccionada] = useState(null); // Para modal detalle
     const [tickSeleccionado, setTickSeleccionado] = useState(null); // Para modal ticket
+    const [extendedTicketData, setExtendedTicketData] = useState(null);
+    const [extendedLoading, setExtendedLoading] = useState(false);
+    const [selectedFileIndex, setSelectedFileIndex] = useState(0);
     const [gerenciaDetalle, setGerenciaDetalle] = useState(null); // Para drill-down
-    const [busquedaProyecto, setBusquedaProyecto] = useState(''); // Para reporte Operaciones
 
     // Auxiliares de seguridad
     const safeFormatDate = (d, fmt = 'dd/MM/yyyy') => {
@@ -82,7 +140,7 @@ const ReportesMaestro = () => {
             const parsed = parseISO(d);
             if (isNaN(parsed.getTime())) return '-';
             return format(parsed, fmt);
-        } catch (e) {
+        } catch {
             return '-';
         }
     };
@@ -96,8 +154,28 @@ const ReportesMaestro = () => {
             date.setDate(date.getDate() + 3 - (date.getDay() + 6) % 7);
             const week1 = new Date(date.getFullYear(), 0, 4);
             return 1 + Math.round(((date.getTime() - week1.getTime()) / 86400000 - 3 + (week1.getDay() + 6) % 7) / 7);
-        } catch (e) { return 0; }
+        } catch { return 0; }
     };
+
+    const parseMonedaPago = (metodo) => {
+        if (!metodo) return '$/$';
+        const str = String(metodo).toUpperCase();
+        if (str.includes('BS') || str.includes('B/S')) {
+            return 'Bs/$';
+        }
+        return '$/$';
+    };
+
+    const getMetodoPagoForTicketItem = (item) => {
+        if (Array.isArray(item.historial_compras) && item.historial_compras.length > 0) {
+            const metodos = item.historial_compras.map(h => h.metodo_pago).filter(Boolean);
+            if (metodos.length > 0) {
+                return metodos[metodos.length - 1];
+            }
+        }
+        return item.metodo_pago_actual || '$ / BS';
+    };
+
 
     const calcularSLA = (req) => {
         const ahora = new Date();
@@ -154,7 +232,7 @@ const ReportesMaestro = () => {
             setLoading(false);
         }
     }, []);
-    
+
     const toggleAlmacenSubRow = async (requisicionId, itemIdx, historyIndex, valor) => {
         // 1. Actualización local
         setData(prev => {
@@ -181,7 +259,7 @@ const ReportesMaestro = () => {
         try {
             const req = data.requisiciones.find(r => r.id === requisicionId);
             if (!req) return;
-            
+
             const nuevosItems = [...(req.items || [])];
             if (nuevosItems[itemIdx]) {
                 const item = { ...nuevosItems[itemIdx] };
@@ -207,6 +285,59 @@ const ReportesMaestro = () => {
         cargarDatos();
     }, [cargarDatos]);
 
+    const handleOpenRequisicion = useCallback((ref, realId) => {
+        const found = data.requisiciones.find(r => r.correlativo_req === ref || r.id === realId);
+        if (found) {
+            const items = Array.isArray(found.items) ? found.items : [];
+            const montoEstimado = items.reduce((sum, i) => sum + (Number(i.cant) * (Number(i.pu) || 0)), 0);
+            setReqSeleccionada({ ...found, montoEstimado });
+        }
+    }, [data.requisiciones]);
+
+    const handleOpenTicket = useCallback(async (ref, uId) => {
+        const ticketId = uId ? uId.split('-')[1] : null;
+        const found = data.tickets.find(t => t.codigo_control === ref || (ticketId && String(t.id) === String(ticketId)));
+        if (!found) return;
+
+        setTickSeleccionado({
+            ...found,
+            montoTotal: Number(found.total_usd || 0),
+            statusDisplay: (found.status?.toUpperCase() === 'PAGADO' || found.status?.toUpperCase() === 'COMPLETADO' || found.status?.toUpperCase() === 'COMPLETADA') ? 'Completada' : 'Pendiente'
+        });
+        setExtendedLoading(true);
+        setSelectedFileIndex(0);
+        setExtendedTicketData(null);
+
+        try {
+            // 1. Fetch exact latest record from Supabase
+            const { data: ticketData, error } = await supabase
+                .from('tickets_directos')
+                .select('*')
+                .eq('id', found.id)
+                .single();
+            if (error) throw error;
+
+            // 2. Fetch related requisition if solicitud_ref is valid
+            let reqData = null;
+            if (ticketData.solicitud_ref) {
+                const { data: rData } = await supabase
+                    .from('requisiciones')
+                    .select('*')
+                    .or(`id.eq.${ticketData.solicitud_ref},correlativo_req.eq.${ticketData.solicitud_ref}`)
+                    .limit(1);
+                if (rData && rData.length > 0) reqData = rData[0];
+            }
+
+            setExtendedTicketData({ ticket: ticketData, req: reqData });
+        } catch (err) {
+            console.error('Error fetching extended ticket data:', err);
+            // Fallback to local ticket data if fetch fails
+            setExtendedTicketData({ ticket: found, req: null });
+        } finally {
+            setExtendedLoading(false);
+        }
+    }, [data.tickets]);
+
     // --- PROCESAMIENTO: VISTA 1 - RELACIÓN DE COSTOS (FLATTENED) ---
     const costosRows = useMemo(() => {
         const rows = [];
@@ -216,6 +347,15 @@ const ReportesMaestro = () => {
             const items = Array.isArray(t.items) ? t.items : [];
             items.forEach(item => {
                 const rowDate = t.fecha_emision ? t.fecha_emision.split('T')[0] : '';
+
+                // Buscar requisición por correlativo_req o id
+                const reqMatch = data.requisiciones.find(r => r.correlativo_req === t.solicitud_ref || r.id === t.solicitud_ref);
+                const proyectoRef = reqMatch ? (reqMatch.id_referencia_proyecto || 'Sin ID Proyecto') : 'Directo / Sin Proyecto';
+
+                const metodo = getMetodoPagoForTicketItem(item);
+                const monedaPago = parseMonedaPago(metodo);
+                const docNumero = (item.historial_compras || []).map(h => h.doc_numero).filter(Boolean).join(', ') || '-';
+
                 rows.push({
                     uId: `TK-${t.id}-${item.id || Math.random()}`,
                     fecha: rowDate,
@@ -226,7 +366,12 @@ const ReportesMaestro = () => {
                     cc: item.cc || t.centro_costo || 'N/A',
                     gerencia: t.departamento || 'N/A',
                     tipo: 'TICKET',
-                    ref: t.codigo_control || `TK-${t.id}`
+                    ref: t.codigo_control || `TK-${t.id}`,
+                    proyecto: proyectoRef,
+                    moneda_pago: monedaPago,
+                    solicitante: t.responsable_nombre || 'N/A',
+                    factura: docNumero,
+                    almacen: false
                 });
             });
         });
@@ -238,6 +383,7 @@ const ReportesMaestro = () => {
                 const historial = Array.isArray(item.historial_compras) ? item.historial_compras : [];
                 historial.filter(h => h.tipo !== 'JUSTIFICACION').forEach((h, hIdx) => {
                     const rowDate = h.fecha ? h.fecha.split('T')[0] : '';
+                    const monedaPago = parseMonedaPago(h.metodo_pago);
                     rows.push({
                         uId: `REQ-${r.id}-${item.id || Math.random()}-${hIdx}`,
                         fecha: rowDate,
@@ -250,18 +396,22 @@ const ReportesMaestro = () => {
                         tipo: 'REQUISICIÓN',
                         ref: r.correlativo_req || `REQ-${r.id}`,
                         factura: h.doc_numero || '-',
-                        almacen: h.enviado_almacen || false,
+                        almacen: r.enviado_almacen || h.enviado_almacen || false,
                         requisicionIdReal: r.id,
                         itemIdx: (r.items || []).indexOf(item),
                         historyIdx: hIdx,
-                        solicitante: r.solicitante
+                        solicitante: r.solicitante,
+                        proyecto: r.id_referencia_proyecto || 'Sin ID Proyecto',
+                        moneda_pago: monedaPago
                     });
                 });
             });
         });
 
         return rows.sort((a, b) => b.fecha.localeCompare(a.fecha)).filter(row => {
-            const matchBusqueda = row.descripcion.toLowerCase().includes(busqueda.toLowerCase()) || row.ref.toLowerCase().includes(busqueda.toLowerCase());
+            const matchBusqueda = row.descripcion.toLowerCase().includes(busqueda.toLowerCase()) ||
+                row.ref.toLowerCase().includes(busqueda.toLowerCase()) ||
+                row.proyecto.toLowerCase().includes(busqueda.toLowerCase());
             const matchCC = filtroCC === 'Todos' || row.cc === filtroCC;
             const matchGerencia = filtroGerencia === 'Todos' || row.gerencia === filtroGerencia;
             const matchSemana = !filtroSemana || String(row.semana) === String(filtroSemana);
@@ -270,9 +420,10 @@ const ReportesMaestro = () => {
             if (fechaHasta && row.fecha > fechaHasta) matchFecha = false;
 
             const matchAlmacen = filtroAlmacen === 'Todos' || (filtroAlmacen === 'Si' ? row.almacen : !row.almacen);
-            return matchBusqueda && matchCC && matchGerencia && matchSemana && matchFecha && matchAlmacen;
+            const matchCategoria = filtroCategoria === 'Todos' || row.categoria === filtroCategoria;
+            return matchBusqueda && matchCC && matchGerencia && matchSemana && matchFecha && matchAlmacen && matchCategoria;
         });
-    }, [data, busqueda, filtroCC, filtroGerencia, filtroSemana, fechaDesde, fechaHasta, filtroAlmacen, listaCentrosCostos]);
+    }, [data, busqueda, filtroCC, filtroGerencia, filtroSemana, fechaDesde, fechaHasta, filtroAlmacen, filtroCategoria]);
 
     const totalGasto = useMemo(() => {
         return costosRows.reduce((sum, r) => sum + (Number(r.monto) || 0), 0);
@@ -375,36 +526,53 @@ const ReportesMaestro = () => {
         return data.tickets.map(t => {
             const items = Array.isArray(t.items) ? t.items : [];
             const status = t.status?.toUpperCase() || 'EMITIDO';
-            const statusDisplay = status === 'PAGADO' ? 'Completada' : 'Pendiente';
+            const statusDisplay = (status === 'PAGADO' || status === 'COMPLETADO' || status === 'COMPLETADA') ? 'Completada' : 'Pendiente';
+
+            // Banco de pago
+            const bancoNombre = bancos.find(b => b.id === t.banco_pago_id)?.nombre
+                || t.banco_origen
+                || (items.flatMap(r => (r.historial_compras || []).map(h => h.banco_nombre)).filter(Boolean)[0])
+                || '-';
+
+            // Método / Tipo pago
+            const metodoRaw = t.metodo_pago
+                || (items.flatMap(r => (r.historial_compras || []).map(h => h.metodo_pago)).filter(Boolean)[0])
+                || '$/$';
+            const metodoPago = parseMonedaPago(metodoRaw);
 
             return {
                 ...t,
                 statusDisplay,
                 itemsCount: items.length,
-                montoTotal: Number(t.total_usd || 0)
+                montoTotal: Number(t.total_usd || 0),
+                fechaEmision: t.fecha_emision || t.created_at,
+                fechaPago: (status === 'PAGADO' || status === 'COMPLETADO' || status === 'COMPLETADA') ? (t.fecha_pago || t.updated_at) : null,
+                banco: bancoNombre,
+                metodo: metodoPago
             };
         }).filter(t => {
             const matchBusqueda = (t.codigo_control || '').toLowerCase().includes(busqueda.toLowerCase()) ||
-                (t.responsable_nombre || '').toLowerCase().includes(busqueda.toLowerCase());
+                (t.responsable_nombre || '').toLowerCase().includes(busqueda.toLowerCase()) ||
+                (t.gerente_nombre || '').toLowerCase().includes(busqueda.toLowerCase());
             const matchStatus = filtroEstadoTick === 'Todos' || t.statusDisplay === filtroEstadoTick;
             const matchGerencia = filtroGerencia === 'Todos' || t.departamento === filtroGerencia;
             const matchCC = filtroCC_Tab === 'Todos' || t.centro_costo === filtroCC_Tab;
             const matchCat = filtroCategoria === 'Todos' || t.clasificacion_admin === filtroCategoria;
 
             let matchFecha = true;
-            const tFecha = t.fecha_emision?.split('T')[0];
+            const tFecha = t.fechaEmision?.split('T')[0];
             if (fechaDesde && tFecha < fechaDesde) matchFecha = false;
             if (fechaHasta && tFecha > fechaHasta) matchFecha = false;
 
             return matchBusqueda && matchStatus && matchGerencia && matchCC && matchCat && matchFecha;
         });
-    }, [data.tickets, busqueda, filtroEstadoTick, filtroGerencia, filtroCC_Tab, filtroCategoria, fechaDesde, fechaHasta]);
+    }, [data.tickets, bancos, busqueda, filtroEstadoTick, filtroGerencia, filtroCC_Tab, filtroCategoria, fechaDesde, fechaHasta]);
 
+    /* Commented out unused memos to satisfy ESLint:
     const consumoGerencial = useMemo(() => {
         const stats = {};
         const meses = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
 
-        // Función helper para procesar registros
         const procesar = (registros, esTicket) => {
             registros.forEach(r => {
                 const fechaStr = r.fecha_emision || r.created_at || r.fecha_operativa;
@@ -414,7 +582,6 @@ const ReportesMaestro = () => {
                 const mName = meses[mIndex];
                 const wNum = getWeekNumber(fechaStr);
 
-                // Filtros Temporales
                 if (filtroMes !== 'Todos' && mName !== filtroMes) return;
                 if (filtroSemana && String(wNum) !== String(filtroSemana)) return;
 
@@ -488,8 +655,6 @@ const ReportesMaestro = () => {
         }).sort((a, b) => b.ejecutado - a.ejecutado);
     }, [data, filtroMes, filtroSemana, incluirReqs, incluirTickets]);
 
-
-    // --- PROCESAMIENTO: DASHBOARD AVANZADO (RESTAURADO) ---
     const kpis = useMemo(() => {
         const listReqs = requisicionesControl || [];
         const listTickets = ticketsControl || [];
@@ -497,7 +662,6 @@ const ReportesMaestro = () => {
         let totBs = 0;
         let totUsd = 0;
 
-        // 1. Procesar Tickets
         listTickets.forEach(t => {
             const b = bancos.find(bank => bank.nombre === t.banco_origen);
             const monto = Number(t.montoTotal) || 0;
@@ -505,7 +669,6 @@ const ReportesMaestro = () => {
             else totUsd += monto;
         });
 
-        // 2. Procesar Requisiciones
         listReqs.forEach(r => {
             const items = Array.isArray(r.items) ? r.items : [];
             items.forEach(it => {
@@ -543,7 +706,7 @@ const ReportesMaestro = () => {
 
     const dashPieData = useMemo(() => {
         const counts = {};
-        const filteredRows = costosRows; // Opcional: aplicar filtros generales
+        const filteredRows = costosRows; 
         filteredRows.forEach(r => {
             counts[r.gerencia] = (counts[r.gerencia] || 0) + r.monto;
         });
@@ -554,46 +717,16 @@ const ReportesMaestro = () => {
             percentage: total > 0 ? ((value / total) * 100).toFixed(1) : "0"
         })).sort((a, b) => b.value - a.value);
     }, [costosRows]);
+    */
 
+    const reporteOperacionesRows = useMemo(() => {
+        return costosRows.filter(r => r.gerencia === 'Operaciones');
+    }, [costosRows]);
 
-    // --- PROCESAMIENTO: VISTA 6 - REPORTE EXCLUSIVO OPERACIONES (POR PROYECTO) ---
-    const reporteOperaciones = useMemo(() => {
-        const opRows = costosRows.filter(r => r.gerencia === 'Operaciones');
-        const proyectos = {};
-
-        opRows.forEach(r => {
-            const projectId = r.cc || 'Sin Proyecto';
-            if (!proyectos[projectId]) {
-                proyectos[projectId] = {
-                    id: projectId,
-                    totalEjecutado: 0,
-                    ticketsCount: 0,
-                    reqsCount: 0,
-                    montoTickets: 0,
-                    montoReqs: 0,
-                    lastMov: r.fecha
-                };
-            }
-            proyectos[projectId].totalEjecutado += (Number(r.monto) || 0);
-            if (r.tipo === 'TICKET') {
-                proyectos[projectId].ticketsCount++;
-                proyectos[projectId].montoTickets += (Number(r.monto) || 0);
-            } else {
-                proyectos[projectId].reqsCount++;
-                proyectos[projectId].montoReqs += (Number(r.monto) || 0);
-            }
-            if (r.fecha > (proyectos[projectId].lastMov || '')) proyectos[projectId].lastMov = r.fecha;
-        });
-
-        return Object.values(proyectos).filter(p =>
-            p.id.toLowerCase().includes(busquedaProyecto.toLowerCase())
-        ).sort((a, b) => b.totalEjecutado - a.totalEjecutado);
-    }, [costosRows, busquedaProyecto]);
-
+    /*
     const dashBarData = useMemo(() => {
         const weeks = {};
 
-        // 1. Procesar Requisiciones para Estimado vs Real
         requisicionesControl.forEach(r => {
             if (filtroGerenciaDash && r.gerencia !== filtroGerenciaDash) return;
             const w = getWeekNumber(r.fecha_emision);
@@ -603,7 +736,6 @@ const ReportesMaestro = () => {
             weeks[wKey].real += (Number(r.totalEjecutado) || 0);
         });
 
-        // 2. Procesar Tickets (Solo Real)
         ticketsControl.forEach(t => {
             if (filtroGerenciaDash && t.departamento !== filtroGerenciaDash) return;
             const w = getWeekNumber(t.fecha_emision);
@@ -624,6 +756,7 @@ const ReportesMaestro = () => {
             return nA - nB;
         });
     }, [requisicionesControl, ticketsControl, filtroGerenciaDash]);
+    */
 
     // --- NUEVAS MÉTRICAS BI DE ALTO IMPACTO ---
 
@@ -727,8 +860,6 @@ const ReportesMaestro = () => {
             { header: 'DESTINO (GERENCIA / CC)', key: 'gerencia_cc', width: 40 },
             { header: 'FINANCIERO ($)', key: 'monto', width: 18 }
         ];
-        // Note: solicitante is not in r for costosRows directly? 
-        // Let's check costosRows mapping.
 
         worksheet.columns = columns;
         worksheet.getRow(1).eachCell((cell) => { Object.assign(cell, headerStyle); });
@@ -741,7 +872,7 @@ const ReportesMaestro = () => {
                 descripcion: r.descripcion,
                 factura: r.factura,
                 fecha: r.fecha,
-                solicitante: r.solicitante || 'N/A', // We should add solicitante to mapping
+                solicitante: r.solicitante || 'N/A',
                 categoria: r.categoria,
                 gerencia_cc: `${r.gerencia} / ${r.cc?.split('(')[0]}`,
                 monto: Number(r.monto) || 0
@@ -750,23 +881,91 @@ const ReportesMaestro = () => {
                 try {
                     const d = parseISO(r.fecha);
                     if (!isNaN(d.getTime())) {
-                        row.getCell(1).value = new Date(r.fecha + 'T12:00:00');
-                        row.getCell(1).numFmt = 'dd/mm/yyyy';
+                        row.getCell(5).value = new Date(r.fecha + 'T12:00:00');
+                        row.getCell(5).numFmt = 'dd/mm/yyyy';
                     }
-                } catch (e) { }
+                } catch {
+                    // Ignore parsing errors
+                }
             }
-            row.getCell(5).numFmt = '"$"#,##0.00';
+            row.getCell(9).numFmt = '"$"#,##0.00';
         });
 
         const totalRowIdx = costosRows.length + 2;
-        worksheet.getCell(`D${totalRowIdx}`).value = 'TOTAL FILTRADO:';
-        worksheet.getCell(`D${totalRowIdx}`).font = { bold: true };
-        worksheet.getCell(`E${totalRowIdx}`).value = totalGasto;
-        worksheet.getCell(`E${totalRowIdx}`).font = { bold: true, color: { argb: 'FF15803D' } };
-        worksheet.getCell(`E${totalRowIdx}`).numFmt = '"$"#,##0.00';
+        worksheet.getCell(`H${totalRowIdx}`).value = 'TOTAL FILTRADO:';
+        worksheet.getCell(`H${totalRowIdx}`).font = { bold: true };
+        worksheet.getCell(`I${totalRowIdx}`).value = totalGasto;
+        worksheet.getCell(`I${totalRowIdx}`).font = { bold: true, color: { argb: 'FF15803D' } };
+        worksheet.getCell(`I${totalRowIdx}`).numFmt = '"$"#,##0.00';
 
         const buffer = await workbook.xlsx.writeBuffer();
         saveAs(new Blob([buffer]), `Relacion_Costos_TC_${format(new Date(), 'yyyy-MM-dd')}.xlsx`);
+    };
+
+    const exportExcelByProject = async () => {
+        const workbook = new ExcelJS.Workbook();
+        const worksheet = workbook.addWorksheet('Relación por Proyecto');
+
+        const headerStyle = {
+            fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF8B5CF6' } }, // Purple header
+            font: { color: { argb: 'FFFFFFFF' }, bold: true, size: 12 },
+            alignment: { horizontal: 'center', vertical: 'middle' },
+            border: { bottom: { style: 'thin', color: { argb: 'FFCBD5E1' } } }
+        };
+
+        const columns = [
+            { header: 'ID REF. PROYECTO / CONTRATO', key: 'proyecto', width: 30 },
+            { header: 'ALMACÉN', key: 'almacen', width: 12 },
+            { header: 'PRODUCTO / DESCRIPCIÓN', key: 'descripcion', width: 45 },
+            { header: 'SOPORTE / FACTURA', key: 'factura', width: 18 },
+            { header: 'FECHA', key: 'fecha', width: 15 },
+            { header: 'ORIGEN (SOLICITANTE)', key: 'solicitante', width: 25 },
+            { header: 'CLASIFICACIÓN (CAT.)', key: 'categoria', width: 25 },
+            { header: 'DESTINO (GERENCIA / CC)', key: 'gerencia_cc', width: 40 },
+            { header: 'MONEDA DE PAGO', key: 'moneda_pago', width: 18 },
+            { header: 'FINANCIERO ($)', key: 'monto', width: 18 }
+        ];
+
+        worksheet.columns = columns;
+        worksheet.getRow(1).eachCell((cell) => { Object.assign(cell, headerStyle); });
+        worksheet.getRow(1).height = 30;
+
+        costosRows.forEach(r => {
+            const row = worksheet.addRow({
+                proyecto: r.proyecto,
+                almacen: r.almacen ? 'SÍ' : 'NO',
+                descripcion: r.descripcion,
+                factura: r.factura,
+                fecha: r.fecha,
+                solicitante: r.solicitante || 'N/A',
+                categoria: r.categoria,
+                gerencia_cc: `${r.gerencia} / ${r.cc?.split('(')[0]}`,
+                moneda_pago: r.moneda_pago,
+                monto: Number(r.monto) || 0
+            });
+            if (r.fecha) {
+                try {
+                    const d = parseISO(r.fecha);
+                    if (!isNaN(d.getTime())) {
+                        row.getCell(5).value = new Date(r.fecha + 'T12:00:00');
+                        row.getCell(5).numFmt = 'dd/mm/yyyy';
+                    }
+                } catch {
+                    // Ignore parsing errors
+                }
+            }
+            row.getCell(10).numFmt = '"$"#,##0.00';
+        });
+
+        const totalRowIdx = costosRows.length + 2;
+        worksheet.getCell(`I${totalRowIdx}`).value = 'TOTAL FILTRADO:';
+        worksheet.getCell(`I${totalRowIdx}`).font = { bold: true };
+        worksheet.getCell(`J${totalRowIdx}`).value = totalGasto;
+        worksheet.getCell(`J${totalRowIdx}`).font = { bold: true, color: { argb: 'FF15803D' } };
+        worksheet.getCell(`J${totalRowIdx}`).numFmt = '"$"#,##0.00';
+
+        const buffer = await workbook.xlsx.writeBuffer();
+        saveAs(new Blob([buffer]), `Relacion_Costos_Por_Proyecto_TC_${format(new Date(), 'yyyy-MM-dd')}.xlsx`);
     };
 
     const exportPDF = () => {
@@ -823,6 +1022,7 @@ const ReportesMaestro = () => {
                 </div>
                 <div className="rm-actions">
                     <button className="rm-btn rm-btn-outline" onClick={exportExcel}><FileSpreadsheet size={18} /> EXCEL</button>
+                    <button className="rm-btn rm-btn-outline" style={{ borderColor: '#8b5cf6', color: '#8b5cf6' }} onClick={exportExcelByProject}><FileSpreadsheet size={18} /> EXCEL POR PROYECTO</button>
                     <button className="rm-btn rm-btn-gradient" onClick={exportPDF}><Printer size={18} /> IMPRIMIR CIERRE</button>
                 </div>
             </div>
@@ -867,7 +1067,11 @@ const ReportesMaestro = () => {
 
                     <div className="filter-item-premium" style={{ maxWidth: '150px' }}>
                         <label className="filter-label-premium">Gerencia</label>
-                        <select value={filtroGerencia} onChange={e => setFiltroGerencia(e.target.value)}>
+                        <select
+                            value={activeTab === 'operaciones' ? 'Operaciones' : filtroGerencia}
+                            onChange={e => setFiltroGerencia(e.target.value)}
+                            disabled={activeTab === 'operaciones'}
+                        >
                             <option value="Todos">Todas</option>
                             {["Administración Maracaibo", "Operaciones", "Mantenimiento", "Seguridad", "Recursos Humanos", "Gerencia General"].map(g => <option key={g} value={g}>{g}</option>)}
                         </select>
@@ -888,9 +1092,9 @@ const ReportesMaestro = () => {
                             <input type="text" placeholder="ID, Descripción..." value={busqueda} onChange={e => setBusqueda(e.target.value)} />
                         </div>
                     </div>
-                    
+
                     <div className="filter-item-premium" style={{ alignSelf: 'flex-end', display: 'flex', gap: '8px' }}>
-                        <button 
+                        <button
                             className={`btn-toggle-filters ${showMoreFilters ? 'active' : ''}`}
                             onClick={() => setShowMoreFilters(!showMoreFilters)}
                             title="Más Filtros"
@@ -902,7 +1106,7 @@ const ReportesMaestro = () => {
 
                 <AnimatePresence>
                     {showMoreFilters && (
-                        <motion.div 
+                        <motion.div
                             initial={{ height: 0, opacity: 0 }}
                             animate={{ height: 'auto', opacity: 1 }}
                             exit={{ height: 0, opacity: 0 }}
@@ -913,7 +1117,12 @@ const ReportesMaestro = () => {
                                 <label className="filter-label-premium">Categoría</label>
                                 <select value={filtroCategoria} onChange={e => setFiltroCategoria(e.target.value)}>
                                     <option value="Todos">Todas</option>
-                                    {/* Categorías dinámicas si estuvieran disponibles en el estado global */}
+                                    {Array.from(new Set([
+                                        ...data.requisiciones.flatMap(r => (r.items || []).map(it => it.categoria || it.cat)),
+                                        ...data.tickets.flatMap(t => (t.items || []).map(it => it.categoria || it.cat))
+                                    ].filter(Boolean))).map(cat => (
+                                        <option key={cat} value={cat}>{cat}</option>
+                                    ))}
                                 </select>
                             </div>
                             <div className="filter-item-premium">
@@ -1021,41 +1230,41 @@ const ReportesMaestro = () => {
                                                     <tr key={r.id} style={sla.alerta ? { backgroundColor: '#fff7ed', borderLeft: '4px solid #f97316' } : {}}>
                                                         <td>
                                                             <motion.span
-                                                              whileHover={{ 
-                                                                scale: 1.1, 
-                                                                x: 5,
-                                                                color: '#2563eb',
-                                                                textShadow: '0 0 8px rgba(37, 99, 235, 0.2)'
-                                                              }}
-                                                              whileTap={{ scale: 0.95 }}
-                                                              transition={{ type: "spring", stiffness: 400, damping: 10 }}
-                                                              onClick={() => setReqSeleccionada(r)}
-                                                              style={{
-                                                                fontSize: '12px',
-                                                                fontWeight: '900',
-                                                                color: '#1e40af',
-                                                                textDecoration: 'underline',
-                                                                textUnderlineOffset: '3px',
-                                                                textDecorationColor: 'rgba(30, 64, 175, 0.4)',
-                                                                cursor: 'pointer',
-                                                                display: 'inline-block'
-                                                              }}
+                                                                whileHover={{
+                                                                    scale: 1.1,
+                                                                    x: 5,
+                                                                    color: '#2563eb',
+                                                                    textShadow: '0 0 8px rgba(37, 99, 235, 0.2)'
+                                                                }}
+                                                                whileTap={{ scale: 0.95 }}
+                                                                transition={{ type: "spring", stiffness: 400, damping: 10 }}
+                                                                onClick={() => setReqSeleccionada(r)}
+                                                                style={{
+                                                                    fontSize: '12px',
+                                                                    fontWeight: '900',
+                                                                    color: '#1e40af',
+                                                                    textDecoration: 'underline',
+                                                                    textUnderlineOffset: '3px',
+                                                                    textDecorationColor: 'rgba(30, 64, 175, 0.4)',
+                                                                    cursor: 'pointer',
+                                                                    display: 'inline-block'
+                                                                }}
                                                             >
-                                                              {r.correlativo_req || `REQ-${r.id}`}
+                                                                {r.correlativo_req || `REQ-${r.id}`}
                                                             </motion.span>
                                                         </td>
                                                         <td>{safeFormatDate(r.fecha_emision)}</td>
                                                         <td className="rm-td-cc">{r.centro_costo?.split('(')[0]}</td>
                                                         <td className="rm-td-justif">
-                                                          <div style={{ fontWeight: '700', color: '#334155' }}>{r.justificacion}</div>
-                                                          {r.items?.length > 1 && (
-                                                            <div 
-                                                              style={{ fontSize: '10px', color: '#0ea5e9', fontWeight: 'bold', cursor: 'help', marginTop: '2px' }}
-                                                              title={r.items.slice(1).map(it => `- ${it.descripcion}`).join('\n')}
-                                                            >
-                                                              (+ {r.items.length - 1} más)
-                                                            </div>
-                                                          )}
+                                                            <div style={{ fontWeight: '700', color: '#334155' }}>{r.justificacion}</div>
+                                                            {r.items?.length > 1 && (
+                                                                <div
+                                                                    style={{ fontSize: '10px', color: '#0ea5e9', fontWeight: 'bold', cursor: 'help', marginTop: '2px' }}
+                                                                    title={r.items.slice(1).map(it => `- ${it.descripcion}`).join('\n')}
+                                                                >
+                                                                    (+ {r.items.length - 1} más)
+                                                                </div>
+                                                            )}
                                                         </td>
 
                                                         <td style={{ textAlign: 'center', fontSize: '0.65rem' }}>
@@ -1079,13 +1288,13 @@ const ReportesMaestro = () => {
 
                                                         <td style={{ textAlign: 'center' }}>
                                                             {(() => {
-                                                              const items = r.items || [];
-                                                              const enAlmacen = items.filter(it => it.enviado_almacen || (it.historial_compras?.length > 0 && it.historial_compras.every(h => h.enviado_almacen))).length;
-                                                              const total = items.length;
-                                                              if (total === 0) return <span style={{ color: '#94a3b8', fontSize: '10px' }}>-</span>;
-                                                              if (enAlmacen === total) return <div style={{ color: '#10b981', fontWeight: '900', fontSize: '11px' }}>RECIBIDO 📦</div>;
-                                                              if (enAlmacen > 0) return <div style={{ color: '#f59e0b', fontWeight: '900', fontSize: '11px' }}>{enAlmacen}/{total} 📥</div>;
-                                                              return <div style={{ color: '#94a3b8', fontWeight: '600', fontSize: '11px' }}>PENDIENTE</div>;
+                                                                const items = r.items || [];
+                                                                const enAlmacen = items.filter(it => it.enviado_almacen || (it.historial_compras?.length > 0 && it.historial_compras.every(h => h.enviado_almacen))).length;
+                                                                const total = items.length;
+                                                                if (total === 0) return <span style={{ color: '#94a3b8', fontSize: '10px' }}>-</span>;
+                                                                if (enAlmacen === total) return <div style={{ color: '#10b981', fontWeight: '900', fontSize: '11px' }}>RECIBIDO 📦</div>;
+                                                                if (enAlmacen > 0) return <div style={{ color: '#f59e0b', fontWeight: '900', fontSize: '11px' }}>{enAlmacen}/{total} 📥</div>;
+                                                                return <div style={{ color: '#94a3b8', fontWeight: '600', fontSize: '11px' }}>PENDIENTE</div>;
                                                             })()}
                                                         </td>
 
@@ -1110,8 +1319,10 @@ const ReportesMaestro = () => {
                                         <thead>
                                             <tr>
                                                 <th style={{ width: '180px' }}>REFERENCIA</th>
-                                                <th>FECHA</th>
-                                                <th>CENTRO DE COSTO</th>
+                                                <th>FECHA EMISIÓN</th>
+                                                <th>FECHA PAGO</th>
+                                                <th>MÉTODO</th>
+                                                <th>BANCO</th>
                                                 <th>RESPONSABLE / CONCEPTO</th>
                                                 <th style={{ textAlign: 'right' }}>MONTO ($)</th>
                                                 <th style={{ textAlign: 'center' }}>ESTATUS</th>
@@ -1119,49 +1330,53 @@ const ReportesMaestro = () => {
                                         </thead>
                                         <tbody>
                                             {ticketsControl.map((t) => (
-                                                <tr key={t.id}>
+                                                <tr
+                                                    key={t.id}
+                                                    onClick={() => handleOpenTicket(t.codigo_control, `TK-${t.id}`)}
+                                                    style={{ cursor: 'pointer' }}
+                                                >
                                                     <td>
-                                                        <motion.span
-                                                          whileHover={{ 
-                                                            scale: 1.1, 
-                                                            x: 5,
-                                                            color: '#2563eb',
-                                                            textShadow: '0 0 8px rgba(37, 99, 235, 0.2)'
-                                                          }}
-                                                          whileTap={{ scale: 0.95 }}
-                                                          transition={{ type: "spring", stiffness: 400, damping: 10 }}
-                                                          onClick={() => setTickSeleccionado(t)}
-                                                          style={{
-                                                            fontSize: '12px',
-                                                            fontWeight: '900',
-                                                            color: '#1e40af',
-                                                            textDecoration: 'underline',
-                                                            textUnderlineOffset: '3px',
-                                                            textDecorationColor: 'rgba(30, 64, 175, 0.4)',
-                                                            cursor: 'pointer',
-                                                            display: 'inline-block'
-                                                          }}
-                                                        >
-                                                          {t.codigo_control}
-                                                        </motion.span>
+                                                        <span className="rm-table-link">
+                                                            {t.codigo_control || `TX-${String(t.id).padStart(4, '0')}`}
+                                                        </span>
                                                     </td>
-                                                    <td>{safeFormatDate(t.fecha_emision)}</td>
-                                                    <td className="rm-td-cc">{t.centro_costo?.split('(')[0]}</td>
+                                                    <td className="rm-td-date">{safeFormatDate(t.fechaEmision)}</td>
+                                                    <td>
+                                                        {t.statusDisplay === 'Completada' ? (
+                                                            <span className="rm-td-date">{safeFormatDate(t.fechaPago)}</span>
+                                                        ) : (
+                                                            <span style={{ color: '#94a3b8', fontSize: '0.75rem', fontWeight: 500 }}>Pendiente</span>
+                                                        )}
+                                                    </td>
+                                                    <td>
+                                                        <span className={`rm-badge-pago ${t.metodo === 'Bs/$' ? 'bs' : 'usd'}`}>
+                                                            Pago {t.metodo}
+                                                        </span>
+                                                    </td>
+                                                    <td style={{ fontSize: '11px', fontWeight: 'normal', color: '#64748b' }}>
+                                                        {t.banco || '-'}
+                                                    </td>
                                                     <td className="rm-td-justif">
-                                                         <div style={{ fontWeight: '700', color: '#334155' }}>{t.responsable_nombre} - {t.clasificacion_admin}</div>
-                                                         {t.itemsCount > 1 && (
-                                                             <div 
-                                                                 style={{ fontSize: '10px', color: '#0ea5e9', fontWeight: 'bold', cursor: 'help', marginTop: '2px' }}
-                                                                 title={t.items?.slice(1).map(it => `- ${it.descripcion || it.desc}`).join('\n')}
-                                                             >
-                                                                 (+ {t.itemsCount - 1} más)
-                                                             </div>
-                                                         )}
-                                                     </td>
-                                                    <td className="rm-td-amount">$ {(t.montoTotal || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
+                                                        <div style={{ fontWeight: '700', color: '#334155' }}>{t.responsable_nombre || t.gerente_nombre} - {t.clasificacion_admin || 'S/C'}</div>
+                                                        {t.itemsCount > 1 && (
+                                                            <div
+                                                                style={{ fontSize: '10px', color: '#0ea5e9', fontWeight: 'bold', cursor: 'help', marginTop: '2px' }}
+                                                                title={t.items?.slice(1).map(it => `- ${it.descripcion || it.desc}`).join('\n')}
+                                                                onClick={(e) => e.stopPropagation()}
+                                                            >
+                                                                (+ {t.itemsCount - 1} más)
+                                                            </div>
+                                                        )}
+                                                    </td>
+                                                    <td
+                                                        className="rm-td-amount"
+                                                        style={t.montoTotal === 0 ? { color: '#cbd5e1', fontWeight: 'normal' } : { color: '#0f172a', fontWeight: 'bold' }}
+                                                    >
+                                                        $ {t.montoTotal.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                                                    </td>
                                                     <td style={{ textAlign: 'center' }}>
                                                         <span className={`rm-badge-status ${t.statusDisplay.toLowerCase()}`}>
-                                                            {t.statusDisplay}
+                                                            {t.statusDisplay.toUpperCase()}
                                                         </span>
                                                     </td>
                                                 </tr>
@@ -1192,42 +1407,49 @@ const ReportesMaestro = () => {
                                         <tbody>
                                             {costosRows.map((r) => (
                                                 <tr key={r.uId}>
-                                                    <td><span style={{ fontWeight: 800, color: '#0ea5e9' }}>{r.ref}</span></td>
+                                                    <td>
+                                                        <span
+                                                            className="rm-table-link"
+                                                            onClick={() => r.tipo === 'REQUISICIÓN' ? handleOpenRequisicion(r.ref, r.requisicionIdReal) : handleOpenTicket(r.ref, r.uId)}
+                                                        >
+                                                            {r.ref}
+                                                        </span>
+                                                    </td>
                                                     <td style={{ textAlign: 'center' }}>
-                                                         {r.tipo === 'REQUISICIÓN' ? (
-                                                             <div
-                                                                 onClick={() => toggleAlmacenSubRow(r.requisicionIdReal, r.itemIdx, r.historyIdx, !r.almacen)}
-                                                                 style={{
-                                                                     cursor: 'pointer',
-                                                                     display: 'inline-flex',
-                                                                     alignItems: 'center',
-                                                                     justifyContent: 'center',
-                                                                     width: '24px',
-                                                                     height: '24px',
-                                                                     borderRadius: '6px',
-                                                                     backgroundColor: r.almacen ? '#e0f2fe' : '#f1f5f9',
-                                                                     border: '1px solid',
-                                                                     borderColor: r.almacen ? '#0ea5e9' : '#e2e8f0',
-                                                                     color: r.almacen ? '#0369a1' : '#94a3b8',
-                                                                     transition: 'all 0.2s',
-                                                                     fontSize: '0.8rem'
-                                                                 }}
-                                                                 title={r.almacen ? 'Registrado en Almacén' : 'Marcar como enviado a Almacén'}
-                                                             >
-                                                                 {r.almacen ? '📦' : '📥'}
-                                                             </div>
-                                                         ) : (
-                                                             <span style={{ fontSize: '1.1rem', opacity: 0.1 }}>📦</span>
-                                                         )}
-                                                     </td>
+                                                        {r.tipo === 'REQUISICIÓN' ? (
+                                                            <div
+                                                                onClick={() => toggleAlmacenSubRow(r.requisicionIdReal, r.itemIdx, r.historyIdx, !r.almacen)}
+                                                                style={{
+                                                                    cursor: 'pointer',
+                                                                    display: 'inline-flex',
+                                                                    alignItems: 'center',
+                                                                    justifyContent: 'center',
+                                                                    width: '24px',
+                                                                    height: '24px',
+                                                                    borderRadius: '6px',
+                                                                    backgroundColor: r.almacen ? '#e0f2fe' : '#f1f5f9',
+                                                                    border: '1px solid',
+                                                                    borderColor: r.almacen ? '#0ea5e9' : '#e2e8f0',
+                                                                    color: r.almacen ? '#0369a1' : '#94a3b8',
+                                                                    transition: 'all 0.2s',
+                                                                    fontSize: '0.8rem'
+                                                                }}
+                                                                title={r.almacen ? 'Registrado en Almacén' : 'Marcar como enviado a Almacén'}
+                                                            >
+                                                                {r.almacen ? '📦' : '📥'}
+                                                            </div>
+                                                        ) : (
+                                                            <span style={{ fontSize: '1.1rem', opacity: 0.1 }}>📦</span>
+                                                        )}
+                                                    </td>
                                                     <td className="rm-td-desc">{r.descripcion}</td>
-                                                    <td style={{ fontSize: '10px', fontWeight: 'bold', color: '#3b82f6' }}>{r.factura}</td>
+                                                    <td className="rm-td-invoice">{r.factura}</td>
                                                     <td className="rm-td-date">{safeFormatDate(r.fecha)}</td>
-                                                    <td style={{ fontSize: '11px', fontWeight: '700', color: '#475569' }}>{r.solicitante || 'N/A'}</td>
+                                                    <td className="rm-td-solicitante">{r.solicitante || 'N/A'}</td>
                                                     <td><span className="rm-badge-type">{r.categoria}</span></td>
-                                                    <td className="rm-td-cc">
-                                                        <div style={{ fontWeight: 700 }}>{r.gerencia}</div>
-                                                        <div style={{ fontSize: '10px', color: '#94a3b8' }}>{r.cc?.split('(')[0]}</div>
+                                                    <td>
+                                                        <span style={{ fontWeight: 700, fontSize: '0.85rem', color: '#0f172a' }}>{r.gerencia}</span>
+                                                        <span className="rm-table-subtext">{r.cc?.split('(')[0]}</span>
                                                     </td>
                                                     <td className="rm-td-amount">$ {(r.monto || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
                                                 </tr>
@@ -1256,54 +1478,88 @@ const ReportesMaestro = () => {
 
                         {activeTab === 'operaciones' && (
                             <motion.div key="operaciones" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="rm-view-wrapper">
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                                    <h2 style={{ margin: 0, fontWeight: 900, color: '#0f172a' }}>Control de Proyectos - Operaciones</h2>
-                                    <div style={{ position: 'relative', width: '300px' }}>
-                                        <Search style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} size={16} />
-                                        <input
-                                            type="text"
-                                            placeholder="Buscar ID Ref / Proyecto..."
-                                            className="rm-input"
-                                            style={{ paddingLeft: '40px', width: '100%', borderRadius: '12px', border: '1px solid #e2e8f0', background: '#fff' }}
-                                            value={busquedaProyecto}
-                                            onChange={e => setBusquedaProyecto(e.target.value)}
-                                        />
-                                    </div>
-                                </div>
-
                                 <div className="rm-table-card">
                                     <table className="rm-table">
                                         <thead>
                                             <tr>
-                                                <th>ID REF. PROYECTO / CONTRATO</th>
-                                                <th style={{ textAlign: 'center' }}>TRANSACCIONES</th>
-                                                <th style={{ textAlign: 'right' }}>EJE. TICKETS</th>
-                                                <th style={{ textAlign: 'right' }}>EJE. COMPRAS (REQ)</th>
-                                                <th style={{ textAlign: 'right' }}>TOTAL EJECUTADO</th>
-                                                <th style={{ textAlign: 'center' }}>ÚLTIMO MOV.</th>
+                                                <th>PROYECTO / FECHA</th>
+                                                <th>REF #</th>
+                                                <th style={{ textAlign: 'center' }}>ALM.</th>
+                                                <th>PRODUCTO</th>
+                                                <th>FACTURA</th>
+                                                <th>SOLICITANTE</th>
+                                                <th>TIPO PAGO</th>
+                                                <th>CAT.</th>
+                                                <th>DESTINO (G/CC)</th>
+                                                <th style={{ textAlign: 'right' }}>TOTAL ($)</th>
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            {reporteOperaciones.map(p => (
-                                                <tr key={p.id}>
-                                                    <td><span style={{ fontWeight: 800, color: '#0ea5e9' }}>{p.id}</span></td>
-                                                    <td style={{ textAlign: 'center' }}>
-                                                        <div style={{ display: 'flex', gap: '5px', justifyContent: 'center' }}>
-                                                            <span title="Tickets" style={{ background: '#e0f2fe', color: '#0369a1', padding: '2px 8px', borderRadius: '4px', fontSize: '10px' }}>{p.ticketsCount} TK</span>
-                                                            <span title="Requisiciones" style={{ background: '#f5f3ff', color: '#4338ca', padding: '2px 8px', borderRadius: '4px', fontSize: '10px' }}>{p.reqsCount} REQ</span>
-                                                        </div>
+                                            {reporteOperacionesRows.map((r) => (
+                                                <tr key={r.uId}>
+                                                    <td>
+                                                        <span
+                                                            className="rm-table-link"
+                                                            onClick={() => r.tipo === 'REQUISICIÓN' ? handleOpenRequisicion(r.ref, r.requisicionIdReal) : handleOpenTicket(r.ref, r.uId)}
+                                                        >
+                                                            {r.proyecto}
+                                                        </span>
+                                                        <span className="rm-table-subtext">{safeFormatDate(r.fecha)}</span>
                                                     </td>
-                                                    <td style={{ textAlign: 'right', fontWeight: 600 }}>$ {p.montoTickets.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
-                                                    <td style={{ textAlign: 'right', fontWeight: 600 }}>$ {p.montoReqs.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
-                                                    <td style={{ textAlign: 'right', fontWeight: 900, color: '#0f172a' }}>$ {p.totalEjecutado.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
-                                                    <td style={{ textAlign: 'center' }}>
-                                                        <span style={{ fontSize: '11px', color: '#64748b' }}>{safeFormatDate(p.lastMov)}</span>
+                                                    <td>
+                                                        <span
+                                                            className="rm-table-link"
+                                                            onClick={() => r.tipo === 'REQUISICIÓN' ? handleOpenRequisicion(r.ref, r.requisicionIdReal) : handleOpenTicket(r.ref, r.uId)}
+                                                        >
+                                                            {r.ref}
+                                                        </span>
                                                     </td>
+                                                    <td style={{ textAlign: 'center' }}>
+                                                        {r.tipo === 'REQUISICIÓN' ? (
+                                                            <div
+                                                                onClick={() => toggleAlmacenSubRow(r.requisicionIdReal, r.itemIdx, r.historyIdx, !r.almacen)}
+                                                                style={{
+                                                                    cursor: 'pointer',
+                                                                    display: 'inline-flex',
+                                                                    alignItems: 'center',
+                                                                    justifyContent: 'center',
+                                                                    width: '24px',
+                                                                    height: '24px',
+                                                                    borderRadius: '6px',
+                                                                    backgroundColor: r.almacen ? '#e0f2fe' : '#f1f5f9',
+                                                                    border: '1px solid',
+                                                                    borderColor: r.almacen ? '#0ea5e9' : '#e2e8f0',
+                                                                    color: r.almacen ? '#0369a1' : '#94a3b8',
+                                                                    transition: 'all 0.2s',
+                                                                    fontSize: '0.8rem'
+                                                                }}
+                                                                title={r.almacen ? 'Registrado en Almacén' : 'Marcar como enviado a Almacén'}
+                                                            >
+                                                                {r.almacen ? '📦' : '📥'}
+                                                            </div>
+                                                        ) : (
+                                                            <span style={{ fontSize: '1.1rem', opacity: 0.1 }}>📦</span>
+                                                        )}
+                                                    </td>
+                                                    <td className="rm-td-desc">{r.descripcion}</td>
+                                                    <td className="rm-td-invoice">{r.factura}</td>
+                                                    <td className="rm-td-solicitante">{r.solicitante || 'N/A'}</td>
+                                                    <td>
+                                                        <span className={`rm-badge-pago ${r.moneda_pago === 'Bs/$' ? 'bs' : 'usd'}`}>
+                                                            Pago {r.moneda_pago}
+                                                        </span>
+                                                    </td>
+                                                    <td><span className="rm-badge-type">{r.categoria}</span></td>
+                                                    <td>
+                                                        <span style={{ fontWeight: 700, fontSize: '0.85rem', color: '#0f172a' }}>{r.cc?.split('(')[0]}</span>
+                                                        <span className="rm-table-subtext">{r.gerencia}</span>
+                                                    </td>
+                                                    <td className="rm-td-amount">$ {(r.monto || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
                                                 </tr>
                                             ))}
                                         </tbody>
                                     </table>
-                                    {reporteOperaciones.length === 0 && (
+                                    {reporteOperacionesRows.length === 0 && (
                                         <div style={{ padding: '60px', textAlign: 'center', color: '#94a3b8' }}>
                                             No se encontraron proyectos de Operaciones.
                                         </div>
@@ -1474,37 +1730,247 @@ const ReportesMaestro = () => {
                 )}
 
                 {tickSeleccionado && (
-                    <div className="rm-modal-overlay" onClick={() => setTickSeleccionado(null)}>
+                    <div className="rm-modal-overlay" onClick={() => { setTickSeleccionado(null); setExtendedTicketData(null); }}>
                         <motion.div
                             initial={{ opacity: 0, scale: 0.95 }}
                             animate={{ opacity: 1, scale: 1 }}
                             exit={{ opacity: 0, scale: 0.95 }}
                             className="rm-detail-modal"
+                            style={{ maxWidth: '1100px', width: '95%' }}
                             onClick={e => e.stopPropagation()}
                         >
-                            <div className="rm-modal-header" style={{ background: '#1e293b' }}>
-                                <h2>Referencia: {tickSeleccionado.codigo_control}</h2>
-                                <button onClick={() => setTickSeleccionado(null)}>×</button>
-                            </div>
-                            <div className="rm-modal-body">
-                                <div className="rm-modal-info-grid">
-                                    <div className="rm-min-card"><strong>Responsable:</strong> {tickSeleccionado.responsable_nombre}</div>
-                                    <div className="rm-min-card"><strong>Depto:</strong> {tickSeleccionado.departamento}</div>
-                                    <div className="rm-min-card"><strong>Estatus:</strong> {tickSeleccionado.statusDisplay}</div>
-                                    <div className="rm-min-card"><strong>Monto:</strong> $ {(tickSeleccionado.montoTotal || 0).toLocaleString('de-DE')}</div>
-                                </div>
-                                <table className="rm-mini-table">
-                                    <thead><tr><th>Concepto</th><th style={{ textAlign: 'right' }}>Total</th></tr></thead>
-                                    <tbody>
-                                        {tickSeleccionado.items?.map((it, idx) => (
-                                            <tr key={idx}>
-                                                <td>{it.descripcion || it.desc}</td>
-                                                <td style={{ textAlign: 'right' }}>$ {(Number(it.total) || (Number(it.pu) * Number(it.cant))).toLocaleString('de-DE')}</td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
+                            {(() => {
+                                const ticket = extendedTicketData?.ticket || tickSeleccionado;
+                                const req = extendedTicketData?.req;
+                                const status = ticket.status?.toUpperCase() || 'EMITIDO';
+                                const statusDisplay = (status === 'PAGADO' || status === 'COMPLETADO' || status === 'COMPLETADA') ? 'Completada' : 'Pendiente';
+                                const bancoNombre = bancos.find(b => b.id === ticket.banco_pago_id)?.nombre
+                                    || ticket.banco_origen
+                                    || (ticket.items || []).flatMap(r => (r.historial_compras || []).map(h => h.banco_nombre)).filter(Boolean)[0]
+                                    || '-';
+                                const metodoRaw = ticket.metodo_pago
+                                    || (ticket.items || []).flatMap(r => (r.historial_compras || []).map(h => h.metodo_pago)).filter(Boolean)[0]
+                                    || '$/$';
+                                const metodoPago = parseMonedaPago(metodoRaw);
+                                const invoiceFiles = parsearFacturaUrls(ticket.factura_url);
+
+                                return (
+                                    <>
+                                        <div className="rm-modal-header" style={{ background: '#1e293b' }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+                                                <h2 style={{ margin: 0 }}>Referencia: {ticket.codigo_control || `TX-${String(ticket.id).padStart(4, '0')}`}</h2>
+                                                <span className={`rm-badge-status ${statusDisplay.toLowerCase()}`}>
+                                                    {statusDisplay.toUpperCase()}
+                                                </span>
+                                            </div>
+                                            <button onClick={() => { setTickSeleccionado(null); setExtendedTicketData(null); }}>×</button>
+                                        </div>
+                                        <div className="rm-modal-body">
+                                            {extendedLoading ? (
+                                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '400px', gap: '15px' }}>
+                                                    <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1 }}>
+                                                        <DollarSign size={40} color="#3b82f6" />
+                                                    </motion.div>
+                                                    <span style={{ color: '#64748b', fontWeight: '600', fontSize: '0.9rem' }}>Cargando información extendida y comprobantes...</span>
+                                                </div>
+                                            ) : (
+                                                <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '30px' }}>
+                                                    {/* Left Panel: Info & Items & Signatures */}
+                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                                                        <div>
+                                                            <h3 style={{ margin: '0 0 10px 0', fontSize: '0.9rem', color: '#64748b', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Información General</h3>
+                                                            <div className="rm-modal-info-grid" style={{ gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px', marginBottom: 0 }}>
+                                                                <div className="rm-min-card"><strong>Responsable:</strong> {ticket.responsable_nombre || ticket.gerente_nombre || 'N/A'}</div>
+                                                                <div className="rm-min-card"><strong>Gerencia:</strong> {ticket.departamento || 'N/A'}</div>
+                                                                <div className="rm-min-card"><strong>Centro de Costo:</strong> {ticket.centro_costo || 'N/A'}</div>
+                                                                <div className="rm-min-card"><strong>Monto Total:</strong> $ {(Number(ticket.total_usd) || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</div>
+                                                            </div>
+                                                        </div>
+
+                                                        <div>
+                                                            <h3 style={{ margin: '0 0 10px 0', fontSize: '0.9rem', color: '#64748b', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Trazabilidad Temporal</h3>
+                                                            <div className="rm-modal-info-grid" style={{ gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px', marginBottom: 0 }}>
+                                                                <div className="rm-min-card"><strong>F. Emisión:</strong> {safeFormatDate(ticket.fecha_emision || ticket.created_at)}</div>
+                                                                <div className="rm-min-card"><strong>F. Pago:</strong> {statusDisplay === 'Completada' ? safeFormatDate(ticket.fecha_pago || ticket.updated_at) : 'Pendiente'}</div>
+                                                                <div className="rm-min-card"><strong>Banco Liquidación:</strong> {bancoNombre}</div>
+                                                                <div className="rm-min-card"><strong>Método de Pago:</strong> Pago {metodoPago}</div>
+                                                            </div>
+                                                        </div>
+
+                                                        <div>
+                                                            <h3 style={{ margin: '0 0 10px 0', fontSize: '0.9rem', color: '#64748b', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Conceptos y Renglones</h3>
+                                                            <div style={{ maxHeight: '180px', overflowY: 'auto', border: '1px solid #e2e8f0', borderRadius: '12px' }}>
+                                                                <table className="rm-mini-table">
+                                                                    <thead>
+                                                                        <tr>
+                                                                            <th>Descripción</th>
+                                                                            <th style={{ textAlign: 'right' }}>Total</th>
+                                                                        </tr>
+                                                                    </thead>
+                                                                    <tbody>
+                                                                        {ticket.items?.map((it, idx) => (
+                                                                            <tr key={idx}>
+                                                                                <td style={{ fontSize: '0.8rem' }}>{it.descripcion || it.desc}</td>
+                                                                                <td style={{ textAlign: 'right', fontWeight: 700, fontSize: '0.85rem' }}>$ {(Number(it.total) || (Number(it.pu) * Number(it.cant))).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
+                                                                            </tr>
+                                                                        ))}
+                                                                    </tbody>
+                                                                </table>
+                                                            </div>
+                                                        </div>
+
+                                                        {ticket.justificacion && (
+                                                            <div>
+                                                                <h3 style={{ margin: '0 0 8px 0', fontSize: '0.9rem', color: '#64748b', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Notas de Auditoría</h3>
+                                                                <div style={{ padding: '12px 15px', background: '#fffbeb', border: '1px solid #fef3c7', borderRadius: '12px', fontSize: '0.82rem', color: '#78350f', whiteSpace: 'pre-line', fontWeight: '500', lineHeight: '1.4' }}>
+                                                                    {ticket.justificacion}
+                                                                </div>
+                                                            </div>
+                                                        )}
+
+                                                        <div>
+                                                            <h3 style={{ margin: '0 0 10px 0', fontSize: '0.9rem', color: '#64748b', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Firmas y Aprobaciones</h3>
+                                                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px' }}>
+                                                                {req ? (
+                                                                    <>
+                                                                        <div style={{ padding: '10px', border: '1px dashed #cbd5e1', borderRadius: '10px', background: '#f8fafc', textAlign: 'center' }}>
+                                                                            <div style={{ fontSize: '0.65rem', fontWeight: '800', color: '#64748b', textTransform: 'uppercase' }}>Aprob. Proyecto</div>
+                                                                            {req.f_aprobacion_proyecto ? (
+                                                                                <>
+                                                                                    <div style={{ fontSize: '0.75rem', color: '#16a34a', fontWeight: 'bold', margin: '4px 0' }}>✓ Aprobado</div>
+                                                                                    <div style={{ fontSize: '0.7rem', color: '#334155', fontWeight: 600 }}>{req.n_aprobacion_proyecto?.split(' ')[0]}</div>
+                                                                                    <div style={{ fontSize: '0.6rem', color: '#64748b' }}>{safeFormatDate(req.f_aprobacion_proyecto)}</div>
+                                                                                </>
+                                                                            ) : (
+                                                                                <div style={{ fontSize: '0.75rem', color: '#94a3b8', margin: '10px 0' }}>N/A</div>
+                                                                            )}
+                                                                        </div>
+
+                                                                        <div style={{ padding: '10px', border: '1px dashed #cbd5e1', borderRadius: '10px', background: '#f8fafc', textAlign: 'center' }}>
+                                                                            <div style={{ fontSize: '0.65rem', fontWeight: '800', color: '#64748b', textTransform: 'uppercase' }}>Aprob. Área</div>
+                                                                            {req.f_aprobacion_area ? (
+                                                                                <>
+                                                                                    <div style={{ fontSize: '0.75rem', color: '#16a34a', fontWeight: 'bold', margin: '4px 0' }}>✓ Aprobado</div>
+                                                                                    <div style={{ fontSize: '0.7rem', color: '#334155', fontWeight: 600 }}>{req.n_aprobacion_area?.split(' ')[0]}</div>
+                                                                                    <div style={{ fontSize: '0.6rem', color: '#64748b' }}>{safeFormatDate(req.f_aprobacion_area)}</div>
+                                                                                </>
+                                                                            ) : (
+                                                                                <div style={{ fontSize: '0.75rem', color: '#94a3b8', margin: '10px 0' }}>N/A</div>
+                                                                            )}
+                                                                        </div>
+
+                                                                        <div style={{ padding: '10px', border: '1px dashed #cbd5e1', borderRadius: '10px', background: '#f8fafc', textAlign: 'center' }}>
+                                                                            <div style={{ fontSize: '0.65rem', fontWeight: '800', color: '#64748b', textTransform: 'uppercase' }}>Aprob. General</div>
+                                                                            {req.f_aprobacion_general ? (
+                                                                                <>
+                                                                                    <div style={{ fontSize: '0.75rem', color: '#16a34a', fontWeight: 'bold', margin: '4px 0' }}>✓ Aprobado</div>
+                                                                                    <div style={{ fontSize: '0.7rem', color: '#334155', fontWeight: 600 }}>{req.n_aprobacion_general?.split(' ')[0]}</div>
+                                                                                    <div style={{ fontSize: '0.6rem', color: '#64748b' }}>{safeFormatDate(req.f_aprobacion_general)}</div>
+                                                                                </>
+                                                                            ) : (
+                                                                                <div style={{ fontSize: '0.75rem', color: '#94a3b8', margin: '10px 0' }}>N/A</div>
+                                                                            )}
+                                                                        </div>
+                                                                    </>
+                                                                ) : (
+                                                                    <>
+                                                                        <div style={{ padding: '10px', border: '1px dashed #cbd5e1', borderRadius: '10px', background: '#f8fafc', textAlign: 'center' }}>
+                                                                            <div style={{ fontSize: '0.65rem', fontWeight: '800', color: '#64748b', textTransform: 'uppercase' }}>Creado Por</div>
+                                                                            <div style={{ fontSize: '0.75rem', color: '#2563eb', fontWeight: 'bold', margin: '4px 0' }}>✓ Emitido</div>
+                                                                            <div style={{ fontSize: '0.7rem', color: '#334155', fontWeight: 600 }}>{ticket.gerente_nombre || ticket.responsable_nombre}</div>
+                                                                            <div style={{ fontSize: '0.6rem', color: '#64748b' }}>{safeFormatDate(ticket.fecha_emision || ticket.created_at)}</div>
+                                                                        </div>
+
+                                                                        <div style={{ padding: '10px', border: '1px dashed #cbd5e1', borderRadius: '10px', background: '#f8fafc', textAlign: 'center', gridColumn: 'span 2' }}>
+                                                                            <div style={{ fontSize: '0.65rem', fontWeight: '800', color: '#64748b', textTransform: 'uppercase' }}>Liquidado Por</div>
+                                                                            {statusDisplay === 'Completada' ? (
+                                                                                <>
+                                                                                    <div style={{ fontSize: '0.75rem', color: '#16a34a', fontWeight: 'bold', margin: '4px 0' }}>✓ Pagado (Liquidado)</div>
+                                                                                    <div style={{ fontSize: '0.7rem', color: '#334155', fontWeight: 600 }}>{bancoNombre}</div>
+                                                                                    <div style={{ fontSize: '0.6rem', color: '#64748b' }}>{safeFormatDate(ticket.fecha_pago || ticket.updated_at)}</div>
+                                                                                </>
+                                                                            ) : (
+                                                                                <div style={{ fontSize: '0.75rem', color: '#94a3b8', margin: '10px 0' }}>Pendiente de Liquidación</div>
+                                                                            )}
+                                                                        </div>
+                                                                    </>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Right Panel: Digital Visor */}
+                                                    <div style={{ display: 'flex', flexDirection: 'column', borderLeft: '1px solid #e2e8f0', paddingLeft: '25px' }}>
+                                                        <h3 style={{ margin: '0 0 10px 0', fontSize: '0.9rem', color: '#64748b', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Visor de Soportes Digitales</h3>
+                                                        {invoiceFiles.length > 0 ? (
+                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', flex: 1 }}>
+                                                                {invoiceFiles.length > 1 && (
+                                                                    <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '5px' }}>
+                                                                        {invoiceFiles.map((file, idx) => (
+                                                                            <button
+                                                                                key={idx}
+                                                                                onClick={() => setSelectedFileIndex(idx)}
+                                                                                style={{
+                                                                                    padding: '6px 12px',
+                                                                                    borderRadius: '6px',
+                                                                                    border: '1px solid',
+                                                                                    borderColor: selectedFileIndex === idx ? '#3b82f6' : '#e2e8f0',
+                                                                                    background: selectedFileIndex === idx ? '#eff6ff' : 'white',
+                                                                                    color: selectedFileIndex === idx ? '#2563eb' : '#475569',
+                                                                                    fontSize: '0.75rem',
+                                                                                    fontWeight: '700',
+                                                                                    cursor: 'pointer',
+                                                                                    whiteSpace: 'nowrap'
+                                                                                }}
+                                                                            >
+                                                                                Doc {idx + 1}
+                                                                            </button>
+                                                                        ))}
+                                                                    </div>
+                                                                )}
+                                                                <div style={{ flex: 1, minHeight: '400px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                                                                    {invoiceFiles[selectedFileIndex]?.url.split('?')[0].toLowerCase().endsWith('.pdf') ? (
+                                                                        <iframe
+                                                                            src={invoiceFiles[selectedFileIndex].url}
+                                                                            width="100%"
+                                                                            height="430px"
+                                                                            style={{ border: 'none', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)' }}
+                                                                        />
+                                                                    ) : (
+                                                                        <div style={{ display: 'flex', justifyContent: 'center', background: '#f8fafc', padding: '10px', borderRadius: '12px', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
+                                                                            <img
+                                                                                src={invoiceFiles[selectedFileIndex].url}
+                                                                                alt="Soporte Factura"
+                                                                                style={{ maxWidth: '100%', maxHeight: '410px', objectFit: 'contain', borderRadius: '8px' }}
+                                                                            />
+                                                                        </div>
+                                                                    )}
+                                                                    <div style={{ marginTop: '8px', textAlign: 'right' }}>
+                                                                        <a
+                                                                            href={invoiceFiles[selectedFileIndex].url}
+                                                                            target="_blank"
+                                                                            rel="noopener noreferrer"
+                                                                            style={{ fontSize: '0.75rem', color: '#2563eb', fontWeight: '700', textDecoration: 'underline' }}
+                                                                        >
+                                                                            Ver en pestaña nueva ↗
+                                                                        </a>
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        ) : (
+                                                            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#f8fafc', border: '1px dashed #cbd5e1', borderRadius: '16px', padding: '40px', textAlign: 'center', color: '#94a3b8' }}>
+                                                                <span style={{ fontSize: '2.5rem', marginBottom: '10px' }}>📁</span>
+                                                                <strong style={{ display: 'block', marginBottom: '5px', color: '#64748b' }}>Sin archivos cargados</strong>
+                                                                No se han adjuntado facturas o comprobantes digitalizados para este ticket.
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </>
+                                );
+                            })()}
                         </motion.div>
                     </div>
                 )}

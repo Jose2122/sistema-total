@@ -12,12 +12,12 @@ const getWeeksForMonth = (monthVal, year = 2026) => {
   const weeksMap = new Map();
   const start = new Date(year, 0, 1);
   const end = new Date(year, 11, 31);
-  
+
   let current = new Date(start);
   while (current <= end) {
     const m = current.getMonth(); // 0-indexed
     const w = getWeek(current, { weekStartsOn: 1 });
-    
+
     if (!weeksMap.has(w)) {
       weeksMap.set(w, {
         weekNum: w,
@@ -26,15 +26,15 @@ const getWeeksForMonth = (monthVal, year = 2026) => {
         months: new Set()
       });
     }
-    
+
     const wObj = weeksMap.get(w);
     wObj.months.add(m);
     if (current < wObj.minDate) wObj.minDate = new Date(current);
     if (current > wObj.maxDate) wObj.maxDate = new Date(current);
-    
+
     current.setDate(current.getDate() + 1);
   }
-  
+
   const weeksList = Array.from(weeksMap.values()).map(wObj => {
     const dStartStr = format(wObj.minDate, 'dd/MM');
     const dEndStr = format(wObj.maxDate, 'dd/MM');
@@ -44,7 +44,7 @@ const getWeeksForMonth = (monthVal, year = 2026) => {
       months: Array.from(wObj.months)
     };
   });
-  
+
   if (!monthVal || monthVal === '') {
     return weeksList;
   } else {
@@ -75,7 +75,20 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
   const [filtroPartidaCategoria, setFiltroPartidaCategoria] = useState('Todos');
   const [filtroPartidaClasificacion, setFiltroPartidaClasificacion] = useState('Todos');
   const [mostrarFiltrosTabla, setMostrarFiltrosTabla] = useState(false);
-  const [currentUser, setCurrentUser] = useState(currentUserProp || null);
+  const [currentUser, setCurrentUser] = useState(() => {
+    if (!currentUserProp) return null;
+    const emailLower = (currentUserProp.correo || currentUserProp.email || '').toLowerCase();
+    const esSuperAdmin = emailLower === 'jcontreras.totalclean@gmail.com';
+    const esAdminReal = esSuperAdmin ||
+      emailLower === 'cvega.totalclean@gmail.com' ||
+      emailLower === 'cvega@totalclean.com' ||
+      emailLower === 'karincmm1@gmail.com';
+    return {
+      ...currentUserProp,
+      esSuperAdmin,
+      esAdminReal
+    };
+  });
   const [loading, setLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -90,7 +103,19 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
   const [esAdminBypass, setEsAdminBypass] = useState(false);
 
   useEffect(() => {
-    if (currentUserProp) setCurrentUser(currentUserProp);
+    if (currentUserProp) {
+      const emailLower = (currentUserProp.correo || currentUserProp.email || '').toLowerCase();
+      const esSuperAdmin = emailLower === 'jcontreras.totalclean@gmail.com';
+      const esAdminReal = esSuperAdmin ||
+        emailLower === 'cvega.totalclean@gmail.com' ||
+        emailLower === 'cvega@totalclean.com' ||
+        emailLower === 'karincmm1@gmail.com';
+      setCurrentUser({
+        ...currentUserProp,
+        esSuperAdmin,
+        esAdminReal
+      });
+    }
   }, [currentUserProp]);
 
   // --- ESTADOS DE DATA MAESTRA ---
@@ -121,6 +146,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
     "Servicios Generales": ["Luis Fallica"],
     "Administración Maracaibo": ["Perla Delgado"],
     "Administración El Tigre": ["Zuleika Lara"],
+    "Dirección Corporativa": ["Carlos Vega"],
     "Gerencia General": ["Carlos Vega"],
     "Contabilidad": ["Jorge Urdaneta"]
   };
@@ -155,6 +181,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       "Estimaciones y Control Interno": "EST",
       "Estimaciónes y Control Interno": "EST",
       "Almacén": "ALM",
+      "Dirección Corporativa": "DC",
       "Gerencia General": "GG",
       "Servicios Generales": "SVG",
       "Contabilidad": "CNT",
@@ -209,12 +236,10 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
 
   // --- FUNCIÓN PARA ELIMINAR ---
   const eliminarSolicitud = (id_db) => {
-    const esAutorizado = currentUser?.esSuperAdmin === true ||
-                         currentUser?.esAdminReal === true ||
-                         ['jcontreras.totalclean@gmail.com', 'karincmm1@gmail.com', 'cvega@totalclean.com', 'cvega.totalclean@gmail.com'].includes(currentUser?.correo?.toLowerCase());
+    const esAutorizado = currentUser?.correo?.toLowerCase() === 'jcontreras.totalclean@gmail.com';
 
     if (!esAutorizado) {
-      toast.error("Solo el SuperAdministrador tiene permisos para eliminar solicitudes.");
+      toast.error("Solo el programador tiene permisos para eliminar solicitudes.");
       return;
     }
 
@@ -323,6 +348,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
     "RRH": "Recursos Humanos",
     "EST": "Estimación",
     "ALM": "Almacén",
+    "DC": "Dirección Corporativa",
     "GG": "Gerencia General",
     "SVG": "Servicios Generales",
     "CNT": "Contabilidad",
@@ -615,7 +641,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
 
       setHistorial(dataHist.map(h => {
         const misPartidas = (pagosData || []).filter(p => p.solicitud_id === h.id);
-        
+
         let calculatedTotalBs = 0;
         let calculatedTotalUsd = 0;
         let totalPagado = 0;
@@ -629,7 +655,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
           calculatedTotalUsd = parseFloat(h.total_usd || 0);
           totalPagado = h.pago_realizado ? (calculatedTotalBs + calculatedTotalUsd) : 0;
         }
-        
+
         const total = calculatedTotalBs + calculatedTotalUsd;
 
         return {
@@ -733,25 +759,25 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
   const obtenerGerentePorCentroCosto = (cc) => {
     if (!cc) return null;
     const ccUpper = cc.toString().toUpperCase().trim();
-    
+
     // Si contiene "MTTO" o "MAYOR" o "GRANDE"
     if (
-      ccUpper.includes("MTTO") || 
-      ccUpper.includes("MAYOR") || 
+      ccUpper.includes("MTTO") ||
+      ccUpper.includes("MAYOR") ||
       ccUpper.includes("GRANDE")
     ) {
       return "Hilda Colina";
     }
-    
+
     // Si contiene "EXCELENCIA" o "VAC" o "VACCUM"
     if (
-      ccUpper.includes("EXCELENCIA") || 
-      ccUpper.includes("VAC") || 
+      ccUpper.includes("EXCELENCIA") ||
+      ccUpper.includes("VAC") ||
       ccUpper.includes("VACCUM")
     ) {
       return "Johannel García";
     }
-    
+
     return null;
   };
 
@@ -834,7 +860,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
   useEffect(() => {
     if (showModal && !isEditing && currentUser) {
       const depto = currentUser.departamento || '';
-      
+
       const inicializarResponsable = async () => {
         const superior = await determinarGerenteSuperior(currentUser, depto);
         setForm(prev => ({
@@ -1385,11 +1411,11 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                     <b>Gerencia:</b> ${solicitud.gerencia_nombre}<br>
                     <b>Responsable:</b> ${solicitud.responsable_nombre}<br>
                     ${(() => {
-                      const respUpper = (solicitud.responsable_nombre || '').toUpperCase();
-                      const esHilda = respUpper.includes('HILDA') && respUpper.includes('COLINA');
-                      const esJohannel = respUpper.includes('JOHANNEL');
-                      return esHilda ? '<b>Contrato:</b> Mtto Mayor<br>' : esJohannel ? '<b>Contrato:</b> Excelencia Y Vacumm<br>' : '';
-                    })()}
+          const respUpper = (solicitud.responsable_nombre || '').toUpperCase();
+          const esHilda = respUpper.includes('HILDA') && respUpper.includes('COLINA');
+          const esJohannel = respUpper.includes('JOHANNEL');
+          return esHilda ? '<b>Contrato:</b> Mtto Mayor<br>' : esJohannel ? '<b>Contrato:</b> Excelencia Y Vacumm<br>' : '';
+        })()}
                     <b>Período Semanal:</b> ${extractPeriodoFromId(solicitud.codigo_control)}
                 </div>
                 <div class="text-right">
@@ -1413,16 +1439,16 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
               </thead>
               <tbody>
                 ${partidas.map(p => {
-                  const unitBs = p.pu_bs || 0;
-                  const unitUsd = p.pu_usd || 0;
-                  const totalRenglon = (unitBs + unitUsd) * (p.cantidad || 1);
-                  
-                  const formatMonto = (val) => {
-                    if (!val || val === 0) return '-';
-                    return val.toLocaleString('de-DE', { minimumFractionDigits: 2 });
-                  };
-                  
-                  return `
+          const unitBs = p.pu_bs || 0;
+          const unitUsd = p.pu_usd || 0;
+          const totalRenglon = (unitBs + unitUsd) * (p.cantidad || 1);
+
+          const formatMonto = (val) => {
+            if (!val || val === 0) return '-';
+            return val.toLocaleString('de-DE', { minimumFractionDigits: 2 });
+          };
+
+          return `
                     <tr>
                       <td>${p.centro_costo || ''}</td>
                       <td>${p.clasificacion || ''}</td>
@@ -1437,7 +1463,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                       <td class="text-right">${totalRenglon.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
                     </tr>
                   `;
-                }).join('')}
+        }).join('')}
               </tbody>
             </table>
 
@@ -1646,7 +1672,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       toast.success("¡Guardado con éxito!");
       await cargarTodo();
       setHasChanges(false);
-      
+
       if (keepOpen) {
         setIsEditing(true);
         // Recargar las partidas recién insertadas de Supabase para obtener sus IDs reales y evitar duplicaciones
@@ -1807,6 +1833,52 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
     setAbrirReq(true);
   };
 
+  const handleClicCodigoRef = async (codigoRef) => {
+    if (!codigoRef) return;
+
+    if (codigoRef.startsWith('RR-')) {
+      try {
+        const { data, error } = await supabase
+          .from('requisiciones')
+          .select('*')
+          .eq('correlativo_req', codigoRef)
+          .maybeSingle();
+        if (error) throw error;
+        if (!data) {
+          toast.error(`No se encontró la requisición ${codigoRef}`);
+          return;
+        }
+        setDataParaReq({
+          isExistingRequisition: true,
+          req: data
+        });
+        setAbrirReq(true);
+      } catch (err) {
+        toast.error("Error al buscar requisición: " + err.message);
+      }
+    } else if (codigoRef.startsWith('TP-')) {
+      try {
+        const { data, error } = await supabase
+          .from('tickets_directos')
+          .select('*')
+          .eq('codigo_control', codigoRef)
+          .maybeSingle();
+        if (error) throw error;
+        if (!data) {
+          toast.error(`No se encontró el ticket ${codigoRef}`);
+          return;
+        }
+        setDataParaTicket({
+          isExistingTicket: true,
+          ticket: data
+        });
+        setAbrirTicketModal(true);
+      } catch (err) {
+        toast.error("Error al buscar ticket: " + err.message);
+      }
+    }
+  };
+
   const handleEmitirTicketFromImprevisto = () => {
     const seleccionados = form.imprevistos.filter(i => i.selected);
     if (seleccionados.length === 0) return toast.error("Selecciona al menos un imprevisto");
@@ -1836,7 +1908,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         cantidad: (imp.cant !== undefined && imp.cant !== '') ? Number(imp.cant) : 1,
         unidad: imp.uni || 'UNID',
         descripcion: imp.desc || '',
-        beneficiario: imp.ben || `${currentUser?.nombre} ${currentUser?.apellido}` || '', // Fallback al usuario actual, no al responsable (que puede ser el gerente)
+        beneficiario: imp.ben || '',
         puUsd: Number(imp.puUsd) || 0,
         puBs: Number(imp.puBs) || 0
       }))
@@ -1892,7 +1964,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
 
       {/* --- ENCABECERA UNIFICADA PREMIUM --- */}
       <div style={{
-        borderLeft: '6px solid #10b981',
+        borderLeft: '6px solid #0ea5e9',
         paddingLeft: '16px',
         marginBottom: '30px'
       }}>
@@ -1904,69 +1976,75 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         </p>
       </div>
 
-      {/* --- DASHBOARD UNIFICADO PREMIUM (KPICards) --- */}
+      {/* --- DASHBOARD Y ACCIONES DE SOLICITUD DE FONDOS --- */}
       <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'minmax(220px, 350px)',
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        flexWrap: 'wrap',
         gap: '20px',
         marginBottom: '32px'
       }}>
-        {[
-          { label: 'Gasto Total Acumulado', val: `$ ${totalesVisibles.general.toLocaleString('de-DE', { minimumFractionDigits: 2 })}`, icon: <DollarSign size={20} />, col: '#0ea5e9', bg: '#e0f2fe' },
-        ].map((x, i) => (
-          <div
-            key={i}
-            style={{
-              background: 'white',
-              padding: '20px 24px',
-              borderRadius: '24px',
-              border: '1px solid #e2e8f0',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '15px',
-              boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02)',
-              transition: 'transform 0.2s, box-shadow 0.2s'
-            }}
-          >
-            <div style={{
-              width: '46px',
-              height: '46px',
-              borderRadius: '14px',
-              backgroundColor: x.bg,
-              color: x.col,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              flexShrink: 0
-            }}>
-              {x.icon}
+        {/* KPI Card */}
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'minmax(220px, 350px)',
+          gap: '20px'
+        }}>
+          {[
+            { label: 'Gasto Total Acumulado', val: `$ ${totalesVisibles.general.toLocaleString('de-DE', { minimumFractionDigits: 2 })}`, icon: <DollarSign size={20} />, col: '#0ea5e9', bg: '#e0f2fe' },
+          ].map((x, i) => (
+            <div
+              key={i}
+              style={{
+                background: 'white',
+                padding: '20px 24px',
+                borderRadius: '24px',
+                border: '1px solid #e2e8f0',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '15px',
+                boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02)',
+                transition: 'transform 0.2s, box-shadow 0.2s'
+              }}
+            >
+              <div style={{
+                width: '46px',
+                height: '46px',
+                borderRadius: '14px',
+                backgroundColor: x.bg,
+                color: x.col,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0
+              }}>
+                {x.icon}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <label style={{ display: 'block', fontSize: '0.65rem', fontWeight: '800', color: '#475569', textTransform: 'uppercase', letterSpacing: '0.5px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {x.label}
+                </label>
+                <h3 style={{ margin: '2px 0 0 0', fontSize: '1.25rem', fontWeight: '900', color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {x.val}
+                </h3>
+              </div>
+              <div style={{ color: '#cbd5e1', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                <ChevronDown size={14} />
+              </div>
             </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <label style={{ display: 'block', fontSize: '0.65rem', fontWeight: '800', color: '#475569', textTransform: 'uppercase', letterSpacing: '0.5px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {x.label}
-              </label>
-              <h3 style={{ margin: '2px 0 0 0', fontSize: '1.25rem', fontWeight: '900', color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {x.val}
-              </h3>
-            </div>
-            <div style={{ color: '#cbd5e1', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
-              <ChevronDown size={14} />
-            </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
 
-      {/* TABLA DE HISTORIAL */}
-
-      <div style={{ backgroundColor: 'white', padding: '30px', borderRadius: '20px', boxShadow: '0 4px 20px rgba(0,0,0,0.02)' }}>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '15px', marginBottom: '25px', alignItems: 'center' }}>
+        {/* Botones de acción */}
+        <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
           <motion.button
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             onClick={exportarExcel}
             style={{ padding: '12px 20px', backgroundColor: '#166534', color: 'white', border: 'none', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: '0 4px 6px rgba(22, 101, 52, 0.2)' }}
           >
-            <FileSpreadsheet size={18} /> Exportar Excel
+            <FileSpreadsheet size={18} /> Resumen General
           </motion.button>
           <motion.button
             whileHover={{ scale: 1.05 }}
@@ -2045,11 +2123,11 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                                 <b>Gerencia:</b> ${sol.gerencia_nombre}<br>
                                 <b>Responsable:</b> ${sol.responsable_nombre}<br>
                                 ${(() => {
-                                  const respUpper = (sol.responsable_nombre || '').toUpperCase();
-                                  const esHilda = respUpper.includes('HILDA') && respUpper.includes('COLINA');
-                                  const esJohannel = respUpper.includes('JOHANNEL');
-                                  return esHilda ? '<b>Contrato:</b> Mtto Mayor<br>' : esJohannel ? '<b>Contrato:</b> Excelencia Y Vacumm<br>' : '';
-                                })()}
+                      const respUpper = (sol.responsable_nombre || '').toUpperCase();
+                      const esHilda = respUpper.includes('HILDA') && respUpper.includes('COLINA');
+                      const esJohannel = respUpper.includes('JOHANNEL');
+                      return esHilda ? '<b>Contrato:</b> Mtto Mayor<br>' : esJohannel ? '<b>Contrato:</b> Excelencia Y Vacumm<br>' : '';
+                    })()}
                                 <b>Período Semanal:</b> ${extractPeriodoFromId(sol.codigo_control)}
                               </div>
                               <div class="text-right">
@@ -2073,10 +2151,10 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                             </thead>
                             <tbody>
                               ${partidas.map(p => {
-                                const unitBs = p.pu_bs || 0;
-                                const unitUsd = p.pu_usd || 0;
-                                const totalRenglon = (unitBs + unitUsd) * (p.cantidad || 1);
-                                return `
+                      const unitBs = p.pu_bs || 0;
+                      const unitUsd = p.pu_usd || 0;
+                      const totalRenglon = (unitBs + unitUsd) * (p.cantidad || 1);
+                      return `
                                   <tr>
                                     <td style="font-size: 8px;">${p.centro_costo || ''}</td>
                                     <td style="font-size: 8px;">${p.clasificacion || ''}</td>
@@ -2097,7 +2175,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                                     </td>
                                   </tr>
                                 `;
-                              }).join('')}
+                    }).join('')}
                             </tbody>
                           </table>
 
@@ -2128,9 +2206,9 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
             }}
             style={{ padding: '12px 20px', backgroundColor: '#0f172a', color: 'white', border: 'none', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: '0 4px 6px rgba(15, 23, 42, 0.2)' }}
           >
-            <Printer size={18} /> Reporte Global
+            <Printer size={18} /> Reporte Detallado
           </motion.button>
-          <motion.button 
+          <motion.button
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             onClick={() => {
@@ -2140,12 +2218,17 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
               setErrorCheck('');
               setSolCheckExitosa(false);
               setShowPreVal(true);
-            }} 
+            }}
             style={{ padding: '12px 25px', backgroundColor: '#0ea5e9', color: 'white', border: 'none', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer', boxShadow: '0 4px 6px rgba(14, 165, 233, 0.2)' }}
           >
             + Nueva Solicitud
           </motion.button>
         </div>
+      </div>
+
+      {/* TABLA DE HISTORIAL */}
+
+      <div style={{ backgroundColor: 'white', padding: '30px', borderRadius: '20px', boxShadow: '0 4px 20px rgba(0,0,0,0.02)' }}>
 
 
         {/* BARRA DE FILTROS AL ESTILO REQUISICIONES */}
@@ -2597,6 +2680,18 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                         marginTop: '10px',
                         textAlign: 'left'
                       }}>
+                        <label style={{ fontSize: '9px', fontWeight: '900', color: '#94a3b8', display: 'block', marginBottom: '8px', borderBottom: '1px solid #f1f5f9', paddingBottom: '4px' }}>RESUMEN DE TOTALES</label>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '12px', borderBottom: '1px solid #f1f5f9', paddingBottom: '10px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', fontWeight: 'bold' }}>
+                            <span style={{ color: '#0369a1' }}>Requisiciones:</span>
+                            <span style={{ color: '#0369a1' }}>$ {(sumas.bs + sumas.usd).toLocaleString('de-DE', { minimumFractionDigits: 0 })}</span>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', fontWeight: 'bold' }}>
+                            <span style={{ color: '#b45309' }}>Tickets de Pago:</span>
+                            <span style={{ color: '#b45309' }}>$ {(sumas.imprevistosBs + sumas.imprevistosUsd).toLocaleString('de-DE', { minimumFractionDigits: 0 })}</span>
+                          </div>
+                        </div>
+
                         <label style={{ fontSize: '9px', fontWeight: '900', color: '#94a3b8', display: 'block', marginBottom: '10px', borderBottom: '1px solid #f1f5f9', paddingBottom: '4px' }}>DESGLOSE POR CATEGORÍA</label>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                           {categoriasEjecucion.length > 0 ? categoriasEjecucion.map((cat, ci) => (
@@ -2660,30 +2755,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
 
                 <div style={{ display: 'flex', flexDirection: 'column' }}>
                   <label style={{ fontSize: '10px', fontWeight: 'bold', color: '#363636', marginBottom: '5px' }}>GERENCIA SOLICITANTE</label>
-                  {(currentUser?.esAdminReal || currentUser?.rol === 'Gerente General' || currentUser?.rol === 'Admin' || currentUser?.esPerlaDelgado || currentUser?.capacidades?.ver_solicitudes_global) ? (
-                    <select
-                      className="sf-input"
-                      value={form.gerencia}
-                      onChange={(e) => {
-                        const nuevaGerencia = e.target.value;
-                        determinarGerenteSuperior(currentUser, nuevaGerencia).then(superior => {
-                          setForm(prev => ({
-                            ...prev,
-                            gerencia: nuevaGerencia,
-                            responsable: superior || ''
-                          }));
-                        });
-                      }}
-
-                    >
-                      <option value="">Seleccione Gerencia...</option>
-                      {[...new Set([...gerentesDisponibles.map(g => g.departamento), 'Contabilidad'])].sort().map(dep => (
-                        <option key={dep} value={dep}>{dep}</option>
-                      ))}
-                    </select>
-                  ) : (
-                    <input className="sf-input" value={form.gerencia} readOnly style={{ backgroundColor: '#f8fafc', color: '#475569' }} />
-                  )}
+                  <input className="sf-input" value={form.gerencia} readOnly style={{ backgroundColor: '#f8fafc', color: '#475569' }} />
                 </div>
 
                 <div style={{ display: 'flex', flexDirection: 'column' }}>
@@ -2859,123 +2931,128 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
 
               {/* TABLA DE RENGLONES */}
               {!mostrarImprevistos && (
-                <div className="sf-table-wrapper">
-                <div className="sf-table-header">
-                  <div style={{ width: '40px', padding: '12px', textAlign: 'center' }}>SEL</div>
-                  <div style={{ width: '45px', padding: '12px', textAlign: 'center' }}>N°</div>
-                  <div style={{ width: '130px', padding: '12px', textAlign: 'center' }}>ID REF</div>
-                  <div style={{ width: '180px', padding: '12px' }}>C. COSTO</div>
-                  <div style={{ width: '215px', padding: '12px' }}>CLASIFICACIÓN</div>
-                  <div style={{ width: '215px', padding: '12px' }}>CATEGORÍA</div>
-                  <div style={{ width: '80px', padding: '12px', textAlign: 'center' }}>CANT</div>
-                  <div style={{ width: '90px', padding: '12px', textAlign: 'center' }}>UNID</div>
-                  <div style={{ width: '460px', padding: '12px' }}>DESCRIPCIÓN DEL GASTO</div>
-                  <div style={{ width: '200px', padding: '12px' }}>BENEFICIARIO</div>
-                  <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>P.U $/BS</div>
-                  <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>P.U $/$</div>
-                  <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>TOTAL $</div>
-                  <div style={{ width: '130px', padding: '12px' }}>EMITIDO POR</div>
-                  <div style={{ width: '80px', padding: '12px', textAlign: 'center' }}>ACCIONES</div>
-                </div>
-
-                <div style={{ maxHeight: '40vh', overflowY: 'auto' }}>
-                  {partidasFiltradas.map((p, i) => (
-                    <div key={p.id} className="sf-table-row" style={{
-                      background: (p.requisicion_id || p.codigo_ticket || p.status === 'Bloqueado') ? '#f1f5f9' : (p.selected ? '#e0f2fe' : 'transparent'),
-                      opacity: 1
-                    }}>
-                      <div style={{ width: '40px', textAlign: 'center' }}>
-                        <input
-                          type="checkbox"
-                          checked={p.selected || false}
-                          onChange={(e) => manejarCambioPartida(p.originalIndex, 'selected', e.target.checked)}
-                          style={{ cursor: (p.requisicion_id || p.codigo_ticket || p.status === 'Bloqueado') ? 'not-allowed' : 'pointer', transform: 'scale(1.2)' }}
-                          disabled={!!p.requisicion_id || !!p.codigo_ticket || p.status === 'Bloqueado'}
-                          title={p.codigo_ticket ? `Ticket Emitido: ${p.codigo_ticket}` : (p.requisicion_id ? "Bloqueado por Requisición" : "")}
-                        />
-                      </div>
-                      <div style={{ width: '45px', textAlign: 'center', fontWeight: 'bold', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'center' }}>
-                        {i + 1}
-                        {p.codigo_ref?.startsWith('TP-') && <span title={`Ticket: ${p.codigo_ref}`}>🎟️</span>}
-                        {p.codigo_ref?.startsWith('RR-') && <span title={`Requisición: ${p.codigo_ref}`}>📝</span>}
-                        {p.pago_realizado && <span title="Pago Completado">✅</span>}
-                      </div>
-                      <div style={{ width: '130px', padding: '6px', fontSize: '10px', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        {p.codigo_ref ? (
-                          <div style={{ backgroundColor: '#0ea5e9', color: 'white', padding: '4px 8px', borderRadius: '6px', fontSize: '9px', boxShadow: '0 2px 4px rgba(14, 165, 233, 0.2)' }}>
-                            {p.codigo_ref}
-                          </div>
-                        ) : (
-                          <span style={{ color: '#cbd5e1' }}>---</span>
-                        )}
-                      </div>
-                      <div style={{ width: '180px', padding: '6px' }}>
-                        <select className="sf-table-input" value={p.cc} onChange={(e) => manejarCambioPartida(p.originalIndex, 'cc', e.target.value)} style={{ fontWeight: 'bold' }} disabled={!!p.codigo_ref}>
-                          <option value="">Seleccione C.C...</option>
-                          {centrosCosto.map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>)}
-                        </select>
-                      </div>
-                      <div style={{ width: '215px', padding: '6px' }}>
-                        <select className="sf-table-input" value={p.clasif} onChange={(e) => manejarCambioPartida(p.originalIndex, 'clasif', e.target.value)} disabled={!p.cc || !!p.codigo_ref}>
-                          <option value="">Clasificación...</option>
-                          {(() => {
-                            const ccObj = centrosCosto.find(c => c.nombre === p.cc);
-                            return todasClasificaciones
-                              .filter(cl => cl.padreId === ccObj?.id)
-                              .map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>);
-                          })()}
-                        </select>
-                      </div>
-                      <div style={{ width: '215px', padding: '6px' }}>
-                        <select className="sf-table-input" value={p.cat} onChange={(e) => manejarCambioPartida(p.originalIndex, 'cat', e.target.value)} disabled={!p.clasif || !!p.codigo_ref}>
-                          <option value="">Categoría...</option>
-                          {(() => {
-                            const ccObj = centrosCosto.find(c => c.nombre === p.cc);
-                            const clObj = todasClasificaciones.find(cl => cl.nombre === p.clasif && cl.padreId === ccObj?.id);
-                            return todasCategorias
-                              .filter(ct => ct.padreId === clObj?.id)
-                              .map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>);
-                          })()}
-                        </select>
-                      </div>
-                      <div style={{ width: '80px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.cant} onChange={(e) => manejarCambioPartida(p.originalIndex, 'cant', e.target.value)} style={{ textAlign: 'center' }} disabled={!!p.codigo_ref} /></div>
-                      <div style={{ width: '90px', padding: '6px' }}><select className="sf-table-input" value={p.uni} onChange={(e) => manejarCambioPartida(p.originalIndex, 'uni', e.target.value)} disabled={!!p.codigo_ref}>{unidades.map(u => <option key={u}>{u}</option>)}</select></div>
-                      <div style={{ width: '460px', padding: '10px' }}><textarea className="sf-table-input" value={p.desc} onChange={(e) => manejarCambioPartida(p.originalIndex, 'desc', e.target.value)} style={{ resize: 'none' }} rows="1" disabled={!!p.codigo_ref} /></div>
-                      <div style={{ width: '200px', padding: '6px' }}><input className="sf-table-input" value={p.ben} onChange={(e) => manejarCambioPartida(p.originalIndex, 'ben', e.target.value)} disabled={!!p.codigo_ref} /></div>
-                      <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puBs === 0 ? '' : p.puBs} onChange={(e) => manejarCambioPartida(p.originalIndex, 'puBs', e.target.value)} style={{ textAlign: 'right' }} disabled={p.puUsd > 0 || !!p.codigo_ref} /></div>
-                      <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puUsd === 0 ? '' : p.puUsd} onChange={(e) => manejarCambioPartida(p.originalIndex, 'puUsd', e.target.value)} style={{ textAlign: 'right' }} disabled={p.puBs > 0 || !!p.codigo_ref} /></div>
-                      <div style={{ width: '120px', padding: '6px', textAlign: 'right', fontWeight: 'bold' }}>{((parseFloat(p.puBs) || parseFloat(p.puUsd) || 0) * (p.cant || 0)).toLocaleString('de-DE')}</div>
-                      <div style={{ width: '130px', padding: '6px', fontSize: '9px', color: '#64748b', fontWeight: '600' }}>
-                        {p.emisor || '---'}
-                      </div>
-                      <div style={{ width: '80px', display: 'flex', gap: '5px', justifyContent: 'center' }}>
-                        <button onClick={() => duplicarPartida(p.originalIndex)} style={{ background: 'none', border: 'none', color: '#0ea5e9', cursor: (p.codigo_ticket || p.requisicion_id) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (p.codigo_ticket || p.requisicion_id) ? 0.3 : 1 }} disabled={!!p.codigo_ticket || !!p.requisicion_id} title="Duplicar renglón"><Copy size={16} /></button>
-                        <button onClick={() => { setHasChanges(true); setForm({ ...form, partidas: form.partidas.filter((_, idx) => idx !== p.originalIndex) }); }} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: (p.codigo_ticket || p.requisicion_id) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (p.codigo_ticket || p.requisicion_id) ? 0.3 : 1 }} disabled={!!p.codigo_ticket || !!p.requisicion_id} title="Eliminar renglón">🗑️</button>
-                      </div>
+                <div style={{ marginTop: '1px' }}>
+                  <div className="sf-table-wrapper">
+                    <div className="sf-table-header">
+                      <div style={{ width: '85px', padding: '12px', textAlign: 'center' }}>N°</div>
+                      <div style={{ width: '130px', padding: '12px', textAlign: 'center' }}>ID REF</div>
+                      <div style={{ width: '180px', padding: '12px' }}>C. COSTO</div>
+                      <div style={{ width: '215px', padding: '12px' }}>CLASIFICACIÓN</div>
+                      <div style={{ width: '215px', padding: '12px' }}>CATEGORÍA</div>
+                      <div style={{ width: '80px', padding: '12px', textAlign: 'center' }}>CANT</div>
+                      <div style={{ width: '90px', padding: '12px', textAlign: 'center' }}>UNID</div>
+                      <div style={{ width: '480px', padding: '12px' }}>DESCRIPCIÓN DEL GASTO</div>
+                      <div style={{ width: '175px', padding: '12px' }}>BENEFICIARIO</div>
+                      <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>P.U $/BS</div>
+                      <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>P.U $/$</div>
+                      <div style={{ width: '122px', padding: '12px', textAlign: 'center' }}>TOTAL $</div>
+                      <div style={{ width: '125px', padding: '12px' }}>USUARIO</div>
+                      <div style={{ width: '70px', padding: '12px', textAlign: 'center' }}>ACCIONES</div>
                     </div>
-                  ))}
+
+                    <div style={{ maxHeight: '40vh', overflowY: 'auto' }}>
+                      {partidasFiltradas.map((p, i) => (
+                        <div key={p.id} className="sf-table-row" style={{
+                          background: (p.requisicion_id || p.codigo_ticket || p.status === 'Bloqueado') ? '#f1f5f9' : (p.selected ? '#e0f2fe' : 'transparent'),
+                          opacity: 1
+                        }}>
+                          <div style={{ width: '40px', textAlign: 'center' }}>
+                            <input
+                              type="checkbox"
+                              checked={p.selected || false}
+                              onChange={(e) => manejarCambioPartida(p.originalIndex, 'selected', e.target.checked)}
+                              style={{ cursor: (p.requisicion_id || p.codigo_ticket || p.status === 'Bloqueado') ? 'not-allowed' : 'pointer', transform: 'scale(1.2)' }}
+                              disabled={!!p.requisicion_id || !!p.codigo_ticket || p.status === 'Bloqueado'}
+                              title={p.codigo_ticket ? `Ticket Emitido: ${p.codigo_ticket}` : (p.requisicion_id ? "Bloqueado por Requisición" : "")}
+                            />
+                          </div>
+                          <div style={{ width: '45px', textAlign: 'center', fontWeight: 'bold', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'center' }}>
+                            {i + 1}
+                            {p.codigo_ref?.startsWith('TP-') && <span title={`Ticket: ${p.codigo_ref}`}>🎟️</span>}
+                            {p.codigo_ref?.startsWith('RR-') && <span title={`Requisición: ${p.codigo_ref}`}>📝</span>}
+                            {p.pago_realizado && <span title="Pago Completado">✅</span>}
+                          </div>
+                          <div style={{ width: '130px', padding: '6px', fontSize: '10px', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            {p.codigo_ref ? (
+                              <div
+                                onClick={() => handleClicCodigoRef(p.codigo_ref)}
+                                style={{
+                                  backgroundColor: '#0ea5e9',
+                                  color: 'white',
+                                  padding: '6px 12px',
+                                  borderRadius: '8px',
+                                  fontSize: '11px',
+                                  fontWeight: '800',
+                                  boxShadow: '0 2px 6px rgba(14, 165, 233, 0.3)',
+                                  cursor: 'pointer',
+                                  transition: 'all 0.2s',
+                                  userSelect: 'none'
+                                }}
+                                onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#0284c7'; e.currentTarget.style.transform = 'scale(1.05)'; }}
+                                onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#0ea5e9'; e.currentTarget.style.transform = 'scale(1)'; }}
+                                title={`Haga clic para ver el detalle de ${p.codigo_ref}`}
+                              >
+                                {p.codigo_ref}
+                              </div>
+                            ) : (
+                              <span style={{ color: '#cbd5e1' }}>---</span>
+                            )}
+                          </div>
+                          <div style={{ width: '180px', padding: '6px' }}>
+                            <select className="sf-table-input" value={p.cc} onChange={(e) => manejarCambioPartida(p.originalIndex, 'cc', e.target.value)} style={{ fontWeight: 'bold' }} disabled={!!p.codigo_ref}>
+                              <option value="">Seleccione C.C...</option>
+                              {centrosCosto.map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>)}
+                            </select>
+                          </div>
+                          <div style={{ width: '215px', padding: '6px' }}>
+                            <select className="sf-table-input" value={p.clasif} onChange={(e) => manejarCambioPartida(p.originalIndex, 'clasif', e.target.value)} disabled={!p.cc || !!p.codigo_ref}>
+                              <option value="">Clasificación...</option>
+                              {(() => {
+                                const ccObj = centrosCosto.find(c => c.nombre === p.cc);
+                                return todasClasificaciones
+                                  .filter(cl => cl.padreId === ccObj?.id)
+                                  .map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>);
+                              })()}
+                            </select>
+                          </div>
+                          <div style={{ width: '215px', padding: '6px' }}>
+                            <select className="sf-table-input" value={p.cat} onChange={(e) => manejarCambioPartida(p.originalIndex, 'cat', e.target.value)} disabled={!p.clasif || !!p.codigo_ref}>
+                              <option value="">Categoría...</option>
+                              {(() => {
+                                const ccObj = centrosCosto.find(c => c.nombre === p.cc);
+                                const clObj = todasClasificaciones.find(cl => cl.nombre === p.clasif && cl.padreId === ccObj?.id);
+                                return todasCategorias
+                                  .filter(ct => ct.padreId === clObj?.id)
+                                  .map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>);
+                              })()}
+                            </select>
+                          </div>
+                          <div style={{ width: '80px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.cant} onChange={(e) => manejarCambioPartida(p.originalIndex, 'cant', e.target.value)} style={{ textAlign: 'center' }} disabled={!!p.codigo_ref} /></div>
+                          <div style={{ width: '90px', padding: '6px' }}><select className="sf-table-input" value={p.uni} onChange={(e) => manejarCambioPartida(p.originalIndex, 'uni', e.target.value)} disabled={!!p.codigo_ref}>{unidades.map(u => <option key={u}>{u}</option>)}</select></div>
+                          <div style={{ width: '460px', padding: '10px' }}><textarea className="sf-table-input" value={p.desc} onChange={(e) => manejarCambioPartida(p.originalIndex, 'desc', e.target.value)} style={{ resize: 'none' }} rows="1" disabled={!!p.codigo_ref} /></div>
+                          <div style={{ width: '200px', padding: '6px' }}><input className="sf-table-input" value={p.ben} onChange={(e) => manejarCambioPartida(p.originalIndex, 'ben', e.target.value)} disabled={!!p.codigo_ref} /></div>
+                          <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puBs === 0 ? '' : p.puBs} onChange={(e) => manejarCambioPartida(p.originalIndex, 'puBs', e.target.value)} style={{ textAlign: 'left' }} disabled={p.puUsd > 0 || !!p.codigo_ref} /></div>
+                          <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puUsd === 0 ? '' : p.puUsd} onChange={(e) => manejarCambioPartida(p.originalIndex, 'puUsd', e.target.value)} style={{ textAlign: 'left' }} disabled={p.puBs > 0 || !!p.codigo_ref} /></div>
+                          <div style={{ width: '120px', padding: '6px', textAlign: 'left', fontWeight: 'bold' }}>{((parseFloat(p.puBs) || parseFloat(p.puUsd) || 0) * (p.cant || 0)).toLocaleString('de-DE')}</div>
+                          <div style={{ width: '130px', padding: '6px', fontSize: '9px', color: '#64748b', fontWeight: '600' }}>
+                            {p.emisor || '---'}
+                          </div>
+                          <div style={{ width: '80px', display: 'flex', gap: '5px', justifyContent: 'center' }}>
+                            <button onClick={() => duplicarPartida(p.originalIndex)} style={{ background: 'none', border: 'none', color: '#0ea5e9', cursor: (p.codigo_ticket || p.requisicion_id) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (p.codigo_ticket || p.requisicion_id) ? 0.3 : 1 }} disabled={!!p.codigo_ticket || !!p.requisicion_id} title="Duplicar renglón"><Copy size={16} /></button>
+                            <button onClick={() => { setHasChanges(true); setForm({ ...form, partidas: form.partidas.filter((_, idx) => idx !== p.originalIndex) }); }} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: (p.codigo_ticket || p.requisicion_id) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (p.codigo_ticket || p.requisicion_id) ? 0.3 : 1 }} disabled={!!p.codigo_ticket || !!p.requisicion_id} title="Eliminar renglón">🗑️</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 </div>
-              </div>
               )}
 
               {/* SECCIÓN GASTOS IMPREVISTOS */}
               {mostrarImprevistos && (
                 <div style={{ marginTop: '30px', animation: 'fadeIn 0.3s ease-in-out' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', marginBottom: '15px' }}>
-                    <div style={{ flex: 1, height: '2px', background: 'linear-gradient(90deg, transparent, #f59e0b, transparent)' }}></div>
-                    <h3 style={{ margin: '0 20px', color: '#b45309', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      <i className="fa-solid fa-triangle-exclamation"></i>TICKET DE PAGO
-                    </h3>
-                    <div style={{ flex: 1, height: '2px', background: 'linear-gradient(90deg, transparent, #f59e0b, transparent)' }}></div>
-                  </div>
 
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '25px', marginBottom: '12px', padding: '0 10px' }}>
-                    <div style={{ background: '#fffbeb', border: '1px solid #fef3c7', padding: '5px 15px', borderRadius: '8px', display: 'flex', gap: '15px' }}>
-                      <span style={{ fontSize: '11px', fontWeight: 'bold', color: '#d97706' }}>BALANCE DE TICKET DE PAGO:</span>
-                      <span style={{ fontSize: '11px', fontWeight: '800', color: '#b45309' }}>$/Bs. {sumas.imprevistosBs.toLocaleString('de-DE')}</span>
-                      <span style={{ fontSize: '11px', fontWeight: '800', color: '#b45309' }}>$ {sumas.imprevistosUsd.toLocaleString('de-DE')}</span>
-                    </div>
-                  </div>
+
 
                   <div className="sf-table-wrapper" style={{ border: '1px solid #fcd34d', boxShadow: '0 4px 15px rgba(245, 158, 11, 0.05)' }}>
                     <div className="sf-table-header" style={{ background: '#fffcf0', borderBottom: '2px solid #fef3c7', color: '#b45309' }}>
@@ -2992,7 +3069,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                       <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>P.U $/BS</div>
                       <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>P.U $/$</div>
                       <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>TOTAL $</div>
-                      <div style={{ width: '130px', padding: '12px' }}>EMITIDO POR</div>
+                      <div style={{ width: '130px', padding: '12px' }}>USUARIO</div>
                       <div style={{ width: '80px', padding: '12px', textAlign: 'center' }}>ACCIONES</div>
                     </div>
 
@@ -3019,7 +3096,24 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                           </div>
                           <div style={{ width: '130px', padding: '6px', fontSize: '10px', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                             {imp.codigo_ref ? (
-                              <div style={{ backgroundColor: '#f59e0b', color: 'white', padding: '4px 8px', borderRadius: '6px', fontSize: '9px', boxShadow: '0 2px 4px rgba(245, 158, 11, 0.2)' }}>
+                              <div
+                                onClick={() => handleClicCodigoRef(imp.codigo_ref)}
+                                style={{
+                                  backgroundColor: '#f59e0b',
+                                  color: 'white',
+                                  padding: '6px 12px',
+                                  borderRadius: '8px',
+                                  fontSize: '11px',
+                                  fontWeight: '800',
+                                  boxShadow: '0 2px 6px rgba(245, 158, 11, 0.3)',
+                                  cursor: 'pointer',
+                                  transition: 'all 0.2s',
+                                  userSelect: 'none'
+                                }}
+                                onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#d97706'; e.currentTarget.style.transform = 'scale(1.05)'; }}
+                                onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#f59e0b'; e.currentTarget.style.transform = 'scale(1)'; }}
+                                title={`Haga clic para ver el detalle de ${imp.codigo_ref}`}
+                              >
                                 {imp.codigo_ref}
                               </div>
                             ) : (
@@ -3167,10 +3261,10 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                     <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#0ea5e9' }}>Procesando...</span>
                   </div>
                 )}
-                <button className="sf-btn sf-btn-close" onClick={intentarCerrarModal} disabled={isSaving} style={{ opacity: isSaving ? 0.6 : 1 }}>CANCELAR</button>
+                <button className="sf-btn sf-btn-close" onClick={intentarCerrarModal} disabled={isSaving} style={{ minWidth: '180px', padding: '12px 30px', opacity: isSaving ? 0.6 : 1 }}>CANCELAR</button>
                 <button
                   className="sf-btn"
-                  style={{ background: '#fff', border: '1px solid #cbd5e1', color: '#475569', opacity: (isExpired || isSaving) ? 0.5 : 1 }}
+                  style={{ padding: '12px 30px', minWidth: '180px', background: '#fff', border: '1px solid #cbd5e1', color: '#475569', opacity: (isExpired || isSaving) ? 0.5 : 1 }}
                   onClick={() => registrarOActualizar(true)}
                   disabled={isExpired || isSaving}
                 >
@@ -3180,7 +3274,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                   className="sf-btn sf-btn-primary"
                   onClick={() => registrarOActualizar(false)}
                   disabled={isExpired || isSaving}
-                  style={{ opacity: (isExpired || isSaving) ? 0.5 : 1, minWidth: '180px' }}
+                  style={{ opacity: (isExpired || isSaving) ? 0.5 : 1, minWidth: '180px', padding: '12px 30px' }}
                 >
                   {isEditing ? 'ACTUALIZAR SOLICITUD' : 'FINALIZAR REGISTRO'}
                 </button>

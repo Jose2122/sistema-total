@@ -217,10 +217,14 @@ const Proveedores = () => {
   return (
     <div className="prov-container">
       <div className="prov-max-width">
-        <div className="prov-header">
-          <div>
-            <h1 className="prov-title">Módulo de Proveedores</h1>
-            <p className="prov-subtitle">Gestión de cartera de proveedores Total Clean</p>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px' }}>
+          <div style={{ borderLeft: '6px solid #0ea5e9', paddingLeft: '16px' }}>
+            <h1 style={{ margin: 0, color: '#0f172a', fontSize: '1.8rem', fontWeight: '900', fontFamily: 'Inter, sans-serif', letterSpacing: '-0.5px' }}>
+              Módulo de Proveedores
+            </h1>
+            <p style={{ margin: '4px 0 0 0', color: '#64748b', fontSize: '0.9rem', fontWeight: '500', fontFamily: 'Inter, sans-serif' }}>
+              Gestión de cartera de proveedores de la empresa
+            </p>
           </div>
           <button 
             onClick={() => { resetForm(); setShowModal(true); }}

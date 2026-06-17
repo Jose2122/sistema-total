@@ -15,9 +15,14 @@ envContent.split('\n').forEach(line => {
 
 const supabase = createClient(env.VITE_SUPABASE_URL, env.VITE_SUPABASE_ANON_KEY);
 
-async function checkJarlen() {
-    const { data: jarlen } = await supabase.from('perfiles').select('*').ilike('nombre', '%Jarlen%').maybeSingle();
-    console.log("Perfil de Jarlen:", jarlen);
+async function run() {
+    const { data: perfiles } = await supabase.from('perfiles').select('*');
+    console.log(`Total perfiles: ${perfiles?.length || 0}`);
+    const matches = perfiles?.filter(p => 
+      JSON.stringify(p).toLowerCase().includes('jarlen') ||
+      JSON.stringify(p).toLowerCase().includes('administra')
+    );
+    console.log("Matching perfiles:", matches);
 }
 
-checkJarlen();
+run();

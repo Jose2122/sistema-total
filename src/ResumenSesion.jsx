@@ -214,11 +214,11 @@ const ResumenSesion = ({ currentUser, setActiveSeccion }) => {
         >
             {/* Cabecera de Bienvenida */}
             <div style={{ marginBottom: '30px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div>
-                    <h1 style={{ margin: 0, fontSize: '1.5rem', fontWeight: '900', color: '#0f172a' }}>
+                <div style={{ borderLeft: '6px solid #0ea5e9', paddingLeft: '16px' }}>
+                    <h1 style={{ margin: 0, color: '#0f172a', fontSize: '1.8rem', fontWeight: '900', fontFamily: 'Inter, sans-serif', letterSpacing: '-0.5px' }}>
                         ¡Hola, {currentUser.nombre}! 👋
                     </h1>
-                    <p style={{ margin: '5px 0 0 0', color: '#64748b', fontSize: '0.9rem' }}>
+                    <p style={{ margin: '4px 0 0 0', color: '#64748b', fontSize: '0.9rem', fontWeight: '500', fontFamily: 'Inter, sans-serif' }}>
                         Aquí tienes un vistazo rápido de tu sesión y actividades actuales.
                     </p>
                 </div>

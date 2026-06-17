@@ -17,6 +17,7 @@ import Almacen from './Almacen';
 import ResumenSesion from './ResumenSesion';
 import ResumenEjecutivo from './ResumenEjecutivo';
 import AnalyticsCompras from './AnalyticsCompras';
+import ControlPrecios from './ControlPrecios';
 import AsistenteAyuda from './components/AsistenteAyuda';
 import { Menu, X as CloseIcon, Search, Cloud, Sun, ChevronDown, Power, LayoutDashboard, BarChartBig, Gauge } from 'lucide-react';
 
@@ -25,11 +26,35 @@ function Dashboard() {
   const [seccionActiva, setSeccionActiva] = useState('dashboard');
   const [sidebarAbierto, setSidebarAbierto] = useState(window.innerWidth > 768);
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
-  const [usuario, setUsuario] = useState({ nombre: '', apellido: '', rol: '', departamento: '' });
+  const [usuario, setUsuario] = useState({ nombre: '', apellido: '', rol: '', departamento: '', permisos: {} });
   const [cargando, setCargando] = useState(true);
   const [notificacionesLog, setNotificacionesLog] = useState([]);
   const [verNotificaciones, setVerNotificaciones] = useState(false);
   const [verPerfil, setVerPerfil] = useState(false);
+
+  const [dropdowns, setDropdowns] = useState({
+    compras: true,
+    control: true,
+    gestiones: true,
+    configuracion: true
+  });
+
+  const toggleDropdown = (key) => {
+    setDropdowns(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  useEffect(() => {
+    if (['compras', 'reportesmaestro', 'reportes', 'proveedores', 'analytics_compras'].includes(seccionActiva)) {
+      setDropdowns(prev => ({ ...prev, compras: true }));
+    } else if (['ejecutivo', 'control_precios'].includes(seccionActiva)) {
+      setDropdowns(prev => ({ ...prev, control: true }));
+    } else if (['requisiciones', 'fondos', 'tickets', 'almacen'].includes(seccionActiva)) {
+      setDropdowns(prev => ({ ...prev, gestiones: true }));
+    } else if (['usuarios', 'atributos'].includes(seccionActiva)) {
+      setDropdowns(prev => ({ ...prev, configuracion: true }));
+    }
+  }, [seccionActiva]);
+
 
   // Helper para obtener semana actual
   const getSemanaActual = () => {
@@ -38,6 +63,21 @@ function Dashboard() {
     d.setDate(d.getDate() + 3 - (d.getDay() + 6) % 7);
     const week1 = new Date(d.getFullYear(), 0, 4);
     return 1 + Math.round(((d.getTime() - week1.getTime()) / 86400000 - 3 + (week1.getDay() + 6) % 7) / 7);
+  };
+
+  const buildUsuarioConPermisos = (perfil) => {
+    if (!perfil) return null;
+    const permisos = {};
+    const modulos = perfil.permisos_modulos || [];
+    const todosModulos = [
+      'dashboard', 'requisiciones', 'fondos', 'tickets', 'almacen',
+      'compras', 'reportesmaestro', 'reportes', 'proveedores',
+      'analytics_compras', 'ejecutivo', 'control_precios', 'usuarios', 'atributos', 'administracion'
+    ];
+    todosModulos.forEach(modId => {
+      permisos[modId] = modulos.includes(modId);
+    });
+    return { ...perfil, permisos };
   };
 
   const getInitials = (n, a) => {
@@ -61,9 +101,9 @@ function Dashboard() {
         .single();
 
       if (perfil) {
-        setUsuario(perfil);
+        setUsuario(buildUsuarioConPermisos(perfil));
       } else {
-        setUsuario({ nombre: user.email.split('@')[0], apellido: '', rol: 'Usuario', departamento: 'Total Clean' });
+        setUsuario({ nombre: user.email.split('@')[0], apellido: '', rol: 'Usuario', departamento: 'Total Clean', permisos: {} });
       }
       setCargando(false);
     };
@@ -370,7 +410,7 @@ function Dashboard() {
     };
 
     if (seccionActiva === 'requisiciones') return <Requisiciones currentUserProp={usuario} />;
-    if (seccionActiva === 'usuarios') return <Usuarios currentUser={usuario} />;
+    if (seccionActiva === 'usuarios') return <Usuarios currentUser={usuario} onUserUpdate={(updatedUser) => setUsuario(buildUsuarioConPermisos(updatedUser))} />;
     if (seccionActiva === 'fondos') return <SolicitudFondos currentUserProp={usuario} />;
     if (seccionActiva === 'tickets') return <ModuloTicketsPago currentUser={usuario} />;
     if (seccionActiva === 'compras') return <Compras currentUser={usuario} />;
@@ -381,6 +421,7 @@ function Dashboard() {
     if (seccionActiva === 'atributos') return <Atributos />;
     if (seccionActiva === 'almacen') return <Almacen />;
     if (seccionActiva === 'ejecutivo') return <ResumenEjecutivo currentUser={usuario} />;
+    if (seccionActiva === 'control_precios') return <ControlPrecios currentUser={usuario} />;
     if (seccionActiva === 'analytics_compras') return <AnalyticsCompras usuario={usuario} />;
     if (seccionActiva === 'dashboard') return <ResumenSesion currentUser={usuario} setActiveSeccion={setSeccionActiva} />;
 
@@ -397,30 +438,60 @@ function Dashboard() {
 
   // Protección de seguridad: si la sección activa no está permitida, reset a la primera permitida
   useEffect(() => {
-    if (!usuario?.id) return;
-    const esAdmin = usuario?.correo === 'jcontreras.totalclean@gmail.com' ||
-      usuario?.correo === 'cvega.totalclean@gmail.com' ||
-      usuario?.esAdminReal ||
-      usuario?.rol === 'Admin' ||
-      usuario?.rol === 'Gerente General';
-    if (esAdmin) return;
-
-    const modulosPermitidos = usuario?.permisos_modulos || [];
-    if (seccionActiva !== 'dashboard' && !modulosPermitidos.includes(seccionActiva)) {
-      if (seccionActiva === 'analytics_compras' && (usuario?.departamento || '').toUpperCase().includes('COMPRAS')) {
-        return;
-      }
-      if (modulosPermitidos.length > 0) {
-        setSeccionActiva(modulosPermitidos[0]);
+    if (!usuario?.id || !usuario?.permisos) return;
+    const isPermitted = !!usuario?.permisos?.[seccionActiva] || seccionActiva === 'dashboard';
+    if (!isPermitted) {
+      // Buscar el primer módulo que tenga activo (true)
+      const primerModuloPermitido = Object.keys(usuario.permisos).find(key => usuario.permisos[key] === true);
+      if (primerModuloPermitido) {
+        setSeccionActiva(primerModuloPermitido);
       } else {
-        setSeccionActiva('requisiciones'); // Fallback mínimo
+        setSeccionActiva('dashboard'); // Fallback final
       }
     }
-  }, [seccionActiva, usuario?.permisos_modulos]);
+  }, [seccionActiva, usuario?.permisos]);
 
-  const toggleNotificaciones = () => {
-    // Ya no marcamos todas como leídas masivamente al abrir.
-    setVerNotificaciones(!verNotificaciones);
+  // Suscripción en tiempo real a cambios del propio perfil
+  useEffect(() => {
+    if (!usuario?.id) return;
+
+    const channel = supabase
+      .channel(`perfil_cambios_${usuario.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'perfiles',
+          filter: `id=eq.${usuario.id}`
+        },
+        (payload) => {
+          console.log('Perfil de usuario actualizado en tiempo real:', payload.new);
+          setUsuario(buildUsuarioConPermisos(payload.new));
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [usuario?.id]);
+
+  const toggleNotificaciones = async () => {
+    const nuevoEstado = !verNotificaciones;
+    setVerNotificaciones(nuevoEstado);
+    if (nuevoEstado) {
+      const nuevas = notificacionesLog.filter(n => n.nuevo);
+      if (nuevas.length > 0) {
+        try {
+          const ids = nuevas.map(n => n.id);
+          await supabase.from('notificaciones').update({ leido: true }).in('id', ids);
+          setNotificacionesLog(prev => prev.map(n => ids.includes(n.id) ? { ...n, nuevo: false } : n));
+        } catch (err) {
+          console.error("Error al marcar notificaciones como leídas:", err);
+        }
+      }
+    }
   };
 
   const manejarClicNotificacion = async (notif) => {
@@ -432,7 +503,7 @@ function Dashboard() {
 
     // 2. Deep Linking
     if (notif.requisicion_id) {
-      setActiveNode('requisiciones');
+      setSeccionActiva('requisiciones');
       setVerNotificaciones(false); // Cerrar panel
 
       // Emitir evento global para que Requisiciones.jsx abra el modal
@@ -725,74 +796,184 @@ function Dashboard() {
         {/* SIDEBAR */}
         <div style={{ ...estilos.sidebar, height: '100%', boxShadow: '4px 0 10px rgba(0,0,0,0.1)', zIndex: 100, paddingTop: '10px' }} className={`sidebar ${isMobile ? 'mobile-drawer' : ''} ${sidebarAbierto ? 'open' : ''}`}>
           <div className="sidebar-scrollable">
+            {/* Direct Link to Dashboard */}
+            {usuario?.permisos?.dashboard && (
+              <div
+                className={`menu-item-new ${seccionActiva === 'dashboard' ? 'active' : ''}`}
+                onClick={() => { setSeccionActiva('dashboard'); if (isMobile) setSidebarAbierto(false); }}
+                title="Resumen"
+                style={{ position: 'relative' }}
+              >
+                <i className="fa-solid fa-house-chimney"></i>
+                {sidebarAbierto && <span>Resumen</span>}
+              </div>
+            )}
+
+            {/* Collapsible Groups */}
             {[
-              { id: 'compras', icon: 'fa-cart-plus', label: 'Compras', cat: 'COMPRAS' },
-              { id: 'reportesmaestro', icon: 'fa-chart-line', label: 'Reportes Maestro', cat: 'COMPRAS' },
-              { id: 'reportes', icon: 'fa-file-contract', label: 'Reporte de Compras', cat: 'COMPRAS' },
-              { id: 'proveedores', icon: 'fa-address-book', label: 'Proveedores', cat: 'COMPRAS' },
-              { id: 'analytics_compras', icon: 'fa-gauge-high', label: 'Estadísticas y Trazabilidad', cat: 'CONTROL DE GESTIÓN' },
-              { id: 'ejecutivo', icon: 'fa-chess-king', label: 'Resumen Ejecutivo', cat: 'CONTROL DE GESTIÓN' },
-              { id: 'requisiciones', icon: 'fa-file-signature', label: 'Requisiciones', cat: 'GESTIONES' },
-              { id: 'fondos', icon: 'fa-hand-holding-dollar', label: 'Solicitud de Fondos', cat: 'GESTIONES' },
-              { id: 'tickets', icon: 'fa-ticket', label: 'Ticket de Pago', cat: 'GESTIONES' },
-              { id: 'almacen', icon: 'fa-warehouse', label: 'Almacén', cat: 'GESTIONES' },
-              { id: 'usuarios', icon: 'fa-users', label: 'Usuarios', cat: 'CONFIGURACIÓN' },
-              { id: 'atributos', icon: 'fa-database', label: 'Atributos', cat: 'CONFIGURACIÓN' },
-            ].reduce((acc, item) => {
-              let hasPerm = usuario?.correo === 'jcontreras.totalclean@gmail.com' ||
-                usuario?.correo === 'cvega.totalclean@gmail.com' ||
-                usuario?.esAdminReal ||
-                usuario?.rol === 'Admin' ||
-                usuario?.rol === 'Gerente General' ||
-                usuario?.permisos_modulos?.includes(item.id);
-
-              if (item.id === 'analytics_compras' && (usuario?.departamento || '').toUpperCase().includes('COMPRAS')) {
-                hasPerm = true;
+              {
+                key: 'compras',
+                label: 'GESTIÓN DE COMPRAS',
+                iconCategory: 'fa-cart-flatbed-suitcases',
+                items: [
+                  { id: 'compras', icon: 'fa-cart-plus', label: 'Compras' },
+                  { id: 'reportesmaestro', icon: 'fa-chart-line', label: 'Reportes Maestro' },
+                  { id: 'reportes', icon: 'fa-file-contract', label: 'Reporte de Compras' },
+                  { id: 'proveedores', icon: 'fa-address-book', label: 'Proveedores' },
+                  { id: 'analytics_compras', icon: 'fa-gauge-high', label: 'Estadísticas' }
+                ]
+              },
+              {
+                key: 'control',
+                label: 'CONTROL DE GESTIÓN',
+                iconCategory: 'fa-chart-pie',
+                items: [
+                  { id: 'ejecutivo', icon: 'fa-chess-king', label: 'Resumen Ejecutivo' },
+                  { id: 'control_precios', icon: 'fa-funnel-dollar', label: 'Control de Precios' }
+                ]
+              },
+              {
+                key: 'gestiones',
+                label: 'GESTIÓN OPERATIVA',
+                iconCategory: 'fa-folder-open',
+                items: [
+                  { id: 'requisiciones', icon: 'fa-file-signature', label: 'Requisiciones' },
+                  { id: 'fondos', icon: 'fa-hand-holding-dollar', label: 'Solicitud de Fondos' },
+                  { id: 'tickets', icon: 'fa-ticket', label: 'Ticket de Pago' },
+                  { id: 'almacen', icon: 'fa-warehouse', label: 'Almacén' }
+                ]
+              },
+              {
+                key: 'configuracion',
+                label: 'CONFIGURACIÓN',
+                iconCategory: 'fa-gears',
+                items: [
+                  { id: 'usuarios', icon: 'fa-users', label: 'Usuarios' },
+                  { id: 'atributos', icon: 'fa-database', label: 'Atributos' }
+                ]
               }
+            ].map(group => {
+              const tienePermiso = (id) => {
+                return !!usuario?.permisos?.[id];
+              };
 
-              if (hasPerm) {
-                if (acc.length === 0 || acc[acc.length - 1].type !== 'header' || acc[acc.length - 1].cat !== item.cat) {
-                  const lastItem = acc.length > 0 ? acc[acc.length - 1] : null;
-                  if (!lastItem || lastItem.cat !== item.cat) {
-                    acc.push({ type: 'header', label: item.cat, cat: item.cat });
-                  }
-                }
-                acc.push({ ...item, type: 'item' });
-              }
-              return acc;
-            }, [
-              { id: 'dashboard', icon: 'fa-house-chimney', label: 'Resumen', cat: 'PRINCIPAL' }
-            ]).map((node, index) => (
-              node.type === 'header' ? (
-                sidebarAbierto && (
-                  <div key={`header-${index}`} style={{ fontSize: '0.6rem', fontWeight: '900', color: '#475569', margin: '20px 0 10px 0', letterSpacing: '0.5px', textAlign: 'center' }}>
-                    {node.label}
-                  </div>
-                )
-              ) : (
-                <div
-                  key={node.id}
-                  className={`menu-item-new ${seccionActiva === node.id ? 'active' : ''}`}
-                  onClick={() => { setSeccionActiva(node.id); if (isMobile) setSidebarAbierto(false); }}
-                  title={node.label}
-                >
-                  <i className={`fa-solid ${node.icon}`}></i>
-                  {sidebarAbierto && (
-                    <span>{node.label}</span>
-                  )}
-                  {node.id === 'requisiciones' && notificacionesLog.some(n => n.nuevo) && (
-                    <div style={{
-                      position: 'absolute', top: '2px', right: '12px', background: '#ef4444', color: 'white',
-                      fontSize: '0.6rem', minWidth: '16px', height: '16px', borderRadius: '50%',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold',
-                      border: '1px solid #030712'
-                    }}>
-                      {notificacionesLog.filter(n => n.nuevo).length}
+              const itemsPermitidos = group.items.filter(it => tienePermiso(it.id));
+              if (itemsPermitidos.length === 0) return null;
+
+              const isOpen = dropdowns[group.key];
+
+              return (
+                <div key={group.key} style={{ marginBottom: '6px' }}>
+                  {/* Group Header */}
+                  {sidebarAbierto ? (
+                    <div
+                      key={`${group.key}-header-open`}
+                      onClick={() => toggleDropdown(group.key)}
+                      style={{
+                        fontSize: '0.62rem',
+                        fontWeight: '900',
+                        color: isOpen ? '#38bdf8' : '#475569',
+                        margin: '20px 0 10px 0',
+                        letterSpacing: '0.5px',
+                        textAlign: 'center',
+                        cursor: 'pointer',
+                        userSelect: 'none',
+                        transition: 'color 0.2s',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '6px'
+                      }}
+                      title={group.label}
+                    >
+                      <span>{group.label}</span>
+                      <ChevronDown
+                        size={10}
+                        style={{
+                          transition: 'transform 0.2s ease',
+                          transform: isOpen ? 'rotate(180deg)' : 'rotate(0)',
+                          color: '#475569'
+                        }}
+                      />
+                    </div>
+                  ) : (
+                    <div
+                      key={`${group.key}-header-closed`}
+                      onClick={() => toggleDropdown(group.key)}
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        gap: '2px',
+                        margin: '15px 0 5px 0',
+                        cursor: 'pointer',
+                        color: isOpen ? '#38bdf8' : '#475569'
+                      }}
+                      title={group.label}
+                    >
+                      <i className={`fa-solid ${group.iconCategory}`} style={{ fontSize: '1rem' }}></i>
+                      <ChevronDown
+                        size={8}
+                        style={{
+                          transition: 'transform 0.2s ease',
+                          transform: isOpen ? 'rotate(180deg)' : 'rotate(0)',
+                          color: '#475569'
+                        }}
+                      />
                     </div>
                   )}
+
+                  {/* Group Items */}
+                  <AnimatePresence initial={false}>
+                    {isOpen && (
+                      <motion.div
+                        key={`${group.key}-content`}
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: 'auto', opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.2, ease: 'easeInOut' }}
+                        style={{ overflow: 'hidden' }}
+                      >
+                        {itemsPermitidos.map(item => (
+                          <div
+                            key={item.id}
+                            className={`menu-item-new ${seccionActiva === item.id ? 'active' : ''}`}
+                            onClick={() => { setSeccionActiva(item.id); if (isMobile) setSidebarAbierto(false); }}
+                            title={item.label}
+                            style={{ position: 'relative' }}
+                          >
+                            <i className={`fa-solid ${item.icon}`}></i>
+                            {sidebarAbierto && (
+                              <span>{item.label}</span>
+                            )}
+                            {item.id === 'requisiciones' && notificacionesLog.some(n => n.nuevo) && (
+                              <div style={{
+                                position: 'absolute',
+                                top: '2px',
+                                right: sidebarAbierto ? '12px' : '8px',
+                                background: '#ef4444',
+                                color: 'white',
+                                fontSize: '0.6rem',
+                                minWidth: '16px',
+                                height: '16px',
+                                borderRadius: '50%',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontWeight: 'bold',
+                                border: '1px solid #030712'
+                              }}>
+                                {notificacionesLog.filter(n => n.nuevo).length}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                 </div>
-              )
-            ))}
+              );
+            })}
           </div>
 
           <div style={{ marginBottom: '20px' }}></div>

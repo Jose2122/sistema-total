@@ -8,7 +8,7 @@ import toast from 'react-hot-toast';
 import { formatDistanceToNow } from 'date-fns';
 import { es } from 'date-fns/locale';
 
-const Usuarios = () => {
+const Usuarios = ({ currentUser: currentUserProp, onUserUpdate }) => {
   const invokeEdgeFunction = async (functionName, options = {}) => {
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -35,6 +35,12 @@ const Usuarios = () => {
   const [filtroCargo, setFiltroCargo] = useState('Todos');
   const [showModal, setShowModal] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
+
+  useEffect(() => {
+    if (currentUserProp) {
+      setCurrentUser(currentUserProp);
+    }
+  }, [currentUserProp]);
   const [verPassword, setVerPassword] = useState(false);
   const [gerencias, setGerencias] = useState([]);
   const [centrosCosto, setCentrosCosto] = useState([]);
@@ -70,6 +76,7 @@ const Usuarios = () => {
     { id: 'proveedores', label: 'Proveedores' },
     { id: 'analytics_compras', label: 'Estadísticas y Trazabilidad' },
     { id: 'ejecutivo', label: 'Resumen Ejecutivo' },
+    { id: 'control_precios', label: 'Control de Precios' },
     { id: 'usuarios', label: 'Gestión de Usuarios' },
     { id: 'atributos', label: 'Atributos' },
     { id: 'administracion', label: 'Administración' }
@@ -351,6 +358,11 @@ const Usuarios = () => {
           }
           toast.success("Perfil actualizado con éxito");
           await registrarActividad('UPDATE_PROFILE', `Cambios en perfil de ${formData.nombre}`);
+
+          // Sincronizar inmediatamente si el perfil editado es el del propio usuario logueado
+          if (formData.id === currentUser?.id && onUserUpdate) {
+            onUserUpdate({ ...currentUser, ...payloadPerfil });
+          }
         } else if (passwordCambiada) {
           await registrarActividad('UPDATE_PASSWORD', `Cambio de contraseña para ${formData.nombre} ${formData.apellido}`);
         }
@@ -523,6 +535,20 @@ const Usuarios = () => {
 
   return (
     <div className="animate-main" style={estilos.contenedor}>
+      {/* --- ENCABECERA UNIFICADA PREMIUM --- */}
+      <div style={{
+        borderLeft: '6px solid #0ea5e9',
+        paddingLeft: '16px',
+        marginBottom: '30px'
+      }}>
+        <h1 style={{ margin: 0, color: '#0f172a', fontSize: '1.8rem', fontWeight: '900', fontFamily: 'Inter, sans-serif', letterSpacing: '-0.5px' }}>
+          Gestión de Usuarios
+        </h1>
+        <p style={{ margin: '4px 0 0 0', color: '#64748b', fontSize: '0.9rem', fontWeight: '500', fontFamily: 'Inter, sans-serif' }}>
+          Administración de perfiles y permisos del personal
+        </p>
+      </div>
+
       <div style={{ display: 'flex', gap: '20px', marginBottom: '25px', flexWrap: 'wrap' }}>
         <div className="stat-card-new stat-total">
           <div style={{ fontSize: '0.7rem', color: '#94a3b8', fontWeight: '800', textTransform: 'uppercase' }}>Personal Total</div>

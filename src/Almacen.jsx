@@ -131,12 +131,18 @@ const Almacen = () => {
   return (
     <div style={{ padding: '20px', backgroundColor: '#f1f5f9', minHeight: '100vh', color: '#1e293b', fontFamily: 'Inter, sans-serif' }}>
       {/* HEADER */}
-      <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', justifyContent: 'space-between', alignItems: isMobile ? 'flex-start' : 'center', gap: '20px', marginBottom: '35px' }}>
-        <div>
-          <h1 style={{ margin: 0, fontSize: isMobile ? '1.5rem' : '1.8rem', display: 'flex', alignItems: 'center', gap: '12px', color: '#0f172a' }}>
-            <Package size={isMobile ? 24 : 32} color="#0ea5e9" /> Gestión de Almacén
+      <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', justifyContent: 'space-between', alignItems: isMobile ? 'flex-start' : 'center', gap: '20px', marginBottom: '30px' }}>
+        {/* --- ENCABECERA UNIFICADA PREMIUM --- */}
+        <div style={{
+          borderLeft: '6px solid #0ea5e9',
+          paddingLeft: '16px'
+        }}>
+          <h1 style={{ margin: 0, color: '#0f172a', fontSize: '1.8rem', fontWeight: '900', fontFamily: 'Inter, sans-serif', letterSpacing: '-0.5px' }}>
+            Gestión de Almacén
           </h1>
-          <p style={{ color: '#64748b', margin: '5px 0 0 0', fontWeight: '500', fontSize: isMobile ? '0.8rem' : '1rem' }}>Control de ingresos y actas de despacho</p>
+          <p style={{ margin: '4px 0 0 0', color: '#64748b', fontSize: '0.9rem', fontWeight: '500', fontFamily: 'Inter, sans-serif' }}>
+            Control de ingresos y actas de despacho
+          </p>
         </div>
 
         <div style={{ display: 'flex', background: '#e2e8f0', padding: '5px', borderRadius: '12px', width: isMobile ? '100%' : 'auto' }}>
@@ -164,7 +170,7 @@ const Almacen = () => {
       {/* TABLA */}
       <div style={{ backgroundColor: 'white', borderRadius: '20px', overflowX: 'auto', border: '1px solid #e2e8f0', boxShadow: '0 4px 15px rgba(0,0,0,0.05)' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: isMobile ? '800px' : 'auto' }}>
-          <thead style={{ backgroundColor: '#f8fafc', color: '#64748b', fontSize: '0.75rem', fontWeight: '800', textTransform: 'uppercase' }}>
+          <thead>
             <tr>
               <th style={{ padding: '18px 15px', textAlign: 'left' }}>Material / Descripción</th>
               <th style={{ padding: '18px 15px', textAlign: 'left' }}>Obra / Gerencia</th>

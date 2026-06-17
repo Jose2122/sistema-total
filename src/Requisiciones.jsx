@@ -78,6 +78,64 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     }
   };
 
+  const notificarSegunEstado = async (reqId, estado, correlativo, cc, gerenciaDepto, creadorNombre) => {
+    try {
+      if (estado === 'pendiente_proyecto') {
+        const { data: gerentesProyecto } = await supabase
+          .from('perfiles')
+          .select('id')
+          .contains('obras_asignadas', [cc])
+          .ilike('rol', '%proyecto%');
+        if (gerentesProyecto && gerentesProyecto.length > 0) {
+          for (const gp of gerentesProyecto) {
+            await enviarNotificacion(
+              gp.id,
+              `Nueva Requisición ${correlativo} de ${creadorNombre} requiere su aprobación de Proyecto.`,
+              'Aprobación Pendiente',
+              reqId
+            );
+          }
+        }
+      } else if (estado === 'pendiente_area') {
+        const { data: gerentesArea } = await supabase
+          .from('perfiles')
+          .select('id, rol')
+          .eq('departamento', gerenciaDepto);
+        if (gerentesArea) {
+          const areaManagers = gerentesArea.filter(g => {
+            const r = (g.rol || '').toLowerCase();
+            return (r.includes('área') || r.includes('area') || g.rol === 'Gerente') && !r.includes('proyecto');
+          });
+          for (const g of areaManagers) {
+            await enviarNotificacion(
+              g.id,
+              `Nueva Requisición ${correlativo} de ${creadorNombre} requiere su aprobación de Área.`,
+              'Aprobación Pendiente',
+              reqId
+            );
+          }
+        }
+      } else if (estado === 'enviada_general') {
+        const { data: carlos } = await supabase
+          .from('perfiles')
+          .select('id')
+          .ilike('rol', 'Gerente General')
+          .limit(1)
+          .single();
+        if (carlos) {
+          await enviarNotificacion(
+            carlos.id,
+            `Nueva Requisición ${correlativo} de ${creadorNombre} requiere su Aprobación Final.`,
+            'Aprobación Pendiente',
+            reqId
+          );
+        }
+      }
+    } catch (err) {
+      console.error("Error al enviar notificaciones de estado:", err);
+    }
+  };
+
   const formatName = (fullName) => {
     if (!fullName) return '';
     const parts = fullName.trim().split(/\s+/);
@@ -109,7 +167,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
   const [filtroSolicitante, setFiltroSolicitante] = useState('Todos');
   const [listaSubordinados, setListaSubordinados] = useState([]);
   const [listaGerencias, setListaGerencias] = useState([
-    "Administración Maracaibo", "Administración El Tigre", "Operaciones", "Mantenimiento",
+    "Administración Maracaibo", "Administración El Tigre", "Dirección Corporativa", "Operaciones", "Mantenimiento",
     "Seguridad", "Recursos Humanos", "Estimación", "Almacén", "Gerencia General",
     "Servicios Generales", "Contabilidad"
   ]);
@@ -242,6 +300,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
           motivo_rechazo: db.motivo_rechazo || '',
           firma_gerente_general: db.firma_gerente_general,
           observaciones: db.observaciones || '',
+          observaciones_direccion: db.observaciones_direccion || '',
           facturas_url: db.facturas_url || [],
           id_referencia_proyecto: db.id_referencia_proyecto || '',
           user_id: db.user_id,
@@ -256,7 +315,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
           f_inicio_compras: db.f_inicio_compras,
           fecha_limite_compra: db.fecha_limite_compra,
           is_pausada: db.is_pausada,
-          motivo_postergacion: db.motivo_postergacion
+          motivo_postergacion: db.motivo_postergacion,
+          con_iva: db.con_iva !== false
         }));
         setHistorial(historialMapeado);
 
@@ -312,6 +372,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
             return {
               ...req,
               observaciones: payload.new.observaciones || '',
+              observaciones_direccion: payload.new.observaciones_direccion || '',
               facturas_url: payload.new.facturas_url || []
             };
           }
@@ -349,7 +410,11 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       const matchStatus = filtroAprobacion === 'Todos' || 
         (filtroAprobacion === 'pendientes_especiales' 
           ? ['pendiente_proyecto', 'pendiente_area', 'enviada_general', 'rechazada', 'ANULADA'].includes(req.estado_aprobacion)
-          : req.estado_aprobacion === filtroAprobacion);
+          : filtroAprobacion === 'pendientes_de_aprobacion'
+            ? ['pendiente_proyecto', 'pendiente_area', 'enviada_general'].includes(req.estado_aprobacion)
+            : filtroAprobacion === 'rechazadas_y_anuladas'
+              ? ['rechazada', 'ANULADA'].includes(req.estado_aprobacion)
+              : req.estado_aprobacion === filtroAprobacion);
       const matchCategoria = filtroCategoria === 'Todos' || (req.detalles && req.detalles.some(d => d.categoria === filtroCategoria));
       const matchCC = filtroCC === 'Todos' || req.centroCosto.includes(filtroCC);
       const matchStatusCompra = filtroStatusCompra === 'Todos' || req.status.toUpperCase() === filtroStatusCompra.toUpperCase();
@@ -361,10 +426,21 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
 
       return matchTexto && matchDepto && matchStatus && matchCategoria && matchCC && matchStatusCompra && matchFecha && matchSolicitante;
     }).sort((a, b) => {
-      // Prioridad Emergencia primero
-      if (a.prioridad === 'Emergencia' && b.prioridad !== 'Emergencia') return -1;
-      if (a.prioridad !== 'Emergencia' && b.prioridad === 'Emergencia') return 1;
-      // Luego por fecha desc (ya viene ordenado de BD, pero por si acaso)
+      const aEmergenciaPendiente = a.prioridad === 'Emergencia' && !( (a.estado_aprobacion === 'aprobado_final' && a.status?.toUpperCase() === 'COMPLETADO') || a.estado_aprobacion === 'ANULADA' );
+      const bEmergenciaPendiente = b.prioridad === 'Emergencia' && !( (b.estado_aprobacion === 'aprobado_final' && b.status?.toUpperCase() === 'COMPLETADO') || b.estado_aprobacion === 'ANULADA' );
+
+      const aEmergenciaFin = a.prioridad === 'Emergencia' && ( (a.estado_aprobacion === 'aprobado_final' && a.status?.toUpperCase() === 'COMPLETADO') || a.estado_aprobacion === 'ANULADA' );
+      const bEmergenciaFin = b.prioridad === 'Emergencia' && ( (b.estado_aprobacion === 'aprobado_final' && b.status?.toUpperCase() === 'COMPLETADO') || b.estado_aprobacion === 'ANULADA' );
+
+      // 1. Emergencias pendientes primero
+      if (aEmergenciaPendiente && !bEmergenciaPendiente) return -1;
+      if (!aEmergenciaPendiente && bEmergenciaPendiente) return 1;
+
+      // 2. Emergencias completadas/anuladas al final
+      if (aEmergenciaFin && !bEmergenciaFin) return 1;
+      if (!aEmergenciaFin && bEmergenciaFin) return -1;
+
+      // 3. Luego por fecha desc
       return new Date(b.fecha) - new Date(a.fecha);
     });
   }, [historial, busqueda, filtroDepto, filtroAprobacion, filtroCategoria, filtroCC, filtroStatusCompra, fechaDesde, fechaHasta, filtroSolicitante]);
@@ -376,11 +452,13 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
   const [departamento, setDepartamento] = useState('Operaciones');
   const [justificacion, setJustificacion] = useState('');
   const [observaciones, setObservaciones] = useState('');
+  const [observacionesDireccion, setObservacionesDireccion] = useState('');
   const [fechaRequerida, setFechaRequerida] = useState(new Date().toISOString().split('T')[0]);
   const [renglones, setRenglones] = useState([
     { id: Date.now(), clasificacion: '', categoria: '', cant: 1, uni: 'UNID', descripcion: '', beneficiario: '', pu: 0, total: 0, status: 'En Espera' }
   ]);
   const [previewCorrelativo, setPreviewCorrelativo] = useState('');
+  const [conIva, setConIva] = useState(true);
 
   const manejarCambioIdProyecto = (e) => {
     let valor = e.target.value.toUpperCase();
@@ -437,6 +515,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     "Estimaciones y Control Interno": "EST",
     "Estimaciónes y Control Interno": "EST",
     "Almacén": "ALM",
+    "Dirección Corporativa": "DC",
     "Gerencia General": "GG",
     "Servicios Generales": "SVG",
     "Contabilidad": "CNT",
@@ -453,7 +532,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
   };
 
   const GERENCIAS_ESTATICAS = [
-    "Administración Maracaibo", "Administración El Tigre", "Operaciones", "Mantenimiento",
+    "Administración Maracaibo", "Administración El Tigre", "Dirección Corporativa", "Operaciones", "Mantenimiento",
     "Seguridad", "Recursos Humanos", "Estimación", "Almacén", "Gerencia General",
     "Servicios Generales", "Contabilidad"
   ];
@@ -480,8 +559,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       return acc + ejecutadoItem;
     }, 0);
 
-    const totalEstimado = subTotalEstimado * 1.16;
-    const totalEjecutado = subTotalEjecutado * 1.16;
+    const totalEstimado = subTotalEstimado * (conIva ? 1.16 : 1.00);
+    const totalEjecutado = subTotalEjecutado * (conIva ? 1.16 : 1.00);
 
     return { subTotalEstimado, subTotalEjecutado, totalEstimado, totalEjecutado };
   };
@@ -509,26 +588,30 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       }
 
       if (datosPredefinidos) {
-        setDepartamento(datosPredefinidos.gerencia_solicitante || datosPredefinidos.gerencia || 'Operaciones');
-        setJustificacion(datosPredefinidos.justificacion || '');
-        setObservaciones(datosPredefinidos.observaciones || '');
-        setIdReferenciaProyecto(datosPredefinidos.id_referencia_proyecto || '');
-        setCentroCosto(datosPredefinidos.centro_costo || '');
+        if (datosPredefinidos.isExistingRequisition) {
+          verRequisicion(datosPredefinidos.req);
+        } else {
+          setDepartamento(datosPredefinidos.gerencia_solicitante || datosPredefinidos.gerencia || 'Operaciones');
+          setJustificacion(datosPredefinidos.justificacion || '');
+          setObservaciones(datosPredefinidos.observaciones || '');
+          setIdReferenciaProyecto(datosPredefinidos.id_referencia_proyecto || '');
+          setCentroCosto(datosPredefinidos.centro_costo || '');
 
-        if (datosPredefinidos.partidasSeleccionadas) {
-          const nuevosRenglones = datosPredefinidos.partidasSeleccionadas.map((p, idx) => ({
-            id: Date.now() + idx,
-            clasificacion: p.clasif || '',
-            categoria: p.cat || '',
-            cant: Number(p.cant) || 1,
-            uni: p.uni || 'UNID',
-            descripcion: p.desc || '',
-            beneficiario: p.ben || '',
-            pu: Number(p.puUsd || p.puBs || 0),
-            total: (Number(p.cant) || 1) * Number(p.puUsd || p.puBs || 0),
-            status: 'En Espera'
-          }));
-          setRenglones(nuevosRenglones);
+          if (datosPredefinidos.partidasSeleccionadas) {
+            const nuevosRenglones = datosPredefinidos.partidasSeleccionadas.map((p, idx) => ({
+              id: Date.now() + idx,
+              clasificacion: p.clasif || '',
+              categoria: p.cat || '',
+              cant: Number(p.cant) || 1,
+              uni: p.uni || 'UNID',
+              descripcion: p.desc || '',
+              beneficiario: p.ben || '',
+              pu: Number(p.puUsd || p.puBs || 0),
+              total: (Number(p.cant) || 1) * Number(p.puUsd || p.puBs || 0),
+              status: 'En Espera'
+            }));
+            setRenglones(nuevosRenglones);
+          }
         }
       } else if (currentUser) {
         setSolicitante(`${currentUser.nombre} ${currentUser.apellido}`);
@@ -692,6 +775,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     }
     setJustificacion('');
     setObservaciones('');
+    setObservacionesDireccion('');
     setFacturasUrls([]);
     setIdReferenciaProyecto('');
     setEditandoId(null);
@@ -701,6 +785,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     setModoEdicion(false);
     setHasChanges(false);
     setMostrarSoportes(false);
+    setConIva(true);
   };
 
   const verRequisicion = (req) => {
@@ -708,6 +793,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     setPrioridad(req.prioridad);
     setJustificacion(req.justificacion);
     setObservaciones(req.observaciones);
+    setObservacionesDireccion(req.observaciones_direccion || '');
     setIdReferenciaProyecto(req.id_referencia_proyecto || '');
     setFacturasUrls(req.facturas_url || []);
     setFechaRequerida(req.fecha_requerida || req.fecha);
@@ -735,6 +821,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     setModoEdicion(false);
     setHasChanges(false);
     setMostrarSoportes(detallesSeguros.length > 0 && (req.facturas_url?.length > 0));
+    setConIva(req.con_iva !== false);
     setShowModal(true);
   };
 
@@ -951,6 +1038,14 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       setUploading(true);
       if (!files || files.length === 0) return;
 
+      for (const file of files) {
+        if (file.size > 5 * 1024 * 1024) {
+          toast.error(`El archivo "${file.name}" supera el límite de 5MB. Por favor, redúzcalo antes de subirlo.`);
+          setUploading(false);
+          return;
+        }
+      }
+
       const uploadPromises = files.map(async (file, index) => {
         const fileExt = file.name.split('.').pop();
         const prefix = editandoId ? editandoId : `nueva_${Date.now()}`;
@@ -1107,7 +1202,12 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
             return (r.includes('área') || r.includes('area') || g.rol === 'Gerente') && !r.includes('proyecto');
           });
           for (const g of areaManagers) {
-            await enviarNotificacion(g.id, `REQ ${reqActual.correlativo || 'N/A'} superó validación técnica de Proyecto. Requiere su aprobación.`, 'Validación Área', editandoId);
+            await enviarNotificacion(
+              g.id,
+              `Requisición ${reqActual.correlativo || reqActual.correlativo_req || 'N/A'} aprobada por Proyecto. Requiere su aprobación de Área.`,
+              'Aprobación Pendiente',
+              editandoId
+            );
           }
         }
       }
@@ -1140,6 +1240,28 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       }).eq('id', editandoId);
       if (error) throw error;
       toast.success('Aprobada por Gerente de Área. Enviada al Gerente General.');
+      
+      // NOTIFICAR AL GERENTE GENERAL
+      try {
+        const { data: carlos } = await supabase
+          .from('perfiles')
+          .select('id')
+          .ilike('rol', 'Gerente General')
+          .limit(1)
+          .single();
+        if (carlos) {
+          const correlativoStr = reqActual?.correlativo || reqActual?.correlativo_req || `ID: ${editandoId}`;
+          await enviarNotificacion(
+            carlos.id,
+            `Requisición ${correlativoStr} aprobada por Área. Requiere su Aprobación Final.`,
+            'Aprobación Pendiente',
+            editandoId
+          );
+        }
+      } catch (err) {
+        console.error("Error al notificar al Gerente General:", err);
+      }
+
       await cargarHistorialDesdeBD();
       setShowModal(false); if (onClose) onClose();
       resetearFormulario();
@@ -1216,6 +1338,45 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       }
 
       toast.success("¡APROBACIÓN COMPLETADA CON ÉXITO!");
+
+      const reqActual = historial.find(h => String(h.id) === String(editandoId));
+      // 1. Notificar al creador/solicitante
+      if (reqActual?.user_id) {
+        const correlativoStr = reqActual?.correlativo || reqActual?.correlativo_req || `ID: ${editandoId}`;
+        await enviarNotificacion(
+          reqActual.user_id,
+          `¡Tu Requisición ${correlativoStr} ha sido Aprobada y está en cola para Compra!`,
+          'Compra Aprobada',
+          editandoId
+        );
+      }
+
+      // 2. Notificar al Gerente de Compras
+      try {
+        const { data: gerentesCompras } = await supabase
+          .from('perfiles')
+          .select('id, rol, departamento')
+          .eq('departamento', 'Compras');
+        
+        if (gerentesCompras) {
+          const gCompras = gerentesCompras.filter(p => {
+            const r = (p.rol || '').toUpperCase();
+            return r.includes('GERENTE') || r.includes('ADMIN');
+          });
+          for (const g of gCompras) {
+            const correlativoStr = reqActual?.correlativo || reqActual?.correlativo_req || `ID: ${editandoId}`;
+            await enviarNotificacion(
+              g.id,
+              `Nueva Requisición ${correlativoStr} aprobada. Lista para ser asignada a un Analista de Compras.`,
+              'Requisición Aprobada',
+              editandoId
+            );
+          }
+        }
+      } catch (err) {
+        console.error("Error al notificar al Gerente de Compras:", err);
+      }
+
       await cargarHistorialDesdeBD();
       setShowModal(false); if (onClose) onClose();
       resetearFormulario();
@@ -1229,6 +1390,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
 
   const manejarReenviar = async () => {
     if (!editandoId) return;
+    const reqActual = historial.find(h => String(h.id) === String(editandoId));
     setLoading(true);
     try {
       const rangoSolicitante = getRank(currentUser?.rol);
@@ -1295,10 +1457,20 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
         centro_costo: centroCosto,
         prioridad,
         fecha_requerida: fechaRequerida,
-        solicitante: solicitante,
-        gerencia: departamento
+        gerencia: departamento,
+        con_iva: conIva
       }).eq('id', editandoId);
       if (error) throw error;
+      const creador = solicitante || `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim();
+      const correlativoStr = reqActual?.correlativo || reqActual?.correlativo_req || `ID: ${editandoId}`;
+      await notificarSegunEstado(
+        editandoId,
+        estadoInicial,
+        correlativoStr,
+        centroCosto,
+        departamento,
+        creador
+      );
       toast.success("Requisición re-enviada correctamente.");
       await cargarHistorialDesdeBD();
       setShowModal(false); if (onClose) onClose();
@@ -1321,7 +1493,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
         observaciones,
         id_referencia_proyecto: idReferenciaProyecto,
         total_bs: Number(totalEstimado) || 0,
-        facturas_url: facturasUrls
+        facturas_url: facturasUrls,
+        con_iva: conIva
       }).eq('id', id);
       if (error) throw error;
 
@@ -1569,7 +1742,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       id_referencia_proyecto: idReferenciaProyecto,
       origen: datosPredefinidos ? `REF: ${datosPredefinidos.id_control}` : 'Manual',
       user_id: currentUser.id,
-      facturas_url: facturasUrls
+      facturas_url: facturasUrls,
+      con_iva: conIva
     };
 
     // VALIDACIÓN ESTRICTA DE CLASIFICACIÓN PARA NUEVA REQ
@@ -1722,63 +1896,15 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       toast.success("Generada y guardada.");
 
       // --- LÓGICA DE NOTIFICACIONES PARA NUEVA REQ ---
-      const miRango = getRank(currentUser.rol);
-
-      // 1. Notificar Superiores Directos (Misma gerencia si existe, mismo depto, rango mayor)
-      let querySuperiores = supabase
-        .from('perfiles')
-        .select('id, rol, nombre')
-        .eq('departamento', currentUser.departamento);
-
-      if (currentUser.gerencia_id) {
-        querySuperiores = querySuperiores.eq('gerencia_id', currentUser.gerencia_id);
-      }
-
-      const { data: superiores } = await querySuperiores;
-      const notificadosIds = new Set();
-
-      console.log("Buscando superiores para:", currentUser.nombre, "en", currentUser.departamento);
-      if (superiores) {
-        const superioresFiltrados = superiores.filter(s => getRank(s.rol) > miRango);
-        console.log("Superiores encontrados:", superioresFiltrados.map(s => s.nombre));
-
-        for (const s of superioresFiltrados) {
-          await enviarNotificacion(s.id, `Nueva Requisición ${nuevaReq.correlativo_req} de ${currentUser.nombre} pendiente de su aprobación.`, 'Nueva Requisición', nuevaReq.id);
-          notificadosIds.add(s.id);
-        }
-      }
-
-      // 1.5 Notificar directamente al Gerente de Proyecto asignado (por obras_asignadas)
-      if (nuevaReq.estado_aprobacion === 'pendiente_proyecto' && nuevaReq.centro_costo) {
-        const { data: gerentesProyecto } = await supabase
-          .from('perfiles')
-          .select('id, nombre')
-          .contains('obras_asignadas', [nuevaReq.centro_costo])
-          .ilike('rol', '%proyecto%');
-
-        if (gerentesProyecto) {
-          for (const gp of gerentesProyecto) {
-            if (!notificadosIds.has(gp.id)) {
-              console.log("Notificando Gerente de Proyecto:", gp.nombre, "para obra:", nuevaReq.centro_costo);
-              await enviarNotificacion(gp.id, `Nueva Requisición ${nuevaReq.correlativo_req} de ${currentUser.nombre} requiere su aprobación de proyecto en ${nuevaReq.centro_costo}.`, 'Nueva Requisición', nuevaReq.id);
-              notificadosIds.add(gp.id);
-            }
-          }
-        }
-      }
-
-      // 2. Notificar a Carlos Vega (Gerente General)
-      const { data: carlos } = await supabase
-        .from('perfiles')
-        .select('id, nombre')
-        .ilike('rol', 'Gerente General')
-        .limit(1)
-        .single();
-
-      if (carlos) {
-        console.log("Notificando a Carlos Vega...");
-        await enviarNotificacion(carlos.id, `Nueva Requisición ${nuevaReq.correlativo_req} creada por ${currentUser.nombre}.`, 'Nueva Requisición', nuevaReq.id);
-      }
+      const creador = solicitante || `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim();
+      await notificarSegunEstado(
+        nuevaReq.id,
+        nuevaReq.estado_aprobacion,
+        nuevaReq.correlativo_req,
+        nuevaReq.centro_costo,
+        nuevaReq.gerencia,
+        creador
+      );
 
       await cargarHistorialDesdeBD();
       onSuccess?.(nuevaReq.id, idsPartidas, nuevaReq.correlativo_req);
@@ -2027,8 +2153,10 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       totalPagoUsd += itemUsd;
     });
 
-    const totalPagoBsConIva = totalPagoBs * 1.16;
-    const totalPagoUsdConIva = totalPagoUsd * 1.16;
+    const aplicaIva = reqActual.con_iva !== false;
+    const labelIva = aplicaIva ? "(Con IVA)" : "(Sin IVA)";
+    const totalPagoBsConIva = totalPagoBs * (aplicaIva ? 1.16 : 1.00);
+    const totalPagoUsdConIva = totalPagoUsd * (aplicaIva ? 1.16 : 1.00);
     
     let finalPagoBs = totalPagoBsConIva;
     let finalPagoUsd = totalPagoUsdConIva;
@@ -2057,11 +2185,11 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     pdf.setTextColor(15, 23, 42);
     
     // Fila 1: Pago Bs
-    pdf.text("Pago Bs (Con IVA)", boxX + 3, currentY + 5);
+    pdf.text(`Pago Bs ${labelIva}`, boxX + 3, currentY + 5);
     pdf.text(`$ ${finalPagoBs.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 192, currentY + 5, { align: 'right' });
     
     // Fila 2: Pago USD
-    pdf.text("Pago USD (Con IVA)", boxX + 3, currentY + 10);
+    pdf.text(`Pago USD ${labelIva}`, boxX + 3, currentY + 10);
     pdf.text(`$ ${finalPagoUsd.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 192, currentY + 10, { align: 'right' });
     
     // Línea divisoria interna
@@ -2071,7 +2199,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     
     // Fila 3: Total General
     pdf.setFont(fontPrimary, 'bold');
-    pdf.text("TOTAL (Con IVA)", boxX + 3, currentY + 15);
+    pdf.text(`TOTAL ${labelIva}`, boxX + 3, currentY + 15);
     pdf.text(`$ ${finalTotal.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 192, currentY + 15, { align: 'right' });
     
     // Guardar el PDF
@@ -2115,17 +2243,26 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
             { label: 'ANULADA', val: historial.filter(r => r.estado_aprobacion === 'ANULADA').length, col: '#6b7280', bg: '#f3f4f6', icon: <X size={18} />, filter: 'ANULADA' }
           ];
 
-          if (rolUser.includes('analista')) {
+          const esAnalistaOCoordinador = rolUser.includes('analista') || rolUser.includes('coordinador');
+          if (esAnalistaOCoordinador) {
             return [
               baseStats[0],
               baseStats[4],
               {
-                label: 'PENDIENTES, RECHAZADAS Y ANULADAS',
-                val: historial.filter(r => ['pendiente_proyecto', 'pendiente_area', 'enviada_general', 'rechazada', 'ANULADA'].includes(r.estado_aprobacion)).length,
+                label: 'PENDIENTES',
+                val: historial.filter(r => ['pendiente_proyecto', 'pendiente_area', 'enviada_general'].includes(r.estado_aprobacion)).length,
+                col: '#d97706',
+                bg: '#fef3c7',
+                icon: <Clock size={18} />,
+                filter: 'pendientes_de_aprobacion'
+              },
+              {
+                label: 'RECHAZADAS Y ANULADAS',
+                val: historial.filter(r => ['rechazada', 'ANULADA'].includes(r.estado_aprobacion)).length,
                 col: '#ef4444',
                 bg: '#fee2e2',
-                icon: <Clock size={18} />,
-                filter: 'pendientes_especiales'
+                icon: <Ban size={18} />,
+                filter: 'rechazadas_y_anuladas'
               }
             ];
           }
@@ -2290,17 +2427,17 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       {/* --- TABLA DE HISTORIAL --- */}
       <div className="table-container" style={{ borderRadius: 0, border: 'none', boxShadow: 'none' }}>
         <table className="tc-table" style={{ borderCollapse: 'collapse', width: '100%' }}>
-          <thead style={{ background: 'linear-gradient(to right, #f8fafc, #f1f5f9)', borderBottom: '1px solid #e2e8f0' }}>
+          <thead>
             <tr>
-              <th style={{ width: '130px', fontSize: '11px', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#64748b', padding: '15px' }}>ID / FECHA</th>
-              <th style={{ width: '220px', fontSize: '11px', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#64748b' }}>SOLICITANTE / GERENCIA</th>
-              <th style={{ textAlign: 'center', width: '150px', fontSize: '11px', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#64748b' }}>ESTATUS APROBACIÓN</th>
-              <th style={{ width: '300px', fontSize: '11px', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#64748b' }}>JUSTIFICACIÓN / CATEGORÍA</th>
-              <th style={{ width: '180px', fontSize: '11px', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#64748b' }}>CENTRO DE COSTO</th>
-              <th style={{ width: '100px', fontSize: '11px', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#64748b' }}>TOTAL ($)</th>
-              <th style={{ textAlign: 'center', width: '130px', fontSize: '11px', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#64748b' }}>TIEMPO SLA</th>
-              <th style={{ textAlign: 'center', width: '120px', fontSize: '11px', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#64748b' }}>ESTATUS COMPRA</th>
-              <th style={{ textAlign: 'center', width: '100px', fontSize: '11px', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#64748b' }}>ACCIONES</th>
+              <th style={{ width: '130px', padding: '15px' }}>ID / FECHA</th>
+              <th style={{ width: '220px' }}>SOLICITANTE / GERENCIA</th>
+              <th style={{ textAlign: 'center', width: '150px' }}>ESTATUS APROBACIÓN</th>
+              <th style={{ width: '300px' }}>JUSTIFICACIÓN / CATEGORÍA</th>
+              <th style={{ width: '180px' }}>CENTRO DE COSTO</th>
+              <th style={{ width: '100px' }}>TOTAL ($)</th>
+              <th style={{ textAlign: 'center', width: '130px' }}>TIEMPO SLA</th>
+              <th style={{ textAlign: 'center', width: '120px' }}>ESTATUS COMPRA</th>
+              <th style={{ textAlign: 'center', width: '100px' }}>ACCIONES</th>
             </tr>
           </thead>
           <tbody>
@@ -2443,7 +2580,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                     let deadline = req.fecha_limite_compra;
                     if (!deadline && req.estado_aprobacion === 'aprobado_final' && req.fecha_emision) {
                       const base = new Date(req.fecha_emision);
-                      const dias = req.prioridad === 'Emergencia' ? 1 : 5;
+                      const dias = req.prioridad === 'Emergencia' ? 2 : 5;
                       deadline = new Date(base.getTime() + (dias * 24 * 60 * 60 * 1000)).toISOString();
                     }
 
@@ -2452,7 +2589,21 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                       const hoy = new Date();
                       const diff = limite.getTime() - hoy.getTime();
 
-                      if (req.is_pausada) return <span style={{ color: '#f59e0b', fontSize: '0.7rem', fontWeight: '900' }}>⏸️ PAUSADO</span>;
+                      if (req.is_pausada) return (
+                        <div style={{
+                          fontSize: '0.65rem',
+                          fontWeight: '800',
+                          backgroundColor: '#fef3c7',
+                          color: '#d97706',
+                          padding: '4px 8px',
+                          borderRadius: '6px',
+                          border: '1px solid #fde68a',
+                          display: 'inline-block',
+                          whiteSpace: 'nowrap'
+                        }}>
+                          ⏸️ SLA Pausado - Espera de Precios
+                        </div>
+                      );
 
                       const horasTotales = Math.floor(diff / (1000 * 60 * 60));
                       const color = horasTotales < 0 ? '#ef4444' : (horasTotales < 24 ? '#f59e0b' : '#16a34a');
@@ -2563,8 +2714,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                       <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
                         <h1 style={{
                           margin: 0,
-                          fontSize: '1.4rem',
-                          fontWeight: '1000',
+                          fontSize: '1.15rem',
+                          fontWeight: '800',
                           color: '#1e293b',
                           letterSpacing: '-0.02em',
                           textTransform: 'uppercase'
@@ -2629,7 +2780,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                         let limiteDate = reqActual.fecha_limite_compra;
                         if (!limiteDate && reqActual.fecha_emision) {
                           const base = new Date(reqActual.fecha_emision);
-                          const dias = reqActual.prioridad === 'Emergencia' ? 1 : 5;
+                          const dias = reqActual.prioridad === 'Emergencia' ? 2 : 5;
                           limiteDate = new Date(base.getTime() + (dias * 24 * 60 * 60 * 1000));
                         } else if (limiteDate) {
                           limiteDate = new Date(limiteDate);
@@ -2961,6 +3112,25 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                   </div>
                 </div>
 
+                {/* --- SECCIÓN DE DIRECTRICES DE DIRECCIÓN (ESTÁTICO / SIEMPRE VISIBLE SI EXISTE) --- */}
+                {observacionesDireccion && (
+                  <div style={{
+                    backgroundColor: '#faf5ff',
+                    padding: '12px 18px',
+                    borderRadius: '12px',
+                    border: '1px solid #ddd6fe',
+                    borderLeft: '4px solid #7c3aed',
+                    marginBottom: '20px'
+                  }}>
+                    <label style={{ fontSize: '0.7rem', fontWeight: '900', color: '#6d28d9', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: '6px', margin: 0, marginBottom: '6px' }}>
+                      🏛️ Directrices de la Dirección
+                    </label>
+                    <p style={{ margin: 0, color: '#4c1d95', fontSize: '0.85rem', fontWeight: '600', lineHeight: '1.4', whiteSpace: 'pre-wrap' }}>
+                      {observacionesDireccion}
+                    </p>
+                  </div>
+                )}
+
                 {/* --- SECCIÓN DE OBSERVACIONES COLAPSABLE --- */}
                 <AnimatePresence>
                   {mostrarObservaciones && (
@@ -3166,20 +3336,22 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                                       {(Array.isArray(f.historial_compras) ? f.historial_compras : []).map((h, idx) => (
                                         <tr key={idx} style={{
                                           borderBottom: idx < f.historial_compras.length - 1 ? '1px solid #f1f5f9' : 'none',
-                                          backgroundColor: h.tipo === 'ANULACION' ? '#fef2f2' : (h.tipo === 'JUSTIFICACION' ? '#fffbeb' : 'transparent')
+                                          backgroundColor: h.tipo === 'ANULACION' ? '#fef2f2' : (h.tipo === 'JUSTIFICACION' ? '#fffbeb' : (h.tipo === 'DIRECTRIZ' ? '#faf5ff' : 'transparent'))
                                         }}>
                                           <td style={{ padding: '8px', color: '#64748b' }}>{new Date(h.fecha).toLocaleDateString()}</td>
-                                          <td style={{ padding: '8px', fontWeight: 'bold', color: h.tipo === 'ANULACION' ? '#ef4444' : (h.tipo === 'JUSTIFICACION' ? '#d97706' : '#16a34a') }}>
-                                            {h.tipo === 'ANULACION' ? '🚫 SIN EFECTO' : (h.tipo === 'JUSTIFICACION' ? '⚠️ JUSTIFICACIÓN' : '✅ COMPRA')}
+                                          <td style={{ padding: '8px', fontWeight: 'bold', color: h.tipo === 'ANULACION' ? '#ef4444' : (h.tipo === 'JUSTIFICACION' ? '#d97706' : (h.tipo === 'DIRECTRIZ' ? '#7c3aed' : '#16a34a')) }}>
+                                            {h.tipo === 'ANULACION' ? '🚫 SIN EFECTO' : (h.tipo === 'JUSTIFICACION' ? '⚠️ JUSTIFICACIÓN' : (h.tipo === 'DIRECTRIZ' ? '🏛️ DIRECTRIZ' : '✅ COMPRA'))}
                                           </td>
                                           <td style={{ padding: '8px', fontSize: '0.65rem', fontWeight: 'bold', color: '#64748b' }}>
-                                            {(h.tipo !== 'JUSTIFICACION' && h.tipo !== 'ANULACION') ? (h.proveedor_nombre || 'No asignado') : '-'}
+                                            {(h.tipo !== 'JUSTIFICACION' && h.tipo !== 'ANULACION' && h.tipo !== 'DIRECTRIZ') ? (h.proveedor_nombre || 'No asignado') : '-'}
                                           </td>
                                           <td style={{ padding: '8px' }}>
                                             {h.tipo === 'ANULACION' ? (
                                               <span style={{ fontStyle: 'italic', color: '#b91c1c', fontWeight: '600' }}>Motivo: {h.motivo}</span>
                                             ) : h.tipo === 'JUSTIFICACION' ? (
                                               <span style={{ fontStyle: 'italic', color: '#92400e', fontWeight: '600' }}>{h.motivo}</span>
+                                            ) : h.tipo === 'DIRECTRIZ' ? (
+                                              <span style={{ fontStyle: 'italic', color: '#6d28d9', fontWeight: '600' }}>{h.motivo}</span>
                                             ) : (
                                               <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
                                                 {h.metodo_pago && (
@@ -3190,11 +3362,16 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                                                 <span style={{ fontWeight: '800', color: '#2563eb' }}>
                                                   {h.doc_tipo || 'FAC'}: {h.doc_numero || 'S/D'}
                                                 </span>
+                                                {h.factura_url && (
+                                                  <a href={h.factura_url} target="_blank" rel="noreferrer" title="Ver Soporte" style={{ marginLeft: '8px', textDecoration: 'none', cursor: 'pointer', fontSize: '1rem' }}>
+                                                    📎
+                                                  </a>
+                                                )}
                                               </div>
                                             )}
                                           </td>
-                                          <td style={{ padding: '8px', textAlign: 'center', fontWeight: '700' }}>{h.cant || '-'}</td>
-                                          <td style={{ padding: '8px', textAlign: 'right' }}>{h.pu ? `$ ${h.pu.toLocaleString('de-DE')}` : '-'}</td>
+                                          <td style={{ padding: '8px', textAlign: 'center', fontWeight: '700' }}>{(h.tipo === 'JUSTIFICACION' || h.tipo === 'ANULACION' || h.tipo === 'DIRECTRIZ') ? '-' : (h.cant || '-')}</td>
+                                          <td style={{ padding: '8px', textAlign: 'right' }}>{(h.tipo === 'JUSTIFICACION' || h.tipo === 'ANULACION' || h.tipo === 'DIRECTRIZ') ? '-' : (h.pu ? `$ ${h.pu.toLocaleString('de-DE')}` : '-')}</td>
                                           <td style={{ padding: '8px', textAlign: 'right' }}>
                                             {h.tipo === 'ANULACION' ? (
                                               <div style={{ fontSize: '0.7rem', color: '#7f1d1d', whiteSpace: 'pre-wrap', textAlign: 'left', backgroundColor: '#fee2e2', padding: '6px', borderRadius: '4px', border: '1px solid #fca5a5' }}>
@@ -3202,6 +3379,10 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                                               </div>
                                             ) : h.tipo === 'JUSTIFICACION' ? (
                                               <div style={{ fontSize: '0.7rem', color: '#475569', whiteSpace: 'pre-wrap', textAlign: 'left', backgroundColor: '#fef3c7', padding: '6px', borderRadius: '4px' }}>
+                                                {h.comentario}
+                                              </div>
+                                            ) : h.tipo === 'DIRECTRIZ' ? (
+                                              <div style={{ fontSize: '0.7rem', color: '#4c1d95', whiteSpace: 'pre-wrap', textAlign: 'left', backgroundColor: '#f3e8ff', padding: '6px', borderRadius: '4px', border: '1px solid #ddd6fe' }}>
                                                 {h.comentario}
                                               </div>
                                             ) : <span style={{ fontWeight: 'bold' }}>$ {(h.cant * h.pu).toLocaleString('de-DE')}</span>}
@@ -3355,13 +3536,13 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                     )}
 
                     <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '2px solid var(--slate-200)', paddingTop: '10px', color: '#64748b' }}>
-                      <span style={{ fontWeight: '900', fontSize: '1rem' }}>TOTAL ESTIMADO (C/IVA):</span>
+                      <span style={{ fontWeight: '900', fontSize: '1rem' }}>TOTAL ESTIMADO {conIva ? "(C/IVA)" : "(S/IVA)"}:</span>
                       <span style={{ fontSize: '1.2rem', fontWeight: '900' }}>$ {totalEstimado.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span>
                     </div>
 
                     {subTotalEjecutado > 0 && (
                       <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: '10px', color: '#16a34a' }}>
-                        <span style={{ fontWeight: '900', fontSize: '1rem' }}>TOTAL EJECUTADO (C/IVA):</span>
+                        <span style={{ fontWeight: '900', fontSize: '1rem' }}>TOTAL EJECUTADO {conIva ? "(C/IVA)" : "(S/IVA)"}:</span>
                         <span style={{ fontSize: '1.2rem', fontWeight: '900' }}>$ {totalEjecutado.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span>
                       </div>
                     )}
@@ -3447,7 +3628,22 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                       )}
                     </div>
 
-                    <div style={{ display: 'flex', gap: '12px' }}>
+                    <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                      {(!editandoId || modoEdicion) ? (
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', fontWeight: 'bold', color: '#475569', cursor: 'pointer', userSelect: 'none', marginRight: '6px' }}>
+                          <input
+                            type="checkbox"
+                            checked={conIva}
+                            onChange={(e) => { setHasChanges(true); setConIva(e.target.checked); }}
+                            style={{ width: '15px', height: '15px', accentColor: 'var(--primary)', cursor: 'pointer' }}
+                          />
+                          ¿Con IVA (16%)?
+                        </label>
+                      ) : (
+                        <span style={{ fontSize: '0.7rem', fontWeight: '800', color: conIva ? '#16a34a' : '#ef4444', backgroundColor: conIva ? '#f0fdf4' : '#fef2f2', padding: '3px 8px', borderRadius: '6px', marginRight: '6px' }}>
+                          {conIva ? 'CON IVA (16%)' : 'SIN IVA'}
+                        </span>
+                      )}
                       {editandoId ? (
                         <>
                           {modoEdicion ? (
