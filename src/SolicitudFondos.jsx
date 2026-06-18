@@ -53,10 +53,22 @@ const getWeeksForMonth = (monthVal, year = 2026) => {
   }
 };
 
+const esRequisicionCompletada = (requisicion) => {
+  if (!requisicion) return false;
+  if (!requisicion.items || !Array.isArray(requisicion.items)) return false;
+  return requisicion.items.every(item => {
+    const cantPedida = parseFloat(item.cantidad_pedida ?? item.cant) || 0;
+    const cantComprada = parseFloat(item.cantidad_comprada || 0);
+    if (item.anulado) return true;
+    return cantComprada >= cantPedida;
+  });
+};
+
 const StockSmartTotalClean = ({ currentUserProp }) => {
   const [showModal, setShowModal] = useState(false);
   const [historial, setHistorial] = useState([]);
   const [isEditing, setIsEditing] = useState(false);
+  const [isReadOnly, setIsReadOnly] = useState(false);
 
   // --- ESTADOS PARA CONTROLAR EL MODAL DE REQUISICIONES ---
   const [abrirReq, setAbrirReq] = useState(false);
@@ -74,6 +86,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
   const [filtroPartidaEmisor, setFiltroPartidaEmisor] = useState('Todos');
   const [filtroPartidaCategoria, setFiltroPartidaCategoria] = useState('Todos');
   const [filtroPartidaClasificacion, setFiltroPartidaClasificacion] = useState('Todos');
+  const [filtroPartidaEstadoId, setFiltroPartidaEstadoId] = useState('Todos');
   const [mostrarFiltrosTabla, setMostrarFiltrosTabla] = useState(false);
   const [currentUser, setCurrentUser] = useState(() => {
     if (!currentUserProp) return null;
@@ -430,9 +443,12 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       getWeek(new Date(h.fecha_operativa + 'T12:00:00'), { weekStartsOn: 1 }) === parseInt(filtroSemana);
 
     const isPagado = h.total_pagado >= h.total && h.total > 0;
+    const isCulminada = h.tiene_requisiciones ? h.requisiciones_completadas : isPagado;
+    const isPendiente = !isCulminada;
+
     const matchStatus = filtroStatus === "Todos" ||
-      (filtroStatus === "Pagados" && isPagado) ||
-      (filtroStatus === "Pendientes" && !isPagado);
+      (filtroStatus === "Pendientes" && isPendiente) ||
+      (filtroStatus === "Culminadas" && isCulminada);
 
     if (!matchTexto || !matchGerencia || !matchMes || !matchSemana || !matchStatus) return false;
 
@@ -636,7 +652,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       // Obtenemos un resumen de pagos por solicitud para los stats
       const { data: pagosData } = await supabase
         .from('partidas_fondos')
-        .select('solicitud_id, pu_bs, pu_usd, cantidad, pago_realizado')
+        .select('solicitud_id, pu_bs, pu_usd, cantidad, pago_realizado, requisicion_id, requisiciones(id, items)')
         .in('solicitud_id', dataHist.map(h => h.id));
 
       setHistorial(dataHist.map(h => {
@@ -645,18 +661,29 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         let calculatedTotalBs = 0;
         let calculatedTotalUsd = 0;
         let totalPagado = 0;
+        let pendingBs = 0;
+        let pendingUsd = 0;
 
         if (misPartidas.length > 0) {
           calculatedTotalBs = misPartidas.reduce((acc, p) => acc + (parseFloat(p.pu_bs) || 0) * (p.cantidad || 1), 0);
           calculatedTotalUsd = misPartidas.reduce((acc, p) => acc + (parseFloat(p.pu_usd) || 0) * (p.cantidad || 1), 0);
           totalPagado = misPartidas.reduce((acc, p) => acc + (p.pago_realizado ? (parseFloat(p.pu_bs) || parseFloat(p.pu_usd) || 0) * (p.cantidad || 1) : 0), 0);
+          pendingBs = misPartidas.reduce((acc, p) => acc + (!p.pago_realizado ? (parseFloat(p.pu_bs) || 0) * (p.cantidad || 1) : 0), 0);
+          pendingUsd = misPartidas.reduce((acc, p) => acc + (!p.pago_realizado ? (parseFloat(p.pu_usd) || 0) * (p.cantidad || 1) : 0), 0);
         } else {
           calculatedTotalBs = parseFloat(h.total_bs || 0);
           calculatedTotalUsd = parseFloat(h.total_usd || 0);
           totalPagado = h.pago_realizado ? (calculatedTotalBs + calculatedTotalUsd) : 0;
+          pendingBs = h.pago_realizado ? 0 : calculatedTotalBs;
+          pendingUsd = h.pago_realizado ? 0 : calculatedTotalUsd;
         }
 
         const total = calculatedTotalBs + calculatedTotalUsd;
+
+        const tieneRequisiciones = misPartidas.some(p => p.requisicion_id);
+        const requisicionesCompletadas = tieneRequisiciones && misPartidas
+          .filter(p => p.requisicion_id)
+          .every(p => p.requisiciones ? esRequisicionCompletada(p.requisiciones) : false);
 
         return {
           ...h,
@@ -667,7 +694,11 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
           total,
           total_pagado: totalPagado,
           responsable: h.responsable_nombre,
-          gerencia: h.gerencia_nombre
+          gerencia: h.gerencia_nombre,
+          pending_bs: pendingBs,
+          pending_usd: pendingUsd,
+          tiene_requisiciones: tieneRequisiciones,
+          requisiciones_completadas: requisicionesCompletadas
         };
       }));
     }
@@ -924,6 +955,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         responsable: solicitud.responsable,
         partidas: partidasRaw.filter(p => !p.clasificacion.includes('[*]') && p.clasificacion !== 'Gastos Imprevistos' && p.clasificacion !== 'Ticket de Pago' && p.clasificacion !== 'Solicitud de ticket').map(p => {
           const { montoReal, montoPendiente } = procesarEjecucion(p);
+          const isReqCompletada = p.requisiciones ? esRequisicionCompletada(p.requisiciones) : false;
           return {
             id: p.id,
             cc: p.centro_costo,
@@ -941,6 +973,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
             ticket_id: p.ticket_id || null,
             codigo_ticket: p.codigo_ticket || null,
             codigo_ref: p.codigo_ticket || p.requisiciones?.correlativo_req || null,
+            isReqCompletada,
             status: p.status || 'Disponible',
             selected: false,
             montoReal,
@@ -950,6 +983,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         imprevistos: partidasRaw.filter(p => p.clasificacion.includes('[*]') || p.clasificacion === 'Gastos Imprevistos' || p.clasificacion === 'Ticket de Pago' || p.clasificacion === 'Solicitud de ticket').length > 0
           ? partidasRaw.filter(p => p.clasificacion.includes('[*]') || p.clasificacion === 'Gastos Imprevistos' || p.clasificacion === 'Ticket de Pago' || p.clasificacion === 'Solicitud de ticket').map(p => {
             const { montoReal, montoPendiente } = procesarEjecucion(p);
+            const isReqCompletada = p.requisiciones ? esRequisicionCompletada(p.requisiciones) : false;
             return {
               id: p.id,
               cc: p.centro_costo,
@@ -967,13 +1001,14 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
               ticket_id: p.ticket_id || null,
               codigo_ticket: p.codigo_ticket || null,
               codigo_ref: p.codigo_ticket || p.requisiciones?.correlativo_req || null,
+              isReqCompletada,
               status: p.status || 'Disponible',
               selected: false,
               montoReal,
               montoPendiente
             };
           })
-          : [{ id: Date.now() + 1, selected: false, cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '', pago_realizado: false, montoReal: 0, montoPendiente: 0 }]
+          : [{ id: Date.now() + 1, selected: false, cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '', pago_realizado: false, isReqCompletada: false, montoReal: 0, montoPendiente: 0 }]
       });
       if (partidasRaw.some(p => p.clasificacion === 'Gastos Imprevistos' || p.clasificacion === 'Ticket de Pago')) {
         setMostrarImprevistos(true);
@@ -981,6 +1016,9 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         setMostrarImprevistos(false);
       }
       setIsEditing(true);
+      const esAdmin = currentUser?.esSuperAdmin || currentUser?.esAdminReal;
+      const esPropioDepto = (solicitud.gerencia || solicitud.gerencia_nombre || '').toLowerCase() === (currentUser?.departamento || '').toLowerCase();
+      setIsReadOnly(!esAdmin && !esPropioDepto);
       setShowModal(true);
     } catch (err) { toast.error("Error cargando detalles."); }
   };
@@ -1079,6 +1117,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
     setFiltroPartidaEmisor('Todos');
     setFiltroPartidaCategoria('Todos');
     setFiltroPartidaClasificacion('Todos');
+    setFiltroPartidaEstadoId('Todos');
     setMostrarFiltrosTabla(false);
   }, [idDinamico]);
 
@@ -1174,8 +1213,8 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('Solicitud de Fondos');
 
-    // Estilo de Título
-    ws.mergeCells('A1:H1');
+    // Estilo de Título (12 columnas: A a L)
+    ws.mergeCells('A1:L1');
     const titleCell = ws.getCell('A1');
     titleCell.value = 'TOTAL CLEAN C.A. - SOLICITUD DE FONDOS OPERATIVOS';
     titleCell.font = { name: 'Arial Black', size: 14, color: { argb: 'FFFFFFFF' } };
@@ -1184,31 +1223,135 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
     ws.getRow(1).height = 35;
 
     // Encabezados
-    const headers = ['ID CONTROL', 'SEMANA', 'PERÍODO', 'RESPONSABLE', 'GERENCIA', 'PAGO BS ($)', 'PAGO USD ($)', 'TOTAL ($)'];
+    const headers = [
+      'ID CONTROL', 'SEMANA', 'PERÍODO', 'RESPONSABLE', 'GERENCIA', 
+      'Solicitado sem. ant. ($/$)', 'Solicitado sem. ant. (Bs/$)', 'Total Solicitado sem. ant. ($)',
+      'Solicitado actual ($/$)', 'Solicitado actual (Bs/$)', 'Total Solicitado actual ($)',
+      'TOTAL GENERAL ($)'
+    ];
     ws.addRow(headers);
     const headerRow = ws.getRow(2);
     headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
     headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
     headerRow.alignment = { horizontal: 'center' };
 
+    let sumPrevUsd = 0;
+    let sumPrevBs = 0;
+    let sumPrevTotal = 0;
+    let sumUsd = 0;
+    let sumBs = 0;
+    let sumActualTotal = 0;
+    let sumGrandTotal = 0;
+
+    // Calcular la semana máxima presente en el reporte filtrado como semana actual de referencia
+    let maxYearWeek = 0;
+    historialFiltrado.forEach(h => {
+      let w = 0;
+      let y = 0;
+      if (h.fecha_operativa) {
+        const dateObj = new Date(h.fecha_operativa + 'T12:00:00');
+        w = getWeek(dateObj, { weekStartsOn: 1 });
+        y = dateObj.getFullYear();
+      } else {
+        const match = h.id?.match(/SEM\s+(\d+)/i) || h.id?.match(/SEMANA\s+(\d+)/i);
+        if (match) {
+          w = parseInt(match[1], 10);
+          const yearMatch = h.id?.match(/-\s+(\d{2})$/);
+          y = yearMatch ? 2000 + parseInt(yearMatch[1], 10) : new Date().getFullYear();
+        }
+      }
+      const yw = y * 100 + w;
+      if (yw > maxYearWeek) {
+        maxYearWeek = yw;
+      }
+    });
+
     // Datos
     historialFiltrado.forEach(h => {
+      let w = 0;
+      let y = 0;
+      if (h.fecha_operativa) {
+        const dateObj = new Date(h.fecha_operativa + 'T12:00:00');
+        w = getWeek(dateObj, { weekStartsOn: 1 });
+        y = dateObj.getFullYear();
+      } else {
+        const match = h.id?.match(/SEM\s+(\d+)/i) || h.id?.match(/SEMANA\s+(\d+)/i);
+        if (match) {
+          w = parseInt(match[1], 10);
+          const yearMatch = h.id?.match(/-\s+(\d{2})$/);
+          y = yearMatch ? 2000 + parseInt(yearMatch[1], 10) : new Date().getFullYear();
+        }
+      }
+
+      const yw = y * 100 + w;
+      const isPastWeek = yw < maxYearWeek;
+
+      let acumuladoAnteriorBs = 0;
+      let acumuladoAnteriorUsd = 0;
+
+      historial.forEach(prev => {
+        if (prev.gerencia !== h.gerencia) return;
+
+        let prevW = 0;
+        let prevY = 0;
+        if (prev.fecha_operativa) {
+          const dateObj = new Date(prev.fecha_operativa + 'T12:00:00');
+          prevW = getWeek(dateObj, { weekStartsOn: 1 });
+          prevY = dateObj.getFullYear();
+        } else {
+          const match = prev.id?.match(/SEM\s+(\d+)/i) || prev.id?.match(/SEMANA\s+(\d+)/i);
+          if (match) {
+            prevW = parseInt(match[1], 10);
+            const yearMatch = prev.id?.match(/-\s+(\d{2})$/);
+            prevY = yearMatch ? 2000 + parseInt(yearMatch[1], 10) : new Date().getFullYear();
+          }
+        }
+
+        const isOlder = prevY < y || (prevY === y && prevW < w);
+        if (isOlder) {
+          acumuladoAnteriorBs += parseFloat(prev.pending_bs || 0);
+          acumuladoAnteriorUsd += parseFloat(prev.pending_usd || 0);
+        }
+      });
+
+      const rowPrevUsd = acumuladoAnteriorUsd + (isPastWeek ? parseFloat(h.total_usd || 0) : 0);
+      const rowPrevBs = acumuladoAnteriorBs + (isPastWeek ? parseFloat(h.total_bs || 0) : 0);
+      const rowPrevTotal = rowPrevUsd + rowPrevBs;
+
+      const rowActualUsd = isPastWeek ? 0 : parseFloat(h.total_usd || 0);
+      const rowActualBs = isPastWeek ? 0 : parseFloat(h.total_bs || 0);
+      const rowActualTotal = rowActualUsd + rowActualBs;
+
+      const rowGrandTotal = rowPrevTotal + rowActualTotal;
+
+      sumPrevUsd += rowPrevUsd;
+      sumPrevBs += rowPrevBs;
+      sumPrevTotal += rowPrevTotal;
+      sumUsd += rowActualUsd;
+      sumBs += rowActualBs;
+      sumActualTotal += rowActualTotal;
+      sumGrandTotal += rowGrandTotal;
+
       ws.addRow([
         h.id,
-        `SEM ${getWeek(new Date(h.fecha_operativa + 'T12:00:00'), { weekStartsOn: 1 })}`,
+        `SEM ${w}`,
         extractPeriodoFromId(h.id),
         h.responsable,
         h.gerencia,
-        parseFloat(h.total_bs || 0),
-        parseFloat(h.total_usd || 0),
-        parseFloat(h.total || 0)
+        rowPrevUsd,
+        rowPrevBs,
+        rowPrevTotal,
+        rowActualUsd,
+        rowActualBs,
+        rowActualTotal,
+        rowGrandTotal
       ]);
     });
 
     // Formato de Moneda
-    ws.getColumn(6).numFmt = '"$"#,##0.00';
-    ws.getColumn(7).numFmt = '"$"#,##0.00';
-    ws.getColumn(8).numFmt = '"$"#,##0.00';
+    for (let c = 6; c <= 12; c++) {
+      ws.getColumn(c).numFmt = '"$"#,##0.00';
+    }
 
     // Ajuste de Anchos
     ws.columns.forEach(col => { col.width = 15; });
@@ -1216,6 +1359,13 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
     ws.getColumn(3).width = 20;
     ws.getColumn(4).width = 25;
     ws.getColumn(5).width = 20;
+    ws.getColumn(6).width = 24;
+    ws.getColumn(7).width = 24;
+    ws.getColumn(8).width = 24;
+    ws.getColumn(9).width = 24;
+    ws.getColumn(10).width = 24;
+    ws.getColumn(11).width = 24;
+    ws.getColumn(12).width = 24;
 
     // Totales Finales
     const totalRowIndex = historialFiltrado.length + 3;
@@ -1225,24 +1375,40 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
     totalLabel.font = { bold: true, size: 12 };
     totalLabel.alignment = { horizontal: 'right' };
 
-    const sumBs = historialFiltrado.reduce((acc, h) => acc + parseFloat(h.total_bs || 0), 0);
-    const sumUsd = historialFiltrado.reduce((acc, h) => acc + parseFloat(h.total_usd || 0), 0);
-    const sumTotal = historialFiltrado.reduce((acc, h) => acc + parseFloat(h.total || 0), 0);
+    const cellPrevUsd = ws.getCell(`F${totalRowIndex}`);
+    cellPrevUsd.value = sumPrevUsd;
+    cellPrevUsd.font = { bold: true, color: { argb: 'FF15803D' } };
+    cellPrevUsd.numFmt = '"$"#,##0.00';
 
-    const cellBs = ws.getCell(`F${totalRowIndex}`);
-    cellBs.value = sumBs;
-    cellBs.font = { bold: true, color: { argb: 'FFB45309' } };
-    cellBs.numFmt = '"$"#,##0.00';
+    const cellPrevBs = ws.getCell(`G${totalRowIndex}`);
+    cellPrevBs.value = sumPrevBs;
+    cellPrevBs.font = { bold: true, color: { argb: 'FFB45309' } };
+    cellPrevBs.numFmt = '"$"#,##0.00';
 
-    const cellUsd = ws.getCell(`G${totalRowIndex}`);
+    const cellPrevTotal = ws.getCell(`H${totalRowIndex}`);
+    cellPrevTotal.value = sumPrevTotal;
+    cellPrevTotal.font = { bold: true, size: 12, color: { argb: 'FF1E3A8A' } };
+    cellPrevTotal.numFmt = '"$"#,##0.00';
+
+    const cellUsd = ws.getCell(`I${totalRowIndex}`);
     cellUsd.value = sumUsd;
     cellUsd.font = { bold: true, color: { argb: 'FF15803D' } };
     cellUsd.numFmt = '"$"#,##0.00';
 
-    const cellTotal = ws.getCell(`H${totalRowIndex}`);
-    cellTotal.value = sumTotal;
-    cellTotal.font = { bold: true, size: 12 };
-    cellTotal.numFmt = '"$"#,##0.00';
+    const cellBs = ws.getCell(`J${totalRowIndex}`);
+    cellBs.value = sumBs;
+    cellBs.font = { bold: true, color: { argb: 'FFB45309' } };
+    cellBs.numFmt = '"$"#,##0.00';
+
+    const cellActualTotal = ws.getCell(`K${totalRowIndex}`);
+    cellActualTotal.value = sumActualTotal;
+    cellActualTotal.font = { bold: true, size: 12, color: { argb: 'FF1E3A8A' } };
+    cellActualTotal.numFmt = '"$"#,##0.00';
+
+    const cellGrandTotal = ws.getCell(`L${totalRowIndex}`);
+    cellGrandTotal.value = sumGrandTotal;
+    cellGrandTotal.font = { bold: true, size: 12, color: { argb: 'FF1E3A8A' } };
+    cellGrandTotal.numFmt = '"$"#,##0.00';
 
     // Bordes
     ws.eachRow((row, rowNumber) => {
@@ -1432,8 +1598,8 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                   <th style="width: 13%">CATEGORIA</th>
                   <th style="width: 22%">DESCRIPCIÓN</th>
                   <th style="width: 8%" class="text-center">CANT.</th>
-                  <th style="width: 11%" class="text-right">P.U. Bs ($)</th>
                   <th style="width: 11%" class="text-right">P.U. USD ($)</th>
+                  <th style="width: 11%" class="text-right">P.U. Bs ($)</th>
                   <th style="width: 10%" class="text-right">TOTAL ($)</th>
                 </tr>
               </thead>
@@ -1458,8 +1624,8 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                         <span style="font-size: 10px; color: #555;">Beneficiario: ${p.beneficiario || ''}</span>
                       </td>
                       <td class="text-center">${p.cantidad || 1}</td>
-                      <td class="text-right">${formatMonto(unitBs)}</td>
                       <td class="text-right">${formatMonto(unitUsd)}</td>
+                      <td class="text-right">${formatMonto(unitBs)}</td>
                       <td class="text-right">${totalRenglon.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
                     </tr>
                   `;
@@ -1470,12 +1636,12 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
             <div class="totals-section">
               <div class="totals-box">
                 <div class="totals-row">
-                  <span>Pago Equivalente (BS)</span>
-                  <span>$ ${solicitud.total_bs.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span>
+                  <span>Solicitado actual USD ($)</span>
+                  <span>$ ${solicitud.total_usd.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span>
                 </div>
                 <div class="totals-row">
-                  <span>Pago en Divisas ($)</span>
-                  <span>$ ${solicitud.total_usd.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span>
+                  <span>Solicitado actual Bs ($)</span>
+                  <span>$ ${solicitud.total_bs.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span>
                 </div>
                 <div class="totals-row bold">
                   <span>TOTAL SOLICITUD ($)</span>
@@ -1547,6 +1713,10 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
 
   const registrarOActualizar = async (keepOpen = false, overrideForm = null) => {
     if (isSaving) return;
+    if (isReadOnly) {
+      toast.error("No tienes permisos para modificar esta solicitud de fondos.");
+      return;
+    }
     setIsSaving(true);
     try {
       let finalCodigoControl = idDinamico;
@@ -1848,9 +2018,41 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
           toast.error(`No se encontró la requisición ${codigoRef}`);
           return;
         }
+        const mappedReq = {
+          id: data.id,
+          correlativo: data.correlativo_req || `REQ-${String(data.id).padStart(3, '0')}`,
+          origen: data.origen || 'Manual',
+          solicitante: data.solicitante,
+          centroCosto: data.centro_costo,
+          aprobacion: data.aprobacion_nombre || (data.aprobacion ? 'Aprobado' : 'Pendiente'),
+          status: data.status_compra || 'Pendiente',
+          prioridad: data.prioridad || 'Normal',
+          total: Number(data.total_bs) || 0,
+          detalles: data.items,
+          fecha: data.fecha_emision ? data.fecha_emision.split('T')[0] : '',
+          justificacion: data.justificacion,
+          fecha_requerida: data.fecha_requerida,
+          gerencia: data.gerencia,
+          aprobado_gerente_area: data.aprobado_gerente_area || false,
+          aprobado_gerente_general: data.aprobado_gerente_general || false,
+          aprobado_gerente_proyecto: data.aprobado_gerente_proyecto || false,
+          estado_aprobacion: data.estado_aprobacion || 'pendiente_area',
+          motivo_rechazo: data.motivo_rechazo || '',
+          firma_gerente_general: data.firma_gerente_general,
+          observaciones: data.observaciones || '',
+          observaciones_direccion: data.observaciones_direccion || '',
+          facturas_url: data.facturas_url || [],
+          id_referencia_proyecto: data.id_referencia_proyecto || '',
+          user_id: data.user_id,
+          fecha_emision: data.fecha_emision,
+          f_aprobacion_proyecto: data.f_aprobacion_proyecto,
+          n_aprobacion_proyecto: data.n_aprobacion_proyecto,
+          f_aprobacion_area: data.f_aprobacion_area,
+          con_iva: data.con_iva
+        };
         setDataParaReq({
           isExistingRequisition: true,
-          req: data
+          req: mappedReq
         });
         setAbrirReq(true);
       } catch (err) {
@@ -1922,18 +2124,38 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       const matchEmisor = filtroPartidaEmisor === 'Todos' || (p.emisor || '---') === filtroPartidaEmisor;
       const matchCategoria = filtroPartidaCategoria === 'Todos' || p.cat === filtroPartidaCategoria;
       const matchClasif = filtroPartidaClasificacion === 'Todos' || p.clasif === filtroPartidaClasificacion;
-      return matchEmisor && matchCategoria && matchClasif;
+      
+      let matchEstadoId = true;
+      if (filtroPartidaEstadoId === 'Comprados') {
+        matchEstadoId = !!p.codigo_ref && p.isReqCompletada === true;
+      } else if (filtroPartidaEstadoId === 'EnRequisicion') {
+        matchEstadoId = !!p.codigo_ref && p.isReqCompletada !== true;
+      } else if (filtroPartidaEstadoId === 'SinID') {
+        matchEstadoId = !p.codigo_ref;
+      }
+      
+      return matchEmisor && matchCategoria && matchClasif && matchEstadoId;
     });
-  }, [form.partidas, filtroPartidaEmisor, filtroPartidaCategoria, filtroPartidaClasificacion]);
+  }, [form.partidas, filtroPartidaEmisor, filtroPartidaCategoria, filtroPartidaClasificacion, filtroPartidaEstadoId]);
 
   const imprevistosFiltrados = useMemo(() => {
     return form.imprevistos.map((imp, idx) => ({ ...imp, originalIndex: idx })).filter(imp => {
       const matchEmisor = filtroPartidaEmisor === 'Todos' || (imp.emisor || '---') === filtroPartidaEmisor;
       const matchCategoria = filtroPartidaCategoria === 'Todos' || imp.cat === filtroPartidaCategoria;
       const matchClasif = filtroPartidaClasificacion === 'Todos' || imp.clasif === filtroPartidaClasificacion;
-      return matchEmisor && matchCategoria && matchClasif;
+
+      let matchEstadoId = true;
+      if (filtroPartidaEstadoId === 'Comprados') {
+        matchEstadoId = !!imp.codigo_ref && imp.isReqCompletada === true;
+      } else if (filtroPartidaEstadoId === 'EnRequisicion') {
+        matchEstadoId = !!imp.codigo_ref && imp.isReqCompletada !== true;
+      } else if (filtroPartidaEstadoId === 'SinID') {
+        matchEstadoId = !imp.codigo_ref;
+      }
+
+      return matchEmisor && matchCategoria && matchClasif && matchEstadoId;
     });
-  }, [form.imprevistos, filtroPartidaEmisor, filtroPartidaCategoria, filtroPartidaClasificacion]);
+  }, [form.imprevistos, filtroPartidaEmisor, filtroPartidaCategoria, filtroPartidaClasificacion, filtroPartidaEstadoId]);
 
   const listaEmisoresUnicos = useMemo(() => {
     const todos = [
@@ -2144,8 +2366,8 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                                 <th style="width: 12%">CATEGORIA</th>
                                 <th style="width: 26%">DESCRIPCIÓN</th>
                                 <th style="width: 8%" class="text-center">CANT.</th>
-                                <th style="width: 11%" class="text-right">P.U. Bs ($)</th>
                                 <th style="width: 11%" class="text-right">P.U. USD ($)</th>
+                                <th style="width: 11%" class="text-right">P.U. Bs ($)</th>
                                 <th style="width: 10%" class="text-right">TOTAL ($)</th>
                               </tr>
                             </thead>
@@ -2165,10 +2387,10 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                                     </td>
                                     <td class="text-center" style="font-size: 9px;">${p.cantidad || 1}</td>
                                     <td class="text-right" style="font-size: 9.5px; font-weight: 600;">
-                                      ${unitBs > 0 ? unitBs.toLocaleString('de-DE', { minimumFractionDigits: 2 }) : '-'}
+                                      ${unitUsd > 0 ? unitUsd.toLocaleString('de-DE', { minimumFractionDigits: 2 }) : '-'}
                                     </td>
                                     <td class="text-right" style="font-size: 9.5px; font-weight: 600;">
-                                      ${unitUsd > 0 ? unitUsd.toLocaleString('de-DE', { minimumFractionDigits: 2 }) : '-'}
+                                      ${unitBs > 0 ? unitBs.toLocaleString('de-DE', { minimumFractionDigits: 2 }) : '-'}
                                     </td>
                                     <td class="text-right" style="font-size: 9.5px; font-weight: 600;">
                                       ${totalRenglon.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
@@ -2181,8 +2403,8 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
 
                           <div class="totals-section">
                             <div class="totals-box">
-                              <div class="totals-row"><span>Pago Bs ($)</span> <span>$ ${sol.total_bs.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span></div>
-                              <div class="totals-row"><span>Pago USD ($)</span> <span>$ ${sol.total_usd.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span></div>
+                              <div class="totals-row"><span>Solicitado actual USD ($)</span> <span>$ ${sol.total_usd.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span></div>
+                              <div class="totals-row"><span>Solicitado actual Bs ($)</span> <span>$ ${sol.total_bs.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span></div>
                               <div class="totals-row bold"><span>TOTAL ($)</span> <span>$ ${(sol.total_bs + sol.total_usd).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span></div>
                             </div>
                           </div>
@@ -2289,6 +2511,16 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
               const semValue = w.weekNum.padStart(2, '0');
               return <option key={w.weekNum} value={semValue}>{w.label}</option>;
             })}
+          </select>
+
+          <select
+            value={filtroStatus}
+            onChange={(e) => setFiltroStatus(e.target.value)}
+            style={{ flex: 1.2, padding: '10px', borderRadius: '10px', border: '1px solid #e2e8f0', fontSize: '13px', backgroundColor: 'white' }}
+          >
+            <option value="Todos">Todos los Estados</option>
+            <option value="Pendientes">Pendientes (Procura/Pago)</option>
+            <option value="Culminadas">Compradas / Culminadas</option>
           </select>
         </div>
 
@@ -2397,8 +2629,8 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
               <th style={{ padding: '15px', width: '16%' }}>ID CONTROL</th>
               <th style={{ width: '15%' }}>SEMANA / PERÍODO</th>
               <th style={{ width: '25%' }}>RESPONSABLE / GERENCIA</th>
-              <th style={{ width: '14%', textAlign: 'right' }}>PAGO BS/$</th>
-              <th style={{ width: '12%', textAlign: 'right' }}>PAGO $/$</th>
+              <th style={{ width: '12%', textAlign: 'right' }}>SOLICITADO ACTUAL $/$</th>
+              <th style={{ width: '14%', textAlign: 'right' }}>SOLICITADO ACTUAL BS/$</th>
               <th style={{ width: '10%', textAlign: 'right' }}>TOTAL ($)</th>
               <th style={{ width: '8%', textAlign: 'center' }}>ACCIONES</th>
             </tr>
@@ -2441,16 +2673,16 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                   <div style={{ fontWeight: '500' }}>{formatName(h.responsable)}</div>
                   <div style={{ fontSize: '0.7rem', color: '#64748b' }}>{h.gerencia}</div>
                 </td>
-                <td data-label="PAGO BS" style={{ color: '#b45309', fontWeight: '600' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', paddingRight: '10px' }}>
-                    <span>$</span>
-                    <span>{parseFloat(h.total_bs || 0).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                  </div>
-                </td>
-                <td data-label="PAGO USD" style={{ color: '#15803d', fontWeight: '600' }}>
+                <td data-label="SOLICITADO ACTUAL USD" style={{ color: '#15803d', fontWeight: '600' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', paddingRight: '10px' }}>
                     <span>$</span>
                     <span>{parseFloat(h.total_usd || 0).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  </div>
+                </td>
+                <td data-label="SOLICITADO ACTUAL BS" style={{ color: '#b45309', fontWeight: '600' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', paddingRight: '10px' }}>
+                    <span>$</span>
+                    <span>{parseFloat(h.total_bs || 0).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                   </div>
                 </td>
                 <td data-label="TOTAL" style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>
@@ -2785,11 +3017,11 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                         position: 'relative',
                         flexShrink: 0
                       }}
-                      title="Filtrar Renglones por Emisor / Categoría / Clasificación"
+                      title="Filtrar Renglones por Emisor / Categoría / Clasificación / Estado ID"
                     >
                       <Activity size={18} />
                       {/* INDICADOR DOT DE FILTRO ACTIVO */}
-                      {(filtroPartidaEmisor !== 'Todos' || filtroPartidaCategoria !== 'Todos' || filtroPartidaClasificacion !== 'Todos') && (
+                      {(filtroPartidaEmisor !== 'Todos' || filtroPartidaCategoria !== 'Todos' || filtroPartidaClasificacion !== 'Todos' || filtroPartidaEstadoId !== 'Todos') && (
                         <div style={{
                           position: 'absolute',
                           top: '-3px',
@@ -2820,15 +3052,16 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', paddingBottom: '8px', borderBottom: '1px solid #f1f5f9' }}>
                     <div style={{ fontSize: '11px', fontWeight: '900', color: '#475569', display: 'flex', alignItems: 'center', gap: '6px' }}>
                       <Activity size={14} style={{ color: '#0ea5e9' }} />
-                      <span>FILTRAR RENGLONES POR EMISOR / CATEGORÍA / CLASIFICACIÓN</span>
+                      <span>FILTRAR RENGLONES POR USUARIO / CATEGORÍA / CLASIFICACIÓN / ESTADO ID</span>
                     </div>
 
-                    {(filtroPartidaEmisor !== 'Todos' || filtroPartidaCategoria !== 'Todos' || filtroPartidaClasificacion !== 'Todos') && (
+                    {(filtroPartidaEmisor !== 'Todos' || filtroPartidaCategoria !== 'Todos' || filtroPartidaClasificacion !== 'Todos' || filtroPartidaEstadoId !== 'Todos') && (
                       <button
                         onClick={() => {
                           setFiltroPartidaEmisor('Todos');
                           setFiltroPartidaCategoria('Todos');
                           setFiltroPartidaClasificacion('Todos');
+                          setFiltroPartidaEstadoId('Todos');
                         }}
                         style={{
                           background: '#fee2e2',
@@ -2851,11 +3084,11 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
 
                   <div style={{
                     display: 'grid',
-                    gridTemplateColumns: 'repeat(3, 1fr)',
+                    gridTemplateColumns: 'repeat(4, 1fr)',
                     gap: '15px'
                   }}>
                     <div style={{ display: 'flex', flexDirection: 'column' }}>
-                      <label style={{ fontSize: '8.5px', fontWeight: '900', color: '#64748b', marginBottom: '4px', textTransform: 'uppercase' }}>Emitido Por</label>
+                      <label style={{ fontSize: '8.5px', fontWeight: '900', color: '#64748b', marginBottom: '4px', textTransform: 'uppercase' }}>Usuario / Emisor</label>
                       <select
                         value={filtroPartidaEmisor}
                         onChange={(e) => setFiltroPartidaEmisor(e.target.value)}
@@ -2925,6 +3158,30 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                         ))}
                       </select>
                     </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                      <label style={{ fontSize: '8.5px', fontWeight: '900', color: '#64748b', marginBottom: '4px', textTransform: 'uppercase' }}>Estado de ID / Ref</label>
+                      <select
+                        value={filtroPartidaEstadoId}
+                        onChange={(e) => setFiltroPartidaEstadoId(e.target.value)}
+                        style={{
+                          width: '100%',
+                          fontSize: '11px',
+                          padding: '6px 10px',
+                          border: '1px solid #cbd5e1',
+                          borderRadius: '8px',
+                          backgroundColor: '#f8fafc',
+                          color: '#334155',
+                          outline: 'none',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        <option value="Todos">Todos</option>
+                        <option value="Comprados">Comprados (Verde)</option>
+                        <option value="EnRequisicion">En Requisición (Azul)</option>
+                        <option value="SinID">Sin ID</option>
+                      </select>
+                    </div>
                   </div>
                 </div>
               )}
@@ -2961,8 +3218,8 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                               type="checkbox"
                               checked={p.selected || false}
                               onChange={(e) => manejarCambioPartida(p.originalIndex, 'selected', e.target.checked)}
-                              style={{ cursor: (p.requisicion_id || p.codigo_ticket || p.status === 'Bloqueado') ? 'not-allowed' : 'pointer', transform: 'scale(1.2)' }}
-                              disabled={!!p.requisicion_id || !!p.codigo_ticket || p.status === 'Bloqueado'}
+                              style={{ cursor: (isReadOnly || p.requisicion_id || p.codigo_ticket || p.status === 'Bloqueado') ? 'not-allowed' : 'pointer', transform: 'scale(1.2)' }}
+                              disabled={isReadOnly || !!p.requisicion_id || !!p.codigo_ticket || p.status === 'Bloqueado'}
                               title={p.codigo_ticket ? `Ticket Emitido: ${p.codigo_ticket}` : (p.requisicion_id ? "Bloqueado por Requisición" : "")}
                             />
                           </div>
@@ -2977,35 +3234,35 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                               <div
                                 onClick={() => handleClicCodigoRef(p.codigo_ref)}
                                 style={{
-                                  backgroundColor: '#0ea5e9',
+                                  backgroundColor: p.isReqCompletada ? '#10b981' : '#0ea5e9',
                                   color: 'white',
                                   padding: '6px 12px',
                                   borderRadius: '8px',
                                   fontSize: '11px',
                                   fontWeight: '800',
-                                  boxShadow: '0 2px 6px rgba(14, 165, 233, 0.3)',
+                                  boxShadow: p.isReqCompletada ? '0 2px 6px rgba(16, 185, 129, 0.3)' : '0 2px 6px rgba(14, 165, 233, 0.3)',
                                   cursor: 'pointer',
                                   transition: 'all 0.2s',
                                   userSelect: 'none'
                                 }}
-                                onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#0284c7'; e.currentTarget.style.transform = 'scale(1.05)'; }}
-                                onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#0ea5e9'; e.currentTarget.style.transform = 'scale(1)'; }}
-                                title={`Haga clic para ver el detalle de ${p.codigo_ref}`}
+                                onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = p.isReqCompletada ? '#059669' : '#0284c7'; e.currentTarget.style.transform = 'scale(1.05)'; }}
+                                onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = p.isReqCompletada ? '#10b981' : '#0ea5e9'; e.currentTarget.style.transform = 'scale(1)'; }}
+                                title={p.isReqCompletada ? `Requisición COMPLETAMENTE COMPRADA: ${p.codigo_ref}` : `Haga clic para ver el detalle de ${p.codigo_ref}`}
                               >
-                                {p.codigo_ref}
+                                {p.codigo_ref} {p.isReqCompletada ? '✅' : ''}
                               </div>
                             ) : (
                               <span style={{ color: '#cbd5e1' }}>---</span>
                             )}
                           </div>
                           <div style={{ width: '180px', padding: '6px' }}>
-                            <select className="sf-table-input" value={p.cc} onChange={(e) => manejarCambioPartida(p.originalIndex, 'cc', e.target.value)} style={{ fontWeight: 'bold' }} disabled={!!p.codigo_ref}>
+                            <select className="sf-table-input" value={p.cc} onChange={(e) => manejarCambioPartida(p.originalIndex, 'cc', e.target.value)} style={{ fontWeight: 'bold' }} disabled={isReadOnly || !!p.codigo_ref}>
                               <option value="">Seleccione C.C...</option>
                               {centrosCosto.map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>)}
                             </select>
                           </div>
                           <div style={{ width: '215px', padding: '6px' }}>
-                            <select className="sf-table-input" value={p.clasif} onChange={(e) => manejarCambioPartida(p.originalIndex, 'clasif', e.target.value)} disabled={!p.cc || !!p.codigo_ref}>
+                            <select className="sf-table-input" value={p.clasif} onChange={(e) => manejarCambioPartida(p.originalIndex, 'clasif', e.target.value)} disabled={isReadOnly || !p.cc || !!p.codigo_ref}>
                               <option value="">Clasificación...</option>
                               {(() => {
                                 const ccObj = centrosCosto.find(c => c.nombre === p.cc);
@@ -3016,7 +3273,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                             </select>
                           </div>
                           <div style={{ width: '215px', padding: '6px' }}>
-                            <select className="sf-table-input" value={p.cat} onChange={(e) => manejarCambioPartida(p.originalIndex, 'cat', e.target.value)} disabled={!p.clasif || !!p.codigo_ref}>
+                            <select className="sf-table-input" value={p.cat} onChange={(e) => manejarCambioPartida(p.originalIndex, 'cat', e.target.value)} disabled={isReadOnly || !p.clasif || !!p.codigo_ref}>
                               <option value="">Categoría...</option>
                               {(() => {
                                 const ccObj = centrosCosto.find(c => c.nombre === p.cc);
@@ -3027,19 +3284,19 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                               })()}
                             </select>
                           </div>
-                          <div style={{ width: '80px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.cant} onChange={(e) => manejarCambioPartida(p.originalIndex, 'cant', e.target.value)} style={{ textAlign: 'center' }} disabled={!!p.codigo_ref} /></div>
-                          <div style={{ width: '90px', padding: '6px' }}><select className="sf-table-input" value={p.uni} onChange={(e) => manejarCambioPartida(p.originalIndex, 'uni', e.target.value)} disabled={!!p.codigo_ref}>{unidades.map(u => <option key={u}>{u}</option>)}</select></div>
-                          <div style={{ width: '460px', padding: '10px' }}><textarea className="sf-table-input" value={p.desc} onChange={(e) => manejarCambioPartida(p.originalIndex, 'desc', e.target.value)} style={{ resize: 'none' }} rows="1" disabled={!!p.codigo_ref} /></div>
-                          <div style={{ width: '200px', padding: '6px' }}><input className="sf-table-input" value={p.ben} onChange={(e) => manejarCambioPartida(p.originalIndex, 'ben', e.target.value)} disabled={!!p.codigo_ref} /></div>
-                          <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puBs === 0 ? '' : p.puBs} onChange={(e) => manejarCambioPartida(p.originalIndex, 'puBs', e.target.value)} style={{ textAlign: 'left' }} disabled={p.puUsd > 0 || !!p.codigo_ref} /></div>
-                          <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puUsd === 0 ? '' : p.puUsd} onChange={(e) => manejarCambioPartida(p.originalIndex, 'puUsd', e.target.value)} style={{ textAlign: 'left' }} disabled={p.puBs > 0 || !!p.codigo_ref} /></div>
+                          <div style={{ width: '80px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.cant} onChange={(e) => manejarCambioPartida(p.originalIndex, 'cant', e.target.value)} style={{ textAlign: 'center' }} disabled={isReadOnly || !!p.codigo_ref} /></div>
+                          <div style={{ width: '90px', padding: '6px' }}><select className="sf-table-input" value={p.uni} onChange={(e) => manejarCambioPartida(p.originalIndex, 'uni', e.target.value)} disabled={isReadOnly || !!p.codigo_ref}>{unidades.map(u => <option key={u}>{u}</option>)}</select></div>
+                          <div style={{ width: '460px', padding: '10px' }}><textarea className="sf-table-input" value={p.desc} onChange={(e) => manejarCambioPartida(p.originalIndex, 'desc', e.target.value)} style={{ resize: 'none' }} rows="1" disabled={isReadOnly || !!p.codigo_ref} /></div>
+                          <div style={{ width: '200px', padding: '6px' }}><input className="sf-table-input" value={p.ben} onChange={(e) => manejarCambioPartida(p.originalIndex, 'ben', e.target.value)} disabled={isReadOnly || !!p.codigo_ref} /></div>
+                          <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puBs === 0 ? '' : p.puBs} onChange={(e) => manejarCambioPartida(p.originalIndex, 'puBs', e.target.value)} style={{ textAlign: 'left' }} disabled={isReadOnly || p.puUsd > 0 || !!p.codigo_ref} /></div>
+                          <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puUsd === 0 ? '' : p.puUsd} onChange={(e) => manejarCambioPartida(p.originalIndex, 'puUsd', e.target.value)} style={{ textAlign: 'left' }} disabled={isReadOnly || p.puBs > 0 || !!p.codigo_ref} /></div>
                           <div style={{ width: '120px', padding: '6px', textAlign: 'left', fontWeight: 'bold' }}>{((parseFloat(p.puBs) || parseFloat(p.puUsd) || 0) * (p.cant || 0)).toLocaleString('de-DE')}</div>
                           <div style={{ width: '130px', padding: '6px', fontSize: '9px', color: '#64748b', fontWeight: '600' }}>
                             {p.emisor || '---'}
                           </div>
                           <div style={{ width: '80px', display: 'flex', gap: '5px', justifyContent: 'center' }}>
-                            <button onClick={() => duplicarPartida(p.originalIndex)} style={{ background: 'none', border: 'none', color: '#0ea5e9', cursor: (p.codigo_ticket || p.requisicion_id) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (p.codigo_ticket || p.requisicion_id) ? 0.3 : 1 }} disabled={!!p.codigo_ticket || !!p.requisicion_id} title="Duplicar renglón"><Copy size={16} /></button>
-                            <button onClick={() => { setHasChanges(true); setForm({ ...form, partidas: form.partidas.filter((_, idx) => idx !== p.originalIndex) }); }} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: (p.codigo_ticket || p.requisicion_id) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (p.codigo_ticket || p.requisicion_id) ? 0.3 : 1 }} disabled={!!p.codigo_ticket || !!p.requisicion_id} title="Eliminar renglón">🗑️</button>
+                            <button onClick={() => duplicarPartida(p.originalIndex)} style={{ background: 'none', border: 'none', color: '#0ea5e9', cursor: (isReadOnly || p.codigo_ticket || p.requisicion_id) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (isReadOnly || p.codigo_ticket || p.requisicion_id) ? 0.3 : 1 }} disabled={isReadOnly || !!p.codigo_ticket || !!p.requisicion_id} title="Duplicar renglón"><Copy size={16} /></button>
+                            <button onClick={() => { setHasChanges(true); setForm({ ...form, partidas: form.partidas.filter((_, idx) => idx !== p.originalIndex) }); }} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: (isReadOnly || p.codigo_ticket || p.requisicion_id) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (isReadOnly || p.codigo_ticket || p.requisicion_id) ? 0.3 : 1 }} disabled={isReadOnly || !!p.codigo_ticket || !!p.requisicion_id} title="Eliminar renglón">🗑️</button>
                           </div>
                         </div>
                       ))}
@@ -3099,35 +3356,35 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                               <div
                                 onClick={() => handleClicCodigoRef(imp.codigo_ref)}
                                 style={{
-                                  backgroundColor: '#f59e0b',
+                                  backgroundColor: imp.isReqCompletada ? '#10b981' : '#f59e0b',
                                   color: 'white',
                                   padding: '6px 12px',
                                   borderRadius: '8px',
                                   fontSize: '11px',
                                   fontWeight: '800',
-                                  boxShadow: '0 2px 6px rgba(245, 158, 11, 0.3)',
+                                  boxShadow: imp.isReqCompletada ? '0 2px 6px rgba(16, 185, 129, 0.3)' : '0 2px 6px rgba(245, 158, 11, 0.3)',
                                   cursor: 'pointer',
                                   transition: 'all 0.2s',
                                   userSelect: 'none'
                                 }}
-                                onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#d97706'; e.currentTarget.style.transform = 'scale(1.05)'; }}
-                                onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#f59e0b'; e.currentTarget.style.transform = 'scale(1)'; }}
-                                title={`Haga clic para ver el detalle de ${imp.codigo_ref}`}
+                                onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = imp.isReqCompletada ? '#059669' : '#d97706'; e.currentTarget.style.transform = 'scale(1.05)'; }}
+                                onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = imp.isReqCompletada ? '#10b981' : '#f59e0b'; e.currentTarget.style.transform = 'scale(1)'; }}
+                                title={imp.isReqCompletada ? `Requisición COMPLETAMENTE COMPRADA: ${imp.codigo_ref}` : `Haga clic para ver el detalle de ${imp.codigo_ref}`}
                               >
-                                {imp.codigo_ref}
+                                {imp.codigo_ref} {imp.isReqCompletada ? '✅' : ''}
                               </div>
                             ) : (
                               <span style={{ color: '#cbd5e1' }}>---</span>
                             )}
                           </div>
                           <div style={{ width: '180px', padding: '6px' }}>
-                            <select className="sf-table-input" value={imp.cc} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'cc', e.target.value)} style={{ fontWeight: 'bold' }} disabled={!!imp.codigo_ref}>
+                            <select className="sf-table-input" value={imp.cc} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'cc', e.target.value)} style={{ fontWeight: 'bold' }} disabled={isReadOnly || !!imp.codigo_ref}>
                               <option value="">Seleccione C.C...</option>
                               {centrosCosto.map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>)}
                             </select>
                           </div>
                           <div style={{ width: '215px', padding: '6px' }}>
-                            <select className="sf-table-input" value={imp.clasif} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'clasif', e.target.value)} disabled={!imp.cc || !!imp.codigo_ref}>
+                            <select className="sf-table-input" value={imp.clasif} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'clasif', e.target.value)} disabled={isReadOnly || !imp.cc || !!imp.codigo_ref}>
                               <option value="">Clasificación...</option>
                               {(() => {
                                 const ccObj = centrosCosto.find(c => c.nombre === imp.cc);
@@ -3138,7 +3395,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                             </select>
                           </div>
                           <div style={{ width: '215px', padding: '6px' }}>
-                            <select className="sf-table-input" value={imp.cat} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'cat', e.target.value)} disabled={!imp.clasif || !!imp.codigo_ref}>
+                            <select className="sf-table-input" value={imp.cat} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'cat', e.target.value)} disabled={isReadOnly || !imp.clasif || !!imp.codigo_ref}>
                               <option value="">Categoría...</option>
                               {(() => {
                                 const ccObj = centrosCosto.find(c => c.nombre === imp.cc);
@@ -3149,28 +3406,30 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                               })()}
                             </select>
                           </div>
-                          <div style={{ width: '80px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.cant} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'cant', e.target.value)} style={{ textAlign: 'center' }} disabled={!!imp.codigo_ref} /></div>
-                          <div style={{ width: '90px', padding: '6px' }}><select className="sf-table-input" value={imp.uni} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'uni', e.target.value)} disabled={!!imp.codigo_ref}>{unidades.map(u => <option key={u}>{u}</option>)}</select></div>
-                          <div style={{ width: '460px', padding: '10px' }}><textarea className="sf-table-input" value={imp.desc} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'desc', e.target.value)} style={{ resize: 'none' }} rows="1" disabled={!!imp.codigo_ref} /></div>
-                          <div style={{ width: '200px', padding: '6px' }}><input className="sf-table-input" value={imp.ben} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'ben', e.target.value)} disabled={!!imp.codigo_ref} /></div>
-                          <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.puBs === 0 ? '' : imp.puBs} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'puBs', e.target.value)} style={{ textAlign: 'right' }} disabled={imp.puUsd > 0 || !!imp.codigo_ref} /></div>
-                          <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.puUsd === 0 ? '' : imp.puUsd} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'puUsd', e.target.value)} style={{ textAlign: 'right' }} disabled={imp.puBs > 0 || !!imp.codigo_ref} /></div>
+                          <div style={{ width: '80px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.cant} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'cant', e.target.value)} style={{ textAlign: 'center' }} disabled={isReadOnly || !!imp.codigo_ref} /></div>
+                          <div style={{ width: '90px', padding: '6px' }}><select className="sf-table-input" value={imp.uni} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'uni', e.target.value)} disabled={isReadOnly || !!imp.codigo_ref}>{unidades.map(u => <option key={u}>{u}</option>)}</select></div>
+                          <div style={{ width: '460px', padding: '10px' }}><textarea className="sf-table-input" value={imp.desc} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'desc', e.target.value)} style={{ resize: 'none' }} rows="1" disabled={isReadOnly || !!imp.codigo_ref} /></div>
+                          <div style={{ width: '200px', padding: '6px' }}><input className="sf-table-input" value={imp.ben} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'ben', e.target.value)} disabled={isReadOnly || !!imp.codigo_ref} /></div>
+                          <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.puBs === 0 ? '' : imp.puBs} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'puBs', e.target.value)} style={{ textAlign: 'right' }} disabled={isReadOnly || imp.puUsd > 0 || !!imp.codigo_ref} /></div>
+                          <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.puUsd === 0 ? '' : imp.puUsd} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'puUsd', e.target.value)} style={{ textAlign: 'right' }} disabled={isReadOnly || imp.puBs > 0 || !!imp.codigo_ref} /></div>
                           <div style={{ width: '120px', padding: '6px', textAlign: 'right', fontWeight: 'bold' }}>{((parseFloat(imp.puBs) || parseFloat(imp.puUsd) || 0) * (imp.cant || 1)).toLocaleString('de-DE')}</div>
                           <div style={{ width: '130px', padding: '6px', fontSize: '9px', color: '#64748b', fontWeight: '600' }}>
                             {imp.emisor || '---'}
                           </div>
                           <div style={{ width: '80px', display: 'flex', gap: '5px', justifyContent: 'center' }}>
-                            <button onClick={() => duplicarImprevisto(imp.originalIndex)} style={{ background: 'none', border: 'none', color: '#f59e0b', cursor: (imp.codigo_ref || imp.status === 'Bloqueado') ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (imp.codigo_ref || imp.status === 'Bloqueado') ? 0.3 : 1 }} disabled={!!imp.codigo_ref || imp.status === 'Bloqueado'} title="Duplicar imprevisto"><Copy size={16} /></button>
-                            <button onClick={() => { setHasChanges(true); setForm({ ...form, imprevistos: form.imprevistos.filter((_, idx) => idx !== imp.originalIndex) }); }} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: (imp.codigo_ref || imp.status === 'Bloqueado') ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (imp.codigo_ref || imp.status === 'Bloqueado') ? 0.3 : 1 }} disabled={!!imp.codigo_ref || imp.status === 'Bloqueado'} title="Eliminar imprevisto">🗑️</button>
+                            <button onClick={() => duplicarImprevisto(imp.originalIndex)} style={{ background: 'none', border: 'none', color: '#f59e0b', cursor: (isReadOnly || imp.codigo_ref || imp.status === 'Bloqueado') ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (isReadOnly || imp.codigo_ref || imp.status === 'Bloqueado') ? 0.3 : 1 }} disabled={isReadOnly || !!imp.codigo_ref || imp.status === 'Bloqueado'} title="Duplicar imprevisto"><Copy size={16} /></button>
+                            <button onClick={() => { setHasChanges(true); setForm({ ...form, imprevistos: form.imprevistos.filter((_, idx) => idx !== imp.originalIndex) }); }} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: (isReadOnly || imp.codigo_ref || imp.status === 'Bloqueado') ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (isReadOnly || imp.codigo_ref || imp.status === 'Bloqueado') ? 0.3 : 1 }} disabled={isReadOnly || !!imp.codigo_ref || imp.status === 'Bloqueado'} title="Eliminar imprevisto">🗑️</button>
                           </div>
                         </div>
                       ))}
                     </div>
-                    <div style={{ padding: '12px', background: '#fffcf0', borderTop: '1px solid #fef3c7', display: 'flex', justifyContent: 'center' }}>
-                      <button className="sf-btn" onClick={() => { setHasChanges(true); setForm({ ...form, imprevistos: [...form.imprevistos, { id: Date.now(), selected: false, cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '', pago_realizado: false, emisor: `${currentUser?.nombre} ${currentUser?.apellido}` }] }); }} style={{ color: '#d97706', border: '2px dashed #f59e0b', background: '#fffbeb', padding: '8px 40px', borderRadius: '10px', fontWeight: 'bold', cursor: 'pointer', transition: 'all 0.2s' }}>
-                        <i className="fa-solid fa-plus-circle"></i> AÑADIR OTRO TICKET DE PAGO
-                      </button>
-                    </div>
+                    {!isReadOnly && (
+                      <div style={{ padding: '12px', background: '#fffcf0', borderTop: '1px solid #fef3c7', display: 'flex', justifyContent: 'center' }}>
+                        <button className="sf-btn" onClick={() => { setHasChanges(true); setForm({ ...form, imprevistos: [...form.imprevistos, { id: Date.now(), selected: false, cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '', pago_realizado: false, emisor: `${currentUser?.nombre} ${currentUser?.apellido}` }] }); }} style={{ color: '#d97706', border: '2px dashed #f59e0b', background: '#fffbeb', padding: '8px 40px', borderRadius: '10px', fontWeight: 'bold', cursor: 'pointer', transition: 'all 0.2s' }}>
+                          <i className="fa-solid fa-plus-circle"></i> AÑADIR OTRO TICKET DE PAGO
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -3188,7 +3447,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
               alignItems: 'center'
             }}>
               <div style={{ display: 'flex', gap: '10px' }}>
-                {!mostrarImprevistos && (
+                {!mostrarImprevistos && !isReadOnly && (
                   <button
                     className="sf-btn sf-btn-add"
                     onClick={() => {
@@ -3222,7 +3481,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                     </>
                   )}
                 </button>
-                {!mostrarImprevistos && (
+                {!mostrarImprevistos && !isReadOnly && (
                   <button className="sf-btn sf-btn-success" onClick={handleCrearRequisicion} disabled={isExpired} style={{
                     backgroundColor: '#10b981',
                     color: 'white',
@@ -3238,7 +3497,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                     <FileText size={18} /> CREAR REQUISICIÓN
                   </button>
                 )}
-                {mostrarImprevistos && (
+                {mostrarImprevistos && !isReadOnly && (
                   <button className="sf-btn" style={{
                     background: '#f59e0b',
                     color: 'white',
@@ -3261,23 +3520,29 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                     <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#0ea5e9' }}>Procesando...</span>
                   </div>
                 )}
-                <button className="sf-btn sf-btn-close" onClick={intentarCerrarModal} disabled={isSaving} style={{ minWidth: '180px', padding: '12px 30px', opacity: isSaving ? 0.6 : 1 }}>CANCELAR</button>
-                <button
-                  className="sf-btn"
-                  style={{ padding: '12px 30px', minWidth: '180px', background: '#fff', border: '1px solid #cbd5e1', color: '#475569', opacity: (isExpired || isSaving) ? 0.5 : 1 }}
-                  onClick={() => registrarOActualizar(true)}
-                  disabled={isExpired || isSaving}
-                >
-                  GUARDAR BORRADOR
+                <button className="sf-btn sf-btn-close" onClick={intentarCerrarModal} disabled={isSaving} style={{ minWidth: '180px', padding: '12px 30px', opacity: isSaving ? 0.6 : 1 }}>
+                  {isReadOnly ? 'CERRAR' : 'CANCELAR'}
                 </button>
-                <button
-                  className="sf-btn sf-btn-primary"
-                  onClick={() => registrarOActualizar(false)}
-                  disabled={isExpired || isSaving}
-                  style={{ opacity: (isExpired || isSaving) ? 0.5 : 1, minWidth: '180px', padding: '12px 30px' }}
-                >
-                  {isEditing ? 'ACTUALIZAR SOLICITUD' : 'FINALIZAR REGISTRO'}
-                </button>
+                {!isReadOnly && (
+                  <button
+                    className="sf-btn"
+                    style={{ padding: '12px 30px', minWidth: '180px', background: '#fff', border: '1px solid #cbd5e1', color: '#475569', opacity: (isExpired || isSaving) ? 0.5 : 1 }}
+                    onClick={() => registrarOActualizar(true)}
+                    disabled={isExpired || isSaving}
+                  >
+                    GUARDAR BORRADOR
+                  </button>
+                )}
+                {!isReadOnly && (
+                  <button
+                    className="sf-btn sf-btn-primary"
+                    onClick={() => registrarOActualizar(false)}
+                    disabled={isExpired || isSaving}
+                    style={{ opacity: (isExpired || isSaving) ? 0.5 : 1, minWidth: '180px', padding: '12px 30px' }}
+                  >
+                    {isEditing ? 'ACTUALIZAR SOLICITUD' : 'FINALIZAR REGISTRO'}
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -3380,6 +3645,8 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                         partidas: [{ id: Date.now(), selected: false, cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '' }],
                         imprevistos: [{ id: Date.now() + 1, selected: false, cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '' }]
                       });
+                      setIsEditing(false);
+                      setIsReadOnly(false);
                       setMostrarImprevistos(false);
                       setShowPreVal(false);
                       setShowModal(true);
@@ -3421,6 +3688,8 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                           partidas: [{ id: Date.now(), selected: false, cc: ccPreVal, clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '' }],
                           imprevistos: [{ id: Date.now() + 1, selected: false, cc: ccPreVal, clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '' }]
                         });
+                        setIsEditing(false);
+                        setIsReadOnly(false);
                         setMostrarImprevistos(false);
                         setShowPreVal(false);
                         setShowModal(true);

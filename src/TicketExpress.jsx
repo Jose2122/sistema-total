@@ -127,7 +127,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
   const [verTodos, setVerTodos] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [verJustificacion, setVerJustificacion] = useState(false);
-  const [mostrarSoportes, setMostrarSoportes] = useState(true);
+  const [mostrarSoportes, setMostrarSoportes] = useState(false);
   const [filtroStatus, setFiltroStatus] = useState('Todos');
   const [filtroGerencia, setFiltroGerencia] = useState('Todos');
 
@@ -288,6 +288,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
         if (datosPredefinidos.isExistingTicket) {
           setIsEditing(true);
           const t = datosPredefinidos.ticket;
+          const factUrls = Array.isArray(t.factura_url) ? t.factura_url : (t.factura_url ? [t.factura_url] : []);
           setForm({
             id: t.id,
             fecha: t.fecha_emision,
@@ -296,7 +297,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
             departamento: t.departamento,
             usuario_id: t.usuario_id,
             partidas: t.items || [],
-            facturas_url: Array.isArray(t.factura_url) ? t.factura_url : (t.factura_url ? [t.factura_url] : []),
+            facturas_url: factUrls,
             status: t.status,
             id_control: t.codigo_control,
             solicitud_ref: t.solicitud_ref || '',
@@ -306,8 +307,14 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
             centro_costo: t.centro_costo || t.items?.[0]?.cc || '',
             con_iva: t.con_iva !== false
           });
+          const hasSoportes = parsearFacturaUrls(factUrls).length > 0;
+          setMostrarSoportes(hasSoportes);
+          const hasJustificacion = !!t.justificacion && t.justificacion.trim() !== '';
+          setVerJustificacion(hasJustificacion);
         } else {
           setIsEditing(false);
+          setMostrarSoportes(false);
+          setVerJustificacion(false);
           setForm(prev => {
             const partidas = (datosPredefinidos.partidasSeleccionadas && Array.isArray(datosPredefinidos.partidasSeleccionadas))
               ? datosPredefinidos.partidasSeleccionadas.map(p => {
@@ -595,6 +602,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
 
       const nuevasUrls = [...(form.facturas_url || []), publicUrl];
       setForm(prev => ({ ...prev, facturas_url: nuevasUrls }));
+      setMostrarSoportes(true);
 
       // Si estamos en modo "Ver Detalle" (isEditing), actualizamos la BD de inmediato
       if (isEditing && form.id) {
@@ -619,6 +627,8 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
   const eliminarSoporte = async (index) => {
     const nuevasUrls = form.facturas_url.filter((_, idx) => idx !== index);
     setForm(prev => ({ ...prev, facturas_url: nuevasUrls }));
+    const hasSoportes = nuevasUrls.length > 0;
+    setMostrarSoportes(hasSoportes);
 
     if (isEditing && form.id) {
       try {

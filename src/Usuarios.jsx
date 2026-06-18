@@ -79,6 +79,7 @@ const Usuarios = ({ currentUser: currentUserProp, onUserUpdate }) => {
     { id: 'control_precios', label: 'Control de Precios' },
     { id: 'usuarios', label: 'Gestión de Usuarios' },
     { id: 'atributos', label: 'Atributos' },
+    { id: 'liquidacion', label: 'Cuentas por Pagar (Procura)' },
     { id: 'administracion', label: 'Administración' }
   ];
 

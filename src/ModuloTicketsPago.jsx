@@ -61,7 +61,7 @@ const parseSafeDate = (dateVal) => {
   }
 };
 
-// Helper recursivo para des-serializar URLs de facturas mal formateadas, anidadas o serializadas mÃºltiples veces en la BD
+// Helper recursivo para des-serializar URLs de facturas mal formateadas, anidadas o serializadas múltiples veces en la BD
 const parsearFacturaUrls = (facturaUrlField) => {
   if (!facturaUrlField) return [];
 
@@ -175,7 +175,7 @@ const FormularioPagoToast = ({
 
   const handleConfirm = () => {
     if (!docNum.trim()) {
-      toast.error('El nÃºmero de documento es obligatorio.');
+      toast.error('El número de documento es obligatorio.');
       return;
     }
     if (!sinFactura && !file) {
@@ -190,11 +190,11 @@ const FormularioPagoToast = ({
     const finalPu = modificarMonto ? Number(puModificada) : defaultPu;
 
     if (isNaN(finalCant) || finalCant <= 0) {
-      toast.error('La cantidad a pagar debe ser un nÃºmero mayor a cero.');
+      toast.error('La cantidad a pagar debe ser un número mayor a cero.');
       return;
     }
     if (isNaN(finalPu) || finalPu < 0) {
-      toast.error('El precio unitario a pagar debe ser un nÃºmero mayor o igual a cero.');
+      toast.error('El precio unitario a pagar debe ser un número mayor o igual a cero.');
       return;
     }
 
@@ -223,7 +223,7 @@ const FormularioPagoToast = ({
           </div>
           <div>
             <h4 className="toast-pago-title">Registrar Pago</h4>
-            <p className="toast-pago-subtitle">Confirmar y detallar transacciÃ³n del Ã­tem</p>
+            <p className="toast-pago-subtitle">Confirmar y detallar transacción del ítem</p>
           </div>
         </div>
         <button className="toast-pago-close-btn" onClick={onCancel} title="Cerrar">
@@ -231,9 +231,9 @@ const FormularioPagoToast = ({
         </button>
       </div>
 
-      {/* MONTO DE LA TRANSACCIÃ“N â€” fila compacta */}
+      {/* MONTO DE LA TRANSACCIÓN — fila compacta */}
       <div className="toast-pago-panel" style={{ padding: '10px 14px' }}>
-        <div className="toast-pago-panel-title" style={{ marginBottom: '8px' }}>Monto de la TransacciÃ³n</div>
+        <div className="toast-pago-panel-title" style={{ marginBottom: '8px' }}>Monto de la Transacción</div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', marginBottom: '10px' }}>
           <div>
             <span style={{ fontSize: '10px', color: '#64748b', display: 'block', fontWeight: '700', textTransform: 'uppercase' }}>Cant. Pendiente</span>
@@ -271,9 +271,9 @@ const FormularioPagoToast = ({
         )}
       </div>
 
-      {/* DOCUMENTACIÃ“N */}
+      {/* DOCUMENTACIÓN */}
       <div className="toast-pago-panel">
-        <div className="toast-pago-panel-title">DocumentaciÃ³n</div>
+        <div className="toast-pago-panel-title">Documentación</div>
         <div className="toast-pago-grid-2">
           <div>
             <label className="toast-pago-label">Estatus Factura</label>
@@ -284,7 +284,7 @@ const FormularioPagoToast = ({
           </div>
           <div>
             <label className="toast-pago-label">
-              NÂ° Factura / Control {!sinFactura && <span className="toast-pago-label-req">*</span>}
+              Número Factura / Control {!sinFactura && <span className="toast-pago-label-req">*</span>}
             </label>
             <input type="text" className="toast-pago-input" value={docNum} onChange={(e) => setDocNum(e.target.value)} disabled={sinFactura} placeholder={sinFactura ? 'N/A' : 'Factura...'} />
           </div>
@@ -301,7 +301,7 @@ const FormularioPagoToast = ({
                 if (e.target.files && e.target.files[0]) {
                   const selectedFile = e.target.files[0];
                   if (selectedFile.size > 5 * 1024 * 1024) {
-                    toast.error("El archivo supera el lÃ­mite de 5MB.");
+                    toast.error("El archivo supera el límite de 5MB.");
                     e.target.value = '';
                     return;
                   }
@@ -326,20 +326,20 @@ const FormularioPagoToast = ({
           <div>
             <label className="toast-pago-label">Banco Origen</label>
             <select className="toast-pago-select" value={bancoId} onChange={(e) => setBancoId(e.target.value)}>
-              <option value="">â€” Seleccionar Banco â€”</option>
+              <option value="">— Seleccionar Banco —</option>
               {bancos.map(b => (<option key={b.id} value={b.id}>{b.nombre} ({b.moneda})</option>))}
             </select>
           </div>
           <div>
             <label className="toast-pago-label">Moneda de Pago</label>
             <select className="toast-pago-select" value={metodoPago} onChange={(e) => setMetodoPago(e.target.value)}>
-              <option value="$ / $">$ / $ (DÃ³lares)</option>
-              <option value="$ / BS">$ / BS (BolÃ­vares)</option>
+              <option value="$ / $">$ / $ (Dólares)</option>
+              <option value="$ / BS">$ / BS (Bolívares)</option>
             </select>
           </div>
           <div>
-            <label className="toast-pago-label">NÂ° Referencia (Opcional)</label>
-            <input type="text" className="toast-pago-input" value={nroReferencia} onChange={(e) => setNroReferencia(e.target.value)} placeholder="NÂ° de Transferencia..." />
+            <label className="toast-pago-label">Número Referencia (Opcional)</label>
+            <input type="text" className="toast-pago-input" value={nroReferencia} onChange={(e) => setNroReferencia(e.target.value)} placeholder="Número de Transferencia..." />
           </div>
         </div>
 
@@ -347,16 +347,16 @@ const FormularioPagoToast = ({
         <div className="toast-pago-panel">
           <div className="toast-pago-panel-title">Proveedor</div>
           <div>
-            <label className="toast-pago-label">Filtrar CategorÃ­a</label>
+            <label className="toast-pago-label">Filtrar Categoría</label>
             <select className="toast-pago-select" value={categoriaProveedor} onChange={(e) => { setCategoriaProveedor(e.target.value); setProveedorId(''); }}>
-              <option value="Todos">Todas las CategorÃ­as</option>
+              <option value="Todos">Todas las Categorías</option>
               {categoriasUnicas.map(cat => (<option key={cat} value={cat}>{cat}</option>))}
             </select>
           </div>
           <div>
             <label className="toast-pago-label">Proveedor</label>
             <select className="toast-pago-select" value={proveedorId} onChange={(e) => setProveedorId(e.target.value)}>
-              <option value="">â€” Seleccionar â€”</option>
+              <option value="">— Seleccionar —</option>
               {proveedoresFiltrados.map(p => (<option key={p.id} value={p.id}>{p.razon_social} ({p.rif})</option>))}
             </select>
           </div>
@@ -403,7 +403,7 @@ const ModuloTicketsPago = () => {
   const [showConfirmacionPago, setShowConfirmacionPago] = useState(false);
 
   // ==========================================
-  // ESTADOS MODAL GESTIÃ“N DE BANCOS
+  // ESTADOS MODAL GESTIÓN DE BANCOS
   // ==========================================
   const [showModalBancos, setShowModalBancos] = useState(false);
   const [nuevoBancoForm, setNuevoBancoForm] = useState({ nombre: '', cbu: '', moneda: 'USD' });
@@ -422,7 +422,7 @@ const ModuloTicketsPago = () => {
   const [obsTemporal, setObsTemporal] = useState('');
   const [mostrarObservaciones, setMostrarObservaciones] = useState(false);
   const [mostrarSoportes, setMostrarSoportes] = useState(false);
-  const [imagenesArchivos, setImagenesArchivos] = useState([]); // Soporte para mÃºltiples archivos
+  const [imagenesArchivos, setImagenesArchivos] = useState([]); // Soporte para múltiples archivos
   const [imagenesUrlsPreview, setImagenesUrlsPreview] = useState([]);
   const [imagenesNombres, setImagenesNombres] = useState([]); // Nombres de soportes para carga manual
   const [proveedores, setProveedores] = useState([]);
@@ -473,7 +473,7 @@ const ModuloTicketsPago = () => {
   // EFECTOS Y FETCH
   // ==========================================
   // ==========================================
-  // FUNCIÃ“N PARA RECARGAR BANCOS
+  // FUNCIÓN PARA RECARGAR BANCOS
   // ==========================================
   const cargarBancosDeOrigen = useCallback(async () => {
     const { data: bData } = await supabase.from('bancos').select('*').eq('activo', true).order('nombre');
@@ -500,7 +500,7 @@ const ModuloTicketsPago = () => {
         schema: 'public',
         table: 'tickets_directos'
       }, () => fetchHistorial())
-      // SuscripciÃ³n en tiempo real a la tabla bancos
+      // Suscripción en tiempo real a la tabla bancos
       .on('postgres_changes', {
         event: '*',
         schema: 'public',
@@ -647,7 +647,7 @@ const ModuloTicketsPago = () => {
             query = query.or(orQ);
 
           } else if (rolUserLower.includes('gerente') || rolUserLower.includes('coordinador')) {
-            // 2. GERENTES DE ÃREA/PROYECTO: Ven su DEPARTAMENTO + OBRAS ASIGNADAS
+            // 2. GERENTES DE ÁREA/PROYECTO: Ven su DEPARTAMENTO + OBRAS ASIGNADAS
             let orFiltros = [];
             if (deptoMatch) orFiltros.push(`departamento.ilike.%${deptoMatch}%`);
             if (obrasFiltro) orFiltros.push(obrasFiltro);
@@ -732,7 +732,9 @@ const ModuloTicketsPago = () => {
 
       // Auto-open collapsible sections if they have content
       const hasSoportes = parsearFacturaUrls(ticket.factura_url).length > 0;
-      const hasObservaciones = !!ticket.observaciones && ticket.observaciones.trim() !== '';
+      const hasObservaciones = !!ticket.observaciones && 
+                               ticket.observaciones.trim() !== '' && 
+                               ticket.observaciones.trim().toLowerCase() !== 'sin observaciones registradas.';
       setMostrarSoportes(hasSoportes);
       setMostrarObservaciones(hasObservaciones);
 
@@ -770,7 +772,18 @@ const ModuloTicketsPago = () => {
         }}
         onCancel={() => toast.dismiss(t.id)}
       />
-    ), { duration: 80000, position: 'top-center' });
+    ), {
+      duration: 80000,
+      position: 'top-center',
+      style: {
+        maxWidth: '520px',
+        width: '100%',
+        padding: '16px',
+        borderRadius: '16px',
+        background: '#ffffff',
+        boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)'
+      }
+    });
   };
 
   const actualizarFila = (id, campo, valor) => {
@@ -781,7 +794,7 @@ const ModuloTicketsPago = () => {
         if (campo === 'compra_actual_cant') {
           v = Math.max(0, Number(valor) || 0);
           if (v > f.cantidad_pendiente) {
-            toast.error(`No puede pagar mÃ¡s de la cantidad pendiente (${f.cantidad_pendiente})`);
+            toast.error(`No puede pagar más de la cantidad pendiente (${f.cantidad_pendiente})`);
             v = f.cantidad_pendiente;
           }
         }
@@ -820,7 +833,7 @@ const ModuloTicketsPago = () => {
       const nroReferenciaProcesar = overrideValues?.nroReferencia || null;
 
       if (!docNumProcesar || !docNumProcesar.trim()) {
-        toast.error('Error: El nÃºmero de documento es obligatorio.');
+        toast.error('Error: El número de documento es obligatorio.');
         setLoading(false);
         return;
       }
@@ -903,7 +916,7 @@ const ModuloTicketsPago = () => {
         return acc + ejecutadoItem + estimadoPendiente;
       }, 0);
 
-      // Obtener facturas existentes y aÃ±adir la nueva
+      // Obtener facturas existentes y añadir la nueva
       let currentUrls = parsearFacturaUrls(ticketSeleccionado.factura_url);
       if (uploadedFileObj) {
         currentUrls.push(uploadedFileObj);
@@ -922,7 +935,7 @@ const ModuloTicketsPago = () => {
       if (error) throw error;
       setRenglones(nuevosRenglones);
       setTicketSeleccionado(prev => prev ? { ...prev, items: nuevosRenglones, banco_pago_id: bancoPagoId || prev.banco_pago_id || null, factura_url: serializedUrls } : null);
-      toast.success('Ãtem guardado con Ã©xito.');
+      toast.success('Ítem guardado con éxito.');
       await fetchHistorial();
     } catch (err) {
       toast.error('Error: ' + err.message);
@@ -938,7 +951,7 @@ const ModuloTicketsPago = () => {
     }
     toast((t) => (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-        <p style={{ margin: 0, fontSize: '0.9rem' }}>Â¿EstÃ¡ seguro de eliminar esta entrada? El saldo pendiente se restaurarÃ¡ automÃ¡ticamente.</p>
+        <p style={{ margin: 0, fontSize: '0.9rem' }}>¿Está seguro de eliminar esta entrada? El saldo pendiente se restaurará automáticamente.</p>
         <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
           <button
             onClick={() => { toast.dismiss(t.id); ejecutarEliminacionHistorial(idRenglon, indexHistorial); }}
@@ -1017,14 +1030,14 @@ const ModuloTicketsPago = () => {
   const guardarEdicionTx = async (renglonId, index) => {
     if (loading) return;
     if (!esPrivilegiado) {
-      toast.error('No tiene privilegios para modificar la informaciÃ³n de pago.');
+      toast.error('No tiene privilegios para modificar la información de pago.');
       return;
     }
     const r = renglones.find(item => item.id === renglonId);
     if (!r) return;
 
     if (!txEditandoData.doc_numero.trim()) {
-      toast.error('El nÃºmero de documento es obligatorio.');
+      toast.error('El número de documento es obligatorio.');
       return;
     }
 
@@ -1112,21 +1125,21 @@ const ModuloTicketsPago = () => {
       setTxEditandoData(null);
       await fetchHistorial();
     } catch (err) {
-      toast.error('Error al guardar ediciÃ³n: ' + err.message);
+      toast.error('Error al guardar edición: ' + err.message);
     } finally {
       setLoading(false);
     }
   };
 
   // ==========================================
-  // LÃ“GICA DE ACTUALIZACIÃ“N DE PAGO
+  // LÓGICA DE ACTUALIZACIÓN DE PAGO
   // ==========================================
   const handleImagenChange = (e) => {
     const files = Array.from(e.target.files);
     const filesValidos = [];
     for (const file of files) {
       if (file.size > 5 * 1024 * 1024) {
-        toast.error(`El archivo "${file.name}" supera el lÃ­mite de 5MB y no serÃ¡ cargado.`);
+        toast.error(`El archivo "${file.name}" supera el límite de 5MB y no será cargado.`);
       } else {
         filesValidos.push(file);
       }
@@ -1185,7 +1198,7 @@ const ModuloTicketsPago = () => {
         setSubiendoImagen(false);
       }
 
-      // Auto-procesar renglones que tienen NÂ° de documento escrito pero no se ha hecho clic en "Marcar Pagado" (solo fuera de modoEdicion)
+      // Auto-procesar renglones que tienen Número de documento escrito pero no se ha hecho clic en "Marcar Pagado" (solo fuera de modoEdicion)
       const renglonesListos = modoEdicion ? renglones : renglones.map(r => {
         if (r.cantidad_pendiente > 0 && r.doc_numero_actual && r.doc_numero_actual.trim().length > 0) {
           const cant = r.cantidad_pendiente;
@@ -1314,7 +1327,7 @@ const ModuloTicketsPago = () => {
   const eliminarBancoModal = (id) => {
     toast((t) => (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-        <p style={{ margin: 0, fontSize: '13px', fontWeight: '600' }}>Â¿Eliminar este banco?</p>
+        <p style={{ margin: 0, fontSize: '13px', fontWeight: '600' }}>¿Eliminar este banco?</p>
         <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
           <button
             onClick={() => {
@@ -1348,6 +1361,10 @@ const ModuloTicketsPago = () => {
         observaciones: obsTemporal
       });
       setEditandoObs(false);
+      const hasObservaciones = !!obsTemporal && 
+                               obsTemporal.trim() !== '' && 
+                               obsTemporal.trim().toLowerCase() !== 'sin observaciones registradas.';
+      setMostrarObservaciones(hasObservaciones);
       toast.success("Observaciones actualizadas.");
     } catch (err) {
       toast.error("Error al guardar: " + err.message);
@@ -1359,7 +1376,7 @@ const ModuloTicketsPago = () => {
   const borrarComprobanteDB = async (url) => {
     toast((t) => (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-        <p style={{ margin: 0, fontSize: '0.9rem' }}>Â¿EstÃ¡ seguro de eliminar permanentemente este soporte? Se borrarÃ¡ tanto del registro como del servidor.</p>
+        <p style={{ margin: 0, fontSize: '0.9rem' }}>¿Está seguro de eliminar permanentemente este soporte? Se borrará tanto del registro como del servidor.</p>
         <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
           <button
             onClick={() => { toast.dismiss(t.id); ejecutarBorradoSoporte(url); }}
@@ -1397,7 +1414,7 @@ const ModuloTicketsPago = () => {
           .from(bucketName)
           .remove([filePath]);
 
-        if (storageError) console.warn("Aviso: El archivo fÃ­sico no se pudo borrar:", storageError.message);
+        if (storageError) console.warn("Aviso: El archivo físico no se pudo borrar:", storageError.message);
       }
 
       const parsedUrls = parsearFacturaUrls(ticketSeleccionado.factura_url);
@@ -1413,7 +1430,9 @@ const ModuloTicketsPago = () => {
       if (dbError) throw dbError;
 
       setTicketSeleccionado({ ...ticketSeleccionado, factura_url: nuevasUrls });
-      toast.success("Soporte eliminado fÃ­sicamente del servidor.");
+      const hasSoportes = nuevasUrls.length > 0;
+      setMostrarSoportes(hasSoportes);
+      toast.success("Soporte eliminado físicamente del servidor.");
       await fetchHistorial();
     } catch (err) {
       toast.error("Error al eliminar soporte: " + err.message);
@@ -1455,7 +1474,7 @@ const ModuloTicketsPago = () => {
 
     toast((t) => (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-        <p style={{ margin: 0, fontSize: '0.9rem' }}>Â¿EstÃ¡ seguro de eliminar permanentemente este ticket de pago? Esta acciÃ³n no se puede deshacer.</p>
+        <p style={{ margin: 0, fontSize: '0.9rem' }}>¿Está seguro de eliminar permanentemente este ticket de pago? Esta acción no se puede deshacer.</p>
         <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
           <button
             onClick={() => { toast.dismiss(t.id); ejecutarEliminacionTicket(id); }}
@@ -1534,7 +1553,7 @@ const ModuloTicketsPago = () => {
       return statusUpper !== 'PAGADO' && statusUpper !== 'RECHAZADO' && statusUpper !== 'ANULADO' && statusUpper !== 'COMPLETADO';
     });
     if (pendientes.length === 0) {
-      toast.error("No hay tickets pendientes por pagar en la selecciÃ³n actual.");
+      toast.error("No hay tickets pendientes por pagar en la selección actual.");
       return;
     }
 
@@ -1542,7 +1561,7 @@ const ModuloTicketsPago = () => {
       const workbook = new ExcelJS.Workbook();
       const worksheet = workbook.addWorksheet('Pendientes por Pagar');
 
-      // Fila de TÃ­tulo
+      // Fila de Título
       worksheet.mergeCells('A1:I1');
       const titleCell = worksheet.getCell('A1');
       titleCell.value = 'TOTAL CLEAN C.A. - TICKETS PENDIENTES POR PAGAR';
@@ -1552,7 +1571,7 @@ const ModuloTicketsPago = () => {
       worksheet.getRow(1).height = 40;
 
       // Encabezados
-      const headers = ['ID', 'FECHA SOLICITUD', 'CATEGORÃA', 'DESCRIPCIÃ“N', 'CENTRO DE COSTO', 'GERENCIA', 'MONEDA DE PAGO', 'STATUS', 'TOTAL ($)'];
+      const headers = ['ID', 'FECHA SOLICITUD', 'CATEGORÍA', 'DESCRIPCIÓN', 'CENTRO DE COSTO', 'GERENCIA', 'MONEDA DE PAGO', 'STATUS', 'TOTAL ($)'];
       worksheet.addRow(headers);
       const headerRow = worksheet.getRow(2);
       headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
@@ -1564,8 +1583,8 @@ const ModuloTicketsPago = () => {
       pendientes.forEach(t => {
         const d = parseSafeDate(t.fecha_emision);
         const fechaStr = d && !isNaN(d.getTime()) ? d : 'N/A';
-        const categ = (t.items || []).map(it => it.clasificacion || it.categoria || 'Sin categorÃ­a').filter(Boolean).join(', ') || 'Sin categorÃ­a';
-        const justif = t.justificacion || (t.items || []).map(it => it.desc || it.descripcion).filter(Boolean).join(', ') || 'Sin justificaciÃ³n';
+        const categ = (t.items || []).map(it => it.clasificacion || it.categoria || 'Sin categoría').filter(Boolean).join(', ') || 'Sin categoría';
+        const justif = t.justificacion || (t.items || []).map(it => it.desc || it.descripcion).filter(Boolean).join(', ') || 'Sin justificación';
         const cc = t.centro_costo || (t.items || []).map(it => it.cc || it.centro_costo).filter(Boolean).join(', ') || '---';
         const gerencia = t.departamento || 'No especificado';
         const total = Number(t.total_usd) || 0;
@@ -1574,7 +1593,7 @@ const ModuloTicketsPago = () => {
         const statusText = statusUpper === 'PARCIAL' ? 'Parcialmente Pagado' : 'Pendiente por Pagar';
 
         const metodosPago = (t.items || []).flatMap(r => (r.historial_compras || []).map(h => h.metodo_pago)).filter(Boolean);
-        let monedaPago = 'â€”';
+        let monedaPago = '—';
         if (metodosPago.length > 0) {
           monedaPago = Array.from(new Set(metodosPago)).join(' / ');
         } else {
@@ -1618,7 +1637,7 @@ const ModuloTicketsPago = () => {
         { key: 'total', width: 18 }
       ];
 
-      // Formatos de alineaciÃ³n y bordes
+      // Formatos de alineación y bordes
       worksheet.eachRow((row, rowNumber) => {
         if (rowNumber > 2) {
           row.getCell(1).alignment = { horizontal: 'center' };
@@ -1653,7 +1672,7 @@ const ModuloTicketsPago = () => {
       return statusUpper === 'PAGADO' || statusUpper === 'COMPLETADO';
     });
     if (procesados.length === 0) {
-      toast.error("No hay tickets procesados (pagados) en la selecciÃ³n actual.");
+      toast.error("No hay tickets procesados (pagados) en la selección actual.");
       return;
     }
 
@@ -1661,7 +1680,7 @@ const ModuloTicketsPago = () => {
       const workbook = new ExcelJS.Workbook();
       const worksheet = workbook.addWorksheet('Tickets Procesados');
 
-      // Fila de TÃ­tulo
+      // Fila de Título
       worksheet.mergeCells('A1:J1');
       const titleCell = worksheet.getCell('A1');
       titleCell.value = 'TOTAL CLEAN C.A. - TICKETS PROCESADOS (PAGADOS)';
@@ -1674,8 +1693,8 @@ const ModuloTicketsPago = () => {
       const headers = [
         'ID',
         'FECHA SOLICITUD',
-        'CATEGORÃA',
-        'DESCRIPCIÃ“N',
+        'CATEGORÍA',
+        'DESCRIPCIÓN',
         'CENTRO DE COSTO',
         'GERENCIA',
         'BANCO ORIGEN',
@@ -1695,8 +1714,8 @@ const ModuloTicketsPago = () => {
       procesados.forEach(t => {
         const d = parseSafeDate(t.fecha_emision);
         const fechaStr = d && !isNaN(d.getTime()) ? d : 'N/A';
-        const categ = (t.items || []).map(it => it.clasificacion || it.categoria || 'Sin categorÃ­a').filter(Boolean).join(', ') || 'Sin categorÃ­a';
-        const justif = t.justificacion || (t.items || []).map(it => it.desc || it.descripcion).filter(Boolean).join(', ') || 'Sin justificaciÃ³n';
+        const categ = (t.items || []).map(it => it.clasificacion || it.categoria || 'Sin categoría').filter(Boolean).join(', ') || 'Sin categoría';
+        const justif = t.justificacion || (t.items || []).map(it => it.desc || it.descripcion).filter(Boolean).join(', ') || 'Sin justificación';
         const cc = t.centro_costo || (t.items || []).map(it => it.cc || it.centro_costo).filter(Boolean).join(', ') || '---';
         const gerencia = t.departamento || 'No especificado';
         const total = Number(t.total_usd) || 0;
@@ -1706,21 +1725,21 @@ const ModuloTicketsPago = () => {
           || (() => {
             const bn = (t.items || []).flatMap(r => (r.historial_compras || []).map(h => h.banco_nombre)).filter(Boolean);
             return bn.length > 0 ? [...new Set(bn)].join(' / ') : null;
-          })() || 'â€”';
+          })() || '—';
 
         // Factura
         const todosLosDocs = Array.from(new Set(
           (t.items || []).flatMap(r => (r.historial_compras || []).map(h => h.doc_numero)).filter(Boolean)
-        )).join(', ') || 'â€”';
+        )).join(', ') || '—';
 
         // Referencias
         const todasLasRefs = Array.from(new Set(
           (t.items || []).flatMap(r => (r.historial_compras || []).map(h => h.nro_referencia)).filter(Boolean)
-        )).join(', ') || 'â€”';
+        )).join(', ') || '—';
 
-        // Moneda/MÃ©todo de pago (Bs/$ o $/$)
+        // Moneda/Método de pago (Bs/$ o $/$)
         const metodosPago = (t.items || []).flatMap(r => (r.historial_compras || []).map(h => h.metodo_pago)).filter(Boolean);
-        let metodoPagoText = 'â€”';
+        let metodoPagoText = '—';
         if (metodosPago.length > 0) {
           metodoPagoText = Array.from(new Set(metodosPago)).join(' / ');
         } else {
@@ -1752,7 +1771,7 @@ const ModuloTicketsPago = () => {
         row.getCell(1).numFmt = '@'; // ID como texto
         row.getCell(8).numFmt = '@'; // Nro Factura como texto
         row.getCell(9).numFmt = '@'; // Nro Referencia como texto
-        row.getCell(10).numFmt = '@'; // MÃ©todo de Pago como texto
+        row.getCell(10).numFmt = '@'; // Método de Pago como texto
         row.getCell(11).numFmt = '"$"#,##0.00;[Red]"$"#,##0.00';
       });
 
@@ -1771,7 +1790,7 @@ const ModuloTicketsPago = () => {
         { key: 'total', width: 18 }
       ];
 
-      // Formatos de alineaciÃ³n y bordes
+      // Formatos de alineación y bordes
       worksheet.eachRow((row, rowNumber) => {
         if (rowNumber > 2) {
           row.getCell(1).alignment = { horizontal: 'center' };
@@ -1807,7 +1826,7 @@ const ModuloTicketsPago = () => {
       return statusUpper !== 'ANULADO';
     });
     if (todos.length === 0) {
-      toast.error("No hay tickets en la selecciÃ³n actual.");
+      toast.error("No hay tickets en la selección actual.");
       return;
     }
 
@@ -1815,8 +1834,8 @@ const ModuloTicketsPago = () => {
       const workbook = new ExcelJS.Workbook();
       const worksheet = workbook.addWorksheet('Reporte Detallado');
 
-      // Fila de TÃ­tulo
-      // Fila de TÃ­tulo
+      // Fila de Título
+      // Fila de Título
       worksheet.mergeCells('A1:K1');
       const titleCell = worksheet.getCell('A1');
       titleCell.value = 'TOTAL CLEAN C.A. - REPORTE DETALLADO DE TICKETS DE PAGO';
@@ -1829,8 +1848,8 @@ const ModuloTicketsPago = () => {
       const headers = [
         'ID',
         'FECHA SOLICITUD',
-        'CATEGORÃA',
-        'DESCRIPCIÃ“N',
+        'CATEGORÍA',
+        'DESCRIPCIÓN',
         'CENTRO DE COSTO',
         'GERENCIA',
         'BANCO ORIGEN',
@@ -1851,8 +1870,8 @@ const ModuloTicketsPago = () => {
       todos.forEach(t => {
         const d = parseSafeDate(t.fecha_emision);
         const fechaStr = d && !isNaN(d.getTime()) ? d : 'N/A';
-        const categ = (t.items || []).map(it => it.clasificacion || it.categoria || 'Sin categorÃ­a').filter(Boolean).join(', ') || 'Sin categorÃ­a';
-        const justif = t.justificacion || (t.items || []).map(it => it.desc || it.descripcion).filter(Boolean).join(', ') || 'Sin justificaciÃ³n';
+        const categ = (t.items || []).map(it => it.clasificacion || it.categoria || 'Sin categoría').filter(Boolean).join(', ') || 'Sin categoría';
+        const justif = t.justificacion || (t.items || []).map(it => it.desc || it.descripcion).filter(Boolean).join(', ') || 'Sin justificación';
         const cc = t.centro_costo || (t.items || []).map(it => it.cc || it.centro_costo).filter(Boolean).join(', ') || '---';
         const gerencia = t.departamento || 'No especificado';
         const total = Number(t.total_usd) || 0;
@@ -1866,30 +1885,30 @@ const ModuloTicketsPago = () => {
             || (() => {
               const bn = (t.items || []).flatMap(r => (r.historial_compras || []).map(h => h.banco_nombre)).filter(Boolean);
               return bn.length > 0 ? [...new Set(bn)].join(' / ') : null;
-            })() || 'â€”')
+            })() || '—')
           : ' --';
 
         // Factura
         const todosLosDocs = estaPagado
           ? (Array.from(new Set(
             (t.items || []).flatMap(r => (r.historial_compras || []).map(h => h.doc_numero)).filter(Boolean)
-          )).join(', ') || 'â€”')
+          )).join(', ') || '—')
           : ' --';
 
         // Referencias
         const todasLasRefs = estaPagado
           ? (Array.from(new Set(
             (t.items || []).flatMap(r => (r.historial_compras || []).map(h => h.nro_referencia)).filter(Boolean)
-          )).join(', ') || 'â€”')
+          )).join(', ') || '—')
           : ' --';
 
-        // Moneda/MÃ©todo de pago (Bs/$ o $/$)
+        // Moneda/Método de pago (Bs/$ o $/$)
         const metodosPago = Array.from(new Set(
           (t.items || []).flatMap(r => (r.historial_compras || []).map(h => h.metodo_pago)).filter(Boolean)
         ));
         const metodoPagoText = estaPagado
-          ? (metodosPago.length > 0 ? metodosPago.join(' / ') : 'â€”')
-          : 'AÃºn no pagado / En espera';
+          ? (metodosPago.length > 0 ? metodosPago.join(' / ') : '—')
+          : 'Aún no pagado / En espera';
 
         let statusText = 'Pendiente por Pagar';
         if (estaPagado) {
@@ -1919,7 +1938,7 @@ const ModuloTicketsPago = () => {
         row.getCell(1).numFmt = '@'; // ID como texto
         row.getCell(8).numFmt = '@'; // Nro Factura como texto
         row.getCell(9).numFmt = '@'; // Nro Referencia como texto
-        row.getCell(10).numFmt = '@'; // MÃ©todo de Pago como texto
+        row.getCell(10).numFmt = '@'; // Método de Pago como texto
         row.getCell(11).numFmt = '@'; // Status como texto
         row.getCell(12).numFmt = '"$"#,##0.00;[Red]"$"#,##0.00';
       });
@@ -1940,7 +1959,7 @@ const ModuloTicketsPago = () => {
         { key: 'total', width: 18 }
       ];
 
-      // Formatos de alineaciÃ³n y bordes
+      // Formatos de alineación y bordes
       worksheet.eachRow((row, rowNumber) => {
         if (rowNumber > 2) {
           row.getCell(1).alignment = { horizontal: 'center' };
@@ -1974,7 +1993,7 @@ const ModuloTicketsPago = () => {
   const renderHistorial = () => {
     const filtrados = filtradosTickets;
 
-    // Opciones Ãºnicas para combos dinÃ¡micos
+    // Opciones únicas para combos dinámicos
     const categoriasUnicas = [...new Set(
       historialTickets.flatMap(t => (t.items || []).map(it => it.clasificacion)).filter(Boolean)
     )].sort();
@@ -2000,7 +2019,7 @@ const ModuloTicketsPago = () => {
               Control de Tickets de Pago
             </h1>
             <p style={{ margin: '4px 0 0 0', color: '#64748b', fontSize: '0.9rem', fontWeight: '500', fontFamily: 'Inter, sans-serif' }}>
-              GestiÃ³n centralizada de emisiones y egresos
+              Gestión centralizada de emisiones y egresos
             </p>
           </div>
 
@@ -2082,7 +2101,7 @@ const ModuloTicketsPago = () => {
           </div>
         </div>
 
-        {/* --- DASHBOARD DE ESTADÃSTICAS (KPICards) clickables --- */}
+        {/* --- DASHBOARD DE ESTADÍSTICAS (KPICards) clickables --- */}
         <div style={{
           display: 'grid',
           gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
@@ -2189,7 +2208,7 @@ const ModuloTicketsPago = () => {
               onChange={(e) => setFiltroCategoria(e.target.value)}
               style={{ flex: 1, minWidth: '130px', padding: '9px 11px', borderRadius: '10px', border: '1px solid #e2e8f0', backgroundColor: '#f8fafc', color: '#475569', fontWeight: '600', fontSize: '12px' }}
             >
-              <option value="Todos">Todas las CategorÃ­as</option>
+              <option value="Todos">Todas las Categorías</option>
               {categoriasUnicas.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
             <select
@@ -2261,7 +2280,7 @@ const ModuloTicketsPago = () => {
                 <tr>
                   <th style={{ width: '150px' }}>ID / FECHA</th>
                   <th>SOLICITANTE / GERENCIA</th>
-                  <th>JUSTIFICACIÃ“N / CATEGORÃA</th>
+                  <th>JUSTIFICACIÓN / CATEGORÍA</th>
                   <th style={{ width: '140px' }}>CENTRO DE COSTO</th>
                   <th style={{ width: '120px' }}>BANCO</th>
                   <th style={{ textAlign: 'right' }}>TOTAL ($)</th>
@@ -2271,9 +2290,9 @@ const ModuloTicketsPago = () => {
               </thead>
               <tbody>
                 {filtrados.map(ticket => {
-                  const justif = ticket.justificacion || ticket.items?.[0]?.justificacion_detallada || ticket.items?.[0]?.justificacion || 'Sin justificaciÃ³n';
+                  const justif = ticket.justificacion || ticket.items?.[0]?.justificacion_detallada || ticket.items?.[0]?.justificacion || 'Sin justificación';
                   const cc = ticket.centro_costo || ticket.items?.[0]?.cc || ticket.items?.[0]?.centro_costo || '---';
-                  const categ = ticket.items?.[0]?.clasificacion || 'Sin categorÃ­a';
+                  const categ = ticket.items?.[0]?.clasificacion || 'Sin categoría';
                   const todosLosDocs = Array.from(new Set(
                     (ticket.items || []).flatMap(r => (r.historial_compras || []).map(h => h.doc_numero)).filter(Boolean)
                   ));
@@ -2345,7 +2364,7 @@ const ModuloTicketsPago = () => {
                                 style={{ color: '#0ea5e9', cursor: 'help', fontWeight: '800' }}
                                 title={ticket.items.slice(1).map(it => `- ${it.descripcion || it.desc}`).join('\n')}
                               >
-                                (+{ticket.items.length - 1} mÃ¡s)
+                                (+{ticket.items.length - 1} más)
                               </span>
                             ) : ''}
                           </span>
@@ -2398,7 +2417,7 @@ const ModuloTicketsPago = () => {
                                   <Landmark size={13} color="#64748b" style={{ flexShrink: 0 }} />
                                   <span>{bancoNombre}</span>
                                 </div>
-                              ) : <span style={{ color: '#cbd5e1', fontSize: '11px' }}>â€”</span>}
+                              ) : <span style={{ color: '#cbd5e1', fontSize: '11px' }}>—</span>}
                               {refs.length > 0 && (
                                 <div style={{ fontSize: '10px', color: '#64748b', fontWeight: '600', marginTop: '2px' }}>
                                   Ref: {refs.join(', ')}
@@ -2413,7 +2432,7 @@ const ModuloTicketsPago = () => {
                       </td>
                       <td style={{ textAlign: 'center', padding: '12px 15px' }}>
                         <div className={`badge-status ${ticket.status?.toLowerCase() || 'emitido'}`}>
-                          {ticket.status === 'Pagado' && <span style={{ marginRight: '4px' }}>âœ“</span>}
+                          {ticket.status === 'Pagado' && <span style={{ marginRight: '4px' }}>✓</span>}
                           {ticket.status || 'Emitido'}
                         </div>
                       </td>
@@ -2540,7 +2559,7 @@ const ModuloTicketsPago = () => {
             <div className="metadata-box" style={{ padding: '15px 20px', backgroundColor: '#f8fafc', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '25px' }}>
                 <div>
-                  <label className="stat-label">FECHA EMISIÃ“N</label>
+                  <label className="stat-label">FECHA EMISIÓN</label>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '5px', color: '#1e293b', fontWeight: '600' }}>
                     <Calendar size={18} color="#94a3b8" />
                     {t.fecha_emision ? new Date(t.fecha_emision).toLocaleDateString() : 'N/A'}
@@ -2615,7 +2634,7 @@ const ModuloTicketsPago = () => {
                   <thead>
                     <tr>
                       <th style={{ width: '40px' }}></th>
-                      <th>DESCRIPCIÃ“N DEL ÃTEM</th>
+                      <th>DESCRIPCIÓN DEL ÍTEM</th>
                       <th style={{ width: '80px', textAlign: 'center' }}>CANTIDAD</th>
                       <th style={{ width: '100px', textAlign: 'center' }}>P.U. ($)</th>
                       <th style={{ width: '160px' }}>PROVEEDOR</th>
@@ -2682,7 +2701,7 @@ const ModuloTicketsPago = () => {
                                   onChange={(e) => actualizarFila(r.id, 'categoria', e.target.value)}
                                   style={{ fontSize: '0.7rem', padding: '4px 6px', width: '50%', backgroundColor: 'white' }}
                                 >
-                                  <option value="">CategorÃ­a...</option>
+                                  <option value="">Categoría...</option>
                                   {todasCategoriasUnicas.map(cat => (
                                     <option key={cat.id} value={cat.nombre}>{cat.nombre}</option>
                                   ))}
@@ -2747,7 +2766,7 @@ const ModuloTicketsPago = () => {
                                   ))}
                                 </div>
                               ) : (
-                                <span style={{ fontSize: '0.7rem', color: '#cbd5e1', fontStyle: 'italic' }}>â€”</span>
+                                <span style={{ fontSize: '0.7rem', color: '#cbd5e1', fontStyle: 'italic' }}>—</span>
                               );
                             })()}
                           </td>
@@ -2774,7 +2793,7 @@ const ModuloTicketsPago = () => {
                                       <input
                                         type="text"
                                         className="premium-edit-input"
-                                        placeholder="NÂ° Documento"
+                                        placeholder="Número  Documento"
                                         value={r.doc_numero_actual || ''}
                                         onChange={(e) => actualizarFila(r.id, 'doc_numero_actual', e.target.value)}
                                         style={{ fontSize: '0.7rem', width: '100px' }}
@@ -2797,7 +2816,7 @@ const ModuloTicketsPago = () => {
                               const refsItem = Array.from(new Set(transacciones.map(h => h.nro_referencia).filter(Boolean)));
 
                               if (bancosRenglon.length === 0 && refsItem.length === 0) {
-                                return <span style={{ fontSize: '0.7rem', color: '#cbd5e1', fontStyle: 'italic' }}>â€”</span>;
+                                return <span style={{ fontSize: '0.7rem', color: '#cbd5e1', fontStyle: 'italic' }}>—</span>;
                               }
 
                               return (
@@ -2952,7 +2971,7 @@ const ModuloTicketsPago = () => {
                                             <td style={{ padding: '8px' }}>
                                               <input
                                                 type="text"
-                                                placeholder="NÂ° Doc"
+                                                placeholder="Número Doc"
                                                 value={txEditandoData.doc_numero}
                                                 onChange={(e) => setTxEditandoData(prev => ({ ...prev, doc_numero: e.target.value }))}
                                                 className="premium-edit-input"
@@ -2972,14 +2991,14 @@ const ModuloTicketsPago = () => {
                                                   className="premium-edit-input"
                                                   style={{ width: '100%', fontSize: '0.7rem', padding: '2px 4px', backgroundColor: 'white' }}
                                                 >
-                                                  <option value="">â€” Banco â€”</option>
+                                                  <option value="">— Banco —</option>
                                                   {bancos.map(b => (
                                                     <option key={b.id} value={b.id}>{b.nombre} ({b.moneda})</option>
                                                   ))}
                                                 </select>
                                                 <input
                                                   type="text"
-                                                  placeholder="NÂ° Referencia"
+                                                  placeholder="Número  Referencia"
                                                   value={txEditandoData.nro_referencia || ''}
                                                   onChange={(e) => setTxEditandoData(prev => ({ ...prev, nro_referencia: e.target.value }))}
                                                   className="premium-edit-input"
@@ -3017,14 +3036,14 @@ const ModuloTicketsPago = () => {
                                                   className="inline-edit-btn confirm"
                                                   title="Guardar"
                                                 >
-                                                  âœ“
+                                                  ✓
                                                 </button>
                                                 <button
                                                   onClick={() => { setTxEditando(null); setTxEditandoData(null); }}
                                                   className="inline-edit-btn cancel"
                                                   title="Cancelar"
                                                 >
-                                                  Ã—
+                                                  ×
                                                 </button>
                                               </div>
                                             </td>
@@ -3058,7 +3077,7 @@ const ModuloTicketsPago = () => {
                                                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', backgroundColor: '#e0f2fe', color: '#0369a1', border: '1px solid #bae6fd', borderRadius: '5px', padding: '2px 6px', fontSize: '0.65rem', fontWeight: '700' }}>
                                                     <Landmark size={9} color="#0369a1" />{h.banco_nombre}
                                                   </span>
-                                                ) : !h.nro_referencia && <span style={{ color: '#cbd5e1' }}>â€”</span>}
+                                                ) : !h.nro_referencia && <span style={{ color: '#cbd5e1' }}>—</span>}
                                               </div>
                                               {h.nro_referencia && (
                                                 <span style={{ fontSize: '9px', backgroundColor: '#f1f5f9', color: '#64748b', padding: '1px 5px', borderRadius: '4px', fontWeight: 'bold', width: 'fit-content' }}>
@@ -3084,7 +3103,7 @@ const ModuloTicketsPago = () => {
                                                   style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', padding: 0 }}
                                                   title="Editar Pago"
                                                 >
-                                                  âœï¸
+                                                  ✏️
                                                 </button>
                                                 <button
                                                   onClick={() => eliminarEntradaHistorial(r.id, hIdx)}
@@ -3124,7 +3143,7 @@ const ModuloTicketsPago = () => {
               <div style={{ backgroundColor: '#f8fafc', padding: '20px', borderRadius: '16px', border: '1px solid #e2e8f0', minHeight: '200px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
                   <h3 style={{ margin: 0, fontSize: '0.9rem', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: '800' }}>
-                    ðŸ“ Soportes y Comprobantes
+                    📁 Soportes y Comprobantes
                   </h3>
                   <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                     <button
@@ -3249,7 +3268,7 @@ const ModuloTicketsPago = () => {
                                   }}
                                   title="Eliminar Soporte"
                                 >
-                                  Ã—
+                                  ×
                                 </button>
                               )}
                             </div>
@@ -3344,7 +3363,7 @@ const ModuloTicketsPago = () => {
                                 }}
                                 title="Quitar"
                               >
-                                Ã—
+                                ×
                               </button>
                             </div>
                           );
@@ -3355,11 +3374,11 @@ const ModuloTicketsPago = () => {
                 </AnimatePresence>
               </div>
 
-              {/* PANEL DE OBSERVACIONES DINÃMICAS (RIGHT) */}
+              {/* PANEL DE OBSERVACIONES DINÁMICAS (RIGHT) */}
               <div style={{ backgroundColor: '#f8fafc', padding: '20px', borderRadius: '16px', border: '1px solid #e2e8f0', minHeight: '200px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <h3 style={{ margin: 0, fontSize: '0.9rem', color: '#475569', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: '800' }}>
-                    <MessageSquare size={16} color="#64748b" /> Notas de AuditorÃ­a / Observaciones ðŸ’¬
+                    <MessageSquare size={16} color="#64748b" /> Notas de Auditoría / Observaciones 💬
                   </h3>
                   <button
                     type="button"
@@ -3409,7 +3428,7 @@ const ModuloTicketsPago = () => {
                               }}
                               value={obsTemporal}
                               onChange={(e) => setObsTemporal(e.target.value)}
-                              placeholder="Agregue notas aclaratorias o justificaciones tÃ©cnicas..."
+                              placeholder="Agregue notas aclaratorias o justificaciones técnicas..."
                             />
                             <div style={{ display: 'flex', gap: '8px' }}>
                               <button
@@ -3426,7 +3445,7 @@ const ModuloTicketsPago = () => {
                                   fontWeight: 'bold'
                                 }}
                               >
-                                âœ“ GUARDAR
+                                ✓ GUARDAR
                               </button>
                               <button
                                 type="button"
@@ -3482,7 +3501,7 @@ const ModuloTicketsPago = () => {
                               }}
                               title="Editar Observaciones"
                             >
-                              âœï¸
+                              ✏️
                             </button>
                           </div>
                         )}
@@ -3495,7 +3514,7 @@ const ModuloTicketsPago = () => {
             </div>
           </div>
 
-          {/* --- PIE DE PÃGINA FIJO --- */}
+          {/* --- PIE DE PÁGINA FIJO --- */}
           <div style={{ padding: '20px 35px 30px 35px', flexShrink: 0, borderTop: '1px solid #f1f5f9', backgroundColor: 'white', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div style={{ display: 'flex', gap: '30px' }}>
               <div>
@@ -3514,10 +3533,10 @@ const ModuloTicketsPago = () => {
 
             <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
               <div style={{ color: '#94a3b8', fontSize: '0.7rem', textAlign: 'right', width: '180px' }}>
-                * El estatus cambiarÃ¡ segÃºn el saldo restante.
+                * El estatus cambiará según el saldo restante.
               </div>
 
-              {/* Habilitar EdiciÃ³n â€” movido abajo al lado de finalizar ticket */}
+              {/* Habilitar Edición — movido abajo al lado de finalizar ticket */}
               {(esPrivilegiado || (ticketSeleccionado?.usuario_id === currentUser?.id && ticketSeleccionado?.status !== 'Pagado')) && (
                 <motion.button
                   onClick={() => setModoEdicion(prev => !prev)}
@@ -3546,7 +3565,7 @@ const ModuloTicketsPago = () => {
                   }}
                 >
                   <Activity size={15} />
-                  {modoEdicion ? 'EdiciÃ³n Activa' : 'Habilitar EdiciÃ³n'}
+                  {modoEdicion ? 'Edición Activa' : 'Habilitar Edición'}
                 </motion.button>
               )}
 
@@ -3583,7 +3602,7 @@ const ModuloTicketsPago = () => {
                 {loading
                   ? 'Procesando...'
                   : (modoEdicion
-                    ? 'Guardar Cambios de EdiciÃ³n'
+                    ? 'Guardar Cambios de Edición'
                     : (esPrivilegiado
                       ? 'Finalizar y Guardar Cambios'
                       : 'Solo lectura'))}
@@ -3596,7 +3615,7 @@ const ModuloTicketsPago = () => {
   };
 
   // ==========================================
-  // MODAL DE GESTIÃ“N DE BANCOS
+  // MODAL DE GESTIÓN DE BANCOS
   // ==========================================
   const renderModalBancos = () => (
     <AnimatePresence>
@@ -3678,7 +3697,7 @@ const ModuloTicketsPago = () => {
                     </div>
                   </div>
                   <div>
-                    <label style={{ display: 'block', fontSize: '11px', fontWeight: '700', color: '#94a3b8', textTransform: 'uppercase', marginBottom: '6px' }}>NÂº DE CUENTA <span style={{ fontWeight: '400', textTransform: 'none', color: '#cbd5e1' }}>(opcional)</span></label>
+                    <label style={{ display: 'block', fontSize: '11px', fontWeight: '700', color: '#94a3b8', textTransform: 'uppercase', marginBottom: '6px' }}>Nº DE CUENTA <span style={{ fontWeight: '400', textTransform: 'none', color: '#cbd5e1' }}>(opcional)</span></label>
                     <input
                       type="text"
                       placeholder="Ej: 0134-0001-00-0012345678"
@@ -3720,7 +3739,7 @@ const ModuloTicketsPago = () => {
               <p style={{ margin: '0 0 12px 0', fontSize: '11px', fontWeight: '700', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Bancos Registrados ({bancos.length})</p>
               {bancos.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '30px', color: '#94a3b8', fontSize: '13px', border: '1px dashed #e2e8f0', borderRadius: '10px' }}>
-                  No hay bancos registrados aÃºn.
+                  No hay bancos registrados aún.
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>

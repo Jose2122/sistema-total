@@ -768,6 +768,13 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     } catch (err) { toast.error(err.message); } finally { setLoading(false); }
   };
 
+  const puedeModificarRequisicion = (req) => {
+    if (!req) return false;
+    const esAdmin = currentUser?.esSuperAdmin || currentUser?.esAdminReal;
+    if (esAdmin) return true;
+    return (req.gerencia || '').toLowerCase() === (currentUser?.departamento || '').toLowerCase();
+  };
+
   const resetearFormulario = () => {
     if (currentUser) {
       setSolicitante(`${currentUser.nombre} ${currentUser.apellido}`);
@@ -796,14 +803,15 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     setObservacionesDireccion(req.observaciones_direccion || '');
     setIdReferenciaProyecto(req.id_referencia_proyecto || '');
     setFacturasUrls(req.facturas_url || []);
-    setFechaRequerida(req.fecha_requerida || req.fecha);
+    setFechaRequerida(req.fecha_requerida || req.fecha || req.fecha_emision);
     setDepartamento(req.gerencia || 'Operaciones');
 
     // SANITIZACIÓN DE DATOS (Raíz del problema)
     let detallesSeguros = [];
-    if (typeof req.detalles === 'string') {
+    const itemsRaw = req.detalles || req.items || [];
+    if (typeof itemsRaw === 'string') {
       try {
-        detallesSeguros = JSON.parse(req.detalles);
+        detallesSeguros = JSON.parse(itemsRaw);
         // Sometimes it's double stringified
         if (typeof detallesSeguros === 'string') {
           detallesSeguros = JSON.parse(detallesSeguros);
@@ -811,12 +819,12 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       } catch (e) {
         detallesSeguros = [];
       }
-    } else if (Array.isArray(req.detalles)) {
-      detallesSeguros = req.detalles;
+    } else if (Array.isArray(itemsRaw)) {
+      detallesSeguros = itemsRaw;
     }
 
     setRenglones(detallesSeguros);
-    setCentroCosto(req.centroCosto);
+    setCentroCosto(req.centroCosto || req.centro_costo);
     setSolicitante(req.solicitante || `${req.solicitante_nombre || ''} ${req.solicitante_apellido || ''}`);
     setModoEdicion(false);
     setHasChanges(false);
@@ -1000,6 +1008,11 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
   };
 
   const ejecutarEliminacionSoporte = async (idx, url) => {
+    const reqActual = historial.find(h => String(h.id) === String(editandoId));
+    if (!puedeModificarRequisicion(reqActual)) {
+      toast.error("No tienes permisos para modificar esta requisición.");
+      return;
+    }
     try {
       setUploading(true);
       let bucketName = 'facturas';
@@ -1034,6 +1047,13 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
   };
 
   const subirArchivos = async (files) => {
+    if (editandoId) {
+      const reqActual = historial.find(h => String(h.id) === String(editandoId));
+      if (!puedeModificarRequisicion(reqActual)) {
+        toast.error("No tienes permisos para modificar esta requisición.");
+        return;
+      }
+    }
     try {
       setUploading(true);
       if (!files || files.length === 0) return;
@@ -1479,6 +1499,11 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     } catch (err) { toast.error(err.message); } finally { setLoading(false); }
   };
   const ejecutarGuardarUpdate = async (id) => {
+    const reqActual = historial.find(h => String(h.id) === String(id));
+    if (!puedeModificarRequisicion(reqActual)) {
+      toast.error("No tienes permisos para modificar esta requisición.");
+      return;
+    }
     setLoading(true);
     try {
       const { data: antigua } = await supabase.from('requisiciones').select('items').eq('id', id).single();
@@ -3670,6 +3695,10 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                               }}
                               onClick={() => {
                                 const reqActual = historial.find(h => String(h.id) === String(editandoId));
+                                if (!puedeModificarRequisicion(reqActual)) {
+                                  toast.error("No tienes permisos para modificar requisiciones de otros departamentos.");
+                                  return;
+                                }
                                 if (reqActual?.estado_aprobacion !== 'aprobado_final' && reqActual?.estado_aprobacion !== 'rechazada') {
                                   setModoEdicion(true);
                                 } else if (reqActual?.estado_aprobacion === 'rechazada') {

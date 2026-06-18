@@ -18,6 +18,7 @@ import ResumenSesion from './ResumenSesion';
 import ResumenEjecutivo from './ResumenEjecutivo';
 import AnalyticsCompras from './AnalyticsCompras';
 import ControlPrecios from './ControlPrecios';
+import LiquidacionFacturas from './LiquidacionFacturas';
 import AsistenteAyuda from './components/AsistenteAyuda';
 import { Menu, X as CloseIcon, Search, Cloud, Sun, ChevronDown, Power, LayoutDashboard, BarChartBig, Gauge } from 'lucide-react';
 
@@ -72,7 +73,7 @@ function Dashboard() {
     const todosModulos = [
       'dashboard', 'requisiciones', 'fondos', 'tickets', 'almacen',
       'compras', 'reportesmaestro', 'reportes', 'proveedores',
-      'analytics_compras', 'ejecutivo', 'control_precios', 'usuarios', 'atributos', 'administracion'
+      'analytics_compras', 'ejecutivo', 'control_precios', 'usuarios', 'atributos', 'administracion', 'liquidacion'
     ];
     todosModulos.forEach(modId => {
       permisos[modId] = modulos.includes(modId);
@@ -406,13 +407,15 @@ function Dashboard() {
       reportesmaestro: { titulo: "Centro de Reportes Maestro", icon: "fa-chart-line", color: "#6366f1" },
       reportestickets: { titulo: "Reporte de Tickets", icon: "fa-file-contract", color: "#f59e0b" },
       usuarios: { titulo: "Gestión de Usuarios", icon: "fa-users-gear", color: "#64748b" },
-      administracion: { titulo: "Administración Central", icon: "fa-gears", color: "#8b5cf6" }
+      administracion: { titulo: "Administración Central", icon: "fa-gears", color: "#8b5cf6" },
+      liquidacion: { titulo: "Liquidación de Facturas", icon: "fa-file-invoice-dollar", color: "#2563eb" }
     };
 
     if (seccionActiva === 'requisiciones') return <Requisiciones currentUserProp={usuario} />;
     if (seccionActiva === 'usuarios') return <Usuarios currentUser={usuario} onUserUpdate={(updatedUser) => setUsuario(buildUsuarioConPermisos(updatedUser))} />;
     if (seccionActiva === 'fondos') return <SolicitudFondos currentUserProp={usuario} />;
     if (seccionActiva === 'tickets') return <ModuloTicketsPago currentUser={usuario} />;
+    if (seccionActiva === 'liquidacion') return <LiquidacionFacturas currentUser={usuario} />;
     if (seccionActiva === 'compras') return <Compras currentUser={usuario} />;
     if (seccionActiva === 'reportes') return <Reportes />;
     if (seccionActiva === 'reportesmaestro') return <ReportesMaestro />;
@@ -840,6 +843,7 @@ function Dashboard() {
                   { id: 'requisiciones', icon: 'fa-file-signature', label: 'Requisiciones' },
                   { id: 'fondos', icon: 'fa-hand-holding-dollar', label: 'Solicitud de Fondos' },
                   { id: 'tickets', icon: 'fa-ticket', label: 'Ticket de Pago' },
+                  { id: 'liquidacion', icon: 'fa-file-invoice-dollar', label: 'Cuentas por Pagar (Procura)' },
                   { id: 'almacen', icon: 'fa-warehouse', label: 'Almacén' }
                 ]
               },
