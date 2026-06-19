@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { supabase } from './supabaseClient';
 import Requisiciones from './Requisiciones';
 import TicketExpress from './TicketExpress';
@@ -246,6 +246,12 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
   };
   const [quickFilter, setQuickFilter] = useState("SemanaActual");
   const [hasChanges, setHasChanges] = useState(false);
+
+  // --- ESTADOS Y REFS PARA CO-PRESENCIA MULTIUSUARIO (Supabase Presence) ---
+  const [activeUsers, setActiveUsers] = useState([]);
+  const [selectedRowsByOthers, setSelectedRowsByOthers] = useState({});
+  const presenceChannelRef = useRef(null);
+  const blurTimeoutRef = useRef(null);
 
   // --- FUNCIÓN PARA ELIMINAR ---
   const eliminarSolicitud = (id_db) => {
@@ -782,10 +788,119 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       })
       .subscribe();
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
   }, [cargarTodo]);
+
+  // --- EFECTO DE PRESENCIA MULTIUSUARIO ---
+  useEffect(() => {
+    if (!showModal || !currentUser) {
+      if (presenceChannelRef.current) {
+        supabase.removeChannel(presenceChannelRef.current);
+        presenceChannelRef.current = null;
+      }
+      setActiveUsers([]);
+      setSelectedRowsByOthers({});
+      return;
+    }
+
+    const depto = currentUser.departamento || '';
+    const channelId = form.id_db 
+      ? `solicitud_presencia_${form.id_db}` 
+      : `solicitud_presencia_nueva_${depto.replace(/\s+/g, '_')}`;
+
+    console.log(`[PRESENCE] Suscribiendo al canal: ${channelId}`);
+    const channel = supabase.channel(channelId);
+    presenceChannelRef.current = channel;
+
+    channel
+      .on('presence', { event: 'sync' }, () => {
+        const state = channel.presenceState();
+        const users = Object.entries(state).flatMap(([ref, presences]) => {
+          return presences.map(p => ({
+            presence_ref: ref,
+            ...p
+          }));
+        });
+        
+        // Deduplicar usuarios por user_id
+        const uniqueUsers = [];
+        const seenIds = new Set();
+        for (const u of users) {
+          if (u.user_id && !seenIds.has(u.user_id)) {
+            seenIds.add(u.user_id);
+            uniqueUsers.push(u);
+          }
+        }
+        console.log('[PRESENCE] Usuarios activos:', uniqueUsers);
+        setActiveUsers(uniqueUsers);
+      })
+      .on('broadcast', { event: 'checkbox_change' }, ({ payload }) => {
+        const { user_id, rowId, selected } = payload;
+        if (user_id !== currentUser.id) {
+          setSelectedRowsByOthers(prev => {
+            const next = { ...prev };
+            if (selected) {
+              next[rowId] = user_id;
+            } else {
+              delete next[rowId];
+            }
+            return next;
+          });
+        }
+      })
+      .subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          await channel.track({
+            user_id: currentUser.id,
+            nombre: `${currentUser.nombre} ${currentUser.apellido}`,
+            gerencia: currentUser.departamento,
+            fila_editando: null
+          });
+        }
+      });
+
+    return () => {
+      console.log(`[PRESENCE] Desuscribiendo del canal: ${channelId}`);
+      if (presenceChannelRef.current) {
+        supabase.removeChannel(presenceChannelRef.current);
+        presenceChannelRef.current = null;
+      }
+      setActiveUsers([]);
+      setSelectedRowsByOthers({});
+    };
+  }, [showModal, currentUser, form.id_db]);
+
+  // Limpiar temporizador de blur al desmontar
+  useEffect(() => {
+    return () => {
+      if (blurTimeoutRef.current) clearTimeout(blurTimeoutRef.current);
+    };
+  }, []);
+
+  const handleFocusRow = (rowId) => {
+    if (blurTimeoutRef.current) clearTimeout(blurTimeoutRef.current);
+    if (presenceChannelRef.current) {
+      presenceChannelRef.current.track({
+        user_id: currentUser?.id,
+        nombre: `${currentUser?.nombre} ${currentUser?.apellido}`,
+        gerencia: currentUser?.departamento,
+        fila_editando: rowId
+      });
+    }
+  };
+
+  const handleBlurRow = () => {
+    if (blurTimeoutRef.current) clearTimeout(blurTimeoutRef.current);
+    blurTimeoutRef.current = setTimeout(() => {
+      if (presenceChannelRef.current) {
+        presenceChannelRef.current.track({
+          user_id: currentUser?.id,
+          nombre: `${currentUser?.nombre} ${currentUser?.apellido}`,
+          gerencia: currentUser?.departamento,
+          fila_editando: null
+        });
+      }
+    }, 150);
+  };
 
   const obtenerGerentePorCentroCosto = (cc) => {
     if (!cc) return null;
@@ -2804,10 +2919,45 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                       {isExpired ? 'SEMANA CERRADA' : 'SEMANA ACTIVA'}
                     </div>
                   </div>
-                  <div style={{ marginTop: '6px' }}>
-                    <span style={{ background: '#0f172a', color: 'white', padding: '3px 10px', borderRadius: '6px', fontSize: '10px', fontWeight: 'bold' }}>
+                  <div style={{ marginTop: '6px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ background: '#0f172a', color: 'white', padding: '3px 10px', borderRadius: '6px', fontSize: '10px', fontWeight: 'bold', display: 'inline-block' }}>
                       ID CONTROL: {idDinamico}
                     </span>
+                    {activeUsers.length > 0 && (
+                      <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+                        {activeUsers.map(u => (
+                          <div
+                            key={u.presence_ref || u.user_id}
+                            className="sf-presence-avatar"
+                            title={`${u.nombre} - ${u.gerencia || 'Sin Gerencia'}`}
+                            style={{
+                              width: '24px',
+                              height: '24px',
+                              borderRadius: '50%',
+                              backgroundColor: '#e0f2fe',
+                              color: '#2d2d2d',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              fontSize: '11px',
+                              fontWeight: 'bold',
+                              border: '1.5px solid #bae6fd',
+                              cursor: 'default',
+                              boxSizing: 'border-box'
+                            }}
+                          >
+                            {(() => {
+                              if (!u.nombre) return '??';
+                              const parts = u.nombre.trim().split(/\s+/);
+                              if (parts.length >= 2) {
+                                return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+                              }
+                              return parts[0].substring(0, 2).toUpperCase();
+                            })()}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -3208,98 +3358,112 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                     </div>
 
                     <div style={{ maxHeight: '40vh', overflowY: 'auto' }}>
-                      {partidasFiltradas.map((p, i) => (
-                        <div key={p.id} className="sf-table-row" style={{
-                          background: (p.requisicion_id || p.codigo_ticket || p.status === 'Bloqueado') ? '#f1f5f9' : (p.selected ? '#e0f2fe' : 'transparent'),
-                          opacity: 1
-                        }}>
-                          <div style={{ width: '40px', textAlign: 'center' }}>
-                            <input
-                              type="checkbox"
-                              checked={p.selected || false}
-                              onChange={(e) => manejarCambioPartida(p.originalIndex, 'selected', e.target.checked)}
-                              style={{ cursor: (isReadOnly || p.requisicion_id || p.codigo_ticket || p.status === 'Bloqueado') ? 'not-allowed' : 'pointer', transform: 'scale(1.2)' }}
-                              disabled={isReadOnly || !!p.requisicion_id || !!p.codigo_ticket || p.status === 'Bloqueado'}
-                              title={p.codigo_ticket ? `Ticket Emitido: ${p.codigo_ticket}` : (p.requisicion_id ? "Bloqueado por Requisición" : "")}
-                            />
-                          </div>
-                          <div style={{ width: '45px', textAlign: 'center', fontWeight: 'bold', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'center' }}>
-                            {i + 1}
-                            {p.codigo_ref?.startsWith('TP-') && <span title={`Ticket: ${p.codigo_ref}`}>🎟️</span>}
-                            {p.codigo_ref?.startsWith('RR-') && <span title={`Requisición: ${p.codigo_ref}`}>📝</span>}
-                            {p.pago_realizado && <span title="Pago Completado">✅</span>}
-                          </div>
-                          <div style={{ width: '130px', padding: '6px', fontSize: '10px', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                            {p.codigo_ref ? (
-                              <div
-                                onClick={() => handleClicCodigoRef(p.codigo_ref)}
-                                style={{
-                                  backgroundColor: p.isReqCompletada ? '#10b981' : '#0ea5e9',
-                                  color: 'white',
-                                  padding: '6px 12px',
-                                  borderRadius: '8px',
-                                  fontSize: '11px',
-                                  fontWeight: '800',
-                                  boxShadow: p.isReqCompletada ? '0 2px 6px rgba(16, 185, 129, 0.3)' : '0 2px 6px rgba(14, 165, 233, 0.3)',
-                                  cursor: 'pointer',
-                                  transition: 'all 0.2s',
-                                  userSelect: 'none'
+                      {partidasFiltradas.map((p, i) => {
+                        const editingUser = activeUsers.find(u => u.fila_editando === p.id && u.user_id !== currentUser?.id);
+                        const isSelectedByOther = !!selectedRowsByOthers[p.id];
+                        return (
+                          <div key={p.id} className={`sf-table-row ${editingUser ? 'sf-row-editing' : ''}`} style={{
+                            background: (p.requisicion_id || p.codigo_ticket || p.status === 'Bloqueado') ? '#f1f5f9' : (p.selected ? '#e0f2fe' : (editingUser ? '#fff1f2' : 'transparent')),
+                            opacity: 1
+                          }}>
+                            <div style={{ width: '40px', textAlign: 'center' }}>
+                              <input
+                                type="checkbox"
+                                checked={p.selected || false}
+                                onChange={(e) => {
+                                  const val = e.target.checked;
+                                  manejarCambioPartida(p.originalIndex, 'selected', val);
+                                  if (presenceChannelRef.current) {
+                                    presenceChannelRef.current.send({
+                                      type: 'broadcast',
+                                      event: 'checkbox_change',
+                                      payload: { user_id: currentUser?.id, rowId: p.id, selected: val }
+                                    });
+                                  }
                                 }}
-                                onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = p.isReqCompletada ? '#059669' : '#0284c7'; e.currentTarget.style.transform = 'scale(1.05)'; }}
-                                onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = p.isReqCompletada ? '#10b981' : '#0ea5e9'; e.currentTarget.style.transform = 'scale(1)'; }}
-                                title={p.isReqCompletada ? `Requisición COMPLETAMENTE COMPRADA: ${p.codigo_ref}` : `Haga clic para ver el detalle de ${p.codigo_ref}`}
-                              >
-                                {p.codigo_ref} {p.isReqCompletada ? '✅' : ''}
-                              </div>
-                            ) : (
-                              <span style={{ color: '#cbd5e1' }}>---</span>
-                            )}
+                                style={{ cursor: (isReadOnly || p.requisicion_id || p.codigo_ticket || p.status === 'Bloqueado' || isSelectedByOther || !!editingUser) ? 'not-allowed' : 'pointer', transform: 'scale(1.2)' }}
+                                disabled={isReadOnly || !!p.requisicion_id || !!p.codigo_ticket || p.status === 'Bloqueado' || isSelectedByOther || !!editingUser}
+                                title={p.codigo_ticket ? `Ticket Emitido: ${p.codigo_ticket}` : (p.requisicion_id ? "Bloqueado por Requisición" : (isSelectedByOther ? "Seleccionado por otro usuario" : (editingUser ? `Editando... (${editingUser.nombre})` : "")))}
+                              />
+                            </div>
+                            <div style={{ width: '45px', textAlign: 'center', fontWeight: 'bold', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'center' }}>
+                              {i + 1}
+                              {p.codigo_ref?.startsWith('TP-') && <span title={`Ticket: ${p.codigo_ref}`}>🎟️</span>}
+                              {p.codigo_ref?.startsWith('RR-') && <span title={`Requisición: ${p.codigo_ref}`}>📝</span>}
+                              {p.pago_realizado && <span title="Pago Completado">✅</span>}
+                            </div>
+                            <div style={{ width: '130px', padding: '6px', fontSize: '10px', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                              {p.codigo_ref ? (
+                                <div
+                                  onClick={() => handleClicCodigoRef(p.codigo_ref)}
+                                  style={{
+                                    backgroundColor: p.isReqCompletada ? '#10b981' : '#0ea5e9',
+                                    color: 'white',
+                                    padding: '6px 12px',
+                                    borderRadius: '8px',
+                                    fontSize: '11px',
+                                    fontWeight: '800',
+                                    boxShadow: p.isReqCompletada ? '0 2px 6px rgba(16, 185, 129, 0.3)' : '0 2px 6px rgba(14, 165, 233, 0.3)',
+                                    cursor: 'pointer',
+                                    transition: 'all 0.2s',
+                                    userSelect: 'none'
+                                  }}
+                                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = p.isReqCompletada ? '#059669' : '#0284c7'; e.currentTarget.style.transform = 'scale(1.05)'; }}
+                                  onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = p.isReqCompletada ? '#10b981' : '#0ea5e9'; e.currentTarget.style.transform = 'scale(1)'; }}
+                                  title={p.isReqCompletada ? `Requisición COMPLETAMENTE COMPRADA: ${p.codigo_ref}` : `Haga clic para ver el detalle de ${p.codigo_ref}`}
+                                >
+                                  {p.codigo_ref} {p.isReqCompletada ? '✅' : ''}
+                                </div>
+                              ) : (
+                                <span style={{ color: '#cbd5e1' }}>---</span>
+                              )}
+                            </div>
+                            <div style={{ width: '180px', padding: '6px' }}>
+                              <select className="sf-table-input" value={p.cc} onChange={(e) => manejarCambioPartida(p.originalIndex, 'cc', e.target.value)} style={{ fontWeight: 'bold' }} disabled={isReadOnly || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow}>
+                                <option value="">Seleccione C.C...</option>
+                                {centrosCosto.map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>)}
+                              </select>
+                            </div>
+                            <div style={{ width: '215px', padding: '6px' }}>
+                              <select className="sf-table-input" value={p.clasif} onChange={(e) => manejarCambioPartida(p.originalIndex, 'clasif', e.target.value)} disabled={isReadOnly || !p.cc || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow}>
+                                <option value="">Clasificación...</option>
+                                {(() => {
+                                  const ccObj = centrosCosto.find(c => c.nombre === p.cc);
+                                  return todasClasificaciones
+                                    .filter(cl => cl.padreId === ccObj?.id)
+                                    .map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>);
+                                })()}
+                              </select>
+                            </div>
+                            <div style={{ width: '215px', padding: '6px' }}>
+                              <select className="sf-table-input" value={p.cat} onChange={(e) => manejarCambioPartida(p.originalIndex, 'cat', e.target.value)} disabled={isReadOnly || !p.clasif || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow}>
+                                <option value="">Categoría...</option>
+                                {(() => {
+                                  const ccObj = centrosCosto.find(c => c.nombre === p.cc);
+                                  const clObj = todasClasificaciones.find(cl => cl.nombre === p.clasif && cl.padreId === ccObj?.id);
+                                  return todasCategorias
+                                    .filter(ct => ct.padreId === clObj?.id)
+                                    .map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>);
+                                })()}
+                              </select>
+                            </div>
+                            <div style={{ width: '80px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.cant} onChange={(e) => manejarCambioPartida(p.originalIndex, 'cant', e.target.value)} style={{ textAlign: 'center' }} disabled={isReadOnly || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow} /></div>
+                            <div style={{ width: '90px', padding: '6px' }}><select className="sf-table-input" value={p.uni} onChange={(e) => manejarCambioPartida(p.originalIndex, 'uni', e.target.value)} disabled={isReadOnly || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow}>{unidades.map(u => <option key={u}>{u}</option>)}</select></div>
+                            <div style={{ width: '460px', padding: '10px' }}><textarea className="sf-table-input" value={p.desc} onChange={(e) => manejarCambioPartida(p.originalIndex, 'desc', e.target.value)} style={{ resize: 'none' }} rows="1" disabled={isReadOnly || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow} /></div>
+                            <div style={{ width: '200px', padding: '6px' }}><input className="sf-table-input" value={p.ben} onChange={(e) => manejarCambioPartida(p.originalIndex, 'ben', e.target.value)} disabled={isReadOnly || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow} /></div>
+                            <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puBs === 0 ? '' : p.puBs} onChange={(e) => manejarCambioPartida(p.originalIndex, 'puBs', e.target.value)} style={{ textAlign: 'left' }} disabled={isReadOnly || p.puUsd > 0 || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow} /></div>
+                            <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puUsd === 0 ? '' : p.puUsd} onChange={(e) => manejarCambioPartida(p.originalIndex, 'puUsd', e.target.value)} style={{ textAlign: 'left' }} disabled={isReadOnly || p.puBs > 0 || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow} /></div>
+                            <div style={{ width: '120px', padding: '6px', textAlign: 'left', fontWeight: 'bold' }}>{((parseFloat(p.puBs) || parseFloat(p.puUsd) || 0) * (p.cant || 0)).toLocaleString('de-DE')}</div>
+                            <div style={{ width: '130px', padding: '6px', fontSize: '9px', color: editingUser ? '#e11d48' : '#64748b', fontWeight: editingUser ? 'bold' : '600' }}>
+                              {editingUser ? `✏️ Editando... (${editingUser.nombre})` : (p.emisor || '---')}
+                            </div>
+                            <div style={{ width: '80px', display: 'flex', gap: '5px', justifyContent: 'center' }}>
+                              <button onClick={() => duplicarPartida(p.originalIndex)} style={{ background: 'none', border: 'none', color: '#0ea5e9', cursor: (isReadOnly || p.codigo_ticket || p.requisicion_id || !!editingUser) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (isReadOnly || p.codigo_ticket || p.requisicion_id || !!editingUser) ? 0.3 : 1 }} disabled={isReadOnly || !!p.codigo_ticket || !!p.requisicion_id || !!editingUser} title="Duplicar renglón"><Copy size={16} /></button>
+                              <button onClick={() => { setHasChanges(true); setForm({ ...form, partidas: form.partidas.filter((_, idx) => idx !== p.originalIndex) }); }} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: (isReadOnly || p.codigo_ticket || p.requisicion_id || !!editingUser) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (isReadOnly || p.codigo_ticket || p.requisicion_id || !!editingUser) ? 0.3 : 1 }} disabled={isReadOnly || !!p.codigo_ticket || !!p.requisicion_id || !!editingUser} title="Eliminar renglón">🗑️</button>
+                            </div>
                           </div>
-                          <div style={{ width: '180px', padding: '6px' }}>
-                            <select className="sf-table-input" value={p.cc} onChange={(e) => manejarCambioPartida(p.originalIndex, 'cc', e.target.value)} style={{ fontWeight: 'bold' }} disabled={isReadOnly || !!p.codigo_ref}>
-                              <option value="">Seleccione C.C...</option>
-                              {centrosCosto.map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>)}
-                            </select>
-                          </div>
-                          <div style={{ width: '215px', padding: '6px' }}>
-                            <select className="sf-table-input" value={p.clasif} onChange={(e) => manejarCambioPartida(p.originalIndex, 'clasif', e.target.value)} disabled={isReadOnly || !p.cc || !!p.codigo_ref}>
-                              <option value="">Clasificación...</option>
-                              {(() => {
-                                const ccObj = centrosCosto.find(c => c.nombre === p.cc);
-                                return todasClasificaciones
-                                  .filter(cl => cl.padreId === ccObj?.id)
-                                  .map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>);
-                              })()}
-                            </select>
-                          </div>
-                          <div style={{ width: '215px', padding: '6px' }}>
-                            <select className="sf-table-input" value={p.cat} onChange={(e) => manejarCambioPartida(p.originalIndex, 'cat', e.target.value)} disabled={isReadOnly || !p.clasif || !!p.codigo_ref}>
-                              <option value="">Categoría...</option>
-                              {(() => {
-                                const ccObj = centrosCosto.find(c => c.nombre === p.cc);
-                                const clObj = todasClasificaciones.find(cl => cl.nombre === p.clasif && cl.padreId === ccObj?.id);
-                                return todasCategorias
-                                  .filter(ct => ct.padreId === clObj?.id)
-                                  .map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>);
-                              })()}
-                            </select>
-                          </div>
-                          <div style={{ width: '80px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.cant} onChange={(e) => manejarCambioPartida(p.originalIndex, 'cant', e.target.value)} style={{ textAlign: 'center' }} disabled={isReadOnly || !!p.codigo_ref} /></div>
-                          <div style={{ width: '90px', padding: '6px' }}><select className="sf-table-input" value={p.uni} onChange={(e) => manejarCambioPartida(p.originalIndex, 'uni', e.target.value)} disabled={isReadOnly || !!p.codigo_ref}>{unidades.map(u => <option key={u}>{u}</option>)}</select></div>
-                          <div style={{ width: '460px', padding: '10px' }}><textarea className="sf-table-input" value={p.desc} onChange={(e) => manejarCambioPartida(p.originalIndex, 'desc', e.target.value)} style={{ resize: 'none' }} rows="1" disabled={isReadOnly || !!p.codigo_ref} /></div>
-                          <div style={{ width: '200px', padding: '6px' }}><input className="sf-table-input" value={p.ben} onChange={(e) => manejarCambioPartida(p.originalIndex, 'ben', e.target.value)} disabled={isReadOnly || !!p.codigo_ref} /></div>
-                          <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puBs === 0 ? '' : p.puBs} onChange={(e) => manejarCambioPartida(p.originalIndex, 'puBs', e.target.value)} style={{ textAlign: 'left' }} disabled={isReadOnly || p.puUsd > 0 || !!p.codigo_ref} /></div>
-                          <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puUsd === 0 ? '' : p.puUsd} onChange={(e) => manejarCambioPartida(p.originalIndex, 'puUsd', e.target.value)} style={{ textAlign: 'left' }} disabled={isReadOnly || p.puBs > 0 || !!p.codigo_ref} /></div>
-                          <div style={{ width: '120px', padding: '6px', textAlign: 'left', fontWeight: 'bold' }}>{((parseFloat(p.puBs) || parseFloat(p.puUsd) || 0) * (p.cant || 0)).toLocaleString('de-DE')}</div>
-                          <div style={{ width: '130px', padding: '6px', fontSize: '9px', color: '#64748b', fontWeight: '600' }}>
-                            {p.emisor || '---'}
-                          </div>
-                          <div style={{ width: '80px', display: 'flex', gap: '5px', justifyContent: 'center' }}>
-                            <button onClick={() => duplicarPartida(p.originalIndex)} style={{ background: 'none', border: 'none', color: '#0ea5e9', cursor: (isReadOnly || p.codigo_ticket || p.requisicion_id) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (isReadOnly || p.codigo_ticket || p.requisicion_id) ? 0.3 : 1 }} disabled={isReadOnly || !!p.codigo_ticket || !!p.requisicion_id} title="Duplicar renglón"><Copy size={16} /></button>
-                            <button onClick={() => { setHasChanges(true); setForm({ ...form, partidas: form.partidas.filter((_, idx) => idx !== p.originalIndex) }); }} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: (isReadOnly || p.codigo_ticket || p.requisicion_id) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (isReadOnly || p.codigo_ticket || p.requisicion_id) ? 0.3 : 1 }} disabled={isReadOnly || !!p.codigo_ticket || !!p.requisicion_id} title="Eliminar renglón">🗑️</button>
-                          </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 </div>
@@ -3331,97 +3495,111 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                     </div>
 
                     <div style={{ maxHeight: '30vh', overflowY: 'auto' }}>
-                      {imprevistosFiltrados.map((imp, i) => (
-                        <div key={imp.id} className="sf-table-row" style={{
-                          background: (imp.requisicion_id || imp.status === 'Bloqueado') ? '#f1f5f9' : (imp.selected ? '#fffcf0' : 'transparent'),
-                          opacity: 1
-                        }}>
-                          <div style={{ width: '40px', textAlign: 'center' }}>
-                            <input
-                              type="checkbox"
-                              checked={imp.selected || false}
-                              onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'selected', e.target.checked)}
-                              style={{ cursor: (imp.requisicion_id || imp.status === 'Bloqueado') ? 'not-allowed' : 'pointer', transform: 'scale(1.2)' }}
-                              disabled={!!imp.requisicion_id || imp.status === 'Bloqueado'}
-                              title={(imp.requisicion_id || imp.status === 'Bloqueado') ? "Esta partida está bloqueada por una requisición activa" : ""}
-                            />
-                          </div>
-                          <div style={{ width: '45px', textAlign: 'center', fontWeight: 'bold', color: '#d97706', display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'center' }}>
-                            {i + 1}
-                            {imp.codigo_ref?.startsWith('TP-') && <span title={`Ticket: ${imp.codigo_ref}`}>🎟️</span>}
-                            {imp.pago_realizado && <span title="Pago Completado">✅</span>}
-                          </div>
-                          <div style={{ width: '130px', padding: '6px', fontSize: '10px', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                            {imp.codigo_ref ? (
-                              <div
-                                onClick={() => handleClicCodigoRef(imp.codigo_ref)}
-                                style={{
-                                  backgroundColor: imp.isReqCompletada ? '#10b981' : '#f59e0b',
-                                  color: 'white',
-                                  padding: '6px 12px',
-                                  borderRadius: '8px',
-                                  fontSize: '11px',
-                                  fontWeight: '800',
-                                  boxShadow: imp.isReqCompletada ? '0 2px 6px rgba(16, 185, 129, 0.3)' : '0 2px 6px rgba(245, 158, 11, 0.3)',
-                                  cursor: 'pointer',
-                                  transition: 'all 0.2s',
-                                  userSelect: 'none'
+                      {imprevistosFiltrados.map((imp, i) => {
+                        const editingImpUser = activeUsers.find(u => u.fila_editando === imp.id && u.user_id !== currentUser?.id);
+                        const isImpSelectedByOther = !!selectedRowsByOthers[imp.id];
+                        return (
+                          <div key={imp.id} className={`sf-table-row ${editingImpUser ? 'sf-row-editing' : ''}`} style={{
+                            background: (imp.requisicion_id || imp.status === 'Bloqueado') ? '#f1f5f9' : (imp.selected ? '#fffcf0' : (editingImpUser ? '#fff1f2' : 'transparent')),
+                            opacity: 1
+                          }}>
+                            <div style={{ width: '40px', textAlign: 'center' }}>
+                              <input
+                                type="checkbox"
+                                checked={imp.selected || false}
+                                onChange={(e) => {
+                                  const val = e.target.checked;
+                                  manejarCambioImprevisto(imp.originalIndex, 'selected', val);
+                                  if (presenceChannelRef.current) {
+                                    presenceChannelRef.current.send({
+                                      type: 'broadcast',
+                                      event: 'checkbox_change',
+                                      payload: { user_id: currentUser?.id, rowId: imp.id, selected: val }
+                                    });
+                                  }
                                 }}
-                                onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = imp.isReqCompletada ? '#059669' : '#d97706'; e.currentTarget.style.transform = 'scale(1.05)'; }}
-                                onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = imp.isReqCompletada ? '#10b981' : '#f59e0b'; e.currentTarget.style.transform = 'scale(1)'; }}
-                                title={imp.isReqCompletada ? `Requisición COMPLETAMENTE COMPRADA: ${imp.codigo_ref}` : `Haga clic para ver el detalle de ${imp.codigo_ref}`}
-                              >
-                                {imp.codigo_ref} {imp.isReqCompletada ? '✅' : ''}
-                              </div>
-                            ) : (
-                              <span style={{ color: '#cbd5e1' }}>---</span>
-                            )}
+                                style={{ cursor: (imp.requisicion_id || imp.status === 'Bloqueado' || isImpSelectedByOther || !!editingImpUser) ? 'not-allowed' : 'pointer', transform: 'scale(1.2)' }}
+                                disabled={!!imp.requisicion_id || imp.status === 'Bloqueado' || isImpSelectedByOther || !!editingImpUser}
+                                title={(imp.requisicion_id || imp.status === 'Bloqueado') ? "Esta partida está bloqueada por una requisición activa" : (isImpSelectedByOther ? "Seleccionado por otro usuario" : (editingImpUser ? `Editando... (${editingImpUser.nombre})` : ""))}
+                              />
+                            </div>
+                            <div style={{ width: '45px', textAlign: 'center', fontWeight: 'bold', color: '#d97706', display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'center' }}>
+                              {i + 1}
+                              {imp.codigo_ref?.startsWith('TP-') && <span title={`Ticket: ${imp.codigo_ref}`}>🎟️</span>}
+                              {imp.pago_realizado && <span title="Pago Completado">✅</span>}
+                            </div>
+                            <div style={{ width: '130px', padding: '6px', fontSize: '10px', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                              {imp.codigo_ref ? (
+                                <div
+                                  onClick={() => handleClicCodigoRef(imp.codigo_ref)}
+                                  style={{
+                                    backgroundColor: imp.isReqCompletada ? '#10b981' : '#f59e0b',
+                                    color: 'white',
+                                    padding: '6px 12px',
+                                    borderRadius: '8px',
+                                    fontSize: '11px',
+                                    fontWeight: '800',
+                                    boxShadow: imp.isReqCompletada ? '0 2px 6px rgba(16, 185, 129, 0.3)' : '0 2px 6px rgba(245, 158, 11, 0.3)',
+                                    cursor: 'pointer',
+                                    transition: 'all 0.2s',
+                                    userSelect: 'none'
+                                  }}
+                                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = imp.isReqCompletada ? '#059669' : '#d97706'; e.currentTarget.style.transform = 'scale(1.05)'; }}
+                                  onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = imp.isReqCompletada ? '#10b981' : '#f59e0b'; e.currentTarget.style.transform = 'scale(1)'; }}
+                                  title={imp.isReqCompletada ? `Requisición COMPLETAMENTE COMPRADA: ${imp.codigo_ref}` : `Haga clic para ver el detalle de ${imp.codigo_ref}`}
+                                >
+                                  {imp.codigo_ref} {imp.isReqCompletada ? '✅' : ''}
+                                </div>
+                              ) : (
+                                <span style={{ color: '#cbd5e1' }}>---</span>
+                              )}
+                            </div>
+                            <div style={{ width: '180px', padding: '6px' }}>
+                              <select className="sf-table-input" value={imp.cc} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'cc', e.target.value)} style={{ fontWeight: 'bold' }} disabled={isReadOnly || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow}>
+                                <option value="">Seleccione C.C...</option>
+                                {centrosCosto.map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>)}
+                              </select>
+                            </div>
+                            <div style={{ width: '215px', padding: '6px' }}>
+                              <select className="sf-table-input" value={imp.clasif} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'clasif', e.target.value)} disabled={isReadOnly || !imp.cc || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow}>
+                                <option value="">Clasificación...</option>
+                                {(() => {
+                                  const ccObj = centrosCosto.find(c => c.nombre === imp.cc);
+                                  return todasClasificaciones
+                                    .filter(cl => cl.padreId === ccObj?.id)
+                                    .map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>);
+                                })()}
+                              </select>
+                            </div>
+                            <div style={{ width: '215px', padding: '6px' }}>
+                              <select className="sf-table-input" value={imp.cat} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'cat', e.target.value)} disabled={isReadOnly || !imp.clasif || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow}>
+                                <option value="">Categoría...</option>
+                                {(() => {
+                                  const ccObj = centrosCosto.find(c => c.nombre === imp.cc);
+                                  const clObj = todasClasificaciones.find(cl => cl.nombre === imp.clasif && cl.padreId === ccObj?.id);
+                                  return todasCategorias
+                                    .filter(ct => ct.padreId === clObj?.id)
+                                    .map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>);
+                                })()}
+                              </select>
+                            </div>
+                            <div style={{ width: '80px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.cant} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'cant', e.target.value)} style={{ textAlign: 'center' }} disabled={isReadOnly || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow} /></div>
+                            <div style={{ width: '90px', padding: '6px' }}><select className="sf-table-input" value={imp.uni} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'uni', e.target.value)} disabled={isReadOnly || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow}>{unidades.map(u => <option key={u}>{u}</option>)}</select></div>
+                            <div style={{ width: '460px', padding: '10px' }}><textarea className="sf-table-input" value={imp.desc} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'desc', e.target.value)} style={{ resize: 'none' }} rows="1" disabled={isReadOnly || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow} /></div>
+                            <div style={{ width: '200px', padding: '6px' }}><input className="sf-table-input" value={imp.ben} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'ben', e.target.value)} disabled={isReadOnly || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow} /></div>
+                            <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.puBs === 0 ? '' : imp.puBs} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'puBs', e.target.value)} style={{ textAlign: 'right' }} disabled={isReadOnly || imp.puUsd > 0 || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow} /></div>
+                            <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.puUsd === 0 ? '' : imp.puUsd} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'puUsd', e.target.value)} style={{ textAlign: 'right' }} disabled={isReadOnly || imp.puBs > 0 || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow} /></div>
+                            <div style={{ width: '120px', padding: '6px', textAlign: 'right', fontWeight: 'bold' }}>{((parseFloat(imp.puBs) || parseFloat(imp.puUsd) || 0) * (imp.cant || 1)).toLocaleString('de-DE')}</div>
+                            <div style={{ width: '130px', padding: '6px', fontSize: '9px', color: editingImpUser ? '#e11d48' : '#64748b', fontWeight: editingImpUser ? 'bold' : '600' }}>
+                              {editingImpUser ? `✏️ Editando... (${editingImpUser.nombre})` : (imp.emisor || '---')}
+                            </div>
+                            <div style={{ width: '80px', display: 'flex', gap: '5px', justifyContent: 'center' }}>
+                              <button onClick={() => duplicarImprevisto(imp.originalIndex)} style={{ background: 'none', border: 'none', color: '#f59e0b', cursor: (isReadOnly || imp.codigo_ref || imp.status === 'Bloqueado' || !!editingImpUser) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (isReadOnly || imp.codigo_ref || imp.status === 'Bloqueado' || !!editingImpUser) ? 0.3 : 1 }} disabled={isReadOnly || !!imp.codigo_ref || imp.status === 'Bloqueado' || !!editingImpUser} title="Duplicar imprevisto"><Copy size={16} /></button>
+                              <button onClick={() => { setHasChanges(true); setForm({ ...form, imprevistos: form.imprevistos.filter((_, idx) => idx !== imp.originalIndex) }); }} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: (isReadOnly || imp.codigo_ref || imp.status === 'Bloqueado' || !!editingImpUser) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (isReadOnly || imp.codigo_ref || imp.status === 'Bloqueado' || !!editingImpUser) ? 0.3 : 1 }} disabled={isReadOnly || !!imp.codigo_ref || imp.status === 'Bloqueado' || !!editingImpUser} title="Eliminar imprevisto">🗑️</button>
+                            </div>
                           </div>
-                          <div style={{ width: '180px', padding: '6px' }}>
-                            <select className="sf-table-input" value={imp.cc} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'cc', e.target.value)} style={{ fontWeight: 'bold' }} disabled={isReadOnly || !!imp.codigo_ref}>
-                              <option value="">Seleccione C.C...</option>
-                              {centrosCosto.map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>)}
-                            </select>
-                          </div>
-                          <div style={{ width: '215px', padding: '6px' }}>
-                            <select className="sf-table-input" value={imp.clasif} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'clasif', e.target.value)} disabled={isReadOnly || !imp.cc || !!imp.codigo_ref}>
-                              <option value="">Clasificación...</option>
-                              {(() => {
-                                const ccObj = centrosCosto.find(c => c.nombre === imp.cc);
-                                return todasClasificaciones
-                                  .filter(cl => cl.padreId === ccObj?.id)
-                                  .map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>);
-                              })()}
-                            </select>
-                          </div>
-                          <div style={{ width: '215px', padding: '6px' }}>
-                            <select className="sf-table-input" value={imp.cat} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'cat', e.target.value)} disabled={isReadOnly || !imp.clasif || !!imp.codigo_ref}>
-                              <option value="">Categoría...</option>
-                              {(() => {
-                                const ccObj = centrosCosto.find(c => c.nombre === imp.cc);
-                                const clObj = todasClasificaciones.find(cl => cl.nombre === imp.clasif && cl.padreId === ccObj?.id);
-                                return todasCategorias
-                                  .filter(ct => ct.padreId === clObj?.id)
-                                  .map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>);
-                              })()}
-                            </select>
-                          </div>
-                          <div style={{ width: '80px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.cant} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'cant', e.target.value)} style={{ textAlign: 'center' }} disabled={isReadOnly || !!imp.codigo_ref} /></div>
-                          <div style={{ width: '90px', padding: '6px' }}><select className="sf-table-input" value={imp.uni} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'uni', e.target.value)} disabled={isReadOnly || !!imp.codigo_ref}>{unidades.map(u => <option key={u}>{u}</option>)}</select></div>
-                          <div style={{ width: '460px', padding: '10px' }}><textarea className="sf-table-input" value={imp.desc} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'desc', e.target.value)} style={{ resize: 'none' }} rows="1" disabled={isReadOnly || !!imp.codigo_ref} /></div>
-                          <div style={{ width: '200px', padding: '6px' }}><input className="sf-table-input" value={imp.ben} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'ben', e.target.value)} disabled={isReadOnly || !!imp.codigo_ref} /></div>
-                          <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.puBs === 0 ? '' : imp.puBs} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'puBs', e.target.value)} style={{ textAlign: 'right' }} disabled={isReadOnly || imp.puUsd > 0 || !!imp.codigo_ref} /></div>
-                          <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.puUsd === 0 ? '' : imp.puUsd} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'puUsd', e.target.value)} style={{ textAlign: 'right' }} disabled={isReadOnly || imp.puBs > 0 || !!imp.codigo_ref} /></div>
-                          <div style={{ width: '120px', padding: '6px', textAlign: 'right', fontWeight: 'bold' }}>{((parseFloat(imp.puBs) || parseFloat(imp.puUsd) || 0) * (imp.cant || 1)).toLocaleString('de-DE')}</div>
-                          <div style={{ width: '130px', padding: '6px', fontSize: '9px', color: '#64748b', fontWeight: '600' }}>
-                            {imp.emisor || '---'}
-                          </div>
-                          <div style={{ width: '80px', display: 'flex', gap: '5px', justifyContent: 'center' }}>
-                            <button onClick={() => duplicarImprevisto(imp.originalIndex)} style={{ background: 'none', border: 'none', color: '#f59e0b', cursor: (isReadOnly || imp.codigo_ref || imp.status === 'Bloqueado') ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (isReadOnly || imp.codigo_ref || imp.status === 'Bloqueado') ? 0.3 : 1 }} disabled={isReadOnly || !!imp.codigo_ref || imp.status === 'Bloqueado'} title="Duplicar imprevisto"><Copy size={16} /></button>
-                            <button onClick={() => { setHasChanges(true); setForm({ ...form, imprevistos: form.imprevistos.filter((_, idx) => idx !== imp.originalIndex) }); }} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: (isReadOnly || imp.codigo_ref || imp.status === 'Bloqueado') ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (isReadOnly || imp.codigo_ref || imp.status === 'Bloqueado') ? 0.3 : 1 }} disabled={isReadOnly || !!imp.codigo_ref || imp.status === 'Bloqueado'} title="Eliminar imprevisto">🗑️</button>
-                          </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                     {!isReadOnly && (
                       <div style={{ padding: '12px', background: '#fffcf0', borderTop: '1px solid #fef3c7', display: 'flex', justifyContent: 'center' }}>
