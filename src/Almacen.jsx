@@ -5,9 +5,21 @@ import {
   Search, FileText, Loader2, FileSpreadsheet, Trash2, ShieldAlert
 } from 'lucide-react';
 import jsPDF from 'jspdf';
-import 'jspdf-autotable';
+import autoTable from 'jspdf-autotable';
 import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
+
+const UBICACIONES_AUTORIZADAS = [
+  "Almacén Maracaibo",
+  "Almacén Campo Boscán",
+  "Almacén Bajo Grande"
+];
+
+const cleanAccents = (str) => {
+  if (!str) return '';
+  return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+};
+
 
 const Almacen = () => {
   const [comprasRaw, setComprasRaw] = useState([]);
@@ -66,57 +78,70 @@ const Almacen = () => {
           if (compras.length > 0) {
             // Formato multitransacción: cada transacción en el historial es una compra
             compras.forEach((h) => {
-              // Buscar índice real en el historial de compras original
-              const realHIdx = it.historial_compras.findIndex(itemH => itemH === h);
-              list.push({
-                id: `${r.id}-${itIdx}-${realHIdx}`,
-                req_id: r.id,
-                item_idx: itIdx,
-                history_idx: realHIdx,
-                is_legacy: false,
-                
-                descripcion: it.descripcion || 'Sin descripción',
-                proveedor: h.proveedor_nombre || 'Desconocido',
-                numero_factura: h.doc_numero || 'S/N',
-                fecha_compra: h.fecha,
-                solicitante: r.solicitante || 'N/A',
-                gerencia: r.gerencia || 'No asignada',
-                centro_costo: r.centro_costo || 'N/A',
-                moneda_pago: h.metodo_pago || '$ / BS',
-                cantidad_comprada: parseFloat(h.cant) || 0,
-                precio_unitario: parseFloat(h.pu) || 0,
-                total: (parseFloat(h.cant) || 0) * (parseFloat(h.pu) || 0),
-                
-                recibido: h.enviado_almacen || false,
-                almacen_destino: h.almacen_destino || '',
-                fecha_entrada_almacen: h.fecha_entrada_almacen || ''
-              });
+              const statusAlmacen = h.estatus_almacen || (h.enviado_almacen ? 'Ubicado' : 'Pendiente_Compras');
+              // Only load items that are ready for or already classified in the warehouse
+              if (statusAlmacen === 'Por_Clasificar_Almacen' || statusAlmacen === 'Ubicado') {
+                // Buscar índice real en el historial de compras original
+                const realHIdx = it.historial_compras.findIndex(itemH => itemH === h);
+                list.push({
+                  id: `${r.id}-${itIdx}-${realHIdx}`,
+                  transaction_id: h.id || `${r.id}-${itIdx}-${realHIdx}`,
+                  req_id: r.id,
+                  correlativo: r.correlativo_req || `REQ-${String(r.id).padStart(3, '0')}`,
+                  item_idx: itIdx,
+                  history_idx: realHIdx,
+                  is_legacy: false,
+                  
+                  descripcion: it.descripcion || 'Sin descripción',
+                  proveedor: h.proveedor_nombre || 'Desconocido',
+                  numero_factura: h.doc_numero || 'S/N',
+                  fecha_compra: h.fecha,
+                  solicitante: r.solicitante || 'N/A',
+                  gerencia: r.gerencia || 'No asignada',
+                  centro_costo: r.centro_costo || 'N/A',
+                  moneda_pago: h.metodo_pago || '$ / BS',
+                  cantidad_comprada: parseFloat(h.cant) || 0,
+                  precio_unitario: parseFloat(h.pu) || 0,
+                  total: (parseFloat(h.cant) || 0) * (parseFloat(h.pu) || 0),
+                  
+                  recibido: statusAlmacen === 'Ubicado',
+                  estatus_almacen: statusAlmacen,
+                  ubicacion_almacen: h.ubicacion_almacen || h.almacen_destino || '',
+                  fecha_entrada_almacen: h.fecha_entrada_almacen || ''
+                });
+              }
             });
           } else if (it.doc_numero || it.numero_factura) {
             // Formato legado: el ítem mismo es una compra única
-            list.push({
-              id: `${r.id}-${itIdx}-legacy`,
-              req_id: r.id,
-              item_idx: itIdx,
-              history_idx: -1,
-              is_legacy: true,
-              
-              descripcion: it.descripcion || 'Sin descripción',
-              proveedor: it.proveedor || 'Desconocido',
-              numero_factura: it.doc_numero || it.numero_factura || 'S/N',
-              fecha_compra: r.fecha_emision || r.created_at,
-              solicitante: r.solicitante || 'N/A',
-              gerencia: r.gerencia || 'No asignada',
-              centro_costo: r.centro_costo || 'N/A',
-              moneda_pago: it.metodo_pago || '$ / BS',
-              cantidad_comprada: parseFloat(it.cantidad_comprada || it.cant) || 0,
-              precio_unitario: parseFloat(it.pu) || 0,
-              total: (parseFloat(it.cantidad_comprada || it.cant) || 0) * (parseFloat(it.pu) || 0),
-              
-              recibido: it.enviado_almacen || false,
-              almacen_destino: it.almacen_destino || '',
-              fecha_entrada_almacen: it.fecha_entrada_almacen || ''
-            });
+            const statusAlmacen = it.estatus_almacen || (it.enviado_almacen ? 'Ubicado' : 'Pendiente_Compras');
+            if (statusAlmacen === 'Por_Clasificar_Almacen' || statusAlmacen === 'Ubicado') {
+              list.push({
+                id: `${r.id}-${itIdx}-legacy`,
+                transaction_id: `${r.id}-${itIdx}-legacy`,
+                req_id: r.id,
+                correlativo: r.correlativo_req || `REQ-${String(r.id).padStart(3, '0')}`,
+                item_idx: itIdx,
+                history_idx: -1,
+                is_legacy: true,
+                
+                descripcion: it.descripcion || 'Sin descripción',
+                proveedor: it.proveedor || 'Desconocido',
+                numero_factura: it.doc_numero || it.numero_factura || 'S/N',
+                fecha_compra: r.fecha_emision || r.created_at,
+                solicitante: r.solicitante || 'N/A',
+                gerencia: r.gerencia || 'No asignada',
+                centro_costo: r.centro_costo || 'N/A',
+                moneda_pago: it.metodo_pago || '$ / BS',
+                cantidad_comprada: parseFloat(it.cantidad_comprada || it.cant) || 0,
+                precio_unitario: parseFloat(it.pu) || 0,
+                total: (parseFloat(it.cantidad_comprada || it.cant) || 0) * (parseFloat(it.pu) || 0),
+                
+                recibido: statusAlmacen === 'Ubicado',
+                estatus_almacen: statusAlmacen,
+                ubicacion_almacen: it.ubicacion_almacen || it.almacen_destino || '',
+                fecha_entrada_almacen: it.fecha_entrada_almacen || ''
+              });
+            }
           }
         });
       });
@@ -132,6 +157,29 @@ const Almacen = () => {
 
   useEffect(() => {
     cargarDatos();
+
+    // SUSCRIPCIÓN REALTIME PARA ALMACÉN
+    const channel = supabase
+      .channel('almacen_realtime')
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'requisiciones'
+      }, (payload) => {
+        cargarDatos();
+      })
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'requisiciones'
+      }, (payload) => {
+        cargarDatos();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [cargarDatos]);
 
   // Filtrado de las compras
@@ -154,7 +202,7 @@ const Almacen = () => {
 
       const matchDestino = 
         filtroDestino === 'Todos' ||
-        c.almacen_destino === filtroDestino;
+        (c.ubicacion_almacen && cleanAccents(c.ubicacion_almacen).includes(cleanAccents(filtroDestino)));
 
       let matchFecha = true;
       const fPago = c.fecha_entrada_almacen ? c.fecha_entrada_almacen.split('T')[0] : '';
@@ -174,14 +222,13 @@ const Almacen = () => {
     const total = comprasRaw.length;
     const recibidos = comprasRaw.filter(c => c.recibido).length;
     const pendientes = total - recibidos;
-    const boscan = comprasRaw.filter(c => c.almacen_destino === 'Almacen Campo Boscan').length;
-    const maracaibo = comprasRaw.filter(c => c.almacen_destino === 'Almacen Maracaibo').length;
-    const bajoGrande = comprasRaw.filter(c => c.almacen_destino === 'Almacen Bajo Grande').length;
+    const boscan = comprasRaw.filter(c => c.ubicacion_almacen && cleanAccents(c.ubicacion_almacen).includes('boscan')).length;
+    const maracaibo = comprasRaw.filter(c => c.ubicacion_almacen && cleanAccents(c.ubicacion_almacen).includes('maracaibo')).length;
+    const bajoGrande = comprasRaw.filter(c => c.ubicacion_almacen && cleanAccents(c.ubicacion_almacen).includes('grande')).length;
 
     return { total, recibidos, pendientes, boscan, maracaibo, bajoGrande };
   }, [comprasRaw]);
 
-  // Registrar la recepción
   const handleRecibir = async (compra) => {
     const destinoSel = selectedAlmacenes[compra.id];
     if (!destinoSel) {
@@ -206,6 +253,8 @@ const Almacen = () => {
       const nowIso = new Date().toISOString();
 
       if (compra.is_legacy) {
+        item.estatus_almacen = 'Ubicado';
+        item.ubicacion_almacen = destinoSel;
         item.enviado_almacen = true;
         item.almacen_destino = destinoSel;
         item.fecha_entrada_almacen = nowIso;
@@ -214,14 +263,19 @@ const Almacen = () => {
         if (hist[compra.history_idx]) {
           hist[compra.history_idx] = {
             ...hist[compra.history_idx],
+            estatus_almacen: 'Ubicado',
+            ubicacion_almacen: destinoSel,
             enviado_almacen: true,
             almacen_destino: destinoSel,
             fecha_entrada_almacen: nowIso
           };
           item.historial_compras = hist;
-          // Si todos los ítems fueron procesados a almacén
+          // Si todos los ítems válidos fueron procesados a almacén
           const valid = hist.filter(h => h.tipo !== 'JUSTIFICACION' && h.tipo !== 'ANULACION');
-          item.enviado_almacen = valid.every(c => c.enviado_almacen);
+          const allLocated = valid.every(c => c.estatus_almacen === 'Ubicado' || c.enviado_almacen === true);
+          item.estatus_almacen = allLocated ? 'Ubicado' : 'Por_Clasificar_Almacen';
+          item.ubicacion_almacen = destinoSel;
+          item.enviado_almacen = allLocated;
           item.almacen_destino = destinoSel;
           item.fecha_entrada_almacen = nowIso;
         } else {
@@ -239,7 +293,36 @@ const Almacen = () => {
       if (updateErr) throw updateErr;
 
       toast.success("Ingreso registrado exitosamente.");
-      // Limpiar selección de almacén local
+
+      // Notificaciones entre almacenes
+      try {
+        const { data: perfilesAlmacen } = await supabase
+          .from('perfiles')
+          .select('id')
+          .or("departamento.ilike.%almacen%,rol.ilike.%almacen%");
+        
+        const { data: userData } = await supabase.auth.getUser();
+        const currentUserId = userData?.user?.id;
+        
+        if (perfilesAlmacen && perfilesAlmacen.length > 0) {
+          const notifs = perfilesAlmacen
+            .filter(p => p.id !== currentUserId)
+            .map(p => ({
+              usuario_id: p.id,
+              mensaje: `El material de Requisición ${compra.correlativo} (${compra.descripcion.substring(0, 30)}...) fue recibido en: ${destinoSel}`,
+              tipo: 'Almacén',
+              leido: false,
+              requisicion_id: compra.req_id
+            }));
+          
+          if (notifs.length > 0) {
+            await supabase.from('notificaciones').insert(notifs);
+          }
+        }
+      } catch (notifErr) {
+        console.error("Error al notificar al personal de almacén:", notifErr);
+      }
+
       setSelectedAlmacenes(prev => {
         const copy = { ...prev };
         delete copy[compra.id];
@@ -254,7 +337,6 @@ const Almacen = () => {
     }
   };
 
-  // Deshacer recepción
   const handleDeshacer = async (compra) => {
     setLoading(true);
     try {
@@ -271,6 +353,8 @@ const Almacen = () => {
       if (!item) throw new Error("Material no encontrado.");
 
       if (compra.is_legacy) {
+        item.estatus_almacen = 'Por_Clasificar_Almacen';
+        item.ubicacion_almacen = null;
         item.enviado_almacen = false;
         item.almacen_destino = null;
         item.fecha_entrada_almacen = null;
@@ -279,11 +363,15 @@ const Almacen = () => {
         if (hist[compra.history_idx]) {
           hist[compra.history_idx] = {
             ...hist[compra.history_idx],
+            estatus_almacen: 'Por_Clasificar_Almacen',
+            ubicacion_almacen: null,
             enviado_almacen: false,
             almacen_destino: null,
             fecha_entrada_almacen: null
           };
           item.historial_compras = hist;
+          item.estatus_almacen = 'Por_Clasificar_Almacen';
+          item.ubicacion_almacen = null;
           item.enviado_almacen = false;
           item.almacen_destino = null;
           item.fecha_entrada_almacen = null;
@@ -332,6 +420,7 @@ const Almacen = () => {
 
     const headers = [
       'ALMACÉN',
+      'REQUISICIÓN',
       'DESCRIPCIÓN',
       'PROVEEDOR',
       'NRO DE FACTURA',
@@ -354,11 +443,12 @@ const Almacen = () => {
     filteredCompras.forEach(c => {
       const row = worksheet.addRow([
         c.recibido ? 'SÍ' : 'NO',
+        c.correlativo,
         c.descripcion,
         c.proveedor,
         c.numero_factura,
         c.fecha_entrada_almacen ? formatFecha(c.fecha_entrada_almacen) : '—',
-        c.almacen_destino ? c.almacen_destino.replace('Almacen ', '') : 'PENDIENTE',
+        c.ubicacion_almacen || 'PENDIENTE',
         c.solicitante,
         c.gerencia,
         c.centro_costo,
@@ -368,14 +458,15 @@ const Almacen = () => {
       ]);
 
       row.getCell(1).alignment = { horizontal: 'center' };
-      row.getCell(4).alignment = { horizontal: 'center' };
+      row.getCell(2).alignment = { horizontal: 'center' };
       row.getCell(5).alignment = { horizontal: 'center' };
       row.getCell(6).alignment = { horizontal: 'center' };
-      row.getCell(10).alignment = { horizontal: 'center' };
-      row.getCell(11).alignment = { horizontal: 'right' };
+      row.getCell(7).alignment = { horizontal: 'center' };
+      row.getCell(11).alignment = { horizontal: 'center' };
       row.getCell(12).alignment = { horizontal: 'right' };
+      row.getCell(13).alignment = { horizontal: 'right' };
 
-      row.getCell(12).numFmt = '"$"#,##0.00;[Red]"$"#,##0.00';
+      row.getCell(13).numFmt = '"$"#,##0.00;[Red]"$"#,##0.00';
 
       row.eachCell(cell => {
         cell.border = {
@@ -389,6 +480,7 @@ const Almacen = () => {
 
     worksheet.columns = [
       { width: 12 }, // ALMACÉN
+      { width: 18 }, // REQUISICIÓN
       { width: 35 }, // DESCRIPCIÓN
       { width: 25 }, // PROVEEDOR
       { width: 18 }, // NRO DE FACTURA
@@ -403,13 +495,13 @@ const Almacen = () => {
     ];
 
     const lastRowNum = filteredCompras.length + 3;
-    worksheet.mergeCells(`A${lastRowNum}:K${lastRowNum}`);
+    worksheet.mergeCells(`A${lastRowNum}:L${lastRowNum}`);
     const totalLabel = worksheet.getCell(`A${lastRowNum}`);
     totalLabel.value = 'TOTAL GENERAL COMPLETADO ($):';
     totalLabel.font = { bold: true };
     totalLabel.alignment = { horizontal: 'right', vertical: 'middle' };
 
-    const totalVal = worksheet.getCell(`L${lastRowNum}`);
+    const totalVal = worksheet.getCell(`M${lastRowNum}`);
     totalVal.value = totalGeneralFiltrado;
     totalVal.font = { bold: true, color: { argb: 'FF15803D' } };
     totalVal.numFmt = '"$"#,##0.00';
@@ -450,36 +542,38 @@ const Almacen = () => {
 
     const tableData = filteredCompras.map(c => [
       c.recibido ? 'SÍ' : 'NO',
-      c.descripcion.substring(0, 35),
-      c.proveedor.substring(0, 20),
+      c.correlativo,
+      c.descripcion.substring(0, 30),
+      c.proveedor.substring(0, 15),
       c.numero_factura,
       c.fecha_entrada_almacen ? formatFecha(c.fecha_entrada_almacen) : '—',
-      c.almacen_destino ? c.almacen_destino.replace('Almacen ', '') : 'PENDIENTE',
-      c.solicitante.substring(0, 15),
-      c.gerencia.substring(0, 15),
-      c.centro_costo.substring(0, 15),
+      c.ubicacion_almacen || 'PENDIENTE',
+      c.solicitante.substring(0, 12),
+      c.gerencia.substring(0, 12),
+      c.centro_costo.substring(0, 12),
       c.moneda_pago,
       c.cantidad_comprada,
       `$ ${(c.total || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}`
     ]);
 
-    doc.autoTable({
-      head: [['ALM', 'DESCRIPCIÓN', 'PROVEEDOR', 'FACTURA', 'FECHA ALM', 'ALM. DESTINO', 'SOLICITANTE', 'GERENCIA', 'C. COSTO', 'MONEDA', 'CANT', 'TOTAL ($)']],
+    autoTable(doc, {
+      head: [['ALM', 'REQUISICIÓN', 'DESCRIPCIÓN', 'PROVEEDOR', 'FACTURA', 'FECHA ALM', 'ALM. DESTINO', 'SOLICITANTE', 'GERENCIA', 'C. COSTO', 'MONEDA', 'CANT', 'TOTAL ($)']],
       body: tableData,
       startY: 35,
       theme: 'grid',
-      headStyles: { fillColor: [30, 41, 59], fontSize: 7, halign: 'center' },
-      styles: { fontSize: 6.5, cellPadding: 1.5 },
+      headStyles: { fillColor: [30, 41, 59], fontSize: 6.5, halign: 'center' },
+      styles: { fontSize: 6, cellPadding: 1 },
       columnStyles: {
         0: { halign: 'center' },
-        3: { halign: 'center' },
+        1: { halign: 'center' },
         4: { halign: 'center' },
         5: { halign: 'center' },
-        9: { halign: 'center' },
-        10: { halign: 'right' },
-        11: { halign: 'right', fontStyle: 'bold' }
+        6: { halign: 'center' },
+        10: { halign: 'center' },
+        11: { halign: 'right' },
+        12: { halign: 'right', fontStyle: 'bold' }
       },
-      foot: [['', '', '', '', '', '', '', '', '', 'TOTAL GRAL.', '', `$ ${(totalGeneralFiltrado || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}`]],
+      foot: [['', '', '', '', '', '', '', '', '', '', 'TOTAL GRAL.', '', `$ ${(totalGeneralFiltrado || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}`]],
       footStyles: { fillColor: [240, 253, 244], textColor: [22, 163, 74], fontStyle: 'bold' }
     });
 
@@ -675,6 +769,7 @@ const Almacen = () => {
             <thead>
               <tr style={{ backgroundColor: '#1e293b', color: '#f8fafc', borderBottom: '2px solid #cbd5e1' }}>
                 <th style={{ padding: '12px 10px', textAlign: 'center', width: '80px' }}>ALMACÉN</th>
+                <th style={{ padding: '12px 10px', textAlign: 'center', width: '120px' }}>REQUISICIÓN</th>
                 <th style={{ padding: '12px 10px', textAlign: 'left', minWidth: '220px' }}>DESCRIPCIÓN</th>
                 <th style={{ padding: '12px 10px', textAlign: 'left' }}>PROVEEDOR</th>
                 <th style={{ padding: '12px 10px', textAlign: 'center' }}>NRO DE FACTURA</th>
@@ -691,7 +786,7 @@ const Almacen = () => {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan="12" style={{ padding: '50px', textAlign: 'center', color: '#64748b' }}>
+                  <td colSpan="13" style={{ padding: '50px', textAlign: 'center', color: '#64748b' }}>
                     <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px' }}>
                       <Loader2 className="animate-spin" /> Cargando compras completadas...
                     </div>
@@ -699,7 +794,7 @@ const Almacen = () => {
                 </tr>
               ) : filteredCompras.length === 0 ? (
                 <tr>
-                  <td colSpan="12" style={{ padding: '50px', textAlign: 'center', color: '#94a3b8', fontWeight: '600' }}>
+                  <td colSpan="13" style={{ padding: '50px', textAlign: 'center', color: '#94a3b8', fontWeight: '600' }}>
                     <ShieldAlert size={24} style={{ display: 'block', margin: '0 auto 10px auto', color: '#94a3b8' }} />
                     No se encontraron registros de compras bajo los filtros actuales.
                   </td>
@@ -709,7 +804,7 @@ const Almacen = () => {
                 const selectedLoc = selectedAlmacenes[compra.id] || '';
 
                 return (
-                  <tr key={compra.id} style={{ borderBottom: '1px solid #e2e8f0', transition: 'background-color 0.2s', backgroundColor: isRecibida ? '#f0fdf4' : 'transparent' }} className="row-hover">
+                  <tr key={compra.transaction_id || compra.id} style={{ borderBottom: '1px solid #e2e8f0', transition: 'background-color 0.2s', backgroundColor: isRecibida ? '#f0fdf4' : 'transparent' }} className="row-hover">
                     {/* ALMACÉN */}
                     <td style={{ padding: '10px', textAlign: 'center' }}>
                       {isRecibida ? (
@@ -719,6 +814,11 @@ const Almacen = () => {
                       )}
                     </td>
                     
+                    {/* REQUISICIÓN */}
+                    <td style={{ padding: '10px', textAlign: 'center', fontWeight: 'bold', color: '#1e40af' }}>
+                      {compra.correlativo}
+                    </td>
+
                     {/* DESCRIPCIÓN */}
                     <td style={{ padding: '10px', fontWeight: '600', color: '#0f172a' }}>
                       {compra.descripcion}
@@ -743,8 +843,8 @@ const Almacen = () => {
                     <td style={{ padding: '10px', textAlign: 'center' }}>
                       {isRecibida ? (
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                          <span style={{ fontWeight: '700', color: '#16a34a' }}>
-                            {compra.almacen_destino.replace('Almacen ', '')}
+                          <span style={{ fontWeight: '700', color: '#16a34a', fontSize: '0.8rem' }}>
+                            {compra.ubicacion_almacen}
                           </span>
                           <button 
                             onClick={() => handleDeshacer(compra)} 
@@ -759,12 +859,12 @@ const Almacen = () => {
                           <select 
                             value={selectedLoc}
                             onChange={(e) => setSelectedAlmacenes(prev => ({ ...prev, [compra.id]: e.target.value }))}
-                            style={{ padding: '6px', border: '1px solid #cbd5e1', borderRadius: '8px', fontSize: '0.8rem', outline: 'none' }}
+                            style={{ padding: '6px', border: '1px solid #cbd5e1', borderRadius: '8px', fontSize: '0.8rem', outline: 'none', maxWidth: '180px' }}
                           >
-                            <option value="">Seleccione...</option>
-                            <option value="Almacen Campo Boscan">Campo Boscán</option>
-                            <option value="Almacen Maracaibo">Maracaibo</option>
-                            <option value="Almacen Bajo Grande">Bajo Grande</option>
+                            <option value="">Clasificar ubicación...</option>
+                            {UBICACIONES_AUTORIZADAS.map(loc => (
+                              <option key={loc} value={loc}>{loc}</option>
+                            ))}
                           </select>
                           <button 
                             onClick={() => handleRecibir(compra)}
@@ -824,7 +924,7 @@ const Almacen = () => {
             {!loading && filteredCompras.length > 0 && (
               <tfoot>
                 <tr style={{ backgroundColor: '#f1f5f9', borderTop: '2px solid #cbd5e1', fontWeight: '900', color: '#0f172a' }}>
-                  <td colSpan="11" style={{ padding: '15px 20px', textAlign: 'right', fontSize: '0.9rem' }}>
+                  <td colSpan="12" style={{ padding: '15px 20px', textAlign: 'right', fontSize: '0.9rem' }}>
                     TOTAL GENERAL COMPLETADO ($):
                   </td>
                   <td style={{ padding: '15px 10px', textAlign: 'right', fontSize: '1rem', color: '#16a34a' }}>

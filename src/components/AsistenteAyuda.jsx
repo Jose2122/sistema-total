@@ -9,6 +9,7 @@ export default function AsistenteAyuda() {
   const [selectedArticle, setSelectedArticle] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('Todos');
+  const [showTooltip, setShowTooltip] = useState(false);
 
   // Cerrar el panel flotante si se presiona la tecla Escape
   useEffect(() => {
@@ -19,6 +20,28 @@ export default function AsistenteAyuda() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  // Temporizador animado para mostrar el tooltip recordatorio
+  useEffect(() => {
+    // Primer recordatorio a los 10 segundos
+    const initialTimer = setTimeout(() => {
+      setShowTooltip(true);
+      // Auto-ocultar a los 10 segundos
+      setTimeout(() => setShowTooltip(false), 10000);
+    }, 10000);
+
+    // Intervalo recurrente cada 5 minutos (300000 ms)
+    const interval = setInterval(() => {
+      setShowTooltip(true);
+      // Auto-ocultar a los 10 segundos
+      setTimeout(() => setShowTooltip(false), 10000);
+    }, 300000);
+
+    return () => {
+      clearTimeout(initialTimer);
+      clearInterval(interval);
+    };
   }, []);
 
   const categories = [
@@ -294,6 +317,54 @@ export default function AsistenteAyuda() {
       boxShadow: '0 4px 10px rgba(15, 23, 42, 0.1)',
       transition: 'all 0.2s',
     },
+    tooltip: {
+      position: 'absolute',
+      bottom: '10px',
+      right: '65px',
+      backgroundColor: '#0f172a',
+      color: '#ffffff',
+      padding: '10px 14px',
+      borderRadius: '14px',
+      fontSize: '11px',
+      fontWeight: '700',
+      boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.15), 0 8px 10px -6px rgba(0, 0, 0, 0.1)',
+      display: 'flex',
+      alignItems: 'center',
+      gap: '10px',
+      whiteSpace: 'nowrap',
+      zIndex: 99998,
+      border: '1px solid rgba(255, 255, 255, 0.15)',
+    },
+    tooltipContent: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: '6px',
+    },
+    tooltipClose: {
+      background: 'none',
+      border: 'none',
+      color: '#94a3b8',
+      cursor: 'pointer',
+      padding: '2px',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: '4px',
+      transition: 'all 0.2s',
+      marginLeft: '4px',
+    },
+    tooltipArrow: {
+      position: 'absolute',
+      top: '50%',
+      right: '-6px',
+      transform: 'translateY(-50%) rotate(45deg)',
+      width: '10px',
+      height: '10px',
+      backgroundColor: '#0f172a',
+      borderRight: '1px solid rgba(255, 255, 255, 0.15)',
+      borderTop: '1px solid rgba(255, 255, 255, 0.15)',
+      zIndex: -1,
+    }
   };
 
   return (
@@ -307,6 +378,17 @@ export default function AsistenteAyuda() {
         @keyframes scaleIn {
           from { opacity: 0; transform: scale(0.9) translateY(10px); }
           to { opacity: 1; transform: scale(1) translateY(0); }
+        }
+        @keyframes tooltipSlideIn {
+          from { opacity: 0; transform: translateX(12px) scale(0.95); }
+          to { opacity: 1; transform: translateX(0) scale(1); }
+        }
+        .help-tooltip-animate {
+          animation: tooltipSlideIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+        .tooltip-close-btn:hover {
+          color: #ef4444 !important;
+          background-color: rgba(255, 255, 255, 0.1);
         }
         .category-scroll::-webkit-scrollbar {
           display: none;
@@ -424,9 +506,27 @@ export default function AsistenteAyuda() {
         </div>
       )}
 
+      {/* Burbuja de Recordatorio Animada */}
+      {showTooltip && !isPanelOpen && !isDrawerOpen && (
+        <div style={styles.tooltip} className="help-tooltip-animate">
+          <div style={styles.tooltipContent}>
+            <Sparkles size={14} style={{ color: '#38bdf8', flexShrink: 0 }} />
+            <span>¿Tienes dudas? Consulta la guía del sistema aquí.</span>
+          </div>
+          <button 
+            onClick={() => setShowTooltip(false)} 
+            style={styles.tooltipClose}
+            className="tooltip-close-btn"
+          >
+            <X size={12} />
+          </button>
+          <div style={styles.tooltipArrow}></div>
+        </div>
+      )}
+
       {/* Botón Flotante */}
       <button
-        onClick={() => setIsPanelOpen(!isPanelOpen)}
+        onClick={() => { setIsPanelOpen(!isPanelOpen); setShowTooltip(false); }}
         style={styles.floatBtn}
         className="float-btn-hover"
         title="Asistente de Ayuda SITC"

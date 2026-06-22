@@ -236,7 +236,8 @@ const Reportes = () => {
             nroFactura: compras.map(c => c.doc_numero).filter(Boolean).join(', ') || 'N/A',
             almacen: item.enviado_almacen || (historial.length > 0 && historial.every(h => h.enviado_almacen)),
             idReal: doc.id,
-            itemIdx: itemIdx
+            itemIdx: itemIdx,
+            cantPendiente: cantPendiente
           });
         });
       } else {
@@ -266,7 +267,8 @@ const Reportes = () => {
             facturas_url: doc.facturas_url || [],
             solicitante: doc.responsable_nombre || 'N/A',
             nroFactura: doc.ref_pago || 'N/A',
-            almacen: false
+            almacen: false,
+            cantPendiente: 0
           });
         });
       }
@@ -461,7 +463,7 @@ const Reportes = () => {
     const worksheet = workbook.addWorksheet('Compras Faltantes');
 
     // Logo/Header Row
-    worksheet.mergeCells('A1:M1');
+    worksheet.mergeCells('A1:O1');
     const titleCell = worksheet.getCell('A1');
     titleCell.value = 'TOTAL CLEAN C.A. - REPORTE DE COMPRAS FALTANTES';
     titleCell.font = { name: 'Arial Black', size: 14, color: { argb: 'FFFFFFFF' } };
@@ -482,7 +484,9 @@ const Reportes = () => {
       'CENTRO DE COSTO',
       'MONEDA DE PAGO',
       'STATUS',
+      'CANTIDAD PEDIDA',
       'CANTIDAD COMPRADA',
+      'CANTIDAD PENDIENTE',
       'TOTAL ($)'
     ];
     worksheet.addRow(headers);
@@ -522,7 +526,9 @@ const Reportes = () => {
         r.centroCosto,
         monedaPago,
         statusText,
+        r.cantPedida,
         r.cantComprada,
+        r.cantPendiente,
         r.total
       ]);
 
@@ -533,7 +539,7 @@ const Reportes = () => {
 
       // Format ID as text
       row.getCell(1).numFmt = '@';
-      row.getCell(13).numFmt = '"$"#,##0.00;[Red]"$"#,##0.00';
+      row.getCell(15).numFmt = '"$"#,##0.00;[Red]"$"#,##0.00';
 
       // Alignment & borders
       row.getCell(1).alignment = { horizontal: 'center' };
@@ -543,6 +549,8 @@ const Reportes = () => {
       row.getCell(11).alignment = { horizontal: 'center' };
       row.getCell(12).alignment = { horizontal: 'right' };
       row.getCell(13).alignment = { horizontal: 'right' };
+      row.getCell(14).alignment = { horizontal: 'right' };
+      row.getCell(15).alignment = { horizontal: 'right' };
 
       row.eachCell(cell => {
         cell.border = {
@@ -567,20 +575,22 @@ const Reportes = () => {
       { width: 25 }, // CENTRO DE COSTO
       { width: 20 }, // MONEDA DE PAGO
       { width: 15 }, // STATUS
+      { width: 18 }, // CANTIDAD PEDIDA
       { width: 22 }, // CANTIDAD COMPRADA
+      { width: 22 }, // CANTIDAD PENDIENTE
       { width: 18 }  // TOTAL ($)
     ];
 
     // Totales
     const totalGastoFaltantes = faltantes.reduce((sum, r) => sum + (Number(r.total) || 0), 0);
     const lastRowNum = faltantes.length + 3;
-    worksheet.mergeCells(`A${lastRowNum}:L${lastRowNum}`);
+    worksheet.mergeCells(`A${lastRowNum}:N${lastRowNum}`);
     const totalLabel = worksheet.getCell(`A${lastRowNum}`);
     totalLabel.value = 'TOTAL ESTIMADO FALTANTES ($):';
     totalLabel.font = { bold: true };
     totalLabel.alignment = { horizontal: 'right', vertical: 'middle' };
 
-    const totalVal = worksheet.getCell(`M${lastRowNum}`);
+    const totalVal = worksheet.getCell(`O${lastRowNum}`);
     totalVal.value = totalGastoFaltantes;
     totalVal.font = { bold: true, color: { argb: 'FF15803D' } };
     totalVal.numFmt = '"$"#,##0.00';
@@ -601,6 +611,191 @@ const Reportes = () => {
     saveAs(new Blob([buffer]), `Compras_Faltantes_TC_${new Date().toISOString().split('T')[0]}.xlsx`);
     toast.success("Excel de compras faltantes generado.");
   };
+
+  const exportByInvoicesToExcel = async () => {
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Reporte por Factura');
+
+    // Logo/Header Row
+    worksheet.mergeCells('A1:N1');
+    const titleCell = worksheet.getCell('A1');
+    titleCell.value = 'TOTAL CLEAN C.A. - REPORTE DETALLADO POR FACTURA';
+    titleCell.font = { name: 'Arial Black', size: 14, color: { argb: 'FFFFFFFF' } };
+    titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2563EB' } }; // Blue Header
+    titleCell.alignment = { vertical: 'middle', horizontal: 'center' };
+    worksheet.getRow(1).height = 40;
+
+    const headers = [
+      'CORRELATIVO #',
+      'FACTURA / DOC',
+      'PROVEEDOR',
+      'DESCRIPCIÓN',
+      'CANTIDAD',
+      'P. UNITARIO ($)',
+      'TOTAL ($)',
+      'FECHA PAGO',
+      'SOLICITANTE',
+      'CATEGORÍA',
+      'GERENCIA',
+      'CENTRO DE COSTO',
+      'MONEDA DE PAGO',
+      'ALMACÉN'
+    ];
+    worksheet.addRow(headers);
+    const headerRow = worksheet.getRow(2);
+    headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+    headerRow.alignment = { horizontal: 'center', vertical: 'middle' };
+    worksheet.getRow(2).height = 25;
+
+    let totalGastoFacturas = 0;
+
+    rows.forEach(r => {
+      if (r.tipoDoc === 'REQUISICIÓN') {
+        const trans = (r.historial_compras || []).filter(h => h.tipo !== 'JUSTIFICACION' && h.tipo !== 'ANULACION' && h.tipo !== 'DIRECTRIZ');
+        trans.forEach(h => {
+          const cant = Number(h.cant) || 0;
+          const pu = Number(h.pu) || 0;
+          const totalRow = cant * pu;
+          totalGastoFacturas += totalRow;
+
+          const row = worksheet.addRow([
+            r.idReq,
+            h.doc_numero || 'S/N',
+            h.proveedor_nombre || 'Desconocido',
+            r.descripcion,
+            cant,
+            pu,
+            totalRow,
+            h.fecha ? new Date(h.fecha.split('T')[0] + 'T12:00:00') : '—',
+            r.solicitante,
+            r.categoria,
+            r.gerencia,
+            r.centroCosto,
+            h.metodo_pago || '—',
+            h.enviado_almacen || h.estatus_almacen === 'Ubicado' ? 'SÍ' : 'NO'
+          ]);
+
+          if (h.fecha) {
+            row.getCell(8).numFmt = 'dd/mm/yyyy';
+          }
+          row.getCell(1).numFmt = '@';
+          row.getCell(2).numFmt = '@';
+          row.getCell(6).numFmt = '"$"#,##0.00';
+          row.getCell(7).numFmt = '"$"#,##0.00;[Red]"$"#,##0.00';
+
+          row.getCell(1).alignment = { horizontal: 'center' };
+          row.getCell(2).alignment = { horizontal: 'center' };
+          row.getCell(5).alignment = { horizontal: 'right' };
+          row.getCell(6).alignment = { horizontal: 'right' };
+          row.getCell(7).alignment = { horizontal: 'right' };
+          row.getCell(8).alignment = { horizontal: 'center' };
+          row.getCell(13).alignment = { horizontal: 'center' };
+          row.getCell(14).alignment = { horizontal: 'center' };
+
+          row.eachCell(cell => {
+            cell.border = {
+              top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+              left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+              bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+              right: { style: 'thin', color: { argb: 'FFE2E8F0' } }
+            };
+          });
+        });
+      } else {
+        // Tickets Directos
+        const totalRow = r.total;
+        totalGastoFacturas += totalRow;
+
+        const row = worksheet.addRow([
+          r.idReq,
+          r.nroFactura,
+          r.rawItem?.proveedor || 'N/A',
+          r.descripcion,
+          r.cantPedida,
+          r.puReal,
+          totalRow,
+          r.fechaPago !== 'Pendiente' && r.fechaPago !== 'N/A' ? new Date(r.fechaPago + 'T12:00:00') : r.fechaPago,
+          r.solicitante,
+          r.categoria,
+          r.gerencia,
+          r.centroCosto,
+          r.metodoPago,
+          r.almacen ? 'SÍ' : 'NO'
+        ]);
+
+        if (r.fechaPago !== 'Pendiente' && r.fechaPago !== 'N/A') {
+          row.getCell(8).numFmt = 'dd/mm/yyyy';
+        }
+        row.getCell(1).numFmt = '@';
+        row.getCell(2).numFmt = '@';
+        row.getCell(6).numFmt = '"$"#,##0.00';
+        row.getCell(7).numFmt = '"$"#,##0.00;[Red]"$"#,##0.00';
+
+        row.getCell(1).alignment = { horizontal: 'center' };
+        row.getCell(2).alignment = { horizontal: 'center' };
+        row.getCell(5).alignment = { horizontal: 'right' };
+        row.getCell(6).alignment = { horizontal: 'right' };
+        row.getCell(7).alignment = { horizontal: 'right' };
+        row.getCell(8).alignment = { horizontal: 'center' };
+        row.getCell(13).alignment = { horizontal: 'center' };
+        row.getCell(14).alignment = { horizontal: 'center' };
+
+        row.eachCell(cell => {
+          cell.border = {
+            top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+            left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+            bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+            right: { style: 'thin', color: { argb: 'FFE2E8F0' } }
+          };
+        });
+      }
+    });
+
+    worksheet.columns = [
+      { width: 16 }, // CORRELATIVO #
+      { width: 18 }, // FACTURA / DOC
+      { width: 25 }, // PROVEEDOR
+      { width: 40 }, // DESCRIPCIÓN
+      { width: 12 }, // CANTIDAD
+      { width: 15 }, // P. UNITARIO ($)
+      { width: 15 }, // TOTAL ($)
+      { width: 15 }, // FECHA PAGO
+      { width: 25 }, // SOLICITANTE
+      { width: 20 }, // CATEGORÍA
+      { width: 25 }, // GERENCIA
+      { width: 25 }, // CENTRO DE COSTO
+      { width: 18 }, // MONEDA DE PAGO
+      { width: 12 }  // ALMACÉN
+    ];
+
+    const lastRowNum = worksheet.rowCount + 2;
+    worksheet.mergeCells(`A${lastRowNum}:F${lastRowNum}`);
+    const totalLabel = worksheet.getCell(`A${lastRowNum}`);
+    totalLabel.value = 'TOTAL POR FACTURA ($):';
+    totalLabel.font = { bold: true };
+    totalLabel.alignment = { horizontal: 'right', vertical: 'middle' };
+
+    const totalVal = worksheet.getCell(`G${lastRowNum}`);
+    totalVal.value = totalGastoFacturas;
+    totalVal.font = { bold: true, color: { argb: 'FF15803D' } };
+    totalVal.numFmt = '"$"#,##0.00';
+    totalVal.alignment = { horizontal: 'right', vertical: 'middle' };
+
+    const totalRow = worksheet.getRow(lastRowNum);
+    totalRow.height = 25;
+    totalRow.eachCell(cell => {
+      cell.border = {
+        top: { style: 'thin', color: { argb: 'FF94A3B8' } },
+        bottom: { style: 'double', color: { argb: 'FF94A3B8' } }
+      };
+    });
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    saveAs(new Blob([buffer]), `Reporte_Facturas_TC_${new Date().toISOString().split('T')[0]}.xlsx`);
+    toast.success("Excel por factura generado.");
+  };
+
 
   const exportCompletedToExcel = async () => {
     const completadas = rows.filter(r => r.cantComprada >= r.cantPedida && r.cantPedida > 0);
@@ -774,6 +969,10 @@ const Reportes = () => {
           <button className="btn-export" style={{ background: '#16a34a' }} onClick={exportCompletedToExcel} title="Completadas">
             <FileSpreadsheet size={14} />
             <span style={{ fontSize: '10px', marginLeft: '5px' }}>Completadas</span>
+          </button>
+          <button className="btn-export" style={{ background: '#2563eb' }} onClick={exportByInvoicesToExcel} title="Por Factura">
+            <FileSpreadsheet size={14} />
+            <span style={{ fontSize: '10px', marginLeft: '5px' }}>Por Factura</span>
           </button>
         </div>
       </div>

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import html2canvas from 'html2canvas';
 import { supabase } from './supabaseClient';
 import toast from 'react-hot-toast';
@@ -667,7 +668,7 @@ const Compras = () => {
       r.cantidad_pendiente
     ]);
 
-    doc.autoTable({
+    autoTable(doc, {
       startY: y,
       head: headersResumen,
       body: dataResumen,
@@ -698,7 +699,7 @@ const Compras = () => {
       });
     });
 
-    doc.autoTable({
+    autoTable(doc, {
       startY: y,
       head: headersHistorial,
       body: dataHistorial,
@@ -873,10 +874,34 @@ const Compras = () => {
     }));
   };
 
-  const toggleAlmacen = async (id, valor) => {
+  const toggleAlmacen = async (id, currentStatus) => {
+    const nuevoEstado = currentStatus === 'Por_Clasificar_Almacen' || currentStatus === 'Ubicado' 
+      ? 'Pendiente_Compras' 
+      : 'Por_Clasificar_Almacen';
+      
     const nuevosRenglones = renglones.map(r => {
       if (r.id === id) {
-        return { ...r, enviado_almacen: valor };
+        const nuevoHistorial = Array.isArray(r.historial_compras)
+          ? r.historial_compras.map(h => {
+              if (h.tipo === 'JUSTIFICACION' || h.tipo === 'ANULACION' || h.tipo === 'DIRECTRIZ') return h;
+              const currentSubStatus = h.estatus_almacen || (h.enviado_almacen ? 'Ubicado' : 'Pendiente_Compras');
+              if (currentSubStatus !== 'Ubicado') {
+                return {
+                  ...h,
+                  estatus_almacen: nuevoEstado,
+                  ubicacion_almacen: nuevoEstado === 'Pendiente_Compras' ? null : h.ubicacion_almacen
+                };
+              }
+              return h;
+            })
+          : r.historial_compras;
+
+        return { 
+          ...r, 
+          estatus_almacen: nuevoEstado,
+          ubicacion_almacen: nuevoEstado === 'Pendiente_Compras' ? null : r.ubicacion_almacen,
+          historial_compras: nuevoHistorial
+        };
       }
       return r;
     });
@@ -888,18 +913,26 @@ const Compras = () => {
         .update({ items: nuevosRenglones })
         .eq('id', editandoId);
       if (error) throw error;
-      toast.success(valor ? "Ítem marcado: Enviado a Almacén" : "Ítem marcado: No enviado a Almacén");
+      toast.success(nuevoEstado === 'Por_Clasificar_Almacen' ? "Enviado a Clasificación de Almacén" : "Devuelto a Pendiente en Compras");
     } catch (err) {
       toast.error("Error al actualizar estado de almacén: " + err.message);
     }
   };
 
-  const toggleAlmacenSubRow = async (renglonId, historyIndex, valor) => {
+  const toggleAlmacenSubRow = async (renglonId, historyIndex, currentStatus) => {
+    const nuevoEstado = currentStatus === 'Por_Clasificar_Almacen' || currentStatus === 'Ubicado' 
+      ? 'Pendiente_Compras' 
+      : 'Por_Clasificar_Almacen';
+
     const nuevosRenglones = renglones.map(r => {
       if (r.id === renglonId) {
         const nuevoHistorial = [...(r.historial_compras || [])];
         if (nuevoHistorial[historyIndex]) {
-          nuevoHistorial[historyIndex] = { ...nuevoHistorial[historyIndex], enviado_almacen: valor };
+          nuevoHistorial[historyIndex] = { 
+            ...nuevoHistorial[historyIndex], 
+            estatus_almacen: nuevoEstado,
+            ubicacion_almacen: nuevoEstado === 'Pendiente_Compras' ? null : nuevoHistorial[historyIndex].ubicacion_almacen
+          };
         }
         return { ...r, historial_compras: nuevoHistorial };
       }
@@ -913,7 +946,7 @@ const Compras = () => {
         .update({ items: nuevosRenglones })
         .eq('id', editandoId);
       if (error) throw error;
-      toast.success(valor ? "Sub-ítem: En Almacén" : "Sub-ítem: Pendiente");
+      toast.success(nuevoEstado === 'Por_Clasificar_Almacen' ? "Enviado a Clasificación de Almacén" : "Devuelto a Pendiente en Compras");
     } catch (err) {
       toast.error("Error al actualizar sub-fila: " + err.message);
     }
@@ -1120,7 +1153,9 @@ const Compras = () => {
       }
 
       // Preparar la nueva transacción
+      const uuidTransaccion = self.crypto ? self.crypto.randomUUID() : (Date.now().toString() + Math.random().toString());
       const nuevaTransaccion = {
+        id: uuidTransaccion,
         fecha: new Date().toISOString(),
         cant: cantProcesar,
         pu: item.compra_actual_pu,
@@ -1131,7 +1166,8 @@ const Compras = () => {
         usuario_nombre: `${currentUser?.nombre} ${currentUser?.apellido}`,
         doc_tipo: item.doc_tipo_actual,
         doc_numero: item.doc_numero_actual,
-        enviado_almacen: false,
+        estatus_almacen: 'Pendiente_Compras',
+        ubicacion_almacen: null,
         factura_url: uploadedFileObj?.url || null
       };
 
@@ -2709,11 +2745,45 @@ const Compras = () => {
 
                         <td style={{ textAlign: 'center' }}>
                           {(() => {
-                            const isEnAlmacen = f.enviado_almacen || (f.historial_compras?.length > 0 && f.historial_compras.every(h => h.enviado_almacen));
+                            let statusAlmacen = f.estatus_almacen || (f.enviado_almacen ? 'Ubicado' : 'Pendiente_Compras');
+                            if (f.historial_compras?.length > 0) {
+                              const trans = f.historial_compras.filter(h => h.tipo !== 'JUSTIFICACION' && h.tipo !== 'ANULACION');
+                              if (trans.length > 0) {
+                                const allUbicados = trans.every(h => (h.estatus_almacen || (h.enviado_almacen ? 'Ubicado' : 'Pendiente_Compras')) === 'Ubicado');
+                                const anyPorClasificar = trans.some(h => (h.estatus_almacen || (h.enviado_almacen ? 'Ubicado' : 'Pendiente_Compras')) === 'Por_Clasificar_Almacen');
+                                if (allUbicados) {
+                                  statusAlmacen = 'Ubicado';
+                                } else if (anyPorClasificar) {
+                                  statusAlmacen = 'Por_Clasificar_Almacen';
+                                } else {
+                                  statusAlmacen = 'Pendiente_Compras';
+                                }
+                              }
+                            }
                             const disableAlmacen = f.anulado && (f.cantidad_comprada || 0) === 0;
+                            let bg = '#f1f5f9';
+                            let borderCol = '#e2e8f0';
+                            let textCol = '#94a3b8';
+                            let titleStr = 'Pendiente en Compras';
+                            let icon = '📥';
+
+                            if (statusAlmacen === 'Por_Clasificar_Almacen') {
+                              bg = '#e0f2fe';
+                              borderCol = '#0ea5e9';
+                              textCol = '#0369a1';
+                              titleStr = 'Enviado a Clasificación de Almacén';
+                              icon = '📦';
+                            } else if (statusAlmacen === 'Ubicado') {
+                              bg = '#dcfce7';
+                              borderCol = '#22c55e';
+                              textCol = '#15803d';
+                              titleStr = 'Ubicado físicamente en Almacén';
+                              icon = '📦';
+                            }
+
                             return (
                               <div
-                                onClick={() => { if (!disableAlmacen) toggleAlmacen(f.id, !isEnAlmacen); }}
+                                onClick={() => { if (!disableAlmacen) toggleAlmacen(f.id, statusAlmacen); }}
                                 style={{
                                   cursor: disableAlmacen ? 'not-allowed' : 'pointer',
                                   display: 'inline-flex',
@@ -2722,17 +2792,17 @@ const Compras = () => {
                                   width: '32px',
                                   height: '32px',
                                   borderRadius: '8px',
-                                  backgroundColor: isEnAlmacen ? '#e0f2fe' : '#f1f5f9',
+                                  backgroundColor: bg,
                                   border: '1px solid',
-                                  borderColor: isEnAlmacen ? '#0ea5e9' : '#e2e8f0',
-                                  color: isEnAlmacen ? '#0369a1' : '#94a3b8',
+                                  borderColor: borderCol,
+                                  color: textCol,
                                   transition: 'all 0.2s',
                                   fontSize: '1.1rem',
                                   opacity: disableAlmacen ? 0.3 : 1
                                 }}
-                                title={disableAlmacen ? 'Renglón sin efecto' : (isEnAlmacen ? 'Registrado en Almacén' : 'Marcar como enviado a Almacén')}
+                                title={disableAlmacen ? 'Renglón sin efecto' : titleStr}
                               >
-                                {isEnAlmacen ? '📦' : '📥'}
+                                {icon}
                               </div>
                             );
                           })()}
@@ -2812,7 +2882,7 @@ const Compras = () => {
                                 </thead>
                                 <tbody>
                                   {f.historial_compras.map((h, idx) => (
-                                    <tr key={idx} style={{
+                                    <tr key={h.id || `${f.id}-h-${idx}`} style={{
                                       borderBottom: idx < f.historial_compras.length - 1 ? '1px solid #f1f5f9' : 'none',
                                       backgroundColor: h.tipo === 'ANULACION' ? '#fef2f2' : (h.tipo === 'JUSTIFICACION' ? '#fffbeb' : (h.tipo === 'DIRECTRIZ' ? '#faf5ff' : 'transparent')),
                                       transition: 'background-color 0.2s'
@@ -2876,29 +2946,52 @@ const Compras = () => {
                                         ) : <span style={{ fontWeight: '900', color: '#0ea5e9', fontSize: '0.85rem' }}>$ {(h.cant * h.pu).toLocaleString('de-DE')}</span>}
                                       </td>
                                       <td style={{ padding: '10px 12px', textAlign: 'center' }}>
-                                        {h.tipo !== 'JUSTIFICACION' && h.tipo !== 'ANULACION' && h.tipo !== 'DIRECTRIZ' && (
-                                          <div
-                                            onClick={() => toggleAlmacenSubRow(f.id, idx, !h.enviado_almacen)}
-                                            style={{
-                                              cursor: 'pointer',
-                                              display: 'inline-flex',
-                                              alignItems: 'center',
-                                              justifyContent: 'center',
-                                              width: '24px',
-                                              height: '24px',
-                                              borderRadius: '6px',
-                                              backgroundColor: h.enviado_almacen ? '#e0f2fe' : '#f1f5f9',
-                                              border: '1px solid',
-                                              borderColor: h.enviado_almacen ? '#0ea5e9' : '#e2e8f0',
-                                              color: h.enviado_almacen ? '#0369a1' : '#94a3b8',
-                                              transition: 'all 0.2s',
-                                              fontSize: '0.8rem'
-                                            }}
-                                            title={h.enviado_almacen ? 'Registrado en Almacén' : 'Marcar como enviado a Almacén'}
-                                          >
-                                            {h.enviado_almacen ? '📦' : '📥'}
-                                          </div>
-                                        )}
+                                        {h.tipo !== 'JUSTIFICACION' && h.tipo !== 'ANULACION' && h.tipo !== 'DIRECTRIZ' && (() => {
+                                          const subStatus = h.estatus_almacen || (h.enviado_almacen ? 'Ubicado' : 'Pendiente_Compras');
+                                          let bg = '#f1f5f9';
+                                          let borderCol = '#e2e8f0';
+                                          let textCol = '#94a3b8';
+                                          let titleStr = 'Pendiente en Compras';
+                                          let icon = '📥';
+                                          
+                                          if (subStatus === 'Por_Clasificar_Almacen') {
+                                            bg = '#e0f2fe';
+                                            borderCol = '#0ea5e9';
+                                            textCol = '#0369a1';
+                                            titleStr = 'Enviado a Clasificación de Almacén';
+                                            icon = '📦';
+                                          } else if (subStatus === 'Ubicado') {
+                                            bg = '#dcfce7';
+                                            borderCol = '#22c55e';
+                                            textCol = '#15803d';
+                                            titleStr = `Ubicado: ${h.ubicacion_almacen || 'Sin ubicación registrada'}`;
+                                            icon = '📦';
+                                          }
+                                          
+                                          return (
+                                            <div
+                                              onClick={() => toggleAlmacenSubRow(f.id, idx, subStatus)}
+                                              style={{
+                                                cursor: 'pointer',
+                                                display: 'inline-flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                width: '24px',
+                                                height: '24px',
+                                                borderRadius: '6px',
+                                                backgroundColor: bg,
+                                                border: '1px solid',
+                                                borderColor: borderCol,
+                                                color: textCol,
+                                                transition: 'all 0.2s',
+                                                fontSize: '0.8rem'
+                                              }}
+                                              title={titleStr}
+                                            >
+                                              {icon}
+                                            </div>
+                                          );
+                                        })()}
                                       </td>
                                       <td style={{ padding: '10px 12px', textAlign: 'right', color: '#64748b', fontSize: '0.65rem', fontWeight: '600' }}>{h.usuario_nombre}</td>
                                       <td style={{ padding: '10px 12px', textAlign: 'center' }}>

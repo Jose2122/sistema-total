@@ -37,7 +37,7 @@ import {
 import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
 import { jsPDF } from 'jspdf';
-import 'jspdf-autotable';
+import autoTable from 'jspdf-autotable';
 import { format, parseISO } from 'date-fns';
 import './ReportesMaestro.css';
 
@@ -992,7 +992,7 @@ const ReportesMaestro = () => {
             r.almacen ? 'SÍ' : 'NO'
         ]);
 
-        doc.autoTable({
+        autoTable(doc, {
             head: [['FECHA', 'SEM', 'CATEGORÍA', 'DESCRIPCIÓN', 'MONTO ($)', 'PROYECTO', 'GERENCIA', 'REF', 'FACTURA', 'ALM.']],
             body: tableData,
             startY: 35,

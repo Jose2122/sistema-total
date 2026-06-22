@@ -179,6 +179,10 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
   const [obsTemporal, setObsTemporal] = useState('');
   const [uploading, setUploading] = useState(false);
   const [facturasUrls, setFacturasUrls] = useState([]);
+  const editandoIdRef = React.useRef(editandoId);
+  useEffect(() => {
+    editandoIdRef.current = editandoId;
+  }, [editandoId]);
   const [idReferenciaProyecto, setIdReferenciaProyecto] = useState('');
   const [idsReferenciaPrevios, setIdsReferenciaPrevios] = useState([]);
   const [mostrarTimeline, setMostrarTimeline] = useState(false);
@@ -373,11 +377,15 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
               ...req,
               observaciones: payload.new.observaciones || '',
               observaciones_direccion: payload.new.observaciones_direccion || '',
-              facturas_url: payload.new.facturas_url || []
+              facturas_url: payload.new.facturas_url || [],
+              detalles: payload.new.items || []
             };
           }
           return req;
         }));
+        if (editandoIdRef.current === payload.new.id) {
+          setRenglones(payload.new.items || []);
+        }
       })
       .subscribe();
 
@@ -3313,14 +3321,65 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                             <td style={{ padding: '12px 4px' }}><input className="input-tc" type="number" value={f.pu === '' ? '' : Number(f.pu)} style={{ textAlign: 'right' }} onChange={(e) => actualizarFila(f.id, 'pu', e.target.value)} disabled={!!editandoId || f.anulado} /></td>
                             <td style={{ textAlign: 'right', fontWeight: 'bold', padding: '12px 4px' }}>{f.total.toLocaleString('de-DE')}</td>
                             <td style={{ textAlign: 'center', verticalAlign: 'middle' }}>
-                              <div style={{ 
-                                opacity: f.enviado_almacen ? 1 : 0.15,
-                                filter: f.enviado_almacen ? 'none' : 'grayscale(1)',
-                                fontSize: '1.2rem',
-                                transition: 'all 0.3s ease'
-                              }} title={f.enviado_almacen ? 'Producto en Almacén' : 'No registrado en Almacén'}>
-                                📦
-                              </div>
+                              {(() => {
+                                const statusAlmacen = f.estatus_almacen || (f.enviado_almacen ? 'Ubicado' : 'Pendiente_Compras');
+                                const ubicacionVal = f.ubicacion_almacen || f.almacen_destino;
+                                if (statusAlmacen !== 'Ubicado') return null;
+
+                                return (
+                                  <div 
+                                    className="warehouse-located-icon-wrapper"
+                                    style={{ 
+                                      position: 'relative',
+                                      display: 'inline-block',
+                                      fontSize: '1.2rem',
+                                      cursor: 'help',
+                                      transition: 'all 0.3s ease',
+                                      userSelect: 'none'
+                                    }}
+                                  >
+                                    📦
+                                    <div 
+                                      className="warehouse-located-tooltip"
+                                      style={{
+                                        position: 'absolute',
+                                        bottom: '125%',
+                                        left: '50%',
+                                        transform: 'translateX(-50%)',
+                                        backgroundColor: '#1e293b',
+                                        color: '#f8fafc',
+                                        padding: '6px 10px',
+                                        borderRadius: '6px',
+                                        fontSize: '11px',
+                                        fontWeight: '400',
+                                        whiteSpace: 'nowrap',
+                                        zIndex: 100,
+                                        boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+                                        opacity: 0,
+                                        pointerEvents: 'none',
+                                        transition: 'opacity 0.2s',
+                                        fontFamily: 'Inter, sans-serif'
+                                      }}
+                                    >
+                                      Ubicado en: {ubicacionVal || 'Almacén general'}
+                                      <div style={{
+                                        position: 'absolute',
+                                        top: '100%',
+                                        left: '50%',
+                                        marginLeft: '-5px',
+                                        borderWidth: '5px',
+                                        borderStyle: 'solid',
+                                        borderColor: '#1e293b transparent transparent transparent'
+                                      }} />
+                                    </div>
+                                  </div>
+                                );
+                              })()}
+                              <style>{`
+                                .warehouse-located-icon-wrapper:hover .warehouse-located-tooltip {
+                                  opacity: 1 !important;
+                                }
+                              `}</style>
                             </td>
                             <td style={{ textAlign: 'center', padding: '12px 4px' }}>
                               <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', alignItems: 'center' }}>
@@ -3359,7 +3418,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                                     </thead>
                                     <tbody>
                                       {(Array.isArray(f.historial_compras) ? f.historial_compras : []).map((h, idx) => (
-                                        <tr key={idx} style={{
+                                        <tr key={h.id || `${f.id}-h-${idx}`} style={{
                                           borderBottom: idx < f.historial_compras.length - 1 ? '1px solid #f1f5f9' : 'none',
                                           backgroundColor: h.tipo === 'ANULACION' ? '#fef2f2' : (h.tipo === 'JUSTIFICACION' ? '#fffbeb' : (h.tipo === 'DIRECTRIZ' ? '#faf5ff' : 'transparent'))
                                         }}>

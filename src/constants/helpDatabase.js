@@ -191,61 +191,276 @@ export const helpDatabase = [
     ]
   },
   {
-    id: "compras-guia",
-    titulo: "Compras y Gestión de Proveedores",
+    id: "procura-delegacion",
+    titulo: "Procura: Procesamiento y Delegación",
     categoria: "Compras",
-    keywords: ["compras", "proveedores", "homologacion", "almacen", "factura", "excel", "faltantes", "completadas", "trazabilidad"],
-    descripcion: "Manual de control logístico para delegar requisiciones aprobadas, registrar compras, controlar ingresos a Almacén e historiales de proveedores.",
+    keywords: ["compras", "procura", "delegación", "coordinador", "ricardo", "responsable", "asignación", "tabla", "expediente"],
+    descripcion: "Flujo operativo de asignación y delegación de requisiciones aprobadas en el departamento de procura de TOTAL CLEAN C.A.",
     flujoEstatus: [
-      { nombre: "COMPRAS EN PROCESO", bg: "#fef3c7", col: "#d97706", desc: "El analista de compras ha registrado transacciones de forma parcial para la requisición." },
-      { nombre: "COMPRAS FINALIZADAS", bg: "#dcfce7", col: "#15803d", desc: "Todos los insumos solicitados en la orden han sido adquiridos al 100% y cerrados." },
-      { nombre: "SIN ASIGNAR", bg: "#fee2e2", col: "#b91c1c", desc: "Requisiciones aprobadas que acaban de ingresar a Compras y requieren la delegación de un comprador responsable." }
+      { nombre: "SIN ASIGNAR", bg: "#fee2e2", col: "#b91c1c", desc: "La requisición acaba de ingresar y no tiene analista asignado (⚠️ Sin Asignar)." },
+      { nombre: "ASIGNADO / BANDEJA", bg: "#eff6ff", col: "#1d4ed8", desc: "El ticket se encuentra en la cola de trabajo del analista de compras." }
     ],
     pasos: [
       {
         paso: 1,
-        titulo: "Delegar Requisición a Comprador",
-        detalle: "El Gerente de Compras selecciona al analista responsable usando el desplegable en la columna Responsable (los tickets nuevos inician como ⚠️ Sin Asignar)."
+        titulo: "Identificar Solicitudes Aprobadas",
+        detalle: "Al entrar al módulo de compras, se despliega una tabla centralizada con las requisiciones del ecosistema que ya completaron su circuito de firmas jerárquicas."
       },
       {
         paso: 2,
-        titulo: "Monitorear Variables de Inventario",
-        detalle: "Al abrir el modal, comprueba las variables: Pedidas (Ped.), Compradas (Comp.) y Pendientes (Pend.). Si hay saldos en cola se destaca en naranja bold."
+        titulo: "Delegar Insumos en Columna Responsable",
+        detalle: "El Coordinador (Sr. Ricardo) evalúa la criticidad de las solicitudes y delega formalmente la orden seleccionando un analista en el menú desplegable."
       },
       {
         paso: 3,
-        titulo: "Registrar Transacción de Procura",
-        detalle: "Ingresa obligatoriamente el Número de Factura, Proveedor homologado, Moneda de Pago, Cantidad y el P.U. Real negociado."
-      },
-      {
-        paso: 4,
-        titulo: "Confirmar Ingreso a Almacén",
-        detalle: "Presiona el icono de casa (columna ALM) en la fila para certificar que la mercancía ingresó físicamente y está resguardada en stock."
-      },
-      {
-        paso: 5,
-        titulo: "Anular Saldos Pendientes (Cierre)",
-        detalle: "Si ya no se requiere comprar el remanente de un ítem, presiona el icono de bloqueo, selecciona el Motivo de Anulación y justifica el Cierre de Efecto."
-      },
-      {
-        paso: 6,
-        titulo: "Administrar Máster de Proveedores",
-        detalle: "Gestiona el directorio inmutable desde 'Proveedores'. Usa RIF (J-12345678-0), razón social, categorías (multi-tags) y activa/desactiva según corresponda."
-      },
-      {
-        paso: 7,
-        titulo: "Exportación Contextual Inteligente",
-        detalle: "Usa los botones de exportación dinámica en el reporte para descargar en Excel lo que ves en pantalla: Excel General, Faltantes o Completadas."
+        titulo: "Apertura del Expediente",
+        detalle: "El analista delegado debe hacer clic estrictamente sobre el identificador alfanumérico (ID de la Requisición) para abrir el modal a pantalla completa."
       }
     ],
     faq: [
       {
-        pregunta: "¿Cómo se enteran los departamentos del estatus de sus compras?",
-        respuesta: "El sistema SITC conecta ambos módulos. Al actualizar las facturas o almacén, los solicitantes pueden visualizarlo al instante haciendo clic en el icono de hoja (📄) de la columna TR (Trazabilidad) en su historial de requisiciones."
+        pregunta: "¿Cómo sabe el analista qué requisiciones tiene asignadas?",
+        respuesta: "Aparecen en su bandeja de trabajo personal una vez que el Coordinador las delega formalmente con su nombre."
+      }
+    ]
+  },
+  {
+    id: "compras-ejecucion",
+    titulo: "Compras: Ejecución y Carga Obligatoria",
+    categoria: "Compras",
+    keywords: ["factura", "proveedor", "moneda", "pu", "cantidad", "adjunto", "soporte", "borrador", "papelera"],
+    descripcion: "Normas de inventario y procedimiento mandatorio para registrar facturas y cargar archivos adjuntos en compras.",
+    flujoEstatus: [
+      { nombre: "PED. (PEDIDO)", bg: "#f1f5f9", col: "#475569", desc: "La cantidad física exacta de insumos que fue solicitada originalmente." },
+      { nombre: "COMP. (COMPRADO)", bg: "#dcfce7", col: "#15803d", desc: "Cantidad acumulada de unidades ya adquiridas en transacciones previas." },
+      { nombre: "PEND. (PENDIENTE)", bg: "#fee2e2", col: "#b91c1c", desc: "Saldo restante por adquirir (resaltado en naranja si es mayor a cero)." }
+    ],
+    pasos: [
+      {
+        paso: 1,
+        titulo: "Verificar Variables de Inventario",
+        detalle: "Revisa la fórmula de tres vías (Ped. vs Comp. vs Pend.) para asegurar que no se compre más de lo presupuestado."
       },
       {
-        pregunta: "¿Por qué no puedo guardar un nuevo proveedor?",
-        respuesta: "Asegúrate de haber ingresado el formato RIF oficial (RIF obligatorio) y de que los datos de contacto y Razón Social estén completos antes de presionar Guardar."
+        paso: 2,
+        titulo: "Registrar Datos de Factura",
+        detalle: "Introduce el código de Factura #, el Proveedor Máster y selecciona la Moneda de Pago ($/Bs a tasa BCV o $/$ en divisas líquidas)."
+      },
+      {
+        paso: 3,
+        titulo: "Ingresar Cantidad y Precio Unitario",
+        detalle: "Coloca la cantidad exacta a comprar y el precio unitario real pactado."
+      },
+      {
+        paso: 4,
+        titulo: "Subir Soporte Digital Obligatorio",
+        detalle: "Es obligatorio adjuntar una imagen o PDF de la factura. Si no se carga el adjunto, el botón 'Procesar Compra' permanecerá bloqueado en el DOM."
+      },
+      {
+        paso: 5,
+        titulo: "Guardar Avances en Borrador",
+        detalle: "Usa 'Guardar Borrador' para guardar tus cambios asíncronamente en Supabase sin necesidad de cerrar o finalizar la requisición entera."
+      },
+      {
+        paso: 6,
+        titulo: "Eliminar Errores de Carga",
+        detalle: "Si cometes una equivocación, presiona el icono de papelera (hover rojo) para borrar la fila local del historial y restablecer los saldos pendientes."
+      }
+    ],
+    faq: [
+      {
+        pregunta: "¿Por qué se bloquea el botón de procesar compra?",
+        respuesta: "Por razones de auditoría interna y seguridad, el frontend bloquea el botón de guardar si falta el soporte digital cargado."
+      }
+    ]
+  },
+  {
+    id: "compras-sla-tiempo",
+    titulo: "Reglas de Negocio: SLA y Tiempos",
+    categoria: "Compras",
+    keywords: ["sla", "tiempo", "cronometro", "vencido", "retraso", "justificacion", "alerta", "penalizacion"],
+    descripcion: "Medición científica del desempeño de la gerencia de compras a través de cronómetros en la nube y justificaciones obligatorias.",
+    flujoEstatus: [
+      { nombre: "SLA ACTIVO", bg: "#eff6ff", col: "#1d4ed8", desc: "El ticket se encuentra en procesamiento óptimo dentro del límite temporal." },
+      { nombre: "VENCIDO", bg: "#fee2e2", col: "#991b1b", desc: "Muestra retraso crítico en mapa de calor y activa alertas en el Dashboard BI corporativo." }
+    ],
+    pasos: [
+      {
+        paso: 1,
+        titulo: "Monitorear Métrica de Tiempo",
+        detalle: "Sigue el cronómetro de SLA asignado a cada ticket de procura para evitar que pase a estatus VENCIDO."
+      },
+      {
+        paso: 2,
+        titulo: "Cargar Justificación Técnica",
+        detalle: "Si hay demoras, abre el selector de motivos (ej: falla de stock, espera de aprobación, definición insuficiente) y escribe una glosa detallada."
+      },
+      {
+        paso: 3,
+        titulo: "Evitar Penalizaciones",
+        detalle: "Asegúrate de registrar compras o justificaciones. Si no se hace, el tiempo correrá y afectará tus métricas de eficiencia en compras."
+      }
+    ],
+    faq: [
+      {
+        pregunta: "¿Quién recibe las alertas por tickets vencidos?",
+        respuesta: "Se envían alertas en tiempo real al Dashboard BI de la Dirección Corporativa, penalizando los KPIs de la gerencia de procura."
+      }
+    ]
+  },
+  {
+    id: "almacen-ubicacion",
+    titulo: "Almacén: Confirmación y Ubicación",
+    categoria: "Compras",
+    keywords: ["almacen", "ubicacion", "entradas", "pasillo", "estante", "trazabilidad", "solicitante"],
+    descripcion: "Flujo de confirmación física de mercancías e integración con ubicaciones de almacén.",
+    flujoEstatus: [
+      { nombre: "POR CLASIFICAR", bg: "#fef3c7", col: "#d97706", desc: "El camión llegó y la compra fue notificada para ser clasificada en Almacén." },
+      { nombre: "CLASIFICADO", bg: "#dcfce7", col: "#15803d", desc: "El almacenista ha registrado la ubicación física de resguardo." }
+    ],
+    pasos: [
+      {
+        paso: 1,
+        titulo: "Notificar Entrega (Icono Casa 🏠)",
+        detalle: "Al recibir físicamente los insumos en sede, el comprador presiona el icono de la Casa en la columna ALM para enviarlo a Almacén."
+      },
+      {
+        paso: 2,
+        titulo: "Gobernanza e Indexación",
+        detalle: "El personal de almacén visualiza el insumo, abre su panel y selecciona obligatoriamente el Pasillo, Estante y Sección de resguardo."
+      },
+      {
+        paso: 3,
+        titulo: "Verificación de Trazabilidad (TR)",
+        detalle: "Al guardar, el solicitante ve el icono 🏠 iluminado en su historial. Al presionar el botón de hoja (📄), visualizará la ubicación exacta para retirar su repuesto."
+      }
+    ],
+    faq: [
+      {
+        pregunta: "¿Por qué no aparece el repuesto en mi almacén?",
+        respuesta: "El comprador debe marcar primero la recepción (🏠) para que almacén pueda asignarle su ubicación física correspondiente."
+      }
+    ]
+  },
+  {
+    id: "compras-anulacion",
+    titulo: "Cierre: Anulación de Saldos",
+    categoria: "Compras",
+    keywords: ["anulacion", "saldo", "bloqueo", "historico", "presupuesto", "remante", "inmutable"],
+    descripcion: "Cierre seguro de requerimientos pendientes por cambios de diseño u operaciones de campo.",
+    flujoEstatus: [
+      { nombre: "SALDO REMANENTE", bg: "#fef3c7", col: "#d97706", desc: "Cantidades presupuestadas pero que ya no son necesarias comprar." },
+      { nombre: "EFECTO ANULADO", bg: "#f1f5f9", col: "#475569", desc: "El saldo se reduce a cero liberando contabilidad sin modificar lo ya comprado." }
+    ],
+    pasos: [
+      {
+        paso: 1,
+        titulo: "Presionar Icono de Bloqueo",
+        detalle: "Acciona el botón de anulación en la fila correspondiente para abrir la ventana interactiva de saldo remanente."
+      },
+      {
+        paso: 2,
+        titulo: "Seleccionar Motivo de Anulación",
+        detalle: "Elige uno de los motivos estándar (ej. Ya en Stock, No requerido, Duplicado) e introduce la justificación textual."
+      },
+      {
+        paso: 3,
+        titulo: "Ejecutar Cierre Contable",
+        detalle: "Presiona [ Anular Saldo ] para liberar presupuesto fantasma. Las compras hechas previamente se mantendrán inmutables."
+      }
+    ],
+    faq: [
+      {
+        pregunta: "¿Se borran las compras ya registradas si anulo el saldo pendiente?",
+        respuesta: "No, las compras ya efectuadas permanecen intactas e inmutables en la base de datos para auditorías financieras."
+      }
+    ]
+  },
+  {
+    id: "proveedores-modulo",
+    titulo: "Proveedores: Directorio y Reportes",
+    categoria: "Compras",
+    keywords: ["proveedor", "rif", "razon social", "directorio", "analytics", "ranking", "estrella", "comparativo"],
+    descripcion: "Manual de administración de la base de proveedores homologados y análisis BI de gastos y mejores precios.",
+    flujoEstatus: [
+      { nombre: "PROVEEDOR ACTIVO", bg: "#dcfce7", col: "#166534", desc: "Proveedor habilitado para ser seleccionado en órdenes de compra." },
+      { nombre: "PROVEEDOR INACTIVO", bg: "#f1f5f9", col: "#475569", desc: "Ocultado temporalmente de las listas de selección del sistema." }
+    ],
+    pasos: [
+      {
+        paso: 1,
+        titulo: "Registrar Proveedor (Pestaña Directorio)",
+        detalle: "Ingresa el RIF oficial (J-12345678-0), Razón Social, Dirección y asigna etiquetas de multi-selección (tags) por rubros comerciales."
+      },
+      {
+        paso: 2,
+        titulo: "Monitorear Estadísticas BI (Pestaña Reportes)",
+        detalle: "Revisa las KPI Cards con el Gasto Total Acumulado, Proveedor Estrella y Conteo de Transacciones de procura."
+      },
+      {
+        paso: 3,
+        titulo: "Usar Comparador de Precios",
+        detalle: "Busca un item en el comparador de precios. El sistema ordenará las ofertas y pintará en verde suave la fila con el 'Mejor Precio' histórico."
+      },
+      {
+        paso: 4,
+        titulo: "Ordenar Ranking de Gasto",
+        detalle: "Utiliza la tabla ranking de gasto de proveedores haciendo clic en las columnas para ordenar por volumen o promedio."
+      },
+      {
+        paso: 5,
+        titulo: "Descargar Hojas de Rendimiento",
+        detalle: "Presiona 'Exportar Ranking a Excel' para generar un reporte automatizado diseñado con ExcelJS."
+      }
+    ],
+    faq: [
+      {
+        pregunta: "¿Cómo encuentro qué proveedor vendió un insumo más barato?",
+        respuesta: "Usa el Comparativo de Precios en la pestaña Análisis, escribe el nombre del item y observa la fila sombreada en verde."
+      }
+    ]
+  },
+  {
+    id: "reportes-compras",
+    titulo: "Reporte Máster de Compras",
+    categoria: "Compras",
+    keywords: ["reportes", "ahorro", "mes", "pagar", "completadas", "faltantes", "exportar", "auditoria"],
+    descripcion: "Centro de auditoría macro para evaluar gastos, ahorros y exportar balances en Excel.",
+    flujoEstatus: [
+      { nombre: "GASTO DEL MES", bg: "#eff6ff", col: "#1e40af", desc: "Acumulado total facturado durante el mes en curso." },
+      { nombre: "AHORRO POR NEGOCIACIÓN", bg: "#dcfce7", col: "#15803d", desc: "Presupuesto ahorrado a través de negociaciones de precio unitario." }
+    ],
+    pasos: [
+      {
+        paso: 1,
+        titulo: "Auditar Indicadores de Cabecera",
+        detalle: "Revisa los contadores acumulados de egresos del mes, ahorros por negociación y deudas de compras pendientes por pagar."
+      },
+      {
+        paso: 2,
+        titulo: "Expandir Filas de Historial",
+        detalle: "Haz clic en cualquier fila para desplegar una subtabla con las facturas, detalles de compras y compradores ejecutores."
+      },
+      {
+        paso: 3,
+        titulo: "Exportar Histórico Filtrado",
+        detalle: "Presiona [ Excel General ] para descargar las requisiciones filtradas actualmente en pantalla."
+      },
+      {
+        paso: 4,
+        titulo: "Descargar Hojas de Materiales Faltantes",
+        detalle: "Haz clic en [ Faltantes ] para compilar en Excel de forma exclusiva los renglones con saldos pendientes para mesas técnicas."
+      },
+      {
+        paso: 5,
+        titulo: "Descargar Hojas de Transacciones Completadas",
+        detalle: "Presiona [ Completadas ] para descargar transacciones cerradas, detallando factura y estatus de ingreso a almacén (🏠)."
+      }
+    ],
+    faq: [
+      {
+        pregunta: "¿Qué mide el 'Ahorro por Negociación'?",
+        respuesta: "Es la diferencia favorable entre el precio unitario estimado original y el precio unitario real final negociado por compras."
       }
     ]
   },
