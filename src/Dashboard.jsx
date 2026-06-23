@@ -10,6 +10,7 @@ import ModuloTicketsPago from './ModuloTicketsPago';
 import Compras from './Compras';
 import Reportes from './Reportes';
 import ReportesMaestro from './ReportesMaestro';
+import ReporteOperaciones from './ReporteOperaciones';
 import Proveedores from './Proveedores';
 import Administracion from './Administracion';
 import Atributos from './Atributos';
@@ -45,7 +46,7 @@ function Dashboard() {
   };
 
   useEffect(() => {
-    if (['compras', 'reportesmaestro', 'reportes', 'proveedores', 'analytics_compras'].includes(seccionActiva)) {
+    if (['compras', 'reportesmaestro', 'reporte_operaciones', 'reportes', 'proveedores', 'analytics_compras'].includes(seccionActiva)) {
       setDropdowns(prev => ({ ...prev, compras: true }));
     } else if (['ejecutivo', 'control_precios'].includes(seccionActiva)) {
       setDropdowns(prev => ({ ...prev, control: true }));
@@ -72,7 +73,7 @@ function Dashboard() {
     const modulos = perfil.permisos_modulos || [];
     const todosModulos = [
       'dashboard', 'requisiciones', 'fondos', 'tickets', 'almacen',
-      'compras', 'reportesmaestro', 'reportes', 'proveedores',
+      'compras', 'reportesmaestro', 'reporte_operaciones', 'reportes', 'proveedores',
       'analytics_compras', 'ejecutivo', 'control_precios', 'usuarios', 'atributos', 'administracion', 'liquidacion'
     ];
     todosModulos.forEach(modId => {
@@ -405,6 +406,7 @@ function Dashboard() {
       tickets: { titulo: "Ticket de Pago", icon: "fa-ticket", color: "#f59e0b" },
       reportes: { titulo: "Centro de Reportes", icon: "fa-file-contract", color: "#0ea5e9" },
       reportesmaestro: { titulo: "Centro de Reportes Maestro", icon: "fa-chart-line", color: "#6366f1" },
+      reporte_operaciones: { titulo: "Reporte de Operaciones", icon: "fa-chart-bar", color: "#3b82f6" },
       reportestickets: { titulo: "Reporte de Tickets", icon: "fa-file-contract", color: "#f59e0b" },
       usuarios: { titulo: "Gestión de Usuarios", icon: "fa-users-gear", color: "#64748b" },
       administracion: { titulo: "Administración Central", icon: "fa-gears", color: "#8b5cf6" },
@@ -419,6 +421,7 @@ function Dashboard() {
     if (seccionActiva === 'compras') return <Compras currentUser={usuario} />;
     if (seccionActiva === 'reportes') return <Reportes />;
     if (seccionActiva === 'reportesmaestro') return <ReportesMaestro />;
+    if (seccionActiva === 'reporte_operaciones') return <ReporteOperaciones currentUser={usuario} />;
     if (seccionActiva === 'proveedores') return <Proveedores />;
     if (seccionActiva === 'administracion') return <Administracion />;
     if (seccionActiva === 'atributos') return <Atributos />;
@@ -821,6 +824,7 @@ function Dashboard() {
                 items: [
                   { id: 'compras', icon: 'fa-cart-plus', label: 'Compras' },
                   { id: 'reportesmaestro', icon: 'fa-chart-line', label: 'Reportes Maestro' },
+                  { id: 'reporte_operaciones', icon: 'fa-chart-bar', label: 'Reporte Operaciones' },
                   { id: 'reportes', icon: 'fa-file-contract', label: 'Reporte de Compras' },
                   { id: 'proveedores', icon: 'fa-address-book', label: 'Proveedores' },
                   { id: 'analytics_compras', icon: 'fa-gauge-high', label: 'Estadísticas' }

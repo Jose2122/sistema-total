@@ -1153,7 +1153,13 @@ const Compras = () => {
       }
 
       // Preparar la nueva transacción
-      const uuidTransaccion = self.crypto ? self.crypto.randomUUID() : (Date.now().toString() + Math.random().toString());
+      const uuidTransaccion = (typeof self !== 'undefined' && self.crypto && typeof self.crypto.randomUUID === 'function')
+        ? self.crypto.randomUUID()
+        : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+            const r = (Math.random() * 16) | 0;
+            const v = c === 'x' ? r : (r & 0x3) | 0x8;
+            return v.toString(16);
+          });
       const nuevaTransaccion = {
         id: uuidTransaccion,
         fecha: new Date().toISOString(),

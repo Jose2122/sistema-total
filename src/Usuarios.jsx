@@ -72,6 +72,7 @@ const Usuarios = ({ currentUser: currentUserProp, onUserUpdate }) => {
     { id: 'almacen', label: 'Almacén' },
     { id: 'compras', label: 'Compras' },
     { id: 'reportesmaestro', label: 'Reportes Maestro' },
+    { id: 'reporte_operaciones', label: 'Reporte de Operaciones' },
     { id: 'reportes', label: 'Reporte de Compras' },
     { id: 'proveedores', label: 'Proveedores' },
     { id: 'analytics_compras', label: 'Estadísticas y Trazabilidad' },
