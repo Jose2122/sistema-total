@@ -13,6 +13,12 @@ import {
 } from 'lucide-react';
 import './Requisiciones.css';
 
+const compararNombres = (nombre1, nombre2) => {
+  if (!nombre1 || !nombre2) return false;
+  const clean = (str) => str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s+/g, ' ').trim();
+  return clean(nombre1) === clean(nombre2);
+};
+
 const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentUserProp }) => {
   // --- ESTADOS DEL SISTEMA ---
   const [showModal, setShowModal] = useState(false);
@@ -22,6 +28,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
   const [currentUser, setCurrentUser] = useState(currentUserProp || null);
   const [modoEdicion, setModoEdicion] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
+  const [gerenteDirectoCreador, setGerenteDirectoCreador] = useState(null);
+  const [gerenteDirectoIdCreador, setGerenteDirectoIdCreador] = useState(null);
 
   const getRank = (rol) => {
     const r = (rol || '').toLowerCase();
@@ -34,7 +42,13 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     return 0;
   };
 
-  const obtenerAprobadorProyecto = (cc) => {
+  const obtenerAprobadorProyecto = (cc, reqCreatorManager = null) => {
+    // Prioridad: gerente directo del creador
+    const gerenteDirecto = reqCreatorManager || currentUser?.gerente_directo_nombre;
+    if (gerenteDirecto) {
+      return gerenteDirecto;
+    }
+
     if (!cc) return null;
     const ccUpper = cc.toString().toUpperCase().trim();
     
@@ -81,19 +95,49 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
   const notificarSegunEstado = async (reqId, estado, correlativo, cc, gerenciaDepto, creadorNombre) => {
     try {
       if (estado === 'pendiente_proyecto') {
-        const { data: gerentesProyecto } = await supabase
-          .from('perfiles')
-          .select('id')
-          .contains('obras_asignadas', [cc])
-          .ilike('rol', '%proyecto%');
-        if (gerentesProyecto && gerentesProyecto.length > 0) {
-          for (const gp of gerentesProyecto) {
-            await enviarNotificacion(
-              gp.id,
-              `Nueva Requisición ${correlativo} de ${creadorNombre} requiere su aprobación de Proyecto.`,
-              'Aprobación Pendiente',
-              reqId
-            );
+        // Intentar obtener el creador y su gerente directo asignado
+        const { data: reqData } = await supabase
+          .from('requisiciones')
+          .select('user_id')
+          .eq('id', reqId)
+          .single();
+
+        let gerenteDirectoId = null;
+        if (reqData?.user_id) {
+          const { data: perfilCreador } = await supabase
+            .from('perfiles')
+            .select('gerente_directo_id')
+            .eq('id', reqData.user_id)
+            .single();
+          if (perfilCreador?.gerente_directo_id) {
+            gerenteDirectoId = perfilCreador.gerente_directo_id;
+          }
+        }
+
+        if (gerenteDirectoId) {
+          // Notificar solo al gerente directo
+          await enviarNotificacion(
+            gerenteDirectoId,
+            `Nueva Requisición ${correlativo} de ${creadorNombre} requiere su aprobación de Proyecto.`,
+            'Aprobación Pendiente',
+            reqId
+          );
+        } else {
+          // Si no hay gerente directo, notificar a los gerentes asociados a la obra
+          const { data: gerentesProyecto } = await supabase
+            .from('perfiles')
+            .select('id')
+            .contains('obras_asignadas', [cc])
+            .ilike('rol', '%proyecto%');
+          if (gerentesProyecto && gerentesProyecto.length > 0) {
+            for (const gp of gerentesProyecto) {
+              await enviarNotificacion(
+                gp.id,
+                `Nueva Requisición ${correlativo} de ${creadorNombre} requiere su aprobación de Proyecto.`,
+                'Aprobación Pendiente',
+                reqId
+              );
+            }
           }
         }
       } else if (estado === 'pendiente_area') {
@@ -784,14 +828,9 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
   };
 
   const resetearFormulario = () => {
-    if (currentUser) {
-      setSolicitante(`${currentUser.nombre} ${currentUser.apellido}`);
-      setDepartamento(currentUser.departamento);
-    }
     setJustificacion('');
     setObservaciones('');
     setObservacionesDireccion('');
-    setFacturasUrls([]);
     setIdReferenciaProyecto('');
     setEditandoId(null);
     setFechaRequerida(new Date().toISOString().split('T')[0]);
@@ -801,6 +840,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     setHasChanges(false);
     setMostrarSoportes(false);
     setConIva(true);
+    setGerenteDirectoCreador(null);
+    setGerenteDirectoIdCreador(null);
   };
 
   const verRequisicion = (req) => {
@@ -813,6 +854,22 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     setFacturasUrls(req.facturas_url || []);
     setFechaRequerida(req.fecha_requerida || req.fecha || req.fecha_emision);
     setDepartamento(req.gerencia || 'Operaciones');
+    setGerenteDirectoCreador(null);
+    setGerenteDirectoIdCreador(null);
+
+    if (req.user_id) {
+      supabase.from('perfiles')
+        .select('gerente_directo_nombre, gerente_directo_id')
+        .eq('id', req.user_id)
+        .single()
+        .then(({ data }) => {
+          if (data) {
+            setGerenteDirectoCreador(data.gerente_directo_nombre || null);
+            setGerenteDirectoIdCreador(data.gerente_directo_id || null);
+          }
+        })
+        .catch(err => console.error("Error al cargar gerente directo del creador:", err));
+    }
 
     // SANITIZACIÓN DE DATOS (Raíz del problema)
     let detallesSeguros = [];
@@ -848,7 +905,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
 
     const rolUser = (currentUser?.rol || '').toLowerCase();
     const cc = reqActual.centro_costo || '';
-    const gerenteEsperado = obtenerAprobadorProyecto(cc);
+    const gerenteEsperado = obtenerAprobadorProyecto(cc, gerenteDirectoCreador);
     const esAdmin = currentUser?.esAdminReal ||
       rolUser.includes('admin') ||
       rolUser.includes('general') ||
@@ -859,12 +916,17 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     if (esAdmin) {
       puedeRechazar = true;
     } else {
-      if (gerenteEsperado === 'Johannel García') {
+      if (gerenteDirectoIdCreador && currentUser?.id === gerenteDirectoIdCreador) {
+        puedeRechazar = true;
+      } else if (gerenteEsperado === 'Johannel García') {
         puedeRechazar = currentUser?.nombre?.toUpperCase().includes('JOHANNEL');
       } else if (gerenteEsperado === 'Hilda Colina') {
         puedeRechazar = currentUser?.nombre?.toUpperCase().includes('HILDA');
+      } else if (gerenteEsperado) {
+        const miNombre = `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim();
+        puedeRechazar = compararNombres(miNombre, gerenteEsperado) || rolUser.includes('proyecto');
       } else {
-        puedeRechazar = rolUser.includes('proyecto');
+        puedeRechazar = rolUser.includes('proyecto') || (rolUser.includes('gerente') && currentUser?.departamento === reqActual?.gerencia);
       }
     }
 
@@ -1180,7 +1242,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
 
     const rolUser = (currentUser?.rol || '').toLowerCase();
     const cc = reqActual.centro_costo || '';
-    const gerenteEsperado = obtenerAprobadorProyecto(cc);
+    const gerenteEsperado = obtenerAprobadorProyecto(cc, gerenteDirectoCreador);
     const esAdmin = currentUser?.esAdminReal ||
       rolUser.includes('admin') ||
       rolUser.includes('general') ||
@@ -1191,12 +1253,17 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     if (esAdmin) {
       puedeAprobar = true;
     } else {
-      if (gerenteEsperado === 'Johannel García') {
+      if (gerenteDirectoIdCreador && currentUser?.id === gerenteDirectoIdCreador) {
+        puedeAprobar = true;
+      } else if (gerenteEsperado === 'Johannel García') {
         puedeAprobar = currentUser?.nombre?.toUpperCase().includes('JOHANNEL');
       } else if (gerenteEsperado === 'Hilda Colina') {
         puedeAprobar = currentUser?.nombre?.toUpperCase().includes('HILDA');
+      } else if (gerenteEsperado) {
+        const miNombre = `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim();
+        puedeAprobar = compararNombres(miNombre, gerenteEsperado) || rolUser.includes('proyecto');
       } else {
-        puedeAprobar = rolUser.includes('proyecto');
+        puedeAprobar = rolUser.includes('proyecto') || (rolUser.includes('gerente') && currentUser?.departamento === reqActual?.gerencia);
       }
     }
 
@@ -2097,7 +2164,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       pdf.text(descLines, 76, currentY);
       
       // Renderizar columnas simples
-      pdf.text(String(item.cant || 1), 145, currentY, { align: 'right' });
+      pdf.text(`${item.cant || 1} ${item.uni || item.unidad || ''}`, 145, currentY, { align: 'right' });
       
       // Calcular valores acumulados de pago (Bs o USD) para el ítem
       const historial = Array.isArray(item.historial_compras) ? item.historial_compras : [];
@@ -3797,7 +3864,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                             let puedeVerBotonesProyecto = false;
                             if (reqActual?.estado_aprobacion === 'pendiente_proyecto') {
                               const cc = reqActual.centro_costo || '';
-                              const gerenteEsperado = obtenerAprobadorProyecto(cc);
+                              const gerenteEsperado = obtenerAprobadorProyecto(cc, gerenteDirectoCreador);
                               const esAdmin = currentUser?.esAdminReal ||
                                 rolUser.includes('admin') ||
                                 rolUser.includes('general') ||
@@ -3807,10 +3874,15 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                               if (esAdmin) {
                                 puedeVerBotonesProyecto = true;
                               } else {
-                                if (gerenteEsperado === 'Johannel García') {
+                                if (gerenteDirectoIdCreador && currentUser?.id === gerenteDirectoIdCreador) {
+                                  puedeVerBotonesProyecto = true;
+                                } else if (gerenteEsperado === 'Johannel García') {
                                   puedeVerBotonesProyecto = currentUser?.nombre?.toUpperCase().includes('JOHANNEL');
                                 } else if (gerenteEsperado === 'Hilda Colina') {
                                   puedeVerBotonesProyecto = currentUser?.nombre?.toUpperCase().includes('HILDA');
+                                } else if (gerenteEsperado) {
+                                  const miNombre = `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim();
+                                  puedeVerBotonesProyecto = compararNombres(miNombre, gerenteEsperado) || rolUser.includes('proyecto') || (rolUser.includes('gerente') && currentUser?.departamento === reqActual?.gerencia);
                                 } else {
                                   puedeVerBotonesProyecto = rolUser.includes('proyecto') || (rolUser.includes('gerente') && currentUser?.departamento === reqActual?.gerencia);
                                 }

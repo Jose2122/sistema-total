@@ -663,9 +663,9 @@ const Compras = () => {
     const headersResumen = [["ITEM", "PEDIDA", "COMPRADA", "PENDIENTE"]];
     const dataResumen = renglones.map(r => [
       r.descripcion.substring(0, 40),
-      r.cantidad_pedida,
-      r.cantidad_comprada,
-      r.cantidad_pendiente
+      `${r.cantidad_pedida} ${r.uni || r.unidad || ''}`,
+      `${r.cantidad_comprada} ${r.uni || r.unidad || ''}`,
+      `${r.cantidad_pendiente} ${r.uni || r.unidad || ''}`
     ]);
 
     autoTable(doc, {
@@ -2607,13 +2607,13 @@ const Compras = () => {
                           <div style={{ fontWeight: 'bold', color: '#1e293b', fontSize: '0.9rem', textDecoration: f.anulado ? 'line-through' : 'none' }}>{f.descripcion}</div>
                           <div style={{ fontSize: '10px', color: '#64748b', fontWeight: '600' }}>{f.categoria}</div>
                         </td>
-                        <td style={{ textAlign: 'center', fontWeight: '650', color: '#64748b' }}>{f.cantidad_pedida}</td>
-                        <td style={{ textAlign: 'center', color: '#16a34a', fontWeight: '800' }}>{f.cantidad_comprada}</td>
+                        <td style={{ textAlign: 'center', fontWeight: '650', color: '#64748b' }}>{f.cantidad_pedida} {f.uni || f.unidad || ''}</td>
+                        <td style={{ textAlign: 'center', color: '#16a34a', fontWeight: '800' }}>{f.cantidad_comprada} {f.uni || f.unidad || ''}</td>
                         <td style={{
                           textAlign: 'center',
                           fontWeight: '800',
                           color: f.cantidad_pendiente > 0 ? '#f97316' : '#94a3b8'
-                        }}>{f.cantidad_pendiente}</td>
+                        }}>{f.cantidad_pendiente} {f.uni || f.unidad || ''}</td>
 
                         {/* CELDA COMPACTA PAGO / PROVEEDOR */}
                         <td>
@@ -2679,7 +2679,7 @@ const Compras = () => {
 
                         <td style={{ verticalAlign: 'middle' }}>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                            <span style={{ fontSize: '9px', fontWeight: '900', color: '#64748b', textAlign: 'right' }}>COMPRAR</span>
+                            <span style={{ fontSize: '9px', fontWeight: '900', color: '#64748b', textAlign: 'right' }}>COMPRAR ({f.uni || f.unidad || ''})</span>
                             <input
                               className="input-tc focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
                               type="number"

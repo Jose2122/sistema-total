@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from './supabaseClient';
 import { 
   Eye, EyeOff, UserPlus, Save, X, Shield, Trash2, UserCircle, 
@@ -57,12 +57,30 @@ const Usuarios = ({ currentUser: currentUserProp, onUserUpdate }) => {
     delegado_id: '',
     delegacion_desde: '',
     delegacion_hasta: '',
-    obras_asignadas: []
+    obras_asignadas: [],
+    gerente_directo_id: '',
+    gerente_directo_nombre: ''
   });
 
   const [userLogs, setUserLogs] = useState([]);
   const [loadingLogs, setLoadingLogs] = useState(false);
   const [uploadingFoto, setUploadingFoto] = useState(false);
+
+  const listadoGerentesDisponibles = useMemo(() => {
+    return usuarios.filter(u => {
+      if (!u.activo) return false;
+      const rol = (u.rol || '').toLowerCase();
+      const cap = u.capacidades || {};
+      return (
+        rol.includes('gerente') ||
+        rol.includes('coordinador') ||
+        rol.includes('director') ||
+        cap.puede_aprobar_proyecto === true ||
+        cap.puede_aprobar_area === true ||
+        cap.puede_aprobar_final === true
+      );
+    });
+  }, [usuarios]);
 
   const MODULOS_DISPONIBLES = [
     { id: 'dashboard', label: 'Resumen General' },
@@ -326,7 +344,9 @@ const Usuarios = ({ currentUser: currentUserProp, onUserUpdate }) => {
         delegado_id: datosForm.delegado_id || null,
         delegacion_desde: datosForm.delegacion_desde || null,
         delegacion_hasta: datosForm.delegacion_hasta || null,
-        obras_asignadas: datosForm.obras_asignadas || []
+        obras_asignadas: datosForm.obras_asignadas || [],
+        gerente_directo_id: datosForm.gerente_directo_id || null,
+        gerente_directo_nombre: datosForm.gerente_directo_nombre || null
       };
 
       if (formData.id) {
@@ -347,13 +367,13 @@ const Usuarios = ({ currentUser: currentUserProp, onUserUpdate }) => {
         }
 
         if (esAdminCompleto) {
-          // ACTUALIZAR PERFIL (Excluimos gerencia_id si falla, por compatibilidad)
+          // ACTUALIZAR PERFIL (Excluimos gerencia_id y campos de gerente si fallan, por compatibilidad)
           const { error } = await supabase.from('perfiles').update(payloadPerfil).eq('id', formData.id);
           
           if (error) {
               // Manejo de error de columna inexistente (fallback)
               if (error.code === '42703') {
-                  const { gerencia_id, ...payloadSafe } = payloadPerfil;
+                  const { gerencia_id: _gerencia_id, gerente_directo_id: _gerente_directo_id, gerente_directo_nombre: _gerente_directo_nombre, ...payloadSafe } = payloadPerfil;
                   const { error: retryError } = await supabase.from('perfiles').update(payloadSafe).eq('id', formData.id);
                   if (retryError) throw retryError;
               } else throw error;
@@ -397,7 +417,7 @@ const Usuarios = ({ currentUser: currentUserProp, onUserUpdate }) => {
 
         if (profileError) {
              if (profileError.code === '42703') {
-                const { gerencia_id, ...payloadSafe } = payloadPerfil;
+                const { gerencia_id: _gerencia_id, gerente_directo_id: _gerente_directo_id, gerente_directo_nombre: _gerente_directo_nombre, ...payloadSafe } = payloadPerfil;
                 const { error: retryError } = await supabase.from('perfiles').insert([{ ...payloadSafe, id: fnData.user.id }]);
                 if (retryError) throw retryError;
              } else throw profileError;
@@ -413,7 +433,13 @@ const Usuarios = ({ currentUser: currentUserProp, onUserUpdate }) => {
         id: null, nombre: '', apellido: '', correo: '', rol: '', departamento: '', gerencia_id: '',
         foto_url: '', contrato: '', activo: true, password: '', 
         permisos_modulos: ["requisiciones", "fondos", "tickets", "usuarios"],
-        capacidades: {}
+        capacidades: {},
+        delegado_id: '',
+        delegacion_desde: '',
+        delegacion_hasta: '',
+        obras_asignadas: [],
+        gerente_directo_id: '',
+        gerente_directo_nombre: ''
       });
       setVerPassword(false);
       setTabActiva('general');
@@ -566,7 +592,7 @@ const Usuarios = ({ currentUser: currentUserProp, onUserUpdate }) => {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '25px' }}>
           <h2 style={{ fontSize: '1.4rem', color: '#0f172a', margin: 0 }}>Gestión de Usuarios</h2>
           {(currentUser?.esAdminReal || (currentUser?.rol || '').toUpperCase() === 'GERENTE GENERAL' || (currentUser?.rol || '').toUpperCase() === 'ADMIN') && (
-            <button className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '8px' }} onClick={() => { setFormData({id:null, nombre:'', apellido:'', correo:'', rol:'', departamento:'', gerencia_id:'', contrato:'', activo: true, foto_url:'', password: '', permisos_modulos: ["requisiciones", "fondos", "tickets", "usuarios"], capacidades: {}, delegado_id: '', delegacion_desde: '', delegacion_hasta: ''}); setShowModal(true); setTabActiva('general'); setUserLogs([]); }}>
+            <button className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '8px' }} onClick={() => { setFormData({id:null, nombre:'', apellido:'', correo:'', rol:'', departamento:'', gerencia_id:'', contrato:'', activo: true, foto_url:'', password: '', permisos_modulos: ["requisiciones", "fondos", "tickets", "usuarios"], capacidades: {}, delegado_id: '', delegacion_desde: '', delegacion_hasta: '', gerente_directo_id: '', gerente_directo_nombre: ''}); setShowModal(true); setTabActiva('general'); setUserLogs([]); }}>
               <UserPlus size={18} /> Nuevo Integrante
             </button>
           )}
@@ -658,7 +684,9 @@ const Usuarios = ({ currentUser: currentUserProp, onUserUpdate }) => {
                             capacidades: u.capacidades || {},
                             delegado_id: u.delegado_id || '',
                             delegacion_desde: u.delegacion_desde || '',
-                            delegacion_hasta: u.delegacion_hasta || ''
+                            delegacion_hasta: u.delegacion_hasta || '',
+                            gerente_directo_id: u.gerente_directo_id || '',
+                            gerente_directo_nombre: u.gerente_directo_nombre || ''
                           });
                           setVerPassword(false);
                           setTabActiva('general');
@@ -779,6 +807,32 @@ const Usuarios = ({ currentUser: currentUserProp, onUserUpdate }) => {
                       <select className="input-style" value={formData.gerencia_id} disabled={!esAdminCompleto} onChange={e => setFormData({...formData, gerencia_id: e.target.value})}>
                         <option value="">Departamento...</option>
                         {gerencias.map(g => <option key={g.id} value={g.id}>{g.nombre}</option>)}
+                      </select>
+                    </div>
+
+                    <div style={{ marginBottom: '12px' }}>
+                      <label style={{ fontSize: '0.65rem', fontWeight: '800', color: '#64748b', display: 'block', marginBottom: '6px' }}>GERENTE DIRECTO / SUPERVISOR</label>
+                      <select 
+                        className="input-style" 
+                        style={{ width: '100%' }} 
+                        value={formData.gerente_directo_id || ''} 
+                        disabled={!esAdminCompleto} 
+                        onChange={e => {
+                          const val = e.target.value;
+                          const selectedMgr = listadoGerentesDisponibles.find(u => u.id === val);
+                          setFormData({
+                            ...formData,
+                            gerente_directo_id: val || null,
+                            gerente_directo_nombre: selectedMgr ? `${selectedMgr.nombre} ${selectedMgr.apellido}`.trim() : null
+                          });
+                        }}
+                      >
+                        <option value="">Ninguno (Determinar por Centro de Costo)</option>
+                        {listadoGerentesDisponibles.map(m => (
+                          <option key={m.id} value={m.id}>
+                            {m.nombre} {m.apellido} ({m.rol || 'Sin Rol'})
+                          </option>
+                        ))}
                       </select>
                     </div>
 

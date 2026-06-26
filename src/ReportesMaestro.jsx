@@ -1716,7 +1716,7 @@ const ReportesMaestro = () => {
                                             {reqSeleccionada.items?.map((it, idx) => (
                                                 <tr key={idx}>
                                                     <td>{it.descripcion}</td>
-                                                    <td>{it.cant} {it.unidad}</td>
+                                                    <td>{it.cant} {it.uni || it.unidad || ''}</td>
                                                     <td>{it.categoria || 'S/C'}</td>
                                                     <td><span className="rm-badge-type">{it.historial_compras?.length > 0 ? 'Procesado' : 'Pendiente'}</span></td>
                                                 </tr>

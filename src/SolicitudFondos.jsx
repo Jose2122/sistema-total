@@ -929,6 +929,12 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
 
   const determinarGerenteSuperior = async (user, depto) => {
     try {
+      // 0. Si el perfil del usuario tiene asignado explícitamente un gerente directo, usarlo
+      if (user && user.gerente_directo_nombre) {
+        console.log(`[GERENTE SUPERIOR] Asignado por Gerente Directo en Perfil:`, user.gerente_directo_nombre);
+        return user.gerente_directo_nombre;
+      }
+
       // Recopilar posibles Centros de Costo / Contratos del usuario
       const posiblesCCs = [];
       if (user && user.contrato) {
