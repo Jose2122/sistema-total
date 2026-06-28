@@ -1,0 +1,249 @@
+.admin-container {
+  padding: 30px;
+  background-color: #f8fafc;
+  min-height: 100vh;
+  font-family: 'Inter', sans-serif;
+}
+
+.admin-header {
+  margin-bottom: 35px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.admin-title {
+  font-size: 2rem;
+  font-weight: 900;
+  color: #0f172a;
+  margin: 0;
+  letter-spacing: -0.025em;
+}
+
+.admin-subtitle {
+  color: #64748b;
+  margin-top: 5px;
+  font-size: 1rem;
+}
+
+.btn-update {
+  background-color: white;
+  border: 1px solid #e2e8f0;
+  padding: 12px 20px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  font-weight: 600;
+  color: #475569;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  transition: all 0.2s;
+}
+
+.btn-update:hover {
+  background-color: #f1f5f9;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 25px;
+  margin-bottom: 40px;
+}
+
+.stat-card {
+  background-color: white;
+  padding: 24px;
+  border-radius: 24px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  border: 1px solid #f1f5f9;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 140px;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.stat-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1);
+}
+
+.content-grid {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  gap: 30px;
+}
+
+/* BANK MANAGEMENT */
+.bank-card {
+  background-color: white;
+  padding: 30px;
+  border-radius: 24px;
+  box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05), 0 2px 4px -1px rgba(0,0,0,0.03);
+  border: 1px solid #f1f5f9;
+}
+
+.bank-card-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 25px;
+}
+
+.bank-icon-wrap {
+  background-color: #f0f9ff;
+  padding: 10px;
+  border-radius: 12px;
+}
+
+.bank-title {
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: #1e293b;
+  margin: 0;
+}
+
+.bank-form {
+  margin-bottom: 35px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 15px;
+  background-color: #f8fafc;
+  padding: 20px;
+  border-radius: 16px;
+  border: 1px solid #e2e8f0;
+}
+
+.form-label {
+  font-size: 11px;
+  font-weight: 800;
+  color: #64748b;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+  display: block;
+}
+
+.form-input {
+  width: 100%;
+  padding: 12px 15px;
+  border-radius: 10px;
+  border: 1px solid #cbd5e1;
+  outline: none;
+  transition: border-color 0.2s;
+  box-sizing: border-box;
+}
+
+.form-input:focus {
+  border-color: #0ea5e9;
+}
+
+.btn-add-bank {
+  grid-column: span 2;
+  margin-top: 10px;
+  background-color: #0f172a;
+  color: white;
+  border: none;
+  padding: 14px;
+  border-radius: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: transform 0.1s, background-color 0.2s;
+}
+
+.btn-add-bank:hover {
+  background-color: #1e293b;
+}
+
+.btn-delete-bank {
+  background-color: #fff1f2;
+  border: none;
+  padding: 10px;
+  border-radius: 10px;
+  color: #e11d48;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-delete-bank:hover {
+  background-color: #ffe4e6;
+}
+
+/* RECENT TICKETS */
+.recent-card {
+  background-color: #0f172a;
+  padding: 30px;
+  border-radius: 24px;
+  color: white;
+  box-shadow: 0 20px 25px -5px rgba(0,0,0,0.2);
+}
+
+.recent-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 25px;
+}
+
+.recent-icon-wrap {
+  background-color: rgba(56, 189, 248, 0.1);
+  padding: 10px;
+  border-radius: 12px;
+}
+
+.recent-title {
+  font-size: 1.25rem;
+  font-weight: 800;
+  margin: 0;
+}
+
+.recent-badge {
+  font-size: 12px;
+  color: #94a3b8;
+  font-weight: 600;
+  background-color: #1e293b;
+  padding: 6px 12px;
+  border-radius: 20px;
+}
+
+.ticket-item {
+  background-color: #1e293b;
+  padding: 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,0.05);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.ticket-avatar {
+  width: 45px;
+  height: 45px;
+  border-radius: 12px;
+  background-color: #334155;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-view-all {
+  width: 100%;
+  margin-top: 25px;
+  padding: 15px;
+  border-radius: 12px;
+  border: 1px dashed rgba(255,255,255,0.2);
+  background: transparent;
+  color: #94a3b8;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.btn-view-all:hover {
+  background-color: rgba(255,255,255,0.05);
+}

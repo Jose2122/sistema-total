@@ -1,0 +1,27 @@
+export const GERENCIAS_DATA = {
+  'DIRECCIÓN CORPORATIVA': 'CARLOS VEGA',
+  'GERENCIA GENERAL': 'CARLOS VEGA',
+  'ADMINISTRACIÓN': 'JOSE CONTRERAS',
+  'ADMINISTRACIÓN MARACAIBO': 'JOSE CONTRERAS',
+  'OPERACIONES': 'RICARDO MACHADO',
+  'SIAHO': 'ALONDRA MACHADO',
+  'MANTENIMIENTO': 'MANUEL CORTEZ',
+  'LOGÍSTICA': 'NELSON ARRIETA'
+};
+
+export const UNIDADES_MEDIDA = [
+  'UNID', 'MTS', 'KGS', 'LTS', 'GAL', 'PAQ', 'RES', 'CAJ', 'SERV', 'HORA', 'DIA', 'MES'
+];
+
+export const SEDES = ['MARACAIBO', 'CARACAS', 'MATURIN', 'VALENCIA', 'BARCELONA'];
+
+export const PRIORIDADES = ['Normal', 'Emergencia'];
+
+export const ESTADOS_REQUISICION = {
+  PENDIENTE_PROYECTO: 'pendiente_proyecto',
+  PENDIENTE_AREA: 'pendiente_area',
+  ENVIADA_GENERAL: 'enviada_general',
+  APROBADO_FINAL: 'aprobado_final',
+  RECHAZADA: 'rechazada',
+  ANULADA: 'ANULADA'
+};

@@ -1,0 +1,67 @@
+@import "tailwindcss";
+
+* {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+body {
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: #f8fafc;
+}
+
+/* Eliminar flechas (spinners) de inputs numéricos */
+input[type=number]::-webkit-inner-spin-button, 
+input[type=number]::-webkit-outer-spin-button { 
+  -webkit-appearance: none; 
+  margin: 0; 
+}
+
+input[type=number] {
+  -moz-appearance: textfield;
+  appearance: none;
+}
+
+/* Asegurar que las notificaciones de toast estén siempre por encima de todo */
+.go3958315123 {
+  z-index: 9999999 !important;
+}
+
+/* Hover de notificaciones en el Dashboard */
+.notificacion-card-item:hover {
+  background-color: #f8fafc !important;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.02);
+}
+
+/* Estandarización de Encabezados de Tablas (thead) */
+table {
+  border-collapse: separate !important;
+  border-spacing: 0 !important;
+}
+
+thead, thead tr {
+  background-color: #1e283a !important;
+}
+
+thead th, table thead tr th {
+  background: #1e283a !important;
+  background-color: #1e283a !important;
+  text-transform: uppercase !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.05em !important;
+  vertical-align: middle !important;
+  color: #ffffff !important;
+}
+
+/* Redondear esquinas superiores del encabezado */
+thead tr:first-child th:first-child {
+  border-top-left-radius: 12px !important;
+}
+
+thead tr:first-child th:last-child {
+  border-top-right-radius: 12px !important;
+}
+
+
