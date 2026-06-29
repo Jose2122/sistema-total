@@ -1934,6 +1934,9 @@ const ReportesMaestro = () => {
                                                                         const lowerUrl = url.split('?')[0].toLowerCase();
                                                                         const isPdf = lowerUrl.endsWith('.pdf');
                                                                         const isImg = /\.(jpg|jpeg|png|webp|avif|gif)$/i.test(lowerUrl);
+                                                                        const isExcel = /\.(xls|xlsx|csv)$/i.test(lowerUrl);
+                                                                        const isWord = /\.(doc|docx)$/i.test(lowerUrl);
+                                                                        const isPowerPoint = /\.(ppt|pptx)$/i.test(lowerUrl);
                                                                         
                                                                         if (isPdf) {
                                                                             return (
@@ -1956,14 +1959,24 @@ const ReportesMaestro = () => {
                                                                                 </div>
                                                                             );
                                                                         }
+
+                                                                        let fileInfo = { iconColor: '#64748b', label: 'Documento Adjunto', desc: 'Este archivo no se puede previsualizar en el navegador.' };
+                                                                        if (isExcel) {
+                                                                            fileInfo = { iconColor: '#10b981', label: 'Hoja de Cálculo Excel', desc: 'Este archivo de Excel no se puede previsualizar directamente en el navegador.' };
+                                                                        } else if (isWord) {
+                                                                            fileInfo = { iconColor: '#2563eb', label: 'Documento Word', desc: 'Este documento de Word no se puede previsualizar directamente en el navegador.' };
+                                                                        } else if (isPowerPoint) {
+                                                                            fileInfo = { iconColor: '#f97316', label: 'Presentación PowerPoint', desc: 'Esta presentación de PowerPoint no se puede previsualizar directamente en el navegador.' };
+                                                                        }
+
                                                                         return (
-                                                                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#f8fafc', padding: '40px 20px', borderRadius: '12px', border: '1px solid #e2e8f0', textAlign: 'center', minHeight: '300px' }}>
-                                                                                <FileText size={48} color="#2563eb" style={{ marginBottom: '15px' }} />
+                                                                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#f8fafc', padding: '40px 20px', borderRadius: '12px', border: '1px solid #cbd5e1', textAlign: 'center', minHeight: '300px' }}>
+                                                                                <FileText size={48} color={fileInfo.iconColor} style={{ marginBottom: '15px' }} />
                                                                                 <span style={{ fontSize: '1rem', fontWeight: 'bold', color: '#1e293b' }}>
-                                                                                    Documento Adjunto
+                                                                                    {fileInfo.label}
                                                                                 </span>
                                                                                 <p style={{ fontSize: '0.8rem', color: '#64748b', margin: '8px 0 20px 0', maxWidth: '300px' }}>
-                                                                                    Este tipo de archivo no se puede previsualizar directamente en el navegador. Por favor, descárguelo usando el enlace de abajo.
+                                                                                    {fileInfo.desc} Por favor use el botón de abajo para descargarlo o abrirlo en una nueva pestaña.
                                                                                 </p>
                                                                                 <a
                                                                                     href={url}

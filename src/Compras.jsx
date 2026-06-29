@@ -492,14 +492,8 @@ const Compras = () => {
   };
 
   const eliminarEntradaHistorial = async (idRenglon, indexHistorial) => {
-    const rolUpper = (currentUser?.rol || '').toUpperCase();
-    const deptoUpper = (currentUser?.departamento || '').toUpperCase();
-    const esCompras = deptoUpper.includes('COMPRAS') ||
-      deptoUpper.includes('ADMINISTRACIÓN') ||
-      currentUser?.esAdminReal ||
-      rolUpper === 'ADMIN' ||
-      rolUpper === 'GERENTE GENERAL';
-    if (!esCompras) return toast.error("Solo el personal de Compras / Administración puede eliminar registros del historial.");
+    const esAutorizado = currentUser?.correo?.toLowerCase() === 'jcontreras.totalclean@gmail.com';
+    if (!esAutorizado) return toast.error("Solo el Administrador jcontreras.totalclean@gmail.com tiene permisos para eliminar registros del historial de compras.");
 
     toast((t) => (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -518,6 +512,10 @@ const Compras = () => {
   };
 
   const ejecutarEliminacionHistorial = async (idRenglon, indexHistorial) => {
+    if (currentUser?.correo?.toLowerCase() !== 'jcontreras.totalclean@gmail.com') {
+      toast.error("Solo el Administrador jcontreras.totalclean@gmail.com tiene permisos para eliminar registros del historial de compras.");
+      return;
+    }
     setLoading(true);
     try {
       const renglonesActualizados = renglones.map(r => {
@@ -1036,7 +1034,7 @@ const Compras = () => {
               <label style={labelStyle}>Adjuntar Soporte (Obligatorio) <span style={{ color: '#ef4444' }}>*</span></label>
               <input
                 type="file"
-                accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv"
                 onChange={(e) => {
                   if (e.target.files && e.target.files[0]) {
                     const selectedFile = e.target.files[0];
@@ -3105,7 +3103,7 @@ const Compras = () => {
                                       </td>
                                       <td style={{ padding: '10px 12px', textAlign: 'right', color: '#64748b', fontSize: '0.65rem', fontWeight: '600' }}>{h.usuario_nombre}</td>
                                       <td style={{ padding: '10px 12px', textAlign: 'center' }}>
-                                        {(deptoUpperFinal.includes('COMPRAS') || currentUser?.esAdminReal || rolUpperFinal === 'ADMIN' || rolUpperFinal === 'GERENTE GENERAL') && (
+                                        {currentUser?.correo?.toLowerCase() === 'jcontreras.totalclean@gmail.com' && (
                                           <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
                                             <button
                                               onClick={() => eliminarEntradaHistorial(f.id, idx)}
@@ -3173,7 +3171,24 @@ const Compras = () => {
                         })();
                         if (!url || url.length < 5) return null;
 
-                        const isImg = /\.(jpg|jpeg|png|webp|avif|gif)$/i.test(url.split('?')[0]);
+                        const lowerUrl = url.split('?')[0].toLowerCase();
+                        const isImg = /\.(jpg|jpeg|png|webp|avif|gif)$/i.test(lowerUrl);
+                        const isPdf = lowerUrl.endsWith('.pdf');
+                        const isExcel = /\.(xls|xlsx|csv)$/i.test(lowerUrl);
+                        const isWord = /\.(doc|docx)$/i.test(lowerUrl);
+                        const isPowerPoint = /\.(ppt|pptx)$/i.test(lowerUrl);
+
+                        let fileInfo = { iconColor: '#64748b', bgColor: '#f8fafc', label: 'DOC' };
+                        if (isPdf) {
+                          fileInfo = { iconColor: '#ef4444', bgColor: '#fef2f2', label: 'PDF' };
+                        } else if (isExcel) {
+                          fileInfo = { iconColor: '#10b981', bgColor: '#ecfdf5', label: 'EXCEL' };
+                        } else if (isWord) {
+                          fileInfo = { iconColor: '#2563eb', bgColor: '#eff6ff', label: 'WORD' };
+                        } else if (isPowerPoint) {
+                          fileInfo = { iconColor: '#f97316', bgColor: '#fff7ed', label: 'PPT' };
+                        }
+
                         return (
                           <div key={idx} style={{ position: 'relative', display: 'flex', flexDirection: 'column', gap: '5px', width: '80px' }}>
                             <a href={url} target="_blank" rel="noreferrer" style={{
@@ -3181,7 +3196,7 @@ const Compras = () => {
                               width: '80px', height: '80px',
                               borderRadius: '10px',
                               overflow: 'hidden',
-                              border: '2px solid #e2e8f0',
+                              border: '2px solid #cbd5e1',
                               backgroundColor: 'white',
                               transition: 'all 0.2s ease',
                               boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
@@ -3193,9 +3208,10 @@ const Compras = () => {
                                   width: '100%', height: '100%',
                                   display: 'flex', flexDirection: 'column',
                                   alignItems: 'center', justifyContent: 'center',
-                                  backgroundColor: '#f8fafc', color: '#ef4444'
+                                  backgroundColor: fileInfo.bgColor, color: fileInfo.iconColor
                                 }}>
-                                  <FileText size={32} />
+                                  <FileText size={24} style={{ marginBottom: '4px' }} />
+                                  <span style={{ fontSize: '9px', fontWeight: 'bold', textTransform: 'uppercase' }}>{fileInfo.label}</span>
                                 </div>
                               )}
                             </a>

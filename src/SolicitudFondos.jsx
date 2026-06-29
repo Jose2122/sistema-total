@@ -286,7 +286,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
     const esAutorizado = currentUser?.correo?.toLowerCase() === 'jcontreras.totalclean@gmail.com';
 
     if (!esAutorizado) {
-      toast.error("Solo el programador tiene permisos para eliminar solicitudes.");
+      toast.error("Solo el Administrador jcontreras.totalclean@gmail.com tiene permisos para eliminar solicitudes.");
       return;
     }
 
@@ -307,6 +307,11 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
   };
 
   const ejecutarEliminarSolicitud = async (id_db) => {
+    const esAutorizado = currentUser?.correo?.toLowerCase() === 'jcontreras.totalclean@gmail.com';
+    if (!esAutorizado) {
+      toast.error("Solo el Administrador jcontreras.totalclean@gmail.com tiene permisos para eliminar solicitudes.");
+      return;
+    }
     try {
       setLoading(true);
       const { error: errorPartidas } = await supabase.from('partidas_fondos').delete().eq('solicitud_id', id_db);
@@ -3003,7 +3008,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                     >
 
                     </button>
-                    {currentUser?.esSuperAdmin && (
+                    {currentUser?.correo?.toLowerCase() === 'jcontreras.totalclean@gmail.com' && (
                       <button
                         onClick={(e) => {
                           e.preventDefault();

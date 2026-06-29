@@ -793,6 +793,10 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
   };
 
   const manejarEliminar = async (id) => {
+    if (currentUser?.correo?.toLowerCase() !== 'jcontreras.totalclean@gmail.com') {
+      toast.error("Solo el Administrador jcontreras.totalclean@gmail.com tiene permisos para eliminar requisiciones.");
+      return;
+    }
     toast((t) => (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
         <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: '500' }}>¿Eliminar esta requisición de forma permanente? Esta acción liberará los renglones en Fondos.</p>
@@ -810,6 +814,10 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
   };
 
   const ejecutarEliminarRequisicion = async (id) => {
+    if (currentUser?.correo?.toLowerCase() !== 'jcontreras.totalclean@gmail.com') {
+      toast.error("Solo el Administrador jcontreras.totalclean@gmail.com tiene permisos para eliminar requisiciones.");
+      return;
+    }
     setLoading(true);
     try {
       await liberarPartidasFondos(id);
@@ -3436,7 +3444,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                               )}
                             </td>
                             <td style={{ padding: '12px 4px' }}><input className="input-tc" value={f.beneficiario} onChange={(e) => actualizarFila(f.id, 'beneficiario', e.target.value)} placeholder="Beneficiario" disabled={(editandoId && !modoEdicion) || f.anulado} /></td>
-                            <td style={{ padding: '12px 4px' }}><input className="input-tc" type="number" value={f.pu === '' ? '' : Number(f.pu)} style={{ textAlign: 'right' }} onChange={(e) => actualizarFila(f.id, 'pu', e.target.value)} disabled={!!editandoId || f.anulado} /></td>
+                            <td style={{ padding: '12px 4px' }}><input className="input-tc" type="number" value={f.pu === '' ? '' : Number(f.pu)} style={{ textAlign: 'right' }} onChange={(e) => actualizarFila(f.id, 'pu', e.target.value)} disabled={(editandoId && !modoEdicion) || f.anulado} /></td>
                             <td style={{ textAlign: 'right', fontWeight: 'bold', padding: '12px 4px' }}>{f.total.toLocaleString('de-DE')}</td>
                             <td style={{ textAlign: 'center', verticalAlign: 'middle' }}>
                               {(() => {
@@ -3643,7 +3651,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                           >
                             {uploading ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
                             {uploading ? 'SUBIENDO...' : 'AÑADIR'}
-                            <input type="file" multiple style={{ display: 'none' }} onChange={subirFactura} disabled={uploading || (editandoId && !modoEdicion)} accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation" />
+                            <input type="file" multiple style={{ display: 'none' }} onChange={subirFactura} disabled={uploading || (editandoId && !modoEdicion)} accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv" />
                           </label>
                         )}
                       </div>
@@ -3691,19 +3699,42 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                                       return item?.url;
                                     })();
                                     if (!url) return null;
-                                    const isImg = /\.(jpg|jpeg|png|webp|avif|gif)$/i.test(url.split('?')[0]);
+                                    const lowerUrl = url.split('?')[0].toLowerCase();
+                                    const isImg = /\.(jpg|jpeg|png|webp|avif|gif)$/i.test(lowerUrl);
+                                    const isPdf = lowerUrl.endsWith('.pdf');
+                                    const isExcel = /\.(xls|xlsx|csv)$/i.test(lowerUrl);
+                                    const isWord = /\.(doc|docx)$/i.test(lowerUrl);
+                                    const isPowerPoint = /\.(ppt|pptx)$/i.test(lowerUrl);
+
+                                    let fileInfo = { iconColor: '#64748b', bgColor: '#f8fafc', label: 'DOC' };
+                                    if (isPdf) {
+                                      fileInfo = { iconColor: '#ef4444', bgColor: '#fef2f2', label: 'PDF' };
+                                    } else if (isExcel) {
+                                      fileInfo = { iconColor: '#10b981', bgColor: '#ecfdf5', label: 'EXCEL' };
+                                    } else if (isWord) {
+                                      fileInfo = { iconColor: '#2563eb', bgColor: '#eff6ff', label: 'WORD' };
+                                    } else if (isPowerPoint) {
+                                      fileInfo = { iconColor: '#f97316', bgColor: '#fff7ed', label: 'PPT' };
+                                    }
+
                                     return (
                                       <div key={idx} style={{ position: 'relative', width: '70px', height: '70px' }}>
                                         <a href={url} target="_blank" rel="noreferrer" style={{
                                           display: 'block', width: '100%', height: '100%',
-                                          borderRadius: '8px', overflow: 'hidden', border: '1px solid #e2e8f0',
+                                          borderRadius: '8px', overflow: 'hidden', border: '1px solid #cbd5e1',
                                           backgroundColor: 'white'
                                         }}>
                                           {isImg ? (
                                             <img src={url} alt={`Soporte ${idx}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                                           ) : (
-                                            <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#fef2f2', color: '#ef4444' }}>
-                                              <FileText size={18} />
+                                            <div style={{
+                                              width: '100%', height: '100%',
+                                              display: 'flex', flexDirection: 'column',
+                                              alignItems: 'center', justifyContent: 'center',
+                                              backgroundColor: fileInfo.bgColor, color: fileInfo.iconColor
+                                            }}>
+                                              <FileText size={18} style={{ marginBottom: '2px' }} />
+                                              <span style={{ fontSize: '7px', fontWeight: 'bold', textTransform: 'uppercase' }}>{fileInfo.label}</span>
                                             </div>
                                           )}
                                         </a>
