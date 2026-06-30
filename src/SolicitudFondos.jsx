@@ -1253,8 +1253,8 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       bLower.includes('exva')) {
       return 'EXVA';
     }
-    if (bLower.includes('habner') || bLower.includes('herrera') || bLower.includes('hh') || bLower.includes('hab')) {
-      return 'HH';
+    if (bLower.includes('habner') || bLower.includes('herrera') || bLower.includes('hh') || bLower.includes('hab') || bLower.includes('campo') || bLower.includes('cmp')) {
+      return 'CMP';
     }
     return '';
   };
