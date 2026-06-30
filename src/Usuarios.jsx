@@ -347,7 +347,8 @@ const Usuarios = ({ currentUser: currentUserProp, onUserUpdate }) => {
         delegacion_hasta: datosForm.delegacion_hasta || null,
         obras_asignadas: datosForm.obras_asignadas || [],
         gerente_directo_id: datosForm.gerente_directo_id || null,
-        gerente_directo_nombre: datosForm.gerente_directo_nombre || null
+        gerente_directo_nombre: datosForm.gerente_directo_nombre || null,
+        bloque_operativo: datosForm.bloque_operativo || null
       };
 
       if (formData.id) {
@@ -440,7 +441,8 @@ const Usuarios = ({ currentUser: currentUserProp, onUserUpdate }) => {
         delegacion_hasta: '',
         obras_asignadas: [],
         gerente_directo_id: '',
-        gerente_directo_nombre: ''
+        gerente_directo_nombre: '',
+        bloque_operativo: ''
       });
       setVerPassword(false);
       setTabActiva('general');
@@ -593,7 +595,7 @@ const Usuarios = ({ currentUser: currentUserProp, onUserUpdate }) => {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '25px' }}>
           <h2 style={{ fontSize: '1.4rem', color: '#0f172a', margin: 0 }}>Gestión de Usuarios</h2>
           {(currentUser?.esAdminReal || (currentUser?.rol || '').toUpperCase() === 'GERENTE GENERAL' || (currentUser?.rol || '').toUpperCase() === 'ADMIN') && (
-            <button className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '8px' }} onClick={() => { setFormData({id:null, nombre:'', apellido:'', correo:'', rol:'', departamento:'', gerencia_id:'', contrato:'', activo: true, foto_url:'', password: '', permisos_modulos: ["requisiciones", "fondos", "tickets", "usuarios"], capacidades: {}, delegado_id: '', delegacion_desde: '', delegacion_hasta: '', gerente_directo_id: '', gerente_directo_nombre: ''}); setShowModal(true); setTabActiva('general'); setUserLogs([]); }}>
+            <button className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '8px' }} onClick={() => { setFormData({id:null, nombre:'', apellido:'', correo:'', rol:'', departamento:'', gerencia_id:'', contrato:'', activo: true, foto_url:'', password: '', permisos_modulos: ["requisiciones", "fondos", "tickets", "usuarios"], capacidades: {}, delegado_id: '', delegacion_desde: '', delegacion_hasta: '', gerente_directo_id: '', gerente_directo_nombre: '', bloque_operativo: ''}); setShowModal(true); setTabActiva('general'); setUserLogs([]); }}>
               <UserPlus size={18} /> Nuevo Integrante
             </button>
           )}
@@ -809,6 +811,19 @@ const Usuarios = ({ currentUser: currentUserProp, onUserUpdate }) => {
                         <option value="">Departamento...</option>
                         {gerencias.map(g => <option key={g.id} value={g.id}>{g.nombre}</option>)}
                       </select>
+                    </div>
+
+                    <div style={{ marginBottom: '12px' }}>
+                      <label style={{ fontSize: '0.65rem', fontWeight: '800', color: '#64748b', display: 'block', marginBottom: '6px' }}>BLOQUE OPERATIVO (OPCIONAL)</label>
+                      <input 
+                        type="text" 
+                        className="input-style" 
+                        style={{ width: '100%' }} 
+                        placeholder="Ej. Campo, Excelencia, Vacuum, Mtto Mayor" 
+                        value={formData.bloque_operativo || ''} 
+                        disabled={!esAdminCompleto} 
+                        onChange={e => setFormData({...formData, bloque_operativo: e.target.value})} 
+                      />
                     </div>
 
                     <div style={{ marginBottom: '12px' }}>
