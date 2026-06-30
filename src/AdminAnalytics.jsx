@@ -15,7 +15,11 @@ import {
   Cpu,
   Database,
   ExternalLink,
-  ChevronDown
+  ChevronDown,
+  Calendar,
+  Smartphone,
+  Shield,
+  Search
 } from 'lucide-react';
 import { 
   ResponsiveContainer, 
@@ -27,7 +31,9 @@ import {
   Tooltip, 
   BarChart, 
   Bar, 
-  Legend 
+  Legend,
+  LineChart,
+  Line
 } from 'recharts';
 import './AdminAnalytics.css';
 
@@ -39,8 +45,18 @@ export default function AdminAnalytics() {
   const [authorized, setAuthorized] = useState(null); // null = checking, false = denied, true = OK
   const [loading, setLoading] = useState(true);
 
-  // Tabs: 'telemetry' or 'management'
+  // Tabs: 'telemetry', 'management', or 'user_audit'
   const [activeTab, setActiveTab] = useState('telemetry');
+
+  // Date Range Picker States (Default last 30 days)
+  const [startDate, setStartDate] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 30);
+    return d.toISOString().split('T')[0];
+  });
+  const [endDate, setEndDate] = useState(() => {
+    return new Date().toISOString().split('T')[0];
+  });
 
   // Telemetry data
   const [systemErrors, setSystemErrors] = useState([]);
@@ -54,6 +70,10 @@ export default function AdminAnalytics() {
   const [requisiciones, setRequisiciones] = useState([]);
   const [requisicionLogs, setRequisicionLogs] = useState([]);
   const [perfiles, setPerfiles] = useState([]);
+
+  // User auth and activity logs states
+  const [authAttempts, setAuthAttempts] = useState([]);
+  const [profileChanges, setProfileChanges] = useState([]);
 
   // Drill-down UI states
   const [showSlaDetails, setShowSlaDetails] = useState(false);
@@ -192,6 +212,24 @@ export default function AdminAnalytics() {
         setLargestFiles(mapped);
       }
 
+      // 9. Fetch user auth logs (for dates traceability)
+      const { data: authLogs, error: authLogsErr } = await supabase
+        .from('user_auth_logs')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (authLogsErr) {
+        console.warn("Error consultando user_auth_logs (posible tabla sin crear en Supabase):", authLogsErr.message);
+      }
+      setAuthAttempts(authLogs || []);
+
+      // 10. Fetch user profiles modification logs
+      const { data: actLogs } = await supabase
+        .from('logs_actividad')
+        .select('*')
+        .eq('modulo', 'Usuarios')
+        .order('created_at', { ascending: false });
+      setProfileChanges(actLogs || []);
+
     } catch (err) {
       console.error("Error cargando métricas de telemetría:", err);
     } finally {
@@ -219,6 +257,78 @@ export default function AdminAnalytics() {
       setTestingLatency(false);
     }
   };
+
+  // ----------------------------------------------------
+  // CLIENT-SIDE FILTERING BY DATE RANGE FOR USER AUDIT
+  // ----------------------------------------------------
+  const filteredAuthAttempts = useMemo(() => {
+    if (!startDate || !endDate) return authAttempts;
+    const start = new Date(startDate + 'T00:00:00');
+    const end = new Date(endDate + 'T23:59:59');
+    return authAttempts.filter(log => {
+      const date = new Date(log.created_at);
+      return date >= start && date <= end;
+    });
+  }, [authAttempts, startDate, endDate]);
+
+  const filteredProfileChanges = useMemo(() => {
+    if (!startDate || !endDate) return profileChanges;
+    const start = new Date(startDate + 'T00:00:00');
+    const end = new Date(endDate + 'T23:59:59');
+    return profileChanges.filter(log => {
+      const date = new Date(log.created_at);
+      return date >= start && date <= end;
+    });
+  }, [profileChanges, startDate, endDate]);
+
+  // Timeline of Daily Active Users (DAU)
+  const dauTimelineData = useMemo(() => {
+    if (!startDate || !endDate) return [];
+    const start = new Date(startDate + 'T12:00:00');
+    const end = new Date(endDate + 'T12:00:00');
+    const dataList = [];
+    
+    // Generate dates one by one
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+      const dateString = d.toISOString().split('T')[0];
+      
+      // Filter successful attempts on this specific day
+      const dayLogs = filteredAuthAttempts.filter(log => {
+        const logDate = new Date(log.created_at).toISOString().split('T')[0];
+        return logDate === dateString && log.exitoso === true;
+      });
+      
+      // Unique users set
+      const uniqueUsers = new Set(dayLogs.map(l => l.correo.toLowerCase().trim()));
+      
+      dataList.push({
+        fecha: dateString.substring(5), // format as MM-DD
+        "Usuarios Activos": uniqueUsers.size
+      });
+    }
+    return dataList;
+  }, [filteredAuthAttempts, startDate, endDate]);
+
+  // Hourly login density count
+  const hourlyAccessData = useMemo(() => {
+    const hours = Array.from({ length: 24 }, (_, i) => ({
+      hora: `${i}:00`,
+      "Inicios Exitosos": 0,
+      "Intentos Fallidos": 0
+    }));
+
+    filteredAuthAttempts.forEach(log => {
+      const date = new Date(log.created_at);
+      const hour = date.getHours();
+      if (log.exitoso) {
+        hours[hour]["Inicios Exitosos"] += 1;
+      } else {
+        hours[hour]["Intentos Fallidos"] += 1;
+      }
+    });
+
+    return hours;
+  }, [filteredAuthAttempts]);
 
   // Computations for SLA & Performance Tab
   const statsGerenciales = useMemo(() => {
@@ -399,6 +509,13 @@ export default function AdminAnalytics() {
         >
           <TrendingUp size={18} />
           <span>SLA y Eficiencia Gerencial</span>
+        </button>
+        <button 
+          className={`tab-btn ${activeTab === 'user_audit' ? 'active' : ''}`}
+          onClick={() => setActiveTab('user_audit')}
+        >
+          <UserCheck size={18} />
+          <span>Trazabilidad y Inicios de Sesión</span>
         </button>
       </div>
 
@@ -670,7 +787,7 @@ export default function AdminAnalytics() {
                 </div>
               </div>
             </div>
-          ) : (
+          ) : activeTab === 'management' ? (
             /* SLA Y EFICIENCIA GERENCIAL */
             <div>
               {/* METRIC CARDS */}
@@ -688,7 +805,7 @@ export default function AdminAnalytics() {
                     <Clock size={22} />
                   </div>
                   <div className="metric-info" style={{ flexGrow: 1 }}>
-                    <div style={{ display: 'flex', justifycontent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <span style={{ fontSize: '0.8rem', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px' }}>SLA Promedio Aprobación</span>
                       <ChevronDown size={14} style={{ transform: showSlaDetails ? 'rotate(180deg)' : 'none', transition: '0.2s', color: '#64748b', marginLeft: 'auto' }} />
                     </div>
@@ -709,7 +826,7 @@ export default function AdminAnalytics() {
                     <Ban size={22} />
                   </div>
                   <div className="metric-info" style={{ flexGrow: 1 }}>
-                    <div style={{ display: 'flex', justifycontent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <span style={{ fontSize: '0.8rem', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Rechazos Históricos</span>
                       <ChevronDown size={14} style={{ transform: showRejectionDetails ? 'rotate(180deg)' : 'none', transition: '0.2s', color: '#64748b', marginLeft: 'auto' }} />
                     </div>
@@ -985,6 +1102,287 @@ export default function AdminAnalytics() {
                             </tr>
                           );
                         })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          ) : (
+            /* TRAZABILIDAD Y AUDITORIA DE SESIONES (NUEVO TAB) */
+            <div className="animate-fade">
+              {/* DATE RANGE CONTROLLERS */}
+              <div 
+                className="chart-card" 
+                style={{ 
+                  marginBottom: '25px', 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  gap: '20px', 
+                  flexWrap: 'wrap', 
+                  background: 'rgba(56, 189, 248, 0.03)', 
+                  border: '1px solid rgba(56, 189, 248, 0.15)',
+                  padding: '16px 24px' 
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Calendar size={18} color="#38bdf8" />
+                  <span style={{ fontSize: '0.9rem', fontWeight: 'bold', color: 'white' }}>Rango de Auditoría:</span>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '15px', flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>Desde:</span>
+                    <input 
+                      type="date" 
+                      value={startDate} 
+                      onChange={(e) => setStartDate(e.target.value)}
+                      style={{
+                        backgroundColor: '#0f172a',
+                        border: '1px solid #1e293b',
+                        color: 'white',
+                        padding: '6px 12px',
+                        borderRadius: '8px',
+                        fontSize: '0.85rem',
+                        outline: 'none',
+                        cursor: 'pointer'
+                      }}
+                    />
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>Hasta:</span>
+                    <input 
+                      type="date" 
+                      value={endDate} 
+                      onChange={(e) => setEndDate(e.target.value)}
+                      style={{
+                        backgroundColor: '#0f172a',
+                        border: '1px solid #1e293b',
+                        color: 'white',
+                        padding: '6px 12px',
+                        borderRadius: '8px',
+                        fontSize: '0.85rem',
+                        outline: 'none',
+                        cursor: 'pointer'
+                      }}
+                    />
+                  </div>
+                  
+                  <span style={{ fontSize: '0.8rem', color: '#64748b', fontStyle: 'italic' }}>
+                    * Los gráficos y registros inferiores se filtran de forma dinámica.
+                  </span>
+                </div>
+              </div>
+
+              {/* AUDIT SUMMARY STATS */}
+              <div className="metrics-grid">
+                <div className="metric-card">
+                  <div className="metric-icon-wrapper" style={{ backgroundColor: 'rgba(16, 185, 129, 0.15)', color: '#10b981' }}>
+                    <UserCheck size={22} />
+                  </div>
+                  <div className="metric-info">
+                    <h4>Inicios Exitosos</h4>
+                    <div className="metric-value">
+                      {filteredAuthAttempts.filter(l => l.exitoso).length}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="metric-card">
+                  <div className="metric-icon-wrapper" style={{ backgroundColor: 'rgba(239, 68, 68, 0.15)', color: '#ef4444' }}>
+                    <Ban size={22} />
+                  </div>
+                  <div className="metric-info">
+                    <h4>Intentos Fallidos</h4>
+                    <div className="metric-value">
+                      {filteredAuthAttempts.filter(l => !l.exitoso).length}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="metric-card">
+                  <div className="metric-icon-wrapper" style={{ backgroundColor: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8' }}>
+                    <Activity size={22} />
+                  </div>
+                  <div className="metric-info">
+                    <h4>D.A.U. Promedio (Período)</h4>
+                    <div className="metric-value">
+                      {dauTimelineData.length > 0 
+                        ? (dauTimelineData.reduce((acc, d) => acc + d["Usuarios Activos"], 0) / dauTimelineData.length).toFixed(1)
+                        : 0
+                      }
+                    </div>
+                  </div>
+                </div>
+
+                <div className="metric-card">
+                  <div className="metric-icon-wrapper" style={{ backgroundColor: 'rgba(245, 158, 11, 0.15)', color: '#f59e0b' }}>
+                    <RefreshCw size={22} />
+                  </div>
+                  <div className="metric-info">
+                    <h4>Modificaciones Perfiles</h4>
+                    <div className="metric-value">
+                      {filteredProfileChanges.length}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* CHARTS CONTAINER */}
+              <div className="charts-grid">
+                {/* Timeline DAU Chart */}
+                <div className="chart-card">
+                  <div className="chart-card-title">
+                    <TrendingUp size={20} color="#38bdf8" />
+                    <span>Línea de Tiempo: Usuarios Activos Diarios (DAU)</span>
+                  </div>
+                  <div style={{ width: '100%', height: 260 }}>
+                    {dauTimelineData.length === 0 ? (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#64748b' }}>
+                        No hay inicios de sesión en este período.
+                      </div>
+                    ) : (
+                      <ResponsiveContainer>
+                        <LineChart
+                          data={dauTimelineData}
+                          margin={{ top: 10, right: 10, left: -25, bottom: 0 }}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                          <XAxis dataKey="fecha" stroke="#64748b" style={{ fontSize: '10px' }} />
+                          <YAxis stroke="#64748b" style={{ fontSize: '11px' }} allowDecimals={false} />
+                          <Tooltip 
+                            contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '12px', color: 'white', fontFamily: 'Inter' }}
+                          />
+                          <Line type="monotone" dataKey="Usuarios Activos" stroke="#38bdf8" strokeWidth={3} dot={{ r: 4, strokeWidth: 2 }} activeDot={{ r: 6 }} />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    )}
+                  </div>
+                </div>
+
+                {/* Login Hourly Density */}
+                <div className="chart-card">
+                  <div className="chart-card-title">
+                    <Clock size={20} color="#f59e0b" />
+                    <span>Densidad Horaria de Accesos (Horas de Inicios de Sesión)</span>
+                  </div>
+                  <div style={{ width: '100%', height: 260 }}>
+                    <ResponsiveContainer>
+                      <BarChart
+                        data={hourlyAccessData}
+                        margin={{ top: 10, right: 10, left: -25, bottom: 0 }}
+                      >
+                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                        <XAxis dataKey="hora" stroke="#64748b" style={{ fontSize: '9px' }} />
+                        <YAxis stroke="#64748b" style={{ fontSize: '11px' }} />
+                        <Tooltip 
+                          contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '12px', color: 'white', fontFamily: 'Inter' }}
+                        />
+                        <Legend style={{ fontSize: '12px' }} />
+                        <Bar dataKey="Inicios Exitosos" name="Exitosos" fill="#10b981" stackId="a" radius={[4, 4, 0, 0]} />
+                        <Bar dataKey="Intentos Fallidos" name="Fallidos" fill="#ef4444" stackId="a" radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              </div>
+
+              {/* SESSIONS AUDIT LOG TABLE */}
+              <div className="chart-card" style={{ marginBottom: '30px', background: 'rgba(30, 41, 59, 0.2)' }}>
+                <div className="chart-card-title">
+                  <Server size={20} color="#10b981" />
+                  <span>Bitácora de Sesiones y Auditoría de Direcciones IP</span>
+                </div>
+                <div style={{ overflowX: 'auto', maxHeight: '350px' }}>
+                  <table className="console-table" style={{ fontFamily: 'Inter' }}>
+                    <thead>
+                      <tr>
+                        <th>USUARIO / CORREO</th>
+                        <th style={{ width: '120px' }}>ESTADO</th>
+                        <th style={{ width: '150px' }}>DIRECCIÓN IP</th>
+                        <th>DISPOSITIVO / NAVAGADOR (USER AGENT)</th>
+                        <th style={{ width: '180px' }}>FECHA Y HORA</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredAuthAttempts.length === 0 ? (
+                        <tr>
+                          <td colSpan="5" style={{ textAlign: 'center', color: '#64748b', padding: '20px' }}>
+                            No se registran sesiones en este rango de fechas. Asegúrese de haber creado la tabla `user_auth_logs` en Supabase.
+                          </td>
+                        </tr>
+                      ) : (
+                        filteredAuthAttempts.slice(0, 50).map(attempt => (
+                          <tr key={attempt.id}>
+                            <td style={{ color: 'white', fontWeight: 'bold' }}>{attempt.correo}</td>
+                            <td>
+                              <span className={attempt.exitoso ? 'badge-warning' : 'badge-error'} style={{
+                                backgroundColor: attempt.exitoso ? 'rgba(16, 185, 129, 0.15)' : '',
+                                borderColor: attempt.exitoso ? 'rgba(16, 185, 129, 0.3)' : '',
+                                color: attempt.exitoso ? '#34d399' : ''
+                              }}>
+                                {attempt.exitoso ? 'EXITOSO' : 'FALLIDO'}
+                              </span>
+                            </td>
+                            <td style={{ fontFamily: 'monospace', color: '#38bdf8' }}>{attempt.ip_address}</td>
+                            <td style={{ color: '#cbd5e1', fontSize: '0.8rem', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden', maxWidth: '350px' }} title={attempt.device_info}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <Smartphone size={12} color="#64748b" />
+                                <span>{attempt.device_info}</span>
+                              </div>
+                            </td>
+                            <td style={{ color: '#64748b', fontSize: '0.85rem' }}>
+                              {new Date(attempt.created_at).toLocaleString()}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* PROFILES AND ROLES CHANGES TABLE */}
+              <div className="chart-card" style={{ background: 'rgba(30, 41, 59, 0.2)' }}>
+                <div className="chart-card-title">
+                  <UserCheck size={20} color="#f59e0b" />
+                  <span>Bitácora de Modificaciones de Perfiles, Roles y Permisos (Auditoría)</span>
+                </div>
+                <div style={{ overflowX: 'auto', maxHeight: '350px' }}>
+                  <table className="console-table" style={{ fontFamily: 'Inter' }}>
+                    <thead>
+                      <tr>
+                        <th style={{ width: '180px' }}>ADMINISTRADOR</th>
+                        <th style={{ width: '150px' }}>ACCIÓN</th>
+                        <th>DETALLE DE LA MODIFICACIÓN</th>
+                        <th style={{ width: '180px' }}>USUARIO AFECTADO</th>
+                        <th style={{ width: '180px' }}>FECHA Y HORA</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredProfileChanges.length === 0 ? (
+                        <tr>
+                          <td colSpan="5" style={{ textAlign: 'center', color: '#64748b', padding: '20px' }}>
+                            No se registran cambios de perfiles en este rango de fechas.
+                          </td>
+                        </tr>
+                      ) : (
+                        filteredProfileChanges.map(log => (
+                          <tr key={log.id}>
+                            <td style={{ color: 'white', fontWeight: 'bold' }}>{log.usuario_nombre}</td>
+                            <td>
+                              <span className="badge-warning" style={{ backgroundColor: 'rgba(245, 158, 11, 0.15)', borderColor: 'rgba(245, 158, 11, 0.3)', color: '#fbbf24' }}>
+                                {log.accion}
+                              </span>
+                            </td>
+                            <td style={{ color: '#94a3b8', fontSize: '0.85rem', wordBreak: 'break-all' }}>{log.detalle}</td>
+                            <td style={{ color: '#38bdf8', fontSize: '0.85rem' }}>{log.metadata?.target_email || 'N/A'}</td>
+                            <td style={{ color: '#64748b', fontSize: '0.85rem' }}>
+                              {new Date(log.created_at).toLocaleString()}
+                            </td>
+                          </tr>
+                        ))
                       )}
                     </tbody>
                   </table>

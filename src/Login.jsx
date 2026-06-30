@@ -17,6 +17,30 @@ const Auth = () => {
 
   const handleChange = (e) => setLoginData({ ...loginData, [e.target.name]: e.target.value });
 
+  const logAuthAttempt = async (email, exitoso) => {
+    try {
+      let ip = 'Desconocida';
+      try {
+        const ipRes = await fetch('https://api.ipify.org?format=json', { signal: AbortSignal.timeout(3000) });
+        if (ipRes.ok) {
+          const ipData = await ipRes.json();
+          ip = ipData.ip || 'Desconocida';
+        }
+      } catch (ipErr) {
+        console.warn("No se pudo obtener la IP:", ipErr.message);
+      }
+
+      await supabase.from('user_auth_logs').insert([{
+        correo: email,
+        exitoso: exitoso,
+        ip_address: ip,
+        device_info: navigator.userAgent || 'Desconocido'
+      }]);
+    } catch (err) {
+      console.error("Error al registrar auditoría de sesión:", err);
+    }
+  };
+
   const ejecutarLogin = async (e) => {
     e.preventDefault();
     setLoading(true);
@@ -28,6 +52,7 @@ const Auth = () => {
 
     if (error) {
       toast.error("Credenciales incorrectas: " + error.message);
+      await logAuthAttempt(loginData.email, false);
       setLoading(false);
       return;
     }
@@ -41,9 +66,12 @@ const Auth = () => {
     if (perfil && perfil.activo === false) {
       await supabase.auth.signOut();
       toast.error("Acceso restringido. Contacte a sistemas.");
+      await logAuthAttempt(loginData.email, false);
       setLoading(false);
       return;
     }
+
+    await logAuthAttempt(loginData.email, true);
 
     localStorage.setItem('user_totalclean_session', JSON.stringify(data.user));
     localStorage.setItem('user_profile', JSON.stringify(perfil));
