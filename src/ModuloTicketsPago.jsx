@@ -297,7 +297,7 @@ const FormularioPagoToast = ({
               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {file ? `${file.name.slice(0, 18)}${file.name.length > 18 ? '...' : ''}` : 'Subir Imagen/PDF'}
               </span>
-              <input type="file" accept="image/*,application/pdf" onChange={(e) => {
+              <input type="file" accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv" onChange={(e) => {
                 if (e.target.files && e.target.files[0]) {
                   const selectedFile = e.target.files[0];
                   if (selectedFile.size > 5 * 1024 * 1024) {
@@ -945,8 +945,9 @@ const ModuloTicketsPago = () => {
   };
 
   const eliminarEntradaHistorial = async (idRenglon, indexHistorial) => {
-    if (!esPrivilegiado) {
-      toast.error('No tiene privilegios para eliminar registros de pago.');
+    const esAutorizado = currentUser?.correo?.toLowerCase() === 'jcontreras.totalclean@gmail.com';
+    if (!esAutorizado) {
+      toast.error('Solo el Administrador jcontreras.totalclean@gmail.com tiene permisos para eliminar registros de pago.');
       return;
     }
     toast((t) => (
@@ -966,8 +967,9 @@ const ModuloTicketsPago = () => {
   };
 
   const ejecutarEliminacionHistorial = async (idRenglon, indexHistorial) => {
-    if (!esPrivilegiado) {
-      toast.error('No tiene privilegios para eliminar registros de pago.');
+    const esAutorizado = currentUser?.correo?.toLowerCase() === 'jcontreras.totalclean@gmail.com';
+    if (!esAutorizado) {
+      toast.error('Solo el Administrador jcontreras.totalclean@gmail.com tiene permisos para eliminar registros de pago.');
       return;
     }
     const renglonesActualizados = renglones.map(r => {
@@ -3105,13 +3107,15 @@ const ModuloTicketsPago = () => {
                                                 >
                                                   ✏️
                                                 </button>
-                                                <button
-                                                  onClick={() => eliminarEntradaHistorial(r.id, hIdx)}
-                                                  style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: 0 }}
-                                                  title="Eliminar Pago"
-                                                >
-                                                  <Trash2 size={14} />
-                                                </button>
+                                                {currentUser?.correo?.toLowerCase() === 'jcontreras.totalclean@gmail.com' && (
+                                                  <button
+                                                    onClick={() => eliminarEntradaHistorial(r.id, hIdx)}
+                                                    style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: 0 }}
+                                                    title="Eliminar Pago"
+                                                  >
+                                                    <Trash2 size={14} />
+                                                  </button>
+                                                )}
                                               </div>
                                             )}
                                           </td>
@@ -3166,7 +3170,7 @@ const ModuloTicketsPago = () => {
                     {esPrivilegiado && (
                       <label className="btn-tc btn-tc-primary" style={{ cursor: 'pointer', padding: '6px 12px', fontSize: '0.7rem' }}>
                         <Upload size={14} /> Adjuntar
-                        <input type="file" multiple style={{ display: 'none' }} onChange={handleImagenChange} />
+                        <input type="file" multiple style={{ display: 'none' }} onChange={handleImagenChange} accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv" />
                       </label>
                     )}
                   </div>
@@ -3182,7 +3186,24 @@ const ModuloTicketsPago = () => {
                     >
                       <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap', marginTop: '15px' }}>
                         {parsearFacturaUrls(t.factura_url).map((item, idx) => {
-                          const isPdf = item.url.split('?')[0].toLowerCase().endsWith('.pdf');
+                          const lowerUrl = item.url.split('?')[0].toLowerCase();
+                          const isImg = /\.(jpg|jpeg|png|webp|avif|gif)$/i.test(lowerUrl);
+                          const isPdf = lowerUrl.endsWith('.pdf');
+                          const isExcel = /\.(xls|xlsx|csv)$/i.test(lowerUrl);
+                          const isWord = /\.(doc|docx)$/i.test(lowerUrl);
+                          const isPowerPoint = /\.(ppt|pptx)$/i.test(lowerUrl);
+
+                          let fileInfo = { iconColor: '#64748b', bgColor: '#f8fafc', label: 'DOC' };
+                          if (isPdf) {
+                            fileInfo = { iconColor: '#ef4444', bgColor: '#fef2f2', label: 'PDF' };
+                          } else if (isExcel) {
+                            fileInfo = { iconColor: '#10b981', bgColor: '#ecfdf5', label: 'EXCEL' };
+                          } else if (isWord) {
+                            fileInfo = { iconColor: '#2563eb', bgColor: '#eff6ff', label: 'WORD' };
+                          } else if (isPowerPoint) {
+                            fileInfo = { iconColor: '#f97316', bgColor: '#fff7ed', label: 'PPT' };
+                          }
+
                           return (
                             <div
                               key={idx}
@@ -3193,7 +3214,7 @@ const ModuloTicketsPago = () => {
                                 alignItems: 'center',
                                 width: '100px',
                                 background: 'rgba(255, 255, 255, 0.6)',
-                                border: '1px solid #e2e8f0',
+                                border: '1px solid #cbd5e1',
                                 borderRadius: '12px',
                                 padding: '8px',
                                 boxShadow: '0 2px 6px rgba(0,0,0,0.02)',
@@ -3212,18 +3233,23 @@ const ModuloTicketsPago = () => {
                                   height: '84px',
                                   borderRadius: '8px',
                                   overflow: 'hidden',
-                                  backgroundColor: '#f1f5f9',
-                                  border: '1px solid #e2e8f0',
+                                  backgroundColor: 'white',
+                                  border: '1px solid #cbd5e1',
                                   position: 'relative'
                                 }}
                               >
-                                {isPdf ? (
-                                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
-                                    <FileText size={32} color="#ef4444" />
-                                    <span style={{ fontSize: '9px', fontWeight: 'bold', color: '#ef4444' }}>PDF</span>
-                                  </div>
-                                ) : (
+                                {isImg ? (
                                   <img src={item.url} alt={item.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                ) : (
+                                  <div style={{
+                                    display: 'flex', flexDirection: 'column',
+                                    alignItems: 'center', justifyContent: 'center',
+                                    gap: '4px', width: '100%', height: '100%',
+                                    backgroundColor: fileInfo.bgColor, color: fileInfo.iconColor
+                                  }}>
+                                    <FileText size={32} />
+                                    <span style={{ fontSize: '9px', fontWeight: 'bold', textTransform: 'uppercase' }}>{fileInfo.label}</span>
+                                  </div>
                                 )}
                               </a>
 
@@ -3276,7 +3302,24 @@ const ModuloTicketsPago = () => {
                         })}
                         {imagenesUrlsPreview.map((url, idx) => {
                           const file = imagenesArchivos[idx];
-                          const isPdf = file?.type === 'application/pdf' || file?.name?.toLowerCase().endsWith('.pdf');
+                          const fileName = file?.name?.toLowerCase() || '';
+                          const isPdf = file?.type === 'application/pdf' || fileName.endsWith('.pdf');
+                          const isExcel = /\.(xls|xlsx|csv)$/i.test(fileName);
+                          const isWord = /\.(doc|docx)$/i.test(fileName);
+                          const isPowerPoint = /\.(ppt|pptx)$/i.test(fileName);
+                          const isImg = file?.type && file.type.startsWith('image/');
+
+                          let fileInfo = { iconColor: '#64748b', bgColor: '#f8fafc', label: 'DOC' };
+                          if (isPdf) {
+                            fileInfo = { iconColor: '#ef4444', bgColor: '#fef2f2', label: 'PDF' };
+                          } else if (isExcel) {
+                            fileInfo = { iconColor: '#10b981', bgColor: '#ecfdf5', label: 'EXCEL' };
+                          } else if (isWord) {
+                            fileInfo = { iconColor: '#2563eb', bgColor: '#eff6ff', label: 'WORD' };
+                          } else if (isPowerPoint) {
+                            fileInfo = { iconColor: '#f97316', bgColor: '#fff7ed', label: 'PPT' };
+                          }
+
                           return (
                             <div
                               key={`preview-${idx}`}
@@ -3287,7 +3330,7 @@ const ModuloTicketsPago = () => {
                                 alignItems: 'center',
                                 width: '100px',
                                 background: 'rgba(255, 255, 255, 0.8)',
-                                border: '1px dashed #94a3b8',
+                                border: '1px dashed #cbd5e1',
                                 borderRadius: '12px',
                                 padding: '8px',
                                 boxShadow: '0 2px 6px rgba(0,0,0,0.02)'
@@ -3302,18 +3345,23 @@ const ModuloTicketsPago = () => {
                                   height: '84px',
                                   borderRadius: '8px',
                                   overflow: 'hidden',
-                                  backgroundColor: '#f8fafc',
-                                  border: '1px solid #e2e8f0',
+                                  backgroundColor: 'white',
+                                  border: '1px solid #cbd5e1',
                                   position: 'relative'
                                 }}
                               >
-                                {isPdf ? (
-                                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
-                                    <FileText size={32} color="#ef4444" />
-                                    <span style={{ fontSize: '9px', fontWeight: 'bold', color: '#ef4444' }}>PDF</span>
-                                  </div>
-                                ) : (
+                                {isImg ? (
                                   <img src={url} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                ) : (
+                                  <div style={{
+                                    display: 'flex', flexDirection: 'column',
+                                    alignItems: 'center', justifyContent: 'center',
+                                    gap: '4px', width: '100%', height: '100%',
+                                    backgroundColor: fileInfo.bgColor, color: fileInfo.iconColor
+                                  }}>
+                                    <FileText size={32} />
+                                    <span style={{ fontSize: '9px', fontWeight: 'bold', textTransform: 'uppercase' }}>{fileInfo.label}</span>
+                                  </div>
                                 )}
                               </div>
 

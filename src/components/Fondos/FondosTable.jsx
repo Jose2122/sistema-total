@@ -31,7 +31,7 @@ const FondosTable = ({ data, loading, onEdit, onPrint }) => {
           ) : data.length === 0 ? (
             <tr><td colSpan="7" style={{ textAlign: 'center', padding: '40px', color: '#64748b' }}>No se encontraron registros.</td></tr>
           ) : data.map((h, i) => (
-            <tr key={h.id_db || i} style={{ borderBottom: '1px solid #f8fafc', fontSize: '0.80rem', backgroundColor: i % 2 === 0 ? '#ffffff' : '#f8fafc' }}>
+            <tr key={h.id || h.id_db || i} style={{ borderBottom: '1px solid #f8fafc', fontSize: '0.80rem', backgroundColor: i % 2 === 0 ? '#ffffff' : '#f8fafc' }}>
               <td style={{ padding: '12px' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
                   <button

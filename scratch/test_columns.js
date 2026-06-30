@@ -2,7 +2,10 @@ import { createClient } from '@supabase/supabase-js';
 import fs from 'fs';
 import path from 'path';
 
-const envPath = path.resolve('.env.local');
+let envPath = path.resolve('.env');
+if (!fs.existsSync(envPath)) {
+  envPath = path.resolve('.env.local');
+}
 const envContent = fs.readFileSync(envPath, 'utf-8');
 const env = {};
 envContent.split('\n').forEach(line => {
@@ -21,36 +24,20 @@ envContent.split('\n').forEach(line => {
 
 const supabase = createClient(env.VITE_SUPABASE_URL, env.VITE_SUPABASE_ANON_KEY);
 
-const candidates = [
-  'almacen',
-  'almacen_recibido',
-  'almacen_destino',
-  'ubicacion',
-  'destino',
-  'almacen_nombre',
-  'bodega',
-  'tipo_almacen'
-];
-
 async function run() {
-  for (const col of candidates) {
-    const testData = {
-      requisicion_id: '00000000-0000-0000-0000-000000000000', // dummy uuid
-      item_index: 0,
-      cantidad_recibida: 0,
-      recibido_por: 'Test',
-      [col]: 'Test Val'
-    };
-    const { error } = await supabase.from('almacen_recepcion').insert([testData]);
-    if (error) {
-      if (error.message.includes('Could not find the')) {
-        console.log(`Column '${col}' does NOT exist.`);
-      } else {
-        console.log(`Column '${col}' EXISTS (returned error: ${error.message}).`);
-      }
-    } else {
-      console.log(`Column '${col}' EXISTS (insertion succeeded).`);
-    }
+  // Try querying information_schema.columns
+  const { data, error } = await supabase
+    .from('columns')
+    .select('table_name, column_name, data_type')
+    .in('table_name', ['solicitudes_fondos', 'partidas_fondos', 'requisiciones', 'auditoria_renglones']);
+  
+  if (error) {
+    console.log("Could not query information_schema directly:", error.message);
+    // Let's try to query it by schema_introspection or executing raw SQL if there's any RPC,
+    // or let's try a different way.
+  } else {
+    console.log("Columns metadata:");
+    console.log(data);
   }
 }
 run();

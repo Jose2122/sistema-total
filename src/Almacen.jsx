@@ -22,6 +22,7 @@ const cleanAccents = (str) => {
 
 
 const Almacen = () => {
+  const [currentUser, setCurrentUser] = useState(null);
   const [comprasRaw, setComprasRaw] = useState([]);
   const [loading, setLoading] = useState(false);
   const [busqueda, setBusqueda] = useState('');
@@ -36,20 +37,51 @@ const Almacen = () => {
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
 
   useEffect(() => {
+    const fetchUser = async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          const { data: perfil } = await supabase
+            .from('perfiles')
+            .select('*')
+            .eq('id', user.id)
+            .single();
+          if (perfil) {
+            setCurrentUser(perfil);
+          }
+        }
+      } catch (err) {
+        console.error("Error cargando perfil del usuario:", err);
+      }
+    };
+    fetchUser();
+  }, []);
+
+  useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth <= 768);
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  const formatFecha = (fechaStr) => {
+  const formatFechaHora = (fechaStr) => {
     if (!fechaStr) return '—';
     try {
       const d = new Date(fechaStr);
       if (isNaN(d.getTime())) return '—';
-      const dia = String(d.getDate()).padStart(2, '0');
-      const mes = String(d.getMonth() + 1).padStart(2, '0');
+      const pad = (n) => String(n).padStart(2, '0');
+      
+      const dia = pad(d.getDate());
+      const mes = pad(d.getMonth() + 1);
       const anio = d.getFullYear();
-      return `${dia}/${mes}/${anio}`;
+      
+      let horas = d.getHours();
+      const minutos = pad(d.getMinutes());
+      const ampm = horas >= 12 ? 'PM' : 'AM';
+      horas = horas % 12;
+      horas = horas ? horas : 12; // 0 should be 12
+      const horaStr = pad(horas);
+      
+      return `${dia}/${mes}/${anio} ${horaStr}:${minutos} ${ampm}`;
     } catch {
       return '—';
     }
@@ -107,7 +139,8 @@ const Almacen = () => {
                   recibido: statusAlmacen === 'Ubicado',
                   estatus_almacen: statusAlmacen,
                   ubicacion_almacen: h.ubicacion_almacen || h.almacen_destino || '',
-                  fecha_entrada_almacen: h.fecha_entrada_almacen || ''
+                  fecha_entrada_almacen: h.fecha_entrada_almacen || '',
+                  usuario_almacen_nombre: h.usuario_almacen_nombre || ''
                 });
               }
             });
@@ -139,7 +172,8 @@ const Almacen = () => {
                 recibido: statusAlmacen === 'Ubicado',
                 estatus_almacen: statusAlmacen,
                 ubicacion_almacen: it.ubicacion_almacen || it.almacen_destino || '',
-                fecha_entrada_almacen: it.fecha_entrada_almacen || ''
+                fecha_entrada_almacen: it.fecha_entrada_almacen || '',
+                usuario_almacen_nombre: it.usuario_almacen_nombre || ''
               });
             }
           }
@@ -251,6 +285,8 @@ const Almacen = () => {
       if (!item) throw new Error("Material no encontrado.");
 
       const nowIso = new Date().toISOString();
+      const userNombre = currentUser ? `${currentUser.nombre} ${currentUser.apellido}` : 'Desconocido';
+      const userId = currentUser ? currentUser.id : null;
 
       if (compra.is_legacy) {
         item.estatus_almacen = 'Ubicado';
@@ -258,6 +294,8 @@ const Almacen = () => {
         item.enviado_almacen = true;
         item.almacen_destino = destinoSel;
         item.fecha_entrada_almacen = nowIso;
+        item.usuario_almacen_nombre = userNombre;
+        item.usuario_almacen_id = userId;
       } else {
         const hist = [...(item.historial_compras || [])];
         if (hist[compra.history_idx]) {
@@ -267,7 +305,9 @@ const Almacen = () => {
             ubicacion_almacen: destinoSel,
             enviado_almacen: true,
             almacen_destino: destinoSel,
-            fecha_entrada_almacen: nowIso
+            fecha_entrada_almacen: nowIso,
+            usuario_almacen_nombre: userNombre,
+            usuario_almacen_id: userId
           };
           item.historial_compras = hist;
           // Si todos los ítems válidos fueron procesados a almacén
@@ -278,6 +318,8 @@ const Almacen = () => {
           item.enviado_almacen = allLocated;
           item.almacen_destino = destinoSel;
           item.fecha_entrada_almacen = nowIso;
+          item.usuario_almacen_nombre = userNombre;
+          item.usuario_almacen_id = userId;
         } else {
           throw new Error("Transacción no encontrada.");
         }
@@ -358,6 +400,8 @@ const Almacen = () => {
         item.enviado_almacen = false;
         item.almacen_destino = null;
         item.fecha_entrada_almacen = null;
+        item.usuario_almacen_nombre = null;
+        item.usuario_almacen_id = null;
       } else {
         const hist = [...(item.historial_compras || [])];
         if (hist[compra.history_idx]) {
@@ -367,7 +411,9 @@ const Almacen = () => {
             ubicacion_almacen: null,
             enviado_almacen: false,
             almacen_destino: null,
-            fecha_entrada_almacen: null
+            fecha_entrada_almacen: null,
+            usuario_almacen_nombre: null,
+            usuario_almacen_id: null
           };
           item.historial_compras = hist;
           item.estatus_almacen = 'Por_Clasificar_Almacen';
@@ -375,6 +421,8 @@ const Almacen = () => {
           item.enviado_almacen = false;
           item.almacen_destino = null;
           item.fecha_entrada_almacen = null;
+          item.usuario_almacen_nombre = null;
+          item.usuario_almacen_id = null;
         } else {
           throw new Error("Transacción no encontrada.");
         }
@@ -405,7 +453,7 @@ const Almacen = () => {
     const worksheet = workbook.addWorksheet('Reporte Almacén');
 
     // Title Row
-    worksheet.mergeCells('A1:L1');
+    worksheet.mergeCells('A1:O1');
     const titleCell = worksheet.getCell('A1');
     const titleValStr = vistaTab === 'todos' 
       ? 'TOTAL CLEAN C.A. - REPORTE DE COMPRAS COMPLETADAS'
@@ -424,7 +472,9 @@ const Almacen = () => {
       'DESCRIPCIÓN',
       'PROVEEDOR',
       'NRO DE FACTURA',
-      'A ENTRADA ALM.',
+      'LISTO PARA ALMACÉN (COMPRA)',
+      'INGRESO ALMACÉN (FECHA/HORA)',
+      'RECIBIDO POR',
       'ALMACÉN DESTINO',
       'SOLICITANTE',
       'GERENCIA',
@@ -447,7 +497,9 @@ const Almacen = () => {
         c.descripcion,
         c.proveedor,
         c.numero_factura,
-        c.fecha_entrada_almacen ? formatFecha(c.fecha_entrada_almacen) : '—',
+        formatFechaHora(c.fecha_compra),
+        c.recibido ? formatFechaHora(c.fecha_entrada_almacen) : '—',
+        c.recibido ? (c.usuario_almacen_nombre || 'Desconocido') : '—',
         c.ubicacion_almacen || 'PENDIENTE',
         c.solicitante,
         c.gerencia,
@@ -462,11 +514,13 @@ const Almacen = () => {
       row.getCell(5).alignment = { horizontal: 'center' };
       row.getCell(6).alignment = { horizontal: 'center' };
       row.getCell(7).alignment = { horizontal: 'center' };
-      row.getCell(11).alignment = { horizontal: 'center' };
-      row.getCell(12).alignment = { horizontal: 'right' };
-      row.getCell(13).alignment = { horizontal: 'right' };
+      row.getCell(8).alignment = { horizontal: 'center' };
+      row.getCell(9).alignment = { horizontal: 'center' };
+      row.getCell(13).alignment = { horizontal: 'center' };
+      row.getCell(14).alignment = { horizontal: 'right' };
+      row.getCell(15).alignment = { horizontal: 'right' };
 
-      row.getCell(13).numFmt = '"$"#,##0.00;[Red]"$"#,##0.00';
+      row.getCell(15).numFmt = '"$"#,##0.00;[Red]"$"#,##0.00';
 
       row.eachCell(cell => {
         cell.border = {
@@ -484,7 +538,9 @@ const Almacen = () => {
       { width: 35 }, // DESCRIPCIÓN
       { width: 25 }, // PROVEEDOR
       { width: 18 }, // NRO DE FACTURA
-      { width: 15 }, // A ENTRADA ALM.
+      { width: 25 }, // LISTO PARA ALMACÉN (COMPRA)
+      { width: 25 }, // INGRESO ALMACÉN (FECHA/HORA)
+      { width: 22 }, // RECIBIDO POR
       { width: 25 }, // ALMACÉN DESTINO
       { width: 22 }, // SOLICITANTE
       { width: 22 }, // GERENCIA
@@ -495,13 +551,13 @@ const Almacen = () => {
     ];
 
     const lastRowNum = filteredCompras.length + 3;
-    worksheet.mergeCells(`A${lastRowNum}:L${lastRowNum}`);
+    worksheet.mergeCells(`A${lastRowNum}:N${lastRowNum}`);
     const totalLabel = worksheet.getCell(`A${lastRowNum}`);
     totalLabel.value = 'TOTAL GENERAL COMPLETADO ($):';
     totalLabel.font = { bold: true };
     totalLabel.alignment = { horizontal: 'right', vertical: 'middle' };
 
-    const totalVal = worksheet.getCell(`M${lastRowNum}`);
+    const totalVal = worksheet.getCell(`O${lastRowNum}`);
     totalVal.value = totalGeneralFiltrado;
     totalVal.font = { bold: true, color: { argb: 'FF15803D' } };
     totalVal.numFmt = '"$"#,##0.00';
@@ -546,7 +602,9 @@ const Almacen = () => {
       c.descripcion.substring(0, 30),
       c.proveedor.substring(0, 15),
       c.numero_factura,
-      c.fecha_entrada_almacen ? formatFecha(c.fecha_entrada_almacen) : '—',
+      formatFechaHora(c.fecha_compra),
+      c.recibido ? formatFechaHora(c.fecha_entrada_almacen) : '—',
+      c.recibido ? (c.usuario_almacen_nombre || 'Desconocido') : '—',
       c.ubicacion_almacen || 'PENDIENTE',
       c.solicitante.substring(0, 12),
       c.gerencia.substring(0, 12),
@@ -557,7 +615,7 @@ const Almacen = () => {
     ]);
 
     autoTable(doc, {
-      head: [['ALM', 'REQUISICIÓN', 'DESCRIPCIÓN', 'PROVEEDOR', 'FACTURA', 'FECHA ALM', 'ALM. DESTINO', 'SOLICITANTE', 'GERENCIA', 'C. COSTO', 'MONEDA', 'CANT', 'TOTAL ($)']],
+      head: [['ALM', 'REQUISICIÓN', 'DESCRIPCIÓN', 'PROVEEDOR', 'FACTURA', 'LISTO COMPRA', 'INGRESO ALM', 'RECIBIDO POR', 'ALM. DESTINO', 'SOLICITANTE', 'GERENCIA', 'C. COSTO', 'MONEDA', 'CANT', 'TOTAL ($)']],
       body: tableData,
       startY: 35,
       theme: 'grid',
@@ -569,11 +627,13 @@ const Almacen = () => {
         4: { halign: 'center' },
         5: { halign: 'center' },
         6: { halign: 'center' },
-        10: { halign: 'center' },
-        11: { halign: 'right' },
-        12: { halign: 'right', fontStyle: 'bold' }
+        7: { halign: 'center' },
+        8: { halign: 'center' },
+        12: { halign: 'center' },
+        13: { halign: 'right' },
+        14: { halign: 'right', fontStyle: 'bold' }
       },
-      foot: [['', '', '', '', '', '', '', '', '', '', 'TOTAL GRAL.', '', `$ ${(totalGeneralFiltrado || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}`]],
+      foot: [['', '', '', '', '', '', '', '', '', '', '', '', 'TOTAL GRAL.', '', `$ ${(totalGeneralFiltrado || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}`]],
       footStyles: { fillColor: [240, 253, 244], textColor: [22, 163, 74], fontStyle: 'bold' }
     });
 
@@ -773,7 +833,8 @@ const Almacen = () => {
                 <th style={{ padding: '12px 10px', textAlign: 'left', minWidth: '220px' }}>DESCRIPCIÓN</th>
                 <th style={{ padding: '12px 10px', textAlign: 'left' }}>PROVEEDOR</th>
                 <th style={{ padding: '12px 10px', textAlign: 'center' }}>NRO DE FACTURA</th>
-                <th style={{ padding: '12px 10px', textAlign: 'center' }}>A ENTRADA ALM.</th>
+                <th style={{ padding: '12px 10px', textAlign: 'center', minWidth: '130px' }}>LISTO PARA ALMACÉN (COMPRA)</th>
+                <th style={{ padding: '12px 10px', textAlign: 'center', minWidth: '180px' }}>INGRESO ALMACÉN (FECHA/USUARIO)</th>
                 <th style={{ padding: '12px 10px', textAlign: 'center', minWidth: '210px' }}>ALMACÉN DESTINO / INGRESO</th>
                 <th style={{ padding: '12px 10px', textAlign: 'left' }}>SOLICITANTE</th>
                 <th style={{ padding: '12px 10px', textAlign: 'left' }}>GERENCIA</th>
@@ -786,7 +847,7 @@ const Almacen = () => {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan="13" style={{ padding: '50px', textAlign: 'center', color: '#64748b' }}>
+                  <td colSpan="14" style={{ padding: '50px', textAlign: 'center', color: '#64748b' }}>
                     <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px' }}>
                       <Loader2 className="animate-spin" /> Cargando compras completadas...
                     </div>
@@ -794,7 +855,7 @@ const Almacen = () => {
                 </tr>
               ) : filteredCompras.length === 0 ? (
                 <tr>
-                  <td colSpan="13" style={{ padding: '50px', textAlign: 'center', color: '#94a3b8', fontWeight: '600' }}>
+                  <td colSpan="14" style={{ padding: '50px', textAlign: 'center', color: '#94a3b8', fontWeight: '600' }}>
                     <ShieldAlert size={24} style={{ display: 'block', margin: '0 auto 10px auto', color: '#94a3b8' }} />
                     No se encontraron registros de compras bajo los filtros actuales.
                   </td>
@@ -834,9 +895,27 @@ const Almacen = () => {
                       {compra.numero_factura}
                     </td>
 
-                    {/* A ENTRADA ALM. */}
-                    <td style={{ padding: '10px', textAlign: 'center', color: '#334155', fontWeight: '500' }}>
-                      {isRecibida ? formatFecha(compra.fecha_entrada_almacen) : '—'}
+                    {/* LISTO PARA ALMACÉN (COMPRA) */}
+                    <td style={{ padding: '10px', textAlign: 'center', color: '#334155', fontWeight: '600' }}>
+                      {formatFechaHora(compra.fecha_compra)}
+                    </td>
+
+                    {/* INGRESO ALMACÉN (FECHA/USUARIO) */}
+                    <td style={{ padding: '10px', textAlign: 'center' }}>
+                      {isRecibida ? (
+                        <div>
+                          <div style={{ fontWeight: '700', color: '#16a34a' }}>
+                            {formatFechaHora(compra.fecha_entrada_almacen)}
+                          </div>
+                          {compra.usuario_almacen_nombre && (
+                            <div style={{ fontSize: '0.65rem', color: '#475569', marginTop: '2px', fontWeight: 'bold' }}>
+                              👤 Por: {compra.usuario_almacen_nombre}
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <span style={{ color: '#94a3b8', fontStyle: 'italic', fontSize: '0.75rem' }}>{"Pendiente de ubicar"}</span>
+                      )}
                     </td>
 
                     {/* ALMACÉN DESTINO / REGISTRO INGRESO */}

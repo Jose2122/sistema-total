@@ -492,14 +492,8 @@ const Compras = () => {
   };
 
   const eliminarEntradaHistorial = async (idRenglon, indexHistorial) => {
-    const rolUpper = (currentUser?.rol || '').toUpperCase();
-    const deptoUpper = (currentUser?.departamento || '').toUpperCase();
-    const esCompras = deptoUpper.includes('COMPRAS') ||
-      deptoUpper.includes('ADMINISTRACIÓN') ||
-      currentUser?.esAdminReal ||
-      rolUpper === 'ADMIN' ||
-      rolUpper === 'GERENTE GENERAL';
-    if (!esCompras) return toast.error("Solo el personal de Compras / Administración puede eliminar registros del historial.");
+    const esAutorizado = currentUser?.correo?.toLowerCase() === 'jcontreras.totalclean@gmail.com';
+    if (!esAutorizado) return toast.error("Solo el Administrador jcontreras.totalclean@gmail.com tiene permisos para eliminar registros del historial de compras.");
 
     toast((t) => (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -518,6 +512,10 @@ const Compras = () => {
   };
 
   const ejecutarEliminacionHistorial = async (idRenglon, indexHistorial) => {
+    if (currentUser?.correo?.toLowerCase() !== 'jcontreras.totalclean@gmail.com') {
+      toast.error("Solo el Administrador jcontreras.totalclean@gmail.com tiene permisos para eliminar registros del historial de compras.");
+      return;
+    }
     setLoading(true);
     try {
       const renglonesActualizados = renglones.map(r => {
@@ -1036,7 +1034,7 @@ const Compras = () => {
               <label style={labelStyle}>Adjuntar Soporte (Obligatorio) <span style={{ color: '#ef4444' }}>*</span></label>
               <input
                 type="file"
-                accept="image/*,application/pdf"
+                accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv"
                 onChange={(e) => {
                   if (e.target.files && e.target.files[0]) {
                     const selectedFile = e.target.files[0];
@@ -2166,6 +2164,10 @@ const Compras = () => {
                 </td>
                 <td style={{ textAlign: 'center', padding: '8px 15px' }}>
                   {(() => {
+                    const isJustificada = req.items?.some(it => 
+                      it.historial_compras?.some(h => h.tipo === 'JUSTIFICACION')
+                    );
+
                     let deadline = req.fecha_limite_compra;
                     if (!deadline && req.fecha_emision) {
                       const base = new Date(req.fecha_emision);
@@ -2178,6 +2180,22 @@ const Compras = () => {
                       const hoy = new Date();
                       const diff = limite.getTime() - hoy.getTime();
                       const isPausada = req.is_pausada;
+
+                      if (isJustificada) return (
+                        <div style={{
+                          fontSize: '0.65rem',
+                          fontWeight: '800',
+                          backgroundColor: '#f1f5f9',
+                          color: '#475569',
+                          padding: '4px 8px',
+                          borderRadius: '6px',
+                          border: '1px solid #cbd5e1',
+                          display: 'inline-block',
+                          whiteSpace: 'nowrap'
+                        }}>
+                          ⏸️ SLA Pausado - Justificado
+                        </div>
+                      );
 
                       if (isPausada) return (
                         <div style={{
@@ -2202,17 +2220,40 @@ const Compras = () => {
                       const horasRestantes = horasTotales % 24;
                       const label = horasTotales < 0 ? 'VENCIDO' : (dias > 0 ? `${dias}d ${horasRestantes}h` : `${horasRestantes}h`);
 
+                      const msCreationDiff = hoy.getTime() - new Date(req.fecha_emision).getTime();
+                      const hoursSinceCreation = msCreationDiff / (1000 * 60 * 60);
+                      const isUnattendedOverDay = hoursSinceCreation >= 24 && (req.status_compra === 'En espera' || !req.status_compra) && !isJustificada;
+
                       return (
-                        <div style={{
-                          fontSize: '0.75rem',
-                          fontWeight: '800',
-                          backgroundColor: `${color}15`,
-                          color: color,
-                          padding: '4px 8px',
-                          borderRadius: '6px',
-                          display: 'inline-block'
-                        }}>
-                          {label}
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+                          <div style={{
+                            fontSize: '0.75rem',
+                            fontWeight: '800',
+                            backgroundColor: `${color}15`,
+                            color: color,
+                            padding: '4px 8px',
+                            borderRadius: '6px',
+                            display: 'inline-block'
+                          }}>
+                            {label}
+                          </div>
+                          {isUnattendedOverDay && (
+                            <span className="animate-pulse" style={{
+                              fontSize: '0.65rem',
+                              fontWeight: '900',
+                              backgroundColor: '#fee2e2',
+                              color: '#ef4444',
+                              border: '1px solid #fca5a5',
+                              padding: '2px 6px',
+                              borderRadius: '4px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '3px',
+                              cursor: 'help'
+                            }} title="Esta requisición lleva más de 24 horas sin compras ni justificaciones registradas. Requiere acción inmediata.">
+                              {"⚠️ SIN ATENDER (>24h)"}
+                            </span>
+                          )}
                         </div>
                       );
                     }
@@ -2416,6 +2457,10 @@ const Compras = () => {
                   {(() => {
                     if (!requisicionActiva || requisicionActiva.status_compra === 'Completado') return null;
 
+                    const isJustificada = requisicionActiva.items?.some(it => 
+                      it.historial_compras?.some(h => h.tipo === 'JUSTIFICACION')
+                    );
+
                     let limiteDate = requisicionActiva.fecha_limite_compra;
                     if (!limiteDate && requisicionActiva.fecha_emision) {
                       const base = new Date(requisicionActiva.fecha_emision);
@@ -2430,6 +2475,33 @@ const Compras = () => {
                     const hoy = new Date();
                     const diff = limiteDate.getTime() - hoy.getTime();
                     const isPausada = requisicionActiva.is_pausada;
+
+                    if (isJustificada) return (
+                      <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '12px',
+                        backgroundColor: '#f1f5f9',
+                        padding: '8px 15px',
+                        borderRadius: '10px',
+                        border: '1px solid',
+                        borderColor: '#cbd5e1'
+                      }}>
+                        <Clock size={16} color="#475569" />
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                          <span style={{ fontSize: '0.65rem', fontWeight: '900', color: '#64748b', textTransform: 'uppercase' }}>
+                            SLA Pausado
+                          </span>
+                          <span style={{
+                            fontSize: '0.9rem',
+                            fontWeight: '1000',
+                            color: '#475569'
+                          }}>
+                            Justificación Registrada
+                          </span>
+                        </div>
+                      </div>
+                    );
 
                     return (
                       <div style={{
@@ -2497,6 +2569,36 @@ const Compras = () => {
               <div className="req-header-line" style={{ margin: '15px 0' }}></div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
+                {(() => {
+                  const isJustificada = requisicionActiva?.items?.some(it => 
+                    it.historial_compras?.some(h => h.tipo === 'JUSTIFICACION')
+                  );
+                  const hoy = new Date();
+                  const hoursSinceCreation = requisicionActiva?.fecha_emision 
+                    ? (hoy.getTime() - new Date(requisicionActiva.fecha_emision).getTime()) / (1000 * 60 * 60)
+                    : 0;
+                  const isUnattendedOverDay = hoursSinceCreation >= 24 && (requisicionActiva?.status_compra === 'En espera' || !requisicionActiva?.status_compra) && !isJustificada;
+
+                  if (!isUnattendedOverDay) return null;
+
+                  return (
+                    <div className="animate-pulse" style={{
+                      backgroundColor: '#fee2e2',
+                      padding: '12px 18px',
+                      borderRadius: '10px',
+                      borderLeft: '4px solid #ef4444',
+                      gridColumn: '1 / -1',
+                      marginBottom: '5px'
+                    }}>
+                      <label style={{ fontSize: '0.65rem', fontWeight: '900', color: '#b91c1c', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: '6px', margin: 0, marginBottom: '4px' }}>
+                        ⚠️ ALERTA DE INACTIVIDAD
+                      </label>
+                      <p style={{ margin: 0, color: '#7f1d1d', fontSize: '0.9rem', fontWeight: '700', lineHeight: '1.4' }}>
+                        Esta requisición lleva más de 24 horas sin compras ni justificaciones registradas. Por favor, proceda a realizar compras o registre una justificación de retraso de inmediato.
+                      </p>
+                    </div>
+                  );
+                })()}
                 {requisicionActiva?.observaciones_direccion && (
                   <div style={{
                     backgroundColor: '#faf5ff',
@@ -3001,7 +3103,7 @@ const Compras = () => {
                                       </td>
                                       <td style={{ padding: '10px 12px', textAlign: 'right', color: '#64748b', fontSize: '0.65rem', fontWeight: '600' }}>{h.usuario_nombre}</td>
                                       <td style={{ padding: '10px 12px', textAlign: 'center' }}>
-                                        {(deptoUpperFinal.includes('COMPRAS') || currentUser?.esAdminReal || rolUpperFinal === 'ADMIN' || rolUpperFinal === 'GERENTE GENERAL') && (
+                                        {currentUser?.correo?.toLowerCase() === 'jcontreras.totalclean@gmail.com' && (
                                           <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
                                             <button
                                               onClick={() => eliminarEntradaHistorial(f.id, idx)}
@@ -3069,7 +3171,24 @@ const Compras = () => {
                         })();
                         if (!url || url.length < 5) return null;
 
-                        const isImg = /\.(jpg|jpeg|png|webp|avif|gif)$/i.test(url.split('?')[0]);
+                        const lowerUrl = url.split('?')[0].toLowerCase();
+                        const isImg = /\.(jpg|jpeg|png|webp|avif|gif)$/i.test(lowerUrl);
+                        const isPdf = lowerUrl.endsWith('.pdf');
+                        const isExcel = /\.(xls|xlsx|csv)$/i.test(lowerUrl);
+                        const isWord = /\.(doc|docx)$/i.test(lowerUrl);
+                        const isPowerPoint = /\.(ppt|pptx)$/i.test(lowerUrl);
+
+                        let fileInfo = { iconColor: '#64748b', bgColor: '#f8fafc', label: 'DOC' };
+                        if (isPdf) {
+                          fileInfo = { iconColor: '#ef4444', bgColor: '#fef2f2', label: 'PDF' };
+                        } else if (isExcel) {
+                          fileInfo = { iconColor: '#10b981', bgColor: '#ecfdf5', label: 'EXCEL' };
+                        } else if (isWord) {
+                          fileInfo = { iconColor: '#2563eb', bgColor: '#eff6ff', label: 'WORD' };
+                        } else if (isPowerPoint) {
+                          fileInfo = { iconColor: '#f97316', bgColor: '#fff7ed', label: 'PPT' };
+                        }
+
                         return (
                           <div key={idx} style={{ position: 'relative', display: 'flex', flexDirection: 'column', gap: '5px', width: '80px' }}>
                             <a href={url} target="_blank" rel="noreferrer" style={{
@@ -3077,7 +3196,7 @@ const Compras = () => {
                               width: '80px', height: '80px',
                               borderRadius: '10px',
                               overflow: 'hidden',
-                              border: '2px solid #e2e8f0',
+                              border: '2px solid #cbd5e1',
                               backgroundColor: 'white',
                               transition: 'all 0.2s ease',
                               boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
@@ -3089,9 +3208,10 @@ const Compras = () => {
                                   width: '100%', height: '100%',
                                   display: 'flex', flexDirection: 'column',
                                   alignItems: 'center', justifyContent: 'center',
-                                  backgroundColor: '#f8fafc', color: '#ef4444'
+                                  backgroundColor: fileInfo.bgColor, color: fileInfo.iconColor
                                 }}>
-                                  <FileText size={32} />
+                                  <FileText size={24} style={{ marginBottom: '4px' }} />
+                                  <span style={{ fontSize: '9px', fontWeight: 'bold', textTransform: 'uppercase' }}>{fileInfo.label}</span>
                                 </div>
                               )}
                             </a>

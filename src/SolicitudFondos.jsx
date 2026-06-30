@@ -64,6 +64,28 @@ const esRequisicionCompletada = (requisicion) => {
   });
 };
 
+const getEstadoSolicitud = (solicitud) => {
+  if (!solicitud) return 'ACTIVA';
+  if (solicitud.estado === 'COMPLETADA') return 'COMPLETADA';
+
+  const fechaStr = solicitud.fecha_operativa || solicitud.fecha;
+  if (!fechaStr) return 'ACTIVA';
+
+  const fechaOp = new Date(fechaStr + 'T12:00:00');
+  const day = fechaOp.getDay();
+  const daysToSunday = day === 0 ? 0 : 7 - day;
+
+  const domingoSemana = new Date(fechaOp);
+  domingoSemana.setDate(fechaOp.getDate() + daysToSunday);
+  domingoSemana.setHours(23, 59, 59, 999);
+
+  const now = new Date();
+  if (now > domingoSemana) {
+    return 'EN PROCESO';
+  }
+  return 'ACTIVA';
+};
+
 const StockSmartTotalClean = ({ currentUserProp }) => {
   const [showModal, setShowModal] = useState(false);
   const [historial, setHistorial] = useState([]);
@@ -244,8 +266,14 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       }
     }
   };
-  const [quickFilter, setQuickFilter] = useState("SemanaActual");
+  const [quickFilter, setQuickFilter] = useState("Activas");
   const [hasChanges, setHasChanges] = useState(false);
+  const [itemParaAnular, setItemParaAnular] = useState(null);
+  const [motivoAnulacion, setMotivoAnulacion] = useState("");
+  const [justificacionAnulacion, setJustificacionAnulacion] = useState("");
+  const [isAnulando, setIsAnulando] = useState(false);
+
+  const estadoActual = getEstadoSolicitud(isEditing ? form : { fecha_operativa: form.fecha || fechaPreVal });
 
   // --- ESTADOS Y REFS PARA CO-PRESENCIA MULTIUSUARIO (Supabase Presence) ---
   const [activeUsers, setActiveUsers] = useState([]);
@@ -258,7 +286,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
     const esAutorizado = currentUser?.correo?.toLowerCase() === 'jcontreras.totalclean@gmail.com';
 
     if (!esAutorizado) {
-      toast.error("Solo el programador tiene permisos para eliminar solicitudes.");
+      toast.error("Solo el Administrador jcontreras.totalclean@gmail.com tiene permisos para eliminar solicitudes.");
       return;
     }
 
@@ -279,6 +307,11 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
   };
 
   const ejecutarEliminarSolicitud = async (id_db) => {
+    const esAutorizado = currentUser?.correo?.toLowerCase() === 'jcontreras.totalclean@gmail.com';
+    if (!esAutorizado) {
+      toast.error("Solo el Administrador jcontreras.totalclean@gmail.com tiene permisos para eliminar solicitudes.");
+      return;
+    }
     try {
       setLoading(true);
       const { error: errorPartidas } = await supabase.from('partidas_fondos').delete().eq('solicitud_id', id_db);
@@ -391,42 +424,24 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
   }, [historial, busqueda, filtroGerencia, filtroMes]);
 
   const counts = useMemo(() => {
-    const semAhora = getWeek(new Date(), { weekStartsOn: 1 });
-    const añoAhora = new Date().getFullYear();
-
     let todos = 0;
-    let semanaActual = 0;
-    let pendientesAcumulados = 0;
+    let activas = 0;
+    let enProceso = 0;
+    let completadas = 0;
 
     baseHistorial.forEach(h => {
       todos++;
-
-      let w = 0;
-      let y = 0;
-      if (h.fecha_operativa) {
-        const dateObj = new Date(h.fecha_operativa + 'T12:00:00');
-        w = getWeek(dateObj, { weekStartsOn: 1 });
-        y = dateObj.getFullYear();
-      } else {
-        const match = h.id?.match(/SEM\s+(\d+)/i) || h.id?.match(/SEMANA\s+(\d+)/i);
-        if (match) {
-          w = parseInt(match[1], 10);
-          const yearMatch = h.id?.match(/-\s+(\d{2})$/);
-          y = yearMatch ? 2000 + parseInt(yearMatch[1], 10) : new Date().getFullYear();
-        }
-      }
-
-      const isSemanaActual = (w === semAhora && y === añoAhora);
-      const isPagado = h.total_pagado >= h.total && h.total > 0;
-
-      if (isSemanaActual) {
-        semanaActual++;
-      } else if (!isPagado) {
-        pendientesAcumulados++;
+      const est = getEstadoSolicitud(h);
+      if (est === 'ACTIVA') {
+        activas++;
+      } else if (est === 'EN PROCESO') {
+        enProceso++;
+      } else if (est === 'COMPLETADA') {
+        completadas++;
       }
     });
 
-    return { todos, semanaActual, pendientesAcumulados };
+    return { todos, activas, enProceso, completadas };
   }, [baseHistorial]);
 
   const historialFiltrado = historial.filter(h => {
@@ -458,31 +473,14 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
 
     if (!matchTexto || !matchGerencia || !matchMes || !matchSemana || !matchStatus) return false;
 
-    // Filtro rápido de estrategia (Quick Filter)
-    const semAhora = getWeek(new Date(), { weekStartsOn: 1 });
-    const añoAhora = new Date().getFullYear();
-
-    let w = 0;
-    let y = 0;
-    if (h.fecha_operativa) {
-      const dateObj = new Date(h.fecha_operativa + 'T12:00:00');
-      w = getWeek(dateObj, { weekStartsOn: 1 });
-      y = dateObj.getFullYear();
-    } else {
-      const match = h.id?.match(/SEM\s+(\d+)/i) || h.id?.match(/SEMANA\s+(\d+)/i);
-      if (match) {
-        w = parseInt(match[1], 10);
-        const yearMatch = h.id?.match(/-\s+(\d{2})$/);
-        y = yearMatch ? 2000 + parseInt(yearMatch[1], 10) : new Date().getFullYear();
-      }
-    }
-
-    const isSemanaActual = (w === semAhora && y === añoAhora);
-
-    if (quickFilter === "SemanaActual") {
-      return isSemanaActual;
-    } else if (quickFilter === "PendientesAcumulados") {
-      return !isSemanaActual && !isPagado;
+    // Filtro rápido de estrategia (Quick Filter) basado en el ciclo de vida
+    const est = getEstadoSolicitud(h);
+    if (quickFilter === "Activas") {
+      return est === 'ACTIVA';
+    } else if (quickFilter === "EnProceso") {
+      return est === 'EN PROCESO';
+    } else if (quickFilter === "Completadas") {
+      return est === 'COMPLETADA';
     }
 
     return true; // "Todos"
@@ -803,8 +801,8 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
     }
 
     const depto = currentUser.departamento || '';
-    const channelId = form.id_db 
-      ? `solicitud_presencia_${form.id_db}` 
+    const channelId = form.id_db
+      ? `solicitud_presencia_${form.id_db}`
       : `solicitud_presencia_nueva_${depto.replace(/\s+/g, '_')}`;
 
     console.log(`[PRESENCE] Suscribiendo al canal: ${channelId}`);
@@ -820,7 +818,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
             ...p
           }));
         });
-        
+
         // Deduplicar usuarios por user_id
         const uniqueUsers = [];
         const seenIds = new Set();
@@ -1034,11 +1032,14 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       // 1. Obtener Partidas
       const { data: partidasRaw } = await supabase
         .from('partidas_fondos')
-        .select('*, requisiciones(id, correlativo_req, items)')
+        .select('*, requisiciones(id, correlativo_req, items, status_compra)')
         .eq('solicitud_id', targetId);
 
       // 2. Mapear Partidas con Lógica de Ejecución (P.U. REAL)
       const procesarEjecucion = (p) => {
+        if (p.status === 'ANULADO_POR_USUARIO') {
+          return { montoReal: 0, montoPendiente: 0 };
+        }
         let montoReal = 0;
         let montoPendiente = (p.pu_bs || p.pu_usd || 0) * (p.cantidad || 1); // Por defecto todo es pendiente
 
@@ -1067,6 +1068,9 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         return { montoReal, montoPendiente };
       };
 
+      const estActual = getEstadoSolicitud(solicitud);
+      setIsReadOnly(estActual === 'COMPLETADA');
+
       setForm({
         ...solicitud,
         id: solicitud.codigo_control || solicitud.id,
@@ -1074,6 +1078,8 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         fecha: solicitud.fecha_operativa,
         gerencia: solicitud.gerencia,
         responsable: solicitud.responsable,
+        estado: solicitud.estado || 'ACTIVA',
+        bloque_operativo: solicitud.bloque_operativo || null,
         partidas: partidasRaw.filter(p => !p.clasificacion.includes('[*]') && p.clasificacion !== 'Gastos Imprevistos' && p.clasificacion !== 'Ticket de Pago' && p.clasificacion !== 'Solicitud de ticket').map(p => {
           const { montoReal, montoPendiente } = procesarEjecucion(p);
           const isReqCompletada = p.requisiciones ? esRequisicionCompletada(p.requisiciones) : false;
@@ -1098,7 +1104,8 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
             status: p.status || 'Disponible',
             selected: false,
             montoReal,
-            montoPendiente
+            montoPendiente,
+            requisiciones: p.requisiciones || null
           };
         }),
         imprevistos: partidasRaw.filter(p => p.clasificacion.includes('[*]') || p.clasificacion === 'Gastos Imprevistos' || p.clasificacion === 'Ticket de Pago' || p.clasificacion === 'Solicitud de ticket').length > 0
@@ -1126,7 +1133,8 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
               status: p.status || 'Disponible',
               selected: false,
               montoReal,
-              montoPendiente
+              montoPendiente,
+              requisiciones: p.requisiciones || null
             };
           })
           : [{ id: Date.now() + 1, selected: false, cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '', pago_realizado: false, isReqCompletada: false, montoReal: 0, montoPendiente: 0 }]
@@ -1139,7 +1147,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       setIsEditing(true);
       const esAdmin = currentUser?.esSuperAdmin || currentUser?.esAdminReal;
       const esPropioDepto = (solicitud.gerencia || solicitud.gerencia_nombre || '').toLowerCase() === (currentUser?.departamento || '').toLowerCase();
-      setIsReadOnly(!esAdmin && !esPropioDepto);
+      setIsReadOnly(estActual === 'COMPLETADA' || (!esAdmin && !esPropioDepto));
       setShowModal(true);
     } catch (err) { toast.error("Error cargando detalles."); }
   };
@@ -1231,7 +1239,30 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
   const siglasGerencia = obtenerSiglas(form.gerencia);
   const aa = new Date(form.fecha).getFullYear().toString().slice(-2);
 
-  const idDinamico = isEditing ? form.id : `${siglasGerencia}-SEM ${numSemana}-${aa}`;
+  const getSiglasBloque = (bloque) => {
+    if (!bloque) return '';
+    const bLower = bloque.toLowerCase();
+    if (bLower.includes('mantenimiento mayor boscan') ||
+      bLower.includes('mantenimiento mayor bajo grande') ||
+      bLower.includes('mantenimiento mayor') ||
+      bLower.includes('mtto')) {
+      return 'MTTO';
+    }
+    if (bLower.includes('excelencia operacional') ||
+      bLower.includes('vacuum') ||
+      bLower.includes('exva')) {
+      return 'EXVA';
+    }
+    return '';
+  };
+
+  const siglasBloque = (form.gerencia || currentUser?.departamento || '').toLowerCase() === 'operaciones'
+    ? getSiglasBloque(form.bloque_operativo || currentUser?.bloque_operativo)
+    : '';
+
+  const idDinamico = isEditing
+    ? form.id
+    : (siglasBloque ? `${siglasGerencia}-${siglasBloque}-SEM ${numSemana}-${aa}` : `${siglasGerencia}-SEM ${numSemana}-${aa}`);
   const periodoSemana = getWeekRange(numSemana, new Date(form.fecha).getFullYear());
 
   useEffect(() => {
@@ -1253,7 +1284,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
   };
 
   const deadlineDate = calculateDeadline(form.fecha);
-  const isExpired = !isEditing && new Date() > deadlineDate;
+  const isExpired = estadoActual !== 'ACTIVA';
 
   const verificarDisponibilidad = async () => {
     if (!fechaPreVal) return setErrorCheck("Por favor, seleccione una fecha operativa.");
@@ -1283,20 +1314,25 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       const fEnd = `${sunday.getFullYear()}-${pad(sunday.getMonth() + 1)}-${pad(sunday.getDate())}`;
 
       // Verificamos si ya existe una solicitud para esa gerencia en esa semana
-      const { data: existencias, error } = await supabase
+      let checkQuery = supabase
         .from('solicitudes_fondos')
         .select('*')
         .eq('gerencia_nombre', depto)
         .gte('fecha_operativa', fStart)
-        .lte('fecha_operativa', fEnd)
-        .limit(1);
+        .lte('fecha_operativa', fEnd);
+
+      if (depto && depto.toLowerCase() === 'operaciones') {
+        checkQuery = checkQuery.eq('bloque_operativo', currentUser?.bloque_operativo || '');
+      }
+
+      const { data: existencias, error } = await checkQuery.limit(1);
 
       if (error) throw error;
 
       if (existencias && existencias.length > 0) {
         const sol = existencias[0];
         setSolicitudConflictiva(sol);
-        setErrorCheck(`Error: El departamento de ${depto} ya tiene una solicitud abierta para la Semana ${week} por ${sol.responsable_nombre}. Por favor, colabora en esa solicitud o espera a que se finalice.`);
+        setErrorCheck(`Error: El departamento de ${depto}${depto.toLowerCase() === 'operaciones' ? ' (' + (sol.bloque_operativo || 'Sin bloque') + ')' : ''} ya tiene una solicitud abierta para la Semana ${week} por ${sol.responsable_nombre}. Por favor, colabora en esa solicitud o espera a que se finalice.`);
         setSolCheckExitosa(isPrivileged); // Si es admin, dejamos el check en éxito parcial
       } else {
         setSolCheckExitosa(true);
@@ -1345,7 +1381,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
 
     // Encabezados
     const headers = [
-      'ID CONTROL', 'SEMANA', 'PERÍODO', 'RESPONSABLE', 'GERENCIA', 
+      'ID CONTROL', 'SEMANA', 'PERÍODO', 'RESPONSABLE', 'GERENCIA',
       'Solicitado sem. ant. ($/$)', 'Solicitado sem. ant. (Bs/$)', 'Total Solicitado sem. ant. ($)',
       'Solicitado actual ($/$)', 'Solicitado actual (Bs/$)', 'Total Solicitado actual ($)',
       'TOTAL GENERAL ($)'
@@ -1787,10 +1823,10 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
   // --- CÁLCULO DE TOTALES PARA EL MODAL ---
   const sumas = useMemo(() => {
     const s = {
-      bs: form.partidas.reduce((acc, p) => acc + (parseFloat(p.puBs) || 0) * (p.cant || 1), 0),
-      usd: form.partidas.reduce((acc, p) => acc + (parseFloat(p.puUsd) || 0) * (p.cant || 1), 0),
-      imprevistosBs: form.imprevistos.reduce((acc, p) => acc + (parseFloat(p.puBs) || 0) * (p.cant || 1), 0),
-      imprevistosUsd: form.imprevistos.reduce((acc, p) => acc + (parseFloat(p.puUsd) || 0) * (p.cant || 1), 0)
+      bs: form.partidas.reduce((acc, p) => acc + (p.status === 'ANULADO_POR_USUARIO' ? 0 : (parseFloat(p.puBs) || 0) * (p.cant || 1)), 0),
+      usd: form.partidas.reduce((acc, p) => acc + (p.status === 'ANULADO_POR_USUARIO' ? 0 : (parseFloat(p.puUsd) || 0) * (p.cant || 1)), 0),
+      imprevistosBs: form.imprevistos.reduce((acc, p) => acc + (p.status === 'ANULADO_POR_USUARIO' ? 0 : (parseFloat(p.puBs) || 0) * (p.cant || 1)), 0),
+      imprevistosUsd: form.imprevistos.reduce((acc, p) => acc + (p.status === 'ANULADO_POR_USUARIO' ? 0 : (parseFloat(p.puUsd) || 0) * (p.cant || 1)), 0)
     };
     return s;
   }, [form.partidas, form.imprevistos]);
@@ -1812,6 +1848,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
     const categoriesMap = {};
     const todas = [...form.partidas];
     todas.forEach(p => {
+      if (p.status === 'ANULADO_POR_USUARIO') return;
       const cat = p.cat || 'S/C';
       if (!categoriesMap[cat]) {
         categoriesMap[cat] = { estimado: 0, ejecutado: 0 };
@@ -1831,6 +1868,108 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       .sort((a, b) => b.estimado - a.estimado)
       .slice(0, 5);
   }, [form.partidas, form.imprevistos]);
+
+  const abrirModalAnulacion = (item) => {
+    setItemParaAnular(item);
+    setMotivoAnulacion("");
+    setJustificacionAnulacion("");
+  };
+
+  const confirmarAnulacion = async () => {
+    if (!itemParaAnular) return;
+    if (!motivoAnulacion) return toast.error("Debe seleccionar un motivo.");
+    if (!justificacionAnulacion || justificacionAnulacion.trim().length < 10) {
+      return toast.error("La justificación debe tener al menos 10 caracteres.");
+    }
+
+    setIsAnulando(true);
+    try {
+      // 1. Calcular monto liberado (cantidad * P.U)
+      const pu = parseFloat(itemParaAnular.puBs) || parseFloat(itemParaAnular.puUsd) || 0;
+      const cant = parseFloat(itemParaAnular.cant) || 1;
+      const montoLiberado = pu * cant;
+
+      // 2. Insertar en auditoria_renglones
+      const { error: auditError } = await supabase
+        .from('auditoria_renglones')
+        .insert([{
+          renglon_id: itemParaAnular.id,
+          usuario: `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim() || currentUser?.correo || 'Sistema',
+          fecha: new Date().toISOString(),
+          motivo: `${motivoAnulacion} - Justificación: ${justificacionAnulacion}`,
+          monto_liberado: montoLiberado
+        }]);
+
+      if (auditError) {
+        console.error("Error inserting audit record:", auditError);
+        throw auditError;
+      }
+
+      // 3. Actualizar estatus en partidas_fondos
+      const { error: updateError } = await supabase
+        .from('partidas_fondos')
+        .update({ status: 'ANULADO_POR_USUARIO' })
+        .eq('id', itemParaAnular.id);
+
+      if (updateError) throw updateError;
+
+      // 4. Actualizar estado local
+      const esImprevisto = form.imprevistos.some(imp => imp.id === itemParaAnular.id);
+
+      if (esImprevisto) {
+        setForm(prev => ({
+          ...prev,
+          imprevistos: prev.imprevistos.map(imp =>
+            imp.id === itemParaAnular.id
+              ? { ...imp, status: 'ANULADO_POR_USUARIO', montoReal: 0, montoPendiente: 0 }
+              : imp
+          )
+        }));
+      } else {
+        setForm(prev => ({
+          ...prev,
+          partidas: prev.partidas.map(p =>
+            p.id === itemParaAnular.id
+              ? { ...p, status: 'ANULADO_POR_USUARIO', montoReal: 0, montoPendiente: 0 }
+              : p
+          )
+        }));
+      }
+
+      toast.success("Renglón anulado con éxito (Sin Efecto).");
+      setItemParaAnular(null);
+      await cargarTodo(); // Recargar la lista principal en segundo plano
+    } catch (error) {
+      toast.error("Error al anular el renglón: " + error.message);
+    } finally {
+      setIsAnulando(false);
+    }
+  };
+
+  const finalizarSolicitudManual = async () => {
+    if (!form.id_db) return toast.error("La solicitud no ha sido registrada aún.");
+    const confirmar = window.confirm("¿Está seguro de que desea finalizar esta solicitud? Esto bloqueará cualquier cambio posterior (incluyendo la emisión de requisiciones).");
+    if (!confirmar) return;
+
+    setIsSaving(true);
+    try {
+      const { error } = await supabase
+        .from('solicitudes_fondos')
+        .update({ estado: 'COMPLETADA' })
+        .eq('id', form.id_db);
+
+      if (error) throw error;
+
+      toast.success("Solicitud finalizada con éxito.");
+      setIsReadOnly(true);
+      setForm(prev => ({ ...prev, estado: 'COMPLETADA' }));
+      await cargarTodo();
+    } catch (err) {
+      toast.error("Error al finalizar la solicitud: " + err.message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   const registrarOActualizar = async (keepOpen = false, overrideForm = null) => {
     if (isSaving) return;
@@ -1886,7 +2025,8 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         gerencia_nombre: targetForm.gerencia,
         responsable_nombre: targetForm.responsable,
         total_bs: totalBsCalc,
-        total_usd: totalUsdCalc
+        total_usd: totalUsdCalc,
+        bloque_operativo: isEditing ? targetForm.bloque_operativo : ((targetForm.gerencia || currentUser?.departamento || '').toLowerCase() === 'operaciones' ? (targetForm.bloque_operativo || currentUser?.bloque_operativo) : null)
       };
 
       let cabeceraId;
@@ -1969,7 +2109,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         // Recargar las partidas recién insertadas de Supabase para obtener sus IDs reales y evitar duplicaciones
         const { data: dbPartidas } = await supabase
           .from('partidas_fondos')
-          .select('*')
+          .select('*, requisiciones(id, correlativo_req, items, status_compra)')
           .eq('solicitud_id', cabeceraId);
 
         if (dbPartidas && dbPartidas.length > 0) {
@@ -1989,11 +2129,12 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
             requisicion_id: p.requisicion_id || null,
             ticket_id: p.ticket_id || null,
             codigo_ticket: p.codigo_ticket || null,
-            codigo_ref: p.codigo_ticket || p.codigo_ticket || null,
+            codigo_ref: p.codigo_ticket || p.requisiciones?.correlativo_req || null,
             status: p.status || 'Disponible',
             selected: false,
             montoReal: 0,
-            montoPendiente: (p.pu_bs || p.pu_usd || 0) * (p.cantidad || 1)
+            montoPendiente: (p.pu_bs || p.pu_usd || 0) * (p.cantidad || 1),
+            requisiciones: p.requisiciones || null
           }));
 
           const mappedImprevistos = dbPartidas.filter(p => p.clasificacion.includes('[*]') || p.clasificacion === 'Gastos Imprevistos' || p.clasificacion === 'Ticket de Pago' || p.clasificacion === 'Solicitud de ticket').map(p => ({
@@ -2012,11 +2153,12 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
             requisicion_id: p.requisicion_id || null,
             ticket_id: p.ticket_id || null,
             codigo_ticket: p.codigo_ticket || null,
-            codigo_ref: p.codigo_ticket || p.codigo_ticket || null,
+            codigo_ref: p.codigo_ticket || p.requisiciones?.correlativo_req || null,
             status: p.status || 'Disponible',
             selected: false,
             montoReal: 0,
-            montoPendiente: (p.pu_bs || p.pu_usd || 0) * (p.cantidad || 1)
+            montoPendiente: (p.pu_bs || p.pu_usd || 0) * (p.cantidad || 1),
+            requisiciones: p.requisiciones || null
           }));
 
           setForm(prev => ({
@@ -2245,7 +2387,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       const matchEmisor = filtroPartidaEmisor === 'Todos' || (p.emisor || '---') === filtroPartidaEmisor;
       const matchCategoria = filtroPartidaCategoria === 'Todos' || p.cat === filtroPartidaCategoria;
       const matchClasif = filtroPartidaClasificacion === 'Todos' || p.clasif === filtroPartidaClasificacion;
-      
+
       let matchEstadoId = true;
       if (filtroPartidaEstadoId === 'Comprados') {
         matchEstadoId = !!p.codigo_ref && p.isReqCompletada === true;
@@ -2254,7 +2396,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       } else if (filtroPartidaEstadoId === 'SinID') {
         matchEstadoId = !p.codigo_ref;
       }
-      
+
       return matchEmisor && matchCategoria && matchClasif && matchEstadoId;
     });
   }, [form.partidas, filtroPartidaEmisor, filtroPartidaCategoria, filtroPartidaClasificacion, filtroPartidaEstadoId]);
@@ -2683,15 +2825,15 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
 
           <button
             onClick={() => {
-              setQuickFilter("SemanaActual");
+              setQuickFilter("Activas");
               setFiltroSemana(""); // Clear week dropdown so they don't conflict
             }}
             style={{
               padding: '6px 14px',
               borderRadius: '20px',
-              border: quickFilter === "SemanaActual" ? '2px solid #10b981' : '1px solid #cbd5e1',
-              backgroundColor: quickFilter === "SemanaActual" ? '#ecfdf5' : 'white',
-              color: quickFilter === "SemanaActual" ? '#065f46' : '#475569',
+              border: quickFilter === "Activas" ? '2px solid #10b981' : '1px solid #cbd5e1',
+              backgroundColor: quickFilter === "Activas" ? '#ecfdf5' : 'white',
+              color: quickFilter === "Activas" ? '#065f46' : '#475569',
               fontWeight: 'bold',
               fontSize: '12px',
               cursor: 'pointer',
@@ -2699,30 +2841,30 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
               alignItems: 'center',
               gap: '6px',
               transition: 'all 0.15s ease',
-              boxShadow: quickFilter === "SemanaActual" ? '0 2px 6px rgba(16, 185, 129, 0.15)' : 'none'
+              boxShadow: quickFilter === "Activas" ? '0 2px 6px rgba(16, 185, 129, 0.15)' : 'none'
             }}
           >
-            📅 Semana Actual <span style={{
-              backgroundColor: quickFilter === "SemanaActual" ? '#10b981' : '#f1f5f9',
-              color: quickFilter === "SemanaActual" ? 'white' : '#475569',
+            📅 Activas (Semana Actual) <span style={{
+              backgroundColor: quickFilter === "Activas" ? '#10b981' : '#f1f5f9',
+              color: quickFilter === "Activas" ? 'white' : '#475569',
               padding: '1px 6px',
               borderRadius: '8px',
               fontSize: '10px',
               fontWeight: '800'
-            }}>{counts.semanaActual}</span>
+            }}>{counts.activas}</span>
           </button>
 
           <button
             onClick={() => {
-              setQuickFilter("PendientesAcumulados");
+              setQuickFilter("EnProceso");
               setFiltroSemana(""); // Clear week dropdown so they don't conflict
             }}
             style={{
               padding: '6px 14px',
               borderRadius: '20px',
-              border: quickFilter === "PendientesAcumulados" ? '2px solid #f43f5e' : '1px solid #fecdd3',
-              backgroundColor: quickFilter === "PendientesAcumulados" ? '#fff1f2' : 'white',
-              color: quickFilter === "PendientesAcumulados" ? '#9f1239' : '#b91c1c',
+              border: quickFilter === "EnProceso" ? '2px solid #f59e0b' : '1px solid #cbd5e1',
+              backgroundColor: quickFilter === "EnProceso" ? '#fef3c7' : 'white',
+              color: quickFilter === "EnProceso" ? '#b45309' : '#475569',
               fontWeight: 'bold',
               fontSize: '12px',
               cursor: 'pointer',
@@ -2730,17 +2872,48 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
               alignItems: 'center',
               gap: '6px',
               transition: 'all 0.15s ease',
-              boxShadow: quickFilter === "PendientesAcumulados" ? '0 2px 6px rgba(244, 63, 94, 0.15)' : 'none'
+              boxShadow: quickFilter === "EnProceso" ? '0 2px 6px rgba(245, 158, 11, 0.15)' : 'none'
             }}
           >
-            ⚠️ Pendientes Acumulados <span style={{
-              backgroundColor: quickFilter === "PendientesAcumulados" ? '#f43f5e' : '#ffe4e6',
-              color: quickFilter === "PendientesAcumulados" ? 'white' : '#9f1239',
+            🚚 Ejecución Logística (En Proceso) <span style={{
+              backgroundColor: quickFilter === "EnProceso" ? '#f59e0b' : '#f1f5f9',
+              color: quickFilter === "EnProceso" ? 'white' : '#475569',
               padding: '1px 6px',
               borderRadius: '8px',
               fontSize: '10px',
               fontWeight: '800'
-            }}>{counts.pendientesAcumulados}</span>
+            }}>{counts.enProceso}</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setQuickFilter("Completadas");
+              setFiltroSemana(""); // Clear week dropdown so they don't conflict
+            }}
+            style={{
+              padding: '6px 14px',
+              borderRadius: '20px',
+              border: quickFilter === "Completadas" ? '2px solid #0ea5e9' : '1px solid #cbd5e1',
+              backgroundColor: quickFilter === "Completadas" ? '#e0f2fe' : 'white',
+              color: quickFilter === "Completadas" ? '#0369a1' : '#475569',
+              fontWeight: 'bold',
+              fontSize: '12px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              transition: 'all 0.15s ease',
+              boxShadow: quickFilter === "Completadas" ? '0 2px 6px rgba(14, 165, 233, 0.15)' : 'none'
+            }}
+          >
+            ✅ Completadas <span style={{
+              backgroundColor: quickFilter === "Completadas" ? '#0ea5e9' : '#f1f5f9',
+              color: quickFilter === "Completadas" ? 'white' : '#475569',
+              padding: '1px 6px',
+              borderRadius: '8px',
+              fontSize: '10px',
+              fontWeight: '800'
+            }}>{counts.completadas}</span>
           </button>
         </div>
 
@@ -2760,7 +2933,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
             {loading ? (
               <tr><td colSpan="6" style={{ textAlign: 'center', padding: '40px', color: '#64748b' }}>Cargando registros...</td></tr>
             ) : historialFiltrado.map((h, i) => (
-              <tr key={h.id_db || h.id} style={{ borderBottom: '1px solid #f8fafc', fontSize: '0.80rem', backgroundColor: i % 2 === 0 ? '#ffffff' : '#f8fafc' }}>
+              <tr key={h.id} style={{ borderBottom: '1px solid #f8fafc', fontSize: '0.80rem', backgroundColor: i % 2 === 0 ? '#ffffff' : '#f8fafc' }}>
                 <td data-label="ID CONTROL" style={{ padding: '12px' }}>
                   <motion.span
                     whileHover={{
@@ -2835,7 +3008,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                     >
 
                     </button>
-                    {currentUser?.esSuperAdmin && (
+                    {currentUser?.correo?.toLowerCase() === 'jcontreras.totalclean@gmail.com' && (
                       <button
                         onClick={(e) => {
                           e.preventDefault();
@@ -2913,16 +3086,20 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                       {isEditing ? 'Solicitud de Fondos' : 'Registro de Fondos'}
                     </h1>
                     <div style={{
-                      backgroundColor: isExpired ? '#ef4444' : '#0ea5e9',
+                      backgroundColor: estadoActual === 'COMPLETADA' ? '#10b981' : estadoActual === 'EN PROCESO' ? '#f59e0b' : '#0ea5e9',
                       color: 'white',
                       padding: '4px 12px',
                       borderRadius: '8px',
                       fontSize: '10px',
                       fontWeight: '800',
                       letterSpacing: '0.02em',
-                      boxShadow: isExpired ? '0 2px 4px rgba(239, 68, 68, 0.2)' : '0 2px 4px rgba(14, 165, 233, 0.2)'
+                      boxShadow: estadoActual === 'COMPLETADA'
+                        ? '0 2px 4px rgba(16, 185, 129, 0.2)'
+                        : estadoActual === 'EN PROCESO'
+                          ? '0 2px 4px rgba(245, 158, 11, 0.2)'
+                          : '0 2px 4px rgba(14, 165, 233, 0.2)'
                     }}>
-                      {isExpired ? 'SEMANA CERRADA' : 'SEMANA ACTIVA'}
+                      {estadoActual === 'COMPLETADA' ? 'COMPLETADA' : estadoActual === 'EN PROCESO' ? 'EN PROCESO' : 'ACTIVA'}
                     </div>
                   </div>
                   <div style={{ marginTop: '6px', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -3354,8 +3531,8 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                       <div style={{ width: '215px', padding: '12px' }}>CATEGORÍA</div>
                       <div style={{ width: '80px', padding: '12px', textAlign: 'center' }}>CANT</div>
                       <div style={{ width: '90px', padding: '12px', textAlign: 'center' }}>UNID</div>
-                      <div style={{ width: '480px', padding: '12px' }}>DESCRIPCIÓN DEL GASTO</div>
-                      <div style={{ width: '175px', padding: '12px' }}>BENEFICIARIO</div>
+                      <div style={{ width: '460px', padding: '12px' }}>DESCRIPCIÓN DEL GASTO</div>
+                      <div style={{ width: '200px', padding: '12px' }}>BENEFICIARIO</div>
                       <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>P.U $/BS</div>
                       <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>P.U $/$</div>
                       <div style={{ width: '122px', padding: '12px', textAlign: 'center' }}>TOTAL $</div>
@@ -3367,10 +3544,12 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                       {partidasFiltradas.map((p, i) => {
                         const editingUser = activeUsers.find(u => u.fila_editando === p.id && u.user_id !== currentUser?.id);
                         const isSelectedByOther = !!selectedRowsByOthers[p.id];
+                        const isAnulado = p.status === 'ANULADO_POR_USUARIO';
                         return (
                           <div key={p.id} className={`sf-table-row ${editingUser ? 'sf-row-editing' : ''}`} style={{
-                            background: (p.requisicion_id || p.codigo_ticket || p.status === 'Bloqueado') ? '#f1f5f9' : (p.selected ? '#e0f2fe' : (editingUser ? '#fff1f2' : 'transparent')),
-                            opacity: 1
+                            background: isAnulado ? '#f1f5f9' : (p.requisicion_id || p.codigo_ticket || p.status === 'Bloqueado') ? '#f1f5f9' : (p.selected ? '#e0f2fe' : (editingUser ? '#fff1f2' : 'transparent')),
+                            opacity: isAnulado ? 0.6 : 1,
+                            textDecoration: isAnulado ? 'line-through' : 'none'
                           }}>
                             <div style={{ width: '40px', textAlign: 'center' }}>
                               <input
@@ -3387,8 +3566,8 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                                     });
                                   }
                                 }}
-                                style={{ cursor: (isReadOnly || p.requisicion_id || p.codigo_ticket || p.status === 'Bloqueado' || isSelectedByOther || !!editingUser) ? 'not-allowed' : 'pointer', transform: 'scale(1.2)' }}
-                                disabled={isReadOnly || !!p.requisicion_id || !!p.codigo_ticket || p.status === 'Bloqueado' || isSelectedByOther || !!editingUser}
+                                style={{ cursor: (isReadOnly || isAnulado || p.requisicion_id || p.codigo_ticket || p.status === 'Bloqueado' || isSelectedByOther || !!editingUser) ? 'not-allowed' : 'pointer', transform: 'scale(1.2)' }}
+                                disabled={isReadOnly || isAnulado || !!p.requisicion_id || !!p.codigo_ticket || p.status === 'Bloqueado' || isSelectedByOther || !!editingUser}
                                 title={p.codigo_ticket ? `Ticket Emitido: ${p.codigo_ticket}` : (p.requisicion_id ? "Bloqueado por Requisición" : (isSelectedByOther ? "Seleccionado por otro usuario" : (editingUser ? `Editando... (${editingUser.nombre})` : "")))}
                               />
                             </div>
@@ -3425,13 +3604,13 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                               )}
                             </div>
                             <div style={{ width: '180px', padding: '6px' }}>
-                              <select className="sf-table-input" value={p.cc} onChange={(e) => manejarCambioPartida(p.originalIndex, 'cc', e.target.value)} style={{ fontWeight: 'bold' }} disabled={isReadOnly || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow}>
+                              <select className="sf-table-input" value={p.cc} onChange={(e) => manejarCambioPartida(p.originalIndex, 'cc', e.target.value)} style={{ fontWeight: 'bold' }} disabled={isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow}>
                                 <option value="">Seleccione C.C...</option>
                                 {centrosCosto.map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>)}
                               </select>
                             </div>
                             <div style={{ width: '215px', padding: '6px' }}>
-                              <select className="sf-table-input" value={p.clasif} onChange={(e) => manejarCambioPartida(p.originalIndex, 'clasif', e.target.value)} disabled={isReadOnly || !p.cc || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow}>
+                              <select className="sf-table-input" value={p.clasif} onChange={(e) => manejarCambioPartida(p.originalIndex, 'clasif', e.target.value)} disabled={isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || !p.cc || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow}>
                                 <option value="">Clasificación...</option>
                                 {(() => {
                                   const ccObj = centrosCosto.find(c => c.nombre === p.cc);
@@ -3442,7 +3621,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                               </select>
                             </div>
                             <div style={{ width: '215px', padding: '6px' }}>
-                              <select className="sf-table-input" value={p.cat} onChange={(e) => manejarCambioPartida(p.originalIndex, 'cat', e.target.value)} disabled={isReadOnly || !p.clasif || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow}>
+                              <select className="sf-table-input" value={p.cat} onChange={(e) => manejarCambioPartida(p.originalIndex, 'cat', e.target.value)} disabled={isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || !p.clasif || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow}>
                                 <option value="">Categoría...</option>
                                 {(() => {
                                   const ccObj = centrosCosto.find(c => c.nombre === p.cc);
@@ -3453,19 +3632,42 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                                 })()}
                               </select>
                             </div>
-                            <div style={{ width: '80px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.cant} onChange={(e) => manejarCambioPartida(p.originalIndex, 'cant', e.target.value)} style={{ textAlign: 'center' }} disabled={isReadOnly || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow} /></div>
-                            <div style={{ width: '90px', padding: '6px' }}><select className="sf-table-input" value={p.uni} onChange={(e) => manejarCambioPartida(p.originalIndex, 'uni', e.target.value)} disabled={isReadOnly || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow}>{unidades.map(u => <option key={u}>{u}</option>)}</select></div>
-                            <div style={{ width: '460px', padding: '10px' }}><textarea className="sf-table-input" value={p.desc} onChange={(e) => manejarCambioPartida(p.originalIndex, 'desc', e.target.value)} style={{ resize: 'none' }} rows="1" disabled={isReadOnly || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow} /></div>
-                            <div style={{ width: '200px', padding: '6px' }}><input className="sf-table-input" value={p.ben} onChange={(e) => manejarCambioPartida(p.originalIndex, 'ben', e.target.value)} disabled={isReadOnly || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow} /></div>
-                            <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puBs === 0 ? '' : p.puBs} onChange={(e) => manejarCambioPartida(p.originalIndex, 'puBs', e.target.value)} style={{ textAlign: 'left' }} disabled={isReadOnly || p.puUsd > 0 || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow} /></div>
-                            <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puUsd === 0 ? '' : p.puUsd} onChange={(e) => manejarCambioPartida(p.originalIndex, 'puUsd', e.target.value)} style={{ textAlign: 'left' }} disabled={isReadOnly || p.puBs > 0 || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow} /></div>
+                            <div style={{ width: '80px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.cant} onChange={(e) => manejarCambioPartida(p.originalIndex, 'cant', e.target.value)} style={{ textAlign: 'center' }} disabled={isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow} /></div>
+                            <div style={{ width: '90px', padding: '6px' }}><select className="sf-table-input" value={p.uni} onChange={(e) => manejarCambioPartida(p.originalIndex, 'uni', e.target.value)} disabled={isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow}>{unidades.map(u => <option key={u}>{u}</option>)}</select></div>
+                            <div style={{ width: '460px', padding: '10px' }}><textarea className="sf-table-input" value={p.desc} onChange={(e) => manejarCambioPartida(p.originalIndex, 'desc', e.target.value)} style={{ resize: 'none' }} rows="1" disabled={isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow} /></div>
+                            <div style={{ width: '200px', padding: '6px' }}><input className="sf-table-input" value={p.ben} onChange={(e) => manejarCambioPartida(p.originalIndex, 'ben', e.target.value)} disabled={isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow} /></div>
+                            <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puBs === 0 ? '' : p.puBs} onChange={(e) => manejarCambioPartida(p.originalIndex, 'puBs', e.target.value)} style={{ textAlign: 'left' }} disabled={isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || p.puUsd > 0 || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow} /></div>
+                            <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puUsd === 0 ? '' : p.puUsd} onChange={(e) => manejarCambioPartida(p.originalIndex, 'puUsd', e.target.value)} style={{ textAlign: 'left' }} disabled={isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || p.puBs > 0 || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow} /></div>
                             <div style={{ width: '120px', padding: '6px', textAlign: 'left', fontWeight: 'bold' }}>{((parseFloat(p.puBs) || parseFloat(p.puUsd) || 0) * (p.cant || 0)).toLocaleString('de-DE')}</div>
                             <div style={{ width: '130px', padding: '6px', fontSize: '9px', color: editingUser ? '#e11d48' : '#64748b', fontWeight: editingUser ? 'bold' : '600' }}>
                               {editingUser ? `✏️ Editando... (${editingUser.nombre})` : (p.emisor || '---')}
                             </div>
-                            <div style={{ width: '80px', display: 'flex', gap: '5px', justifyContent: 'center' }}>
-                              <button onClick={() => duplicarPartida(p.originalIndex)} style={{ background: 'none', border: 'none', color: '#0ea5e9', cursor: (isReadOnly || p.codigo_ticket || p.requisicion_id || !!editingUser) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (isReadOnly || p.codigo_ticket || p.requisicion_id || !!editingUser) ? 0.3 : 1 }} disabled={isReadOnly || !!p.codigo_ticket || !!p.requisicion_id || !!editingUser} title="Duplicar renglón"><Copy size={16} /></button>
-                              <button onClick={() => { setHasChanges(true); setForm({ ...form, partidas: form.partidas.filter((_, idx) => idx !== p.originalIndex) }); }} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: (isReadOnly || p.codigo_ticket || p.requisicion_id || !!editingUser) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (isReadOnly || p.codigo_ticket || p.requisicion_id || !!editingUser) ? 0.3 : 1 }} disabled={isReadOnly || !!p.codigo_ticket || !!p.requisicion_id || !!editingUser} title="Eliminar renglón">🗑️</button>
+                            <div style={{ width: '110px', display: 'flex', gap: '5px', justifyContent: 'center' }}>
+                              <button onClick={() => duplicarPartida(p.originalIndex)} style={{ background: 'none', border: 'none', color: '#0ea5e9', cursor: (isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || p.codigo_ticket || p.requisicion_id || !!editingUser) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || p.codigo_ticket || p.requisicion_id || !!editingUser) ? 0.3 : 1 }} disabled={isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || !!p.codigo_ticket || !!p.requisicion_id || !!editingUser} title="Duplicar renglón"><Copy size={16} /></button>
+                              <button onClick={() => { setHasChanges(true); setForm({ ...form, partidas: form.partidas.filter((_, idx) => idx !== p.originalIndex) }); }} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: (isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || p.codigo_ticket || p.requisicion_id || !!editingUser) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || p.codigo_ticket || p.requisicion_id || !!editingUser) ? 0.3 : 1 }} disabled={isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || !!p.codigo_ticket || !!p.requisicion_id || !!editingUser} title="Eliminar renglón">🗑️</button>
+                              {p.id && (
+                                <button
+                                  onClick={() => abrirModalAnulacion(p)}
+                                  disabled={isReadOnly || isAnulado || (p.requisiciones && (p.requisiciones.status_compra === 'Comprado' || p.requisiciones.status_compra === 'Recibido en Almacén')) || !!editingUser}
+                                  style={{
+                                    background: 'none',
+                                    border: 'none',
+                                    color: '#f43f5e',
+                                    cursor: (isReadOnly || isAnulado || (p.requisiciones && (p.requisiciones.status_compra === 'Comprado' || p.requisiciones.status_compra === 'Recibido en Almacén')) || !!editingUser) ? 'not-allowed' : 'pointer',
+                                    fontSize: '1rem',
+                                    opacity: (isReadOnly || isAnulado || (p.requisiciones && (p.requisiciones.status_compra === 'Comprado' || p.requisiciones.status_compra === 'Recibido en Almacén')) || !!editingUser) ? 0.3 : 1
+                                  }}
+                                  title={
+                                    (p.requisiciones && (p.requisiciones.status_compra === 'Comprado' || p.requisiciones.status_compra === 'Recibido en Almacén'))
+                                      ? "No se puede anular: Requisición ya Comprada o en Almacén"
+                                      : isAnulado
+                                        ? "Renglón ya sin efecto"
+                                        : "Anular Renglón (Sin Efecto)"
+                                  }
+                                >
+                                  🚫
+                                </button>
+                              )}
                             </div>
                           </div>
                         );
@@ -3497,17 +3699,19 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                       <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>P.U $/$</div>
                       <div style={{ width: '120px', padding: '12px', textAlign: 'center' }}>TOTAL $</div>
                       <div style={{ width: '130px', padding: '12px' }}>USUARIO</div>
-                      <div style={{ width: '80px', padding: '12px', textAlign: 'center' }}>ACCIONES</div>
+                      <div style={{ width: '110px', padding: '12px', textAlign: 'center' }}>ACCIONES</div>
                     </div>
 
                     <div style={{ maxHeight: '30vh', overflowY: 'auto' }}>
                       {imprevistosFiltrados.map((imp, i) => {
                         const editingImpUser = activeUsers.find(u => u.fila_editando === imp.id && u.user_id !== currentUser?.id);
                         const isImpSelectedByOther = !!selectedRowsByOthers[imp.id];
+                        const isAnulado = imp.status === 'ANULADO_POR_USUARIO';
                         return (
                           <div key={imp.id} className={`sf-table-row ${editingImpUser ? 'sf-row-editing' : ''}`} style={{
-                            background: (imp.requisicion_id || imp.status === 'Bloqueado') ? '#f1f5f9' : (imp.selected ? '#fffcf0' : (editingImpUser ? '#fff1f2' : 'transparent')),
-                            opacity: 1
+                            background: isAnulado ? '#f1f5f9' : (imp.requisicion_id || imp.status === 'Bloqueado') ? '#f1f5f9' : (imp.selected ? '#fffcf0' : (editingImpUser ? '#fff1f2' : 'transparent')),
+                            opacity: isAnulado ? 0.6 : 1,
+                            textDecoration: isAnulado ? 'line-through' : 'none'
                           }}>
                             <div style={{ width: '40px', textAlign: 'center' }}>
                               <input
@@ -3524,8 +3728,8 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                                     });
                                   }
                                 }}
-                                style={{ cursor: (imp.requisicion_id || imp.status === 'Bloqueado' || isImpSelectedByOther || !!editingImpUser) ? 'not-allowed' : 'pointer', transform: 'scale(1.2)' }}
-                                disabled={!!imp.requisicion_id || imp.status === 'Bloqueado' || isImpSelectedByOther || !!editingImpUser}
+                                style={{ cursor: (isReadOnly || isAnulado || imp.requisicion_id || imp.status === 'Bloqueado' || isImpSelectedByOther || !!editingImpUser) ? 'not-allowed' : 'pointer', transform: 'scale(1.2)' }}
+                                disabled={isReadOnly || isAnulado || !!imp.requisicion_id || imp.status === 'Bloqueado' || isImpSelectedByOther || !!editingImpUser}
                                 title={(imp.requisicion_id || imp.status === 'Bloqueado') ? "Esta partida está bloqueada por una requisición activa" : (isImpSelectedByOther ? "Seleccionado por otro usuario" : (editingImpUser ? `Editando... (${editingImpUser.nombre})` : ""))}
                               />
                             </div>
@@ -3561,13 +3765,13 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                               )}
                             </div>
                             <div style={{ width: '180px', padding: '6px' }}>
-                              <select className="sf-table-input" value={imp.cc} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'cc', e.target.value)} style={{ fontWeight: 'bold' }} disabled={isReadOnly || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow}>
+                              <select className="sf-table-input" value={imp.cc} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'cc', e.target.value)} style={{ fontWeight: 'bold' }} disabled={isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow}>
                                 <option value="">Seleccione C.C...</option>
                                 {centrosCosto.map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>)}
                               </select>
                             </div>
                             <div style={{ width: '215px', padding: '6px' }}>
-                              <select className="sf-table-input" value={imp.clasif} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'clasif', e.target.value)} disabled={isReadOnly || !imp.cc || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow}>
+                              <select className="sf-table-input" value={imp.clasif} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'clasif', e.target.value)} disabled={isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || !imp.cc || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow}>
                                 <option value="">Clasificación...</option>
                                 {(() => {
                                   const ccObj = centrosCosto.find(c => c.nombre === imp.cc);
@@ -3578,7 +3782,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                               </select>
                             </div>
                             <div style={{ width: '215px', padding: '6px' }}>
-                              <select className="sf-table-input" value={imp.cat} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'cat', e.target.value)} disabled={isReadOnly || !imp.clasif || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow}>
+                              <select className="sf-table-input" value={imp.cat} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'cat', e.target.value)} disabled={isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || !imp.clasif || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow}>
                                 <option value="">Categoría...</option>
                                 {(() => {
                                   const ccObj = centrosCosto.find(c => c.nombre === imp.cc);
@@ -3589,19 +3793,42 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                                 })()}
                               </select>
                             </div>
-                            <div style={{ width: '80px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.cant} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'cant', e.target.value)} style={{ textAlign: 'center' }} disabled={isReadOnly || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow} /></div>
-                            <div style={{ width: '90px', padding: '6px' }}><select className="sf-table-input" value={imp.uni} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'uni', e.target.value)} disabled={isReadOnly || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow}>{unidades.map(u => <option key={u}>{u}</option>)}</select></div>
-                            <div style={{ width: '460px', padding: '10px' }}><textarea className="sf-table-input" value={imp.desc} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'desc', e.target.value)} style={{ resize: 'none' }} rows="1" disabled={isReadOnly || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow} /></div>
-                            <div style={{ width: '200px', padding: '6px' }}><input className="sf-table-input" value={imp.ben} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'ben', e.target.value)} disabled={isReadOnly || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow} /></div>
-                            <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.puBs === 0 ? '' : imp.puBs} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'puBs', e.target.value)} style={{ textAlign: 'right' }} disabled={isReadOnly || imp.puUsd > 0 || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow} /></div>
-                            <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.puUsd === 0 ? '' : imp.puUsd} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'puUsd', e.target.value)} style={{ textAlign: 'right' }} disabled={isReadOnly || imp.puBs > 0 || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow} /></div>
+                            <div style={{ width: '80px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.cant} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'cant', e.target.value)} style={{ textAlign: 'center' }} disabled={isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow} /></div>
+                            <div style={{ width: '90px', padding: '6px' }}><select className="sf-table-input" value={imp.uni} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'uni', e.target.value)} disabled={isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow}>{unidades.map(u => <option key={u}>{u}</option>)}</select></div>
+                            <div style={{ width: '460px', padding: '10px' }}><textarea className="sf-table-input" value={imp.desc} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'desc', e.target.value)} style={{ resize: 'none' }} rows="1" disabled={isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow} /></div>
+                            <div style={{ width: '200px', padding: '6px' }}><input className="sf-table-input" value={imp.ben} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'ben', e.target.value)} disabled={isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow} /></div>
+                            <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.puBs === 0 ? '' : imp.puBs} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'puBs', e.target.value)} style={{ textAlign: 'right' }} disabled={isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || imp.puUsd > 0 || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow} /></div>
+                            <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.puUsd === 0 ? '' : imp.puUsd} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'puUsd', e.target.value)} style={{ textAlign: 'right' }} disabled={isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || imp.puBs > 0 || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow} /></div>
                             <div style={{ width: '120px', padding: '6px', textAlign: 'right', fontWeight: 'bold' }}>{((parseFloat(imp.puBs) || parseFloat(imp.puUsd) || 0) * (imp.cant || 1)).toLocaleString('de-DE')}</div>
                             <div style={{ width: '130px', padding: '6px', fontSize: '9px', color: editingImpUser ? '#e11d48' : '#64748b', fontWeight: editingImpUser ? 'bold' : '600' }}>
                               {editingImpUser ? `✏️ Editando... (${editingImpUser.nombre})` : (imp.emisor || '---')}
                             </div>
-                            <div style={{ width: '80px', display: 'flex', gap: '5px', justifyContent: 'center' }}>
-                              <button onClick={() => duplicarImprevisto(imp.originalIndex)} style={{ background: 'none', border: 'none', color: '#f59e0b', cursor: (isReadOnly || imp.codigo_ref || imp.status === 'Bloqueado' || !!editingImpUser) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (isReadOnly || imp.codigo_ref || imp.status === 'Bloqueado' || !!editingImpUser) ? 0.3 : 1 }} disabled={isReadOnly || !!imp.codigo_ref || imp.status === 'Bloqueado' || !!editingImpUser} title="Duplicar imprevisto"><Copy size={16} /></button>
-                              <button onClick={() => { setHasChanges(true); setForm({ ...form, imprevistos: form.imprevistos.filter((_, idx) => idx !== imp.originalIndex) }); }} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: (isReadOnly || imp.codigo_ref || imp.status === 'Bloqueado' || !!editingImpUser) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (isReadOnly || imp.codigo_ref || imp.status === 'Bloqueado' || !!editingImpUser) ? 0.3 : 1 }} disabled={isReadOnly || !!imp.codigo_ref || imp.status === 'Bloqueado' || !!editingImpUser} title="Eliminar imprevisto">🗑️</button>
+                            <div style={{ width: '110px', display: 'flex', gap: '5px', justifyContent: 'center' }}>
+                              <button onClick={() => duplicarImprevisto(imp.originalIndex)} style={{ background: 'none', border: 'none', color: '#f59e0b', cursor: (isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || imp.codigo_ref || imp.status === 'Bloqueado' || !!editingImpUser) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || imp.codigo_ref || imp.status === 'Bloqueado' || !!editingImpUser) ? 0.3 : 1 }} disabled={isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || !!imp.codigo_ref || imp.status === 'Bloqueado' || !!editingImpUser} title="Duplicar imprevisto"><Copy size={16} /></button>
+                              <button onClick={() => { setHasChanges(true); setForm({ ...form, imprevistos: form.imprevistos.filter((_, idx) => idx !== imp.originalIndex) }); }} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: (isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || imp.codigo_ref || imp.status === 'Bloqueado' || !!editingImpUser) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || imp.codigo_ref || imp.status === 'Bloqueado' || !!editingImpUser) ? 0.3 : 1 }} disabled={isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || !!imp.codigo_ref || imp.status === 'Bloqueado' || !!editingImpUser} title="Eliminar imprevisto">🗑️</button>
+                              {imp.id && (
+                                <button
+                                  onClick={() => abrirModalAnulacion(imp)}
+                                  disabled={isReadOnly || isAnulado || (imp.requisiciones && (imp.requisiciones.status_compra === 'Comprado' || imp.requisiciones.status_compra === 'Recibido en Almacén')) || !!editingImpUser}
+                                  style={{
+                                    background: 'none',
+                                    border: 'none',
+                                    color: '#f43f5e',
+                                    cursor: (isReadOnly || isAnulado || (imp.requisiciones && (imp.requisiciones.status_compra === 'Comprado' || imp.requisiciones.status_compra === 'Recibido en Almacén')) || !!editingImpUser) ? 'not-allowed' : 'pointer',
+                                    fontSize: '1rem',
+                                    opacity: (isReadOnly || isAnulado || (imp.requisiciones && (imp.requisiciones.status_compra === 'Comprado' || imp.requisiciones.status_compra === 'Recibido en Almacén')) || !!editingImpUser) ? 0.3 : 1
+                                  }}
+                                  title={
+                                    (imp.requisiciones && (imp.requisiciones.status_compra === 'Comprado' || imp.requisiciones.status_compra === 'Recibido en Almacén'))
+                                      ? "No se puede anular: Requisición ya Comprada o en Almacén"
+                                      : isAnulado
+                                        ? "Renglón ya sin efecto"
+                                        : "Anular Renglón (Sin Efecto)"
+                                  }
+                                >
+                                  🚫
+                                </button>
+                              )}
                             </div>
                           </div>
                         );
@@ -3666,13 +3893,13 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                   )}
                 </button>
                 {!mostrarImprevistos && !isReadOnly && (
-                  <button className="sf-btn sf-btn-success" onClick={handleCrearRequisicion} disabled={isExpired} style={{
+                  <button className="sf-btn sf-btn-success" onClick={handleCrearRequisicion} disabled={isReadOnly || estadoActual === 'COMPLETADA'} style={{
                     backgroundColor: '#10b981',
                     color: 'white',
                     padding: '10px 25px',
                     borderRadius: '12px',
                     fontWeight: '900',
-                    opacity: isExpired ? 0.5 : 1,
+                    opacity: (isReadOnly || estadoActual === 'COMPLETADA') ? 0.5 : 1,
                     boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)',
                     display: 'flex',
                     alignItems: 'center',
@@ -3689,9 +3916,9 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                     padding: '10px 25px',
                     borderRadius: '12px',
                     fontWeight: '900',
-                    opacity: isExpired ? 0.5 : 1,
+                    opacity: (isReadOnly || estadoActual === 'COMPLETADA') ? 0.5 : 1,
                     boxShadow: '0 4px 12px rgba(245, 158, 11, 0.3)'
-                  }} onClick={handleEmitirTicketFromImprevisto} disabled={isExpired}>
+                  }} onClick={handleEmitirTicketFromImprevisto} disabled={isReadOnly || estadoActual === 'COMPLETADA'}>
                     <Activity size={18} /> EMITIR TICKET DE PAGO
                   </button>
                 )}
@@ -3707,24 +3934,43 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                 <button className="sf-btn sf-btn-close" onClick={intentarCerrarModal} disabled={isSaving} style={{ minWidth: '180px', padding: '12px 30px', opacity: isSaving ? 0.6 : 1 }}>
                   {isReadOnly ? 'CERRAR' : 'CANCELAR'}
                 </button>
-                {!isReadOnly && (
+                {!isReadOnly && estadoActual === 'ACTIVA' && (
                   <button
                     className="sf-btn"
-                    style={{ padding: '12px 30px', minWidth: '180px', background: '#fff', border: '1px solid #cbd5e1', color: '#475569', opacity: (isExpired || isSaving) ? 0.5 : 1 }}
+                    style={{ padding: '12px 30px', minWidth: '180px', background: '#fff', border: '1px solid #cbd5e1', color: '#475569', opacity: isSaving ? 0.5 : 1 }}
                     onClick={() => registrarOActualizar(true)}
-                    disabled={isExpired || isSaving}
+                    disabled={isSaving}
                   >
                     GUARDAR BORRADOR
                   </button>
                 )}
-                {!isReadOnly && (
+                {!isReadOnly && estadoActual === 'ACTIVA' && (
                   <button
                     className="sf-btn sf-btn-primary"
                     onClick={() => registrarOActualizar(false)}
-                    disabled={isExpired || isSaving}
-                    style={{ opacity: (isExpired || isSaving) ? 0.5 : 1, minWidth: '180px', padding: '12px 30px' }}
+                    disabled={isSaving}
+                    style={{ opacity: isSaving ? 0.5 : 1, minWidth: '180px', padding: '12px 30px' }}
                   >
                     {isEditing ? 'ACTUALIZAR SOLICITUD' : 'FINALIZAR REGISTRO'}
+                  </button>
+                )}
+                {!isReadOnly && estadoActual === 'EN PROCESO' && (
+                  <button
+                    className="sf-btn sf-btn-success"
+                    onClick={finalizarSolicitudManual}
+                    disabled={isSaving}
+                    style={{
+                      backgroundColor: '#10b981',
+                      color: 'white',
+                      fontWeight: 'bold',
+                      padding: '12px 30px',
+                      minWidth: '180px',
+                      borderRadius: '12px',
+                      boxShadow: '0 4px 12px rgba(16, 185, 129, 0.2)',
+                      cursor: isSaving ? 'not-allowed' : 'pointer'
+                    }}
+                  >
+                    FINALIZAR SOLICITUD
                   </button>
                 )}
               </div>
@@ -3754,6 +4000,135 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                   datosPredefinidos={dataParaTicket}
                   onSuccess={handleTicketFinalizado}
                 />
+              </div>
+            </div>
+          )}
+
+          {itemParaAnular && (
+            <div style={{
+              position: 'fixed',
+              inset: 0,
+              backgroundColor: 'rgba(15, 23, 42, 0.6)',
+              backdropFilter: 'blur(4px)',
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              zIndex: 20000,
+              padding: '20px',
+              animation: 'fadeIn 0.2s ease-out'
+            }}>
+              <div style={{
+                width: '100%',
+                maxWidth: '480px',
+                backgroundColor: 'white',
+                borderRadius: '20px',
+                padding: '28px',
+                boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+                border: '1px solid #e2e8f0',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '18px'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span style={{ fontSize: '24px' }}>🚫</span>
+                  <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: '900', color: '#0f172a' }}>
+                    Anular Renglón (Sin Efecto)
+                  </h3>
+                </div>
+
+                <p style={{ margin: 0, fontSize: '0.875rem', color: '#475569', lineHeight: '1.5' }}>
+                  Está marcando el renglón <strong>"{itemParaAnular.desc || 'Sin descripción'}"</strong> como sin efecto. Esta acción liberará el saldo del presupuesto y quedará registrada en la auditoría.
+                </p>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '800', color: '#475569', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    Motivo de la Anulación *
+                  </label>
+                  <select
+                    value={motivoAnulacion}
+                    onChange={(e) => setMotivoAnulacion(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '10px 12px',
+                      borderRadius: '10px',
+                      border: '1px solid #cbd5e1',
+                      fontSize: '0.875rem',
+                      color: '#0f172a',
+                      backgroundColor: 'white',
+                      outline: 'none',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    <option value="">Seleccione un motivo...</option>
+                    <option value="No se requiere el material">No se requiere el material</option>
+                    <option value="Presupuesto insuficiente">Presupuesto insuficiente</option>
+                    <option value="Error de transcripción">Error de transcripción</option>
+                    <option value="Duplicado">Duplicado</option>
+                    <option value="Cambio de especificación">Cambio de especificación</option>
+                    <option value="Otro">Otro</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '800', color: '#475569', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    Justificación Detallada *
+                  </label>
+                  <textarea
+                    value={justificacionAnulacion}
+                    onChange={(e) => setJustificacionAnulacion(e.target.value)}
+                    placeholder="Escriba la justificación detallada para esta anulación (mínimo 10 caracteres)..."
+                    rows={4}
+                    style={{
+                      width: '100%',
+                      padding: '10px 12px',
+                      borderRadius: '10px',
+                      border: '1px solid #cbd5e1',
+                      fontSize: '0.875rem',
+                      color: '#0f172a',
+                      outline: 'none',
+                      resize: 'none',
+                      boxSizing: 'border-box'
+                    }}
+                  />
+                </div>
+
+                <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '5px' }}>
+                  <button
+                    onClick={() => setItemParaAnular(null)}
+                    disabled={isAnulando}
+                    style={{
+                      padding: '10px 20px',
+                      borderRadius: '10px',
+                      border: '1px solid #cbd5e1',
+                      background: 'white',
+                      color: '#475569',
+                      fontWeight: 'bold',
+                      fontSize: '0.875rem',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s'
+                    }}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={confirmarAnulacion}
+                    disabled={isAnulando}
+                    style={{
+                      padding: '10px 20px',
+                      borderRadius: '10px',
+                      border: 'none',
+                      background: '#ef4444',
+                      color: 'white',
+                      fontWeight: 'bold',
+                      fontSize: '0.875rem',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s',
+                      boxShadow: '0 4px 12px rgba(239, 68, 68, 0.25)'
+                    }}
+                  >
+                    {isAnulando ? "Anulando..." : "Confirmar Anulación"}
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -3823,6 +4198,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                         fecha: fechaPreVal,
                         sede: 'MARACAIBO',
                         gerencia: currentUser?.departamento || '',
+                        bloque_operativo: (currentUser?.departamento || '').toLowerCase() === 'operaciones' ? (currentUser?.bloque_operativo || null) : null,
                         responsable: (['Gerente', 'Coordinador', 'Analista', 'Admin'].includes(currentUser?.rol) || currentUser?.esAdminReal)
                           ? `${currentUser.nombre} ${currentUser.apellido}`
                           : '',
@@ -3868,6 +4244,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                           fecha: fechaPreVal,
                           sede: 'MARACAIBO',
                           gerencia: currentUser?.departamento || '',
+                          bloque_operativo: (currentUser?.departamento || '').toLowerCase() === 'operaciones' ? (currentUser?.bloque_operativo || null) : null,
                           responsable: `${currentUser.nombre} ${currentUser.apellido}`,
                           partidas: [{ id: Date.now(), selected: false, cc: ccPreVal, clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '' }],
                           imprevistos: [{ id: Date.now() + 1, selected: false, cc: ccPreVal, clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '' }]

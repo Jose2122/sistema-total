@@ -1929,22 +1929,74 @@ const ReportesMaestro = () => {
                                                                     </div>
                                                                 )}
                                                                 <div style={{ flex: 1, minHeight: '400px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-                                                                    {invoiceFiles[selectedFileIndex]?.url.split('?')[0].toLowerCase().endsWith('.pdf') ? (
-                                                                        <iframe
-                                                                            src={invoiceFiles[selectedFileIndex].url}
-                                                                            width="100%"
-                                                                            height="430px"
-                                                                            style={{ border: 'none', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)' }}
-                                                                        />
-                                                                    ) : (
-                                                                        <div style={{ display: 'flex', justifyContent: 'center', background: '#f8fafc', padding: '10px', borderRadius: '12px', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
-                                                                            <img
-                                                                                src={invoiceFiles[selectedFileIndex].url}
-                                                                                alt="Soporte Factura"
-                                                                                style={{ maxWidth: '100%', maxHeight: '410px', objectFit: 'contain', borderRadius: '8px' }}
-                                                                            />
-                                                                        </div>
-                                                                    )}
+                                                                    {(() => {
+                                                                        const url = invoiceFiles[selectedFileIndex]?.url || '';
+                                                                        const lowerUrl = url.split('?')[0].toLowerCase();
+                                                                        const isPdf = lowerUrl.endsWith('.pdf');
+                                                                        const isImg = /\.(jpg|jpeg|png|webp|avif|gif)$/i.test(lowerUrl);
+                                                                        const isExcel = /\.(xls|xlsx|csv)$/i.test(lowerUrl);
+                                                                        const isWord = /\.(doc|docx)$/i.test(lowerUrl);
+                                                                        const isPowerPoint = /\.(ppt|pptx)$/i.test(lowerUrl);
+                                                                        
+                                                                        if (isPdf) {
+                                                                            return (
+                                                                                <iframe
+                                                                                    src={url}
+                                                                                    width="100%"
+                                                                                    height="430px"
+                                                                                    style={{ border: 'none', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)' }}
+                                                                                />
+                                                                            );
+                                                                        }
+                                                                        if (isImg) {
+                                                                            return (
+                                                                                <div style={{ display: 'flex', justifyContent: 'center', background: '#f8fafc', padding: '10px', borderRadius: '12px', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
+                                                                                    <img
+                                                                                        src={url}
+                                                                                        alt="Soporte Factura"
+                                                                                        style={{ maxWidth: '100%', maxHeight: '410px', objectFit: 'contain', borderRadius: '8px' }}
+                                                                                    />
+                                                                                </div>
+                                                                            );
+                                                                        }
+
+                                                                        let fileInfo = { iconColor: '#64748b', label: 'Documento Adjunto', desc: 'Este archivo no se puede previsualizar en el navegador.' };
+                                                                        if (isExcel) {
+                                                                            fileInfo = { iconColor: '#10b981', label: 'Hoja de Cálculo Excel', desc: 'Este archivo de Excel no se puede previsualizar directamente en el navegador.' };
+                                                                        } else if (isWord) {
+                                                                            fileInfo = { iconColor: '#2563eb', label: 'Documento Word', desc: 'Este documento de Word no se puede previsualizar directamente en el navegador.' };
+                                                                        } else if (isPowerPoint) {
+                                                                            fileInfo = { iconColor: '#f97316', label: 'Presentación PowerPoint', desc: 'Esta presentación de PowerPoint no se puede previsualizar directamente en el navegador.' };
+                                                                        }
+
+                                                                        return (
+                                                                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#f8fafc', padding: '40px 20px', borderRadius: '12px', border: '1px solid #cbd5e1', textAlign: 'center', minHeight: '300px' }}>
+                                                                                <FileText size={48} color={fileInfo.iconColor} style={{ marginBottom: '15px' }} />
+                                                                                <span style={{ fontSize: '1rem', fontWeight: 'bold', color: '#1e293b' }}>
+                                                                                    {fileInfo.label}
+                                                                                </span>
+                                                                                <p style={{ fontSize: '0.8rem', color: '#64748b', margin: '8px 0 20px 0', maxWidth: '300px' }}>
+                                                                                    {fileInfo.desc} Por favor use el botón de abajo para descargarlo o abrirlo en una nueva pestaña.
+                                                                                </p>
+                                                                                <a
+                                                                                    href={url}
+                                                                                    target="_blank"
+                                                                                    rel="noreferrer"
+                                                                                    style={{
+                                                                                        padding: '8px 18px',
+                                                                                        backgroundColor: '#2563eb',
+                                                                                        color: 'white',
+                                                                                        borderRadius: '8px',
+                                                                                        textDecoration: 'none',
+                                                                                        fontWeight: 'bold',
+                                                                                        fontSize: '0.85rem'
+                                                                                    }}
+                                                                                >
+                                                                                    Descargar Archivo
+                                                                                </a>
+                                                                            </div>
+                                                                        );
+                                                                    })()}
                                                                     <div style={{ marginTop: '8px', textAlign: 'right' }}>
                                                                         <a
                                                                             href={invoiceFiles[selectedFileIndex].url}
