@@ -1028,19 +1028,46 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
   };
 
 
+  const parsearObservaciones = (obsRaw) => {
+    if (!obsRaw || !obsRaw.trim()) return [];
+    try {
+      const parsed = JSON.parse(obsRaw);
+      if (Array.isArray(parsed)) return parsed;
+    } catch (e) {
+      // Legacy text
+    }
+    return [{
+      author: 'Observación Inicial',
+      text: obsRaw,
+      date: null,
+      rol: 'Solicitante'
+    }];
+  };
+
   const guardarObservacionesDirecto = async () => {
     if (!editandoId) return;
+    if (!obsTemporal.trim()) return toast.error('El comentario no puede estar vacío');
     setLoading(true);
     try {
+      const chatComentarios = parsearObservaciones(observaciones);
+      const nuevoComentario = {
+        author: `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim() || 'Usuario',
+        text: obsTemporal.trim(),
+        date: new Date().toISOString(),
+        rol: currentUser?.rol || 'Usuario'
+      };
+
+      const nuevoHistorial = [...chatComentarios, nuevoComentario];
+      const payloadString = JSON.stringify(nuevoHistorial);
+
       const { error } = await supabase
         .from('requisiciones')
         .update({
-          observaciones: obsTemporal,
+          observaciones: payloadString,
           id_referencia_proyecto: idReferenciaProyecto,
           leido_compras_at: null
         })
-        .eq('id', editandoId)
-        .select();
+        .eq('id', editandoId);
       if (error) throw error;
 
       // NOTIFICAR A COMPRAS
@@ -1051,14 +1078,21 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
 
       if (usuariosCompras) {
         for (const u of usuariosCompras) {
-          await enviarNotificacion(u.id, `Nueva observación en REQ ${previewCorrelativo || 'Pendiente'} de ${currentUser.nombre}`, 'Observación', editandoId);
+          await enviarNotificacion(u.id, `Nuevo comentario en REQ ${previewCorrelativo || 'Pendiente'} de ${currentUser.nombre}`, 'Observación', editandoId);
         }
       }
 
-      setObservaciones(obsTemporal);
-      setHistorial(prev => prev.map(req => req.id === editandoId ? { ...req, observaciones: obsTemporal } : req));
+      // NOTIFICAR AL SOLICITANTE SI NO ES EL QUE ESCRIBE
+      const reqActual = historial.find(h => h.id === editandoId);
+      if (reqActual && reqActual.user_id !== currentUser?.id) {
+        await enviarNotificacion(reqActual.user_id, `Nuevo comentario de ${currentUser.nombre} en tu REQ ${reqActual.correlativo || 'Pendiente'}`, 'Observación', editandoId);
+      }
+
+      setObservaciones(payloadString);
+      setHistorial(prev => prev.map(req => req.id === editandoId ? { ...req, observaciones: payloadString } : req));
+      setObsTemporal('');
       setEditandoObs(false);
-      toast.success('Observaciones actualizadas correctamente.');
+      toast.success('Comentario agregado con éxito.');
     } catch (err) {
       toast.error("Error al actualizar observaciones: " + err.message);
     } finally {
@@ -1581,7 +1615,16 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
         // Se preservan los datos editados en los inputs
         items: renglones,
         justificacion,
-        observaciones,
+        observaciones: (observaciones.startsWith('[') && observaciones.endsWith(']'))
+          ? observaciones
+          : (observaciones.trim()
+              ? JSON.stringify([{
+                  author: solicitante || `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim() || 'S/E',
+                  text: observaciones.trim(),
+                  date: new Date().toISOString(),
+                  rol: currentUser?.rol || 'Usuario'
+                }])
+              : '[]'),
         id_referencia_proyecto: idReferenciaProyecto,
         centro_costo: centroCosto,
         prioridad,
@@ -1741,7 +1784,16 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
           prioridad,
           items: renglones,
           justificacion,
-          observaciones,
+          observaciones: (observaciones.startsWith('[') && observaciones.endsWith(']'))
+            ? observaciones
+            : (observaciones.trim()
+                ? JSON.stringify([{
+                    author: solicitante || `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim() || 'S/E',
+                    text: observaciones.trim(),
+                    date: new Date().toISOString(),
+                    rol: currentUser?.rol || 'Usuario'
+                  }])
+                : '[]'),
           id_referencia_proyecto: idReferenciaProyecto,
           total_bs: Number(totalEstimado) || 0,
           facturas_url: facturasUrls
@@ -1871,7 +1923,14 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       total_bs: Number(totalEstimado) || 0,
       items: renglones,
       justificacion,
-      observaciones,
+      observaciones: observaciones.trim() 
+        ? JSON.stringify([{
+            author: solicitante || `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim() || 'S/E',
+            text: observaciones.trim(),
+            date: new Date().toISOString(),
+            rol: currentUser?.rol || 'Usuario'
+          }]) 
+        : '[]',
       id_referencia_proyecto: idReferenciaProyecto,
       origen: datosPredefinidos ? `REF: ${datosPredefinidos.id_control}` : 'Manual',
       user_id: currentUser.id,
@@ -3345,57 +3404,113 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                           {editandoId && !editandoObs && (
                             <button
                               onClick={() => {
-                                setObsTemporal(observaciones);
+                                setObsTemporal('');
                                 setEditandoObs(true);
                               }}
                               style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '0.9rem', padding: 0 }}
-                              title="Editar Observaciones"
+                              title="Añadir Observación"
                             >
-                              ✏️
+                              💬
                             </button>
                           )}
                         </div>
 
-                        {editandoObs ? (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                            <textarea
-                              className="input-tc"
-                              style={{ minHeight: '80px', paddingTop: '10px', fontSize: '0.85rem' }}
-                              value={obsTemporal}
-                              onChange={(e) => setObsTemporal(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter' && !e.shiftKey) {
-                                  e.preventDefault();
-                                  guardarObservacionesDirecto();
-                                }
-                              }}
-                              placeholder="Actualice las observaciones aquí..."
-                            />
-                            <div style={{ display: 'flex', gap: '8px' }}>
-                              <button
-                                className="btn-tc btn-tc-success"
-                                style={{ padding: '4px 12px', fontSize: '0.7rem' }}
-                                onClick={guardarObservacionesDirecto}
-                              >
-                                ✓ GUARDAR
-                              </button>
-                              <button
-                                className="btn-tc btn-tc-secondary"
-                                style={{ padding: '4px 12px', fontSize: '0.7rem' }}
-                                onClick={() => setEditandoObs(false)}
-                              >
-                                CANCELAR
-                              </button>
+                        {editandoId ? (
+                          /* Modo Vista/Edición de Requisición Existente: Chat Historial */
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                            {/* Listado de comentarios */}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '200px', overflowY: 'auto', paddingRight: '4px', marginBottom: '10px' }}>
+                              {parsearObservaciones(observaciones).length === 0 ? (
+                                <span style={{ fontSize: '0.8rem', color: '#94a3b8', fontStyle: 'italic' }}>No hay comentarios ni observaciones registradas.</span>
+                              ) : (
+                                parsearObservaciones(observaciones).map((c, idx) => {
+                                  const authorName = c.author || 'Usuario';
+                                  const isMe = authorName.toLowerCase().includes((currentUser?.nombre || '').toLowerCase()) && authorName.toLowerCase().includes((currentUser?.apellido || '').toLowerCase());
+                                  return (
+                                    <div 
+                                      key={idx} 
+                                      style={{
+                                        alignSelf: isMe ? 'flex-end' : 'flex-start',
+                                        maxWidth: '85%',
+                                        backgroundColor: isMe ? '#e0f2fe' : '#f1f5f9',
+                                        color: '#1e293b',
+                                        padding: '8px 12px',
+                                        borderRadius: isMe ? '12px 12px 2px 12px' : '12px 12px 12px 2px',
+                                        border: '1px solid',
+                                        borderColor: isMe ? '#bae6fd' : '#e2e8f0',
+                                        boxShadow: '0 1px 2px rgba(0,0,0,0.02)'
+                                      }}
+                                    >
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '15px', marginBottom: '3px' }}>
+                                        <span style={{ fontSize: '0.65rem', fontWeight: '800', color: isMe ? '#0369a1' : '#475569' }}>
+                                          {c.author} {c.rol ? `(${c.rol})` : ''}
+                                        </span>
+                                        {c.date && (
+                                          <span style={{ fontSize: '0.55rem', color: '#94a3b8' }}>
+                                            {new Date(c.date).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' })} - {new Date(c.date).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', hour12: true })}
+                                          </span>
+                                        )}
+                                      </div>
+                                      <p style={{ margin: 0, fontSize: '0.75rem', whiteSpace: 'pre-wrap', lineHeight: '1.4', fontWeight: '500' }}>
+                                        {c.text}
+                                      </p>
+                                    </div>
+                                  );
+                                })
+                              )}
                             </div>
+
+                            {/* Campo para redactar comentario */}
+                            {editandoObs ? (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid #e2e8f0', paddingTop: '10px' }}>
+                                <textarea
+                                  className="input-tc"
+                                  style={{ minHeight: '60px', paddingTop: '8px', fontSize: '0.8rem' }}
+                                  value={obsTemporal}
+                                  onChange={(e) => setObsTemporal(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter' && !e.shiftKey) {
+                                      e.preventDefault();
+                                      guardarObservacionesDirecto();
+                                    }
+                                  }}
+                                  placeholder="Escriba un comentario o respuesta aquí..."
+                                />
+                                <div style={{ display: 'flex', gap: '8px' }}>
+                                  <button
+                                    className="btn-tc btn-tc-success"
+                                    style={{ padding: '4px 12px', fontSize: '0.65rem' }}
+                                    onClick={guardarObservacionesDirecto}
+                                  >
+                                    ✓ ENVIAR NOTA
+                                  </button>
+                                  <button
+                                    className="btn-tc btn-tc-secondary"
+                                    style={{ padding: '4px 12px', fontSize: '0.65rem' }}
+                                    onClick={() => setEditandoObs(false)}
+                                  >
+                                    CANCELAR
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <button 
+                                onClick={() => { setObsTemporal(''); setEditandoObs(true); }}
+                                className="btn-tc btn-tc-secondary"
+                                style={{ width: '100%', fontSize: '0.75rem', padding: '6px' }}
+                              >
+                                💬 Añadir comentario al historial...
+                              </button>
+                            )}
                           </div>
                         ) : (
+                          /* Modo Creación de Nueva Requisición: Entrada simple */
                           <textarea
                             className="input-tc"
                             style={{ minHeight: '60px', paddingTop: '10px', fontSize: '0.85rem' }}
                             value={observaciones}
                             onChange={(e) => { setHasChanges(true); setObservaciones(e.target.value); }}
                             placeholder="Notas adicionales sobre la entrega, especificaciones técnicas, etc."
-                            disabled={editandoId && !editandoObs}
                           />
                         )}
                       </div>

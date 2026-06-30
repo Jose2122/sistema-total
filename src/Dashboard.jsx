@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from './supabaseClient';
 import toast from 'react-hot-toast';
@@ -33,6 +33,7 @@ function Dashboard() {
   const [notificacionesLog, setNotificacionesLog] = useState([]);
   const [verNotificaciones, setVerNotificaciones] = useState(false);
   const [verPerfil, setVerPerfil] = useState(false);
+  const globalPresenceRef = useRef(null);
 
   const [dropdowns, setDropdowns] = useState({
     compras: true,
@@ -399,6 +400,36 @@ function Dashboard() {
       supabase.removeChannel(channel);
     };
   }, [usuario?.id]);
+
+  // --- SEGURIDAD Y TELEMETRÍA: CO-PRESENCIA GLOBAL EN TIEMPO REAL ---
+  useEffect(() => {
+    if (!usuario?.id) return;
+
+    const channel = supabase.channel('sitc_global_presence');
+    globalPresenceRef.current = channel;
+
+    channel
+      .subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          await channel.track({
+            user_id: usuario.id,
+            nombre: usuario.nombre,
+            apellido: usuario.apellido,
+            rol: usuario.rol,
+            departamento: usuario.departamento,
+            correo: usuario.correo || usuario.email,
+            online_at: new Date().toISOString()
+          });
+        }
+      });
+
+    return () => {
+      if (globalPresenceRef.current) {
+        supabase.removeChannel(globalPresenceRef.current);
+        globalPresenceRef.current = null;
+      }
+    };
+  }, [usuario?.id, usuario?.nombre, usuario?.apellido, usuario?.rol, usuario?.departamento, usuario?.correo, usuario?.email]);
 
   const cerrarSesion = async () => {
     await supabase.auth.signOut();

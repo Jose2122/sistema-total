@@ -80,6 +80,45 @@ export default function AdminAnalytics() {
   const [showRejectionDetails, setShowRejectionDetails] = useState(false);
   const [selectedDeptoFilter, setSelectedDeptoFilter] = useState('TODOS');
   const [traceabilityDeptoFilter, setTraceabilityDeptoFilter] = useState('TODOS');
+  const [onlineUsers, setOnlineUsers] = useState([]);
+
+  // Suscribirse a co-presencia global para usuarios en línea
+  useEffect(() => {
+    const channel = supabase.channel('sitc_global_presence');
+
+    channel
+      .on('presence', { event: 'sync' }, () => {
+        const state = channel.presenceState();
+        const users = Object.entries(state).flatMap(([ref, presences]) => {
+          return presences.map(p => ({
+            presence_ref: ref,
+            user_id: p.user_id,
+            nombre: p.nombre,
+            apellido: p.apellido,
+            rol: p.rol,
+            departamento: p.departamento,
+            correo: p.correo,
+            online_at: p.online_at
+          }));
+        });
+
+        // Deduplicar por user_id
+        const uniqueUsers = [];
+        const seen = new Set();
+        for (const u of users) {
+          if (u.user_id && !seen.has(u.user_id)) {
+            seen.add(u.user_id);
+            uniqueUsers.push(u);
+          }
+        }
+        setOnlineUsers(uniqueUsers);
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
 
   // Check Auth & Role
   useEffect(() => {
@@ -1110,6 +1149,57 @@ export default function AdminAnalytics() {
                     </tbody>
                   </table>
                 </div>
+              </div>
+
+              {/* REALTIME USERS ONLINE GRID */}
+              <div className="chart-card animate-fade" style={{ marginTop: '30px', background: 'rgba(16, 185, 129, 0.03)', border: '1px solid rgba(16, 185, 129, 0.15)' }}>
+                <div className="chart-card-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span className="console-blink" style={{ backgroundColor: '#10b981', display: 'inline-block', width: '10px', height: '10px', borderRadius: '50%' }}></span>
+                  <span style={{ color: '#10b981', fontWeight: 'bold' }}>Usuarios Conectados en Tiempo Real ({onlineUsers.length})</span>
+                </div>
+                {onlineUsers.length === 0 ? (
+                  <div style={{ padding: '20px 0', color: '#64748b', fontSize: '0.85rem' }}>
+                    No se detectan otros usuarios conectados en este momento.
+                  </div>
+                ) : (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '15px', marginTop: '15px' }}>
+                    {onlineUsers.map(user => {
+                      const initials = ((user.nombre?.[0] || '') + (user.apellido?.[0] || '')).toUpperCase();
+                      return (
+                        <div 
+                          key={user.presence_ref} 
+                          style={{ 
+                            padding: '12px 16px', 
+                            background: 'rgba(15, 23, 42, 0.4)', 
+                            borderRadius: '12px', 
+                            border: '1px solid rgba(255,255,255,0.06)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '12px'
+                          }}
+                        >
+                          <div style={{ position: 'relative' }}>
+                            <div style={{ width: '40px', height: '40px', borderRadius: '50%', backgroundColor: '#6366f1', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '0.95rem' }}>
+                              {initials || 'U'}
+                            </div>
+                            <span style={{ position: 'absolute', bottom: '1px', right: '1px', width: '10px', height: '10px', backgroundColor: '#10b981', border: '2px solid #0f172a', borderRadius: '50%' }}></span>
+                          </div>
+                          <div>
+                            <div style={{ color: 'white', fontWeight: '700', fontSize: '0.85rem' }}>
+                              {user.nombre} {user.apellido}
+                            </div>
+                            <div style={{ color: '#94a3b8', fontSize: '0.75rem', marginTop: '2px' }}>
+                              {user.rol} • {user.departamento || 'SITC'}
+                            </div>
+                            <div style={{ color: '#475569', fontSize: '0.65rem', marginTop: '4px', fontFamily: 'monospace' }}>
+                              {user.correo}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </div>
           ) : activeTab === 'management' ? (
