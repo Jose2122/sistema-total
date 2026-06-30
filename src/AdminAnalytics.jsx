@@ -13,7 +13,9 @@ import {
   TrendingUp, 
   UserCheck, 
   Cpu,
-  Database
+  Database,
+  ExternalLink,
+  ChevronDown
 } from 'lucide-react';
 import { 
   ResponsiveContainer, 
@@ -46,11 +48,17 @@ export default function AdminAnalytics() {
   const [storageStats, setStorageStats] = useState([]);
   const [dbLatency, setDbLatency] = useState(0);
   const [testingLatency, setTestingLatency] = useState(false);
+  const [largestFiles, setLargestFiles] = useState([]);
 
   // Requisition / general metrics
   const [requisiciones, setRequisiciones] = useState([]);
   const [requisicionLogs, setRequisicionLogs] = useState([]);
   const [perfiles, setPerfiles] = useState([]);
+
+  // Drill-down UI states
+  const [showSlaDetails, setShowSlaDetails] = useState(false);
+  const [showRejectionDetails, setShowRejectionDetails] = useState(false);
+  const [selectedDeptoFilter, setSelectedDeptoFilter] = useState('TODOS');
 
   // Check Auth & Role
   useEffect(() => {
@@ -119,7 +127,6 @@ export default function AdminAnalytics() {
       if (!storageRpcError && storageRpc) {
         setStorageStats(storageRpc);
       } else {
-        // Defensive Client-Side storage fallback estimation
         console.warn("get_storage_stats RPC falló, calculando localmente:", storageRpcError);
         const buckets = ['facturas', 'tickets-evidencia'];
         const fallbackStorage = [];
@@ -141,7 +148,6 @@ export default function AdminAnalytics() {
         setHourlyTraffic(trafficRpc);
       } else {
         console.warn("get_hourly_traffic RPC falló, usando datos mockeados:", trafficRpcError);
-        // Fallback dummy traffic mapping
         const dummyTraffic = Array.from({ length: 24 }, (_, i) => ({
           hora: i,
           requisiciones_count: Math.floor(Math.random() * 8) + 2,
@@ -153,13 +159,13 @@ export default function AdminAnalytics() {
       // 5. Fetch requisiciones for gerencia reports
       const { data: reqs } = await supabase
         .from('requisiciones')
-        .select('id, correlativo_req, created_at, fecha_aprobacion_final, gerencia, estado_aprobacion, total_bs');
+        .select('id, correlativo_req, created_at, fecha_aprobacion_final, gerencia, estado_aprobacion, total_bs, solicitante');
       setRequisiciones(reqs || []);
 
       // 6. Fetch requisiciones audit action logs
       const { data: logs } = await supabase
         .from('requisicion_logs')
-        .select('id, requisicion_id, accion, comentario, fecha');
+        .select('id, requisicion_id, accion, comentario, fecha, usuario_nombre');
       setRequisicionLogs(logs || []);
 
       // 7. Fetch active perfiles count
@@ -168,6 +174,23 @@ export default function AdminAnalytics() {
         .select('id, nombre, apellido, rol, departamento, activo, last_login, created_at')
         .order('created_at', { ascending: false });
       setPerfiles(profiles || []);
+
+      // 8. Fetch largest files (Storage Bloat)
+      const { data: filesRpc, error: filesRpcError } = await supabase.rpc('get_largest_files');
+      if (!filesRpcError && filesRpc) {
+        setLargestFiles(filesRpc);
+      } else {
+        console.warn("get_largest_files RPC falló, calculando localmente:", filesRpcError);
+        const { data: list } = await supabase.storage.from('facturas').list('', { limit: 100 });
+        const mapped = (list || []).map(f => ({
+          name: f.name,
+          bucket_id: 'facturas',
+          size: f.metadata?.size || 0,
+          created_at: f.created_at,
+          owner_id: null
+        })).sort((a, b) => b.size - a.size).slice(0, 10);
+        setLargestFiles(mapped);
+      }
 
     } catch (err) {
       console.error("Error cargando métricas de telemetría:", err);
@@ -187,7 +210,6 @@ export default function AdminAnalytics() {
     setTestingLatency(true);
     try {
       const t0 = performance.now();
-      // Simple fast schema cache query
       await supabase.from('perfiles').select('id').limit(1);
       const t1 = performance.now();
       setDbLatency(Math.round(t1 - t0));
@@ -200,7 +222,7 @@ export default function AdminAnalytics() {
 
   // Computations for SLA & Performance Tab
   const statsGerenciales = useMemo(() => {
-    if (requisiciones.length === 0) return { avgSlaHours: 0, rejectionRates: [], volumeStats: [] };
+    if (requisiciones.length === 0) return { avgSlaHours: 0, rejectionRates: [], volumeStats: [], listDeptos: [] };
 
     // 1. SLA Average Approval Time
     const approvedReqs = requisiciones.filter(r => r.estado_aprobacion === 'aprobado_final' && r.fecha_aprobacion_final);
@@ -212,14 +234,12 @@ export default function AdminAnalytics() {
     const avgSlaHours = approvedReqs.length > 0 ? (totalSlaMs / approvedReqs.length / (1000 * 60 * 60)).toFixed(1) : 0;
 
     // 2. Rejection Rate by Department
-    // Group totals by department
     const deptoTotals = {};
     requisiciones.forEach(r => {
       const d = r.gerencia || 'Desconocida';
       deptoTotals[d] = (deptoTotals[d] || 0) + 1;
     });
 
-    // Group rejections from logs and map back to requisition department
     const deptoRejections = {};
     requisicionLogs.forEach(l => {
       if (l.accion === 'RECHAZADA') {
@@ -243,6 +263,9 @@ export default function AdminAnalytics() {
       };
     }).sort((a, b) => b.tasa_rechazo - a.tasa_rechazo);
 
+    // Get list of departments for filters
+    const listDeptos = Object.keys(deptoTotals).sort();
+
     // 3. Requisitions Status Volume
     const volumeGroups = {};
     requisiciones.forEach(r => {
@@ -255,7 +278,7 @@ export default function AdminAnalytics() {
       cantidad: volumeGroups[status]
     }));
 
-    return { avgSlaHours, rejectionRates, volumeStats };
+    return { avgSlaHours, rejectionRates, volumeStats, listDeptos };
   }, [requisiciones, requisicionLogs]);
 
   // Compute storage utilization percent
@@ -265,6 +288,50 @@ export default function AdminAnalytics() {
     const planLimitBytes = 1024 * 1024 * 1024; // 1 GB free tier
     return Math.min(parseFloat(((totalBytes / planLimitBytes) * 100).toFixed(2)), 100);
   }, [storageStats]);
+
+  // Resolve Uploader Name and Department from cached perfiles list
+  const getUploaderInfo = (ownerId) => {
+    if (!ownerId) return { nombre: 'Desconocido', depto: 'N/A' };
+    const p = perfiles.find(prof => prof.id === ownerId);
+    if (!p) return { nombre: 'Uploader / Admin', depto: 'SITC System' };
+    return {
+      nombre: `${p.nombre} ${p.apellido || ''}`.trim(),
+      depto: p.departamento || 'Operaciones'
+    };
+  };
+
+  // Detailed list for SLA Drill-Down
+  const detailedSlaList = useMemo(() => {
+    return requisiciones
+      .filter(r => r.estado_aprobacion === 'aprobado_final' && r.fecha_aprobacion_final)
+      .map(r => {
+        const diffMs = new Date(r.fecha_aprobacion_final) - new Date(r.created_at);
+        const diffHours = (diffMs / (1000 * 60 * 60)).toFixed(1);
+        return {
+          ...r,
+          horas_aprobacion: parseFloat(diffHours),
+          dias_aprobacion: parseFloat((diffHours / 24).toFixed(1))
+        };
+      })
+      .sort((a, b) => b.horas_aprobacion - a.horas_aprobacion);
+  }, [requisiciones]);
+
+  // Detailed list for Rejection Reasons Drill-Down
+  const detailedRejectionsList = useMemo(() => {
+    return requisicionLogs
+      .filter(l => l.accion === 'RECHAZADA')
+      .map(l => {
+        const req = requisiciones.find(r => r.id === l.requisicion_id);
+        return {
+          ...l,
+          correlativo: req?.correlativo_req || `#${l.requisicion_id}`,
+          gerencia: req?.gerencia || 'Desconocido',
+          solicitante: req?.solicitante || 'Desconocido'
+        };
+      })
+      .filter(l => selectedDeptoFilter === 'TODOS' || l.gerencia === selectedDeptoFilter)
+      .sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+  }, [requisicionLogs, requisiciones, selectedDeptoFilter]);
 
   const bytesToSize = (bytes) => {
     if (!bytes || bytes === 0) return '0 Bytes';
@@ -490,6 +557,64 @@ export default function AdminAnalytics() {
                 </div>
               </div>
 
+              {/* STORAGE BLOAT AUDIT: LARGEST FILES */}
+              <div className="chart-card" style={{ marginBottom: '30px', background: 'rgba(30, 41, 59, 0.2)' }}>
+                <div className="chart-card-title">
+                  <HardDrive size={20} color="#38bdf8" />
+                  <span>Auditoría de Almacenamiento (Top Archivos Más Pesados y Uploaders)</span>
+                </div>
+                <div style={{ overflowX: 'auto' }}>
+                  <table className="console-table" style={{ fontFamily: 'Inter' }}>
+                    <thead>
+                      <tr>
+                        <th>ARCHIVO / RUTA</th>
+                        <th style={{ width: '120px' }}>CARPETA</th>
+                        <th style={{ width: '120px' }}>TAMAÑO</th>
+                        <th style={{ width: '180px' }}>SUBIDO POR (CREADOR)</th>
+                        <th style={{ width: '180px' }}>DEPARTAMENTO</th>
+                        <th style={{ width: '150px' }}>FECHA DE SUBIDA</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {largestFiles.length === 0 ? (
+                        <tr>
+                          <td colSpan="6" style={{ textAlign: 'center', color: '#64748b', padding: '20px' }}>
+                            No se detectan archivos subidos en el storage.
+                          </td>
+                        </tr>
+                      ) : (
+                        largestFiles.map((file, idx) => {
+                          const uploader = getUploaderInfo(file.owner_id);
+                          const fileUrl = `${supabase.storage.from(file.bucket_id).getPublicUrl(file.name).data.publicUrl}`;
+                          return (
+                            <tr key={idx}>
+                              <td>
+                                <a 
+                                  href={fileUrl} 
+                                  target="_blank" 
+                                  rel="noopener noreferrer" 
+                                  style={{ color: '#38bdf8', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '6px' }}
+                                >
+                                  <span style={{ wordBreak: 'break-all' }}>{file.name}</span>
+                                  <ExternalLink size={12} />
+                                </a>
+                              </td>
+                              <td style={{ color: '#f59e0b', fontSize: '0.85rem' }}>{file.bucket_id}</td>
+                              <td style={{ fontWeight: '600', color: '#ef4444' }}>{bytesToSize(file.size)}</td>
+                              <td style={{ color: '#e2e8f0', fontSize: '0.85rem' }}>{uploader.nombre}</td>
+                              <td style={{ color: '#cbd5e1', fontSize: '0.85rem' }}>{uploader.depto}</td>
+                              <td style={{ color: '#64748b', fontSize: '0.8rem' }}>
+                                {file.created_at ? new Date(file.created_at).toLocaleString() : 'N/A'}
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
               {/* CONSOLE / TERMINAL SYSTEM ERRORS */}
               <div className="console-card">
                 <div className="console-header">
@@ -550,22 +675,44 @@ export default function AdminAnalytics() {
             <div>
               {/* METRIC CARDS */}
               <div className="metrics-grid">
-                <div className="metric-card">
+                <div 
+                  className="metric-card" 
+                  style={{ 
+                    cursor: 'pointer', 
+                    border: showSlaDetails ? '1.5px solid #6366f1' : '1px solid rgba(255, 255, 255, 0.05)',
+                    boxShadow: showSlaDetails ? '0 0 15px rgba(99, 102, 241, 0.15)' : ''
+                  }} 
+                  onClick={() => { setShowSlaDetails(!showSlaDetails); setShowRejectionDetails(false); }}
+                >
                   <div className="metric-icon-wrapper" style={{ backgroundColor: 'rgba(99, 102, 241, 0.15)', color: '#6366f1' }}>
                     <Clock size={22} />
                   </div>
-                  <div className="metric-info">
-                    <h4>SLA Promedio Aprobación</h4>
+                  <div className="metric-info" style={{ flexGrow: 1 }}>
+                    <div style={{ display: 'flex', justifycontent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: '0.8rem', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px' }}>SLA Promedio Aprobación</span>
+                      <ChevronDown size={14} style={{ transform: showSlaDetails ? 'rotate(180deg)' : 'none', transition: '0.2s', color: '#64748b', marginLeft: 'auto' }} />
+                    </div>
                     <div className="metric-value">{statsGerenciales.avgSlaHours} hrs</div>
                   </div>
                 </div>
 
-                <div className="metric-card">
+                <div 
+                  className="metric-card" 
+                  style={{ 
+                    cursor: 'pointer', 
+                    border: showRejectionDetails ? '1.5px solid #ef4444' : '1px solid rgba(255, 255, 255, 0.05)',
+                    boxShadow: showRejectionDetails ? '0 0 15px rgba(239, 68, 68, 0.15)' : ''
+                  }} 
+                  onClick={() => { setShowRejectionDetails(!showRejectionDetails); setShowSlaDetails(false); }}
+                >
                   <div className="metric-icon-wrapper" style={{ backgroundColor: 'rgba(239, 68, 68, 0.15)', color: '#ef4444' }}>
                     <Ban size={22} />
                   </div>
-                  <div className="metric-info">
-                    <h4>Rechazos Históricos</h4>
+                  <div className="metric-info" style={{ flexGrow: 1 }}>
+                    <div style={{ display: 'flex', justifycontent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: '0.8rem', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Rechazos Históricos</span>
+                      <ChevronDown size={14} style={{ transform: showRejectionDetails ? 'rotate(180deg)' : 'none', transition: '0.2s', color: '#64748b', marginLeft: 'auto' }} />
+                    </div>
                     <div className="metric-value">
                       {requisicionLogs.filter(l => l.accion === 'RECHAZADA').length}
                     </div>
@@ -593,6 +740,122 @@ export default function AdminAnalytics() {
                 </div>
               </div>
 
+              {/* SLA DRILL DOWN DETAIL TABLE */}
+              {showSlaDetails && (
+                <div className="chart-card animate-fade" style={{ marginBottom: '30px', border: '1px solid rgba(99, 102, 241, 0.3)', background: 'rgba(99, 102, 241, 0.03)' }}>
+                  <div className="chart-card-title">
+                    <Clock size={20} color="#6366f1" />
+                    <span>Desglose Analítico de SLA: Tiempo de Aprobación por Requisición</span>
+                  </div>
+                  <div style={{ overflowX: 'auto' }}>
+                    <table className="console-table" style={{ fontFamily: 'Inter' }}>
+                      <thead>
+                        <tr>
+                          <th>REQUISICIÓN</th>
+                          <th>DEPARTAMENTO</th>
+                          <th>CREADOR / SOLICITANTE</th>
+                          <th>FECHA CREACIÓN</th>
+                          <th>FECHA APROBACIÓN FINAL</th>
+                          <th style={{ width: '180px', textAlign: 'right' }}>TIEMPO TRANSCURRIDO</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {detailedSlaList.length === 0 ? (
+                          <tr>
+                            <td colSpan="6" style={{ textAlign: 'center', color: '#64748b', padding: '20px' }}>
+                              No se registran requisiciones aprobadas en la base de datos.
+                            </td>
+                          </tr>
+                        ) : (
+                          detailedSlaList.map(r => (
+                            <tr key={r.id}>
+                              <td style={{ fontFamily: 'monospace', color: '#38bdf8', fontWeight: 'bold' }}>{r.correlativo_req}</td>
+                              <td style={{ color: '#cbd5e1' }}>{r.gerencia}</td>
+                              <td style={{ color: '#e2e8f0' }}>{r.solicitante || 'SITC User'}</td>
+                              <td style={{ color: '#64748b', fontSize: '0.85rem' }}>{new Date(r.created_at).toLocaleString()}</td>
+                              <td style={{ color: '#64748b', fontSize: '0.85rem' }}>{new Date(r.fecha_aprobacion_final).toLocaleString()}</td>
+                              <td style={{ textAlign: 'right', fontWeight: 'bold', color: r.horas_aprobacion > 48 ? '#ef4444' : r.horas_aprobacion > 24 ? '#f59e0b' : '#10b981' }}>
+                                {r.dias_aprobacion >= 1 ? `${r.dias_aprobacion} días` : `${r.horas_aprobacion} hrs`}
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* REJECTION DRILL DOWN DETAIL TABLE */}
+              {showRejectionDetails && (
+                <div className="chart-card animate-fade" style={{ marginBottom: '30px', border: '1px solid rgba(239, 68, 68, 0.3)', background: 'rgba(239, 68, 68, 0.03)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '15px' }}>
+                    <div className="chart-card-title" style={{ marginBottom: 0 }}>
+                      <Ban size={20} color="#ef4444" />
+                      <span>Desglose Analítico de Rechazos: Motivos y Responsables</span>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <span style={{ fontSize: '0.85rem', color: '#94a3b8' }}>Filtrar Departamento:</span>
+                      <select 
+                        value={selectedDeptoFilter} 
+                        onChange={(e) => setSelectedDeptoFilter(e.target.value)}
+                        style={{
+                          backgroundColor: '#0f172a',
+                          border: '1px solid #1e293b',
+                          color: 'white',
+                          padding: '6px 12px',
+                          borderRadius: '8px',
+                          fontSize: '0.85rem',
+                          outline: 'none',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        <option value="TODOS">Todos los Departamentos</option>
+                        {statsGerenciales.listDeptos.map(d => (
+                          <option key={d} value={d}>{d}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div style={{ overflowX: 'auto' }}>
+                    <table className="console-table" style={{ fontFamily: 'Inter' }}>
+                      <thead>
+                        <tr>
+                          <th style={{ width: '120px' }}>REQ</th>
+                          <th style={{ width: '150px' }}>DEPARTAMENTO</th>
+                          <th style={{ width: '180px' }}>SOLICITANTE</th>
+                          <th style={{ width: '150px' }}>RECHAZADO POR</th>
+                          <th>MOTIVO DE RECHAZO / CORRECCIÓN DETALLADO</th>
+                          <th style={{ width: '150px' }}>FECHA DE RECHAZO</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {detailedRejectionsList.length === 0 ? (
+                          <tr>
+                            <td colSpan="6" style={{ textAlign: 'center', color: '#64748b', padding: '20px' }}>
+                              No se registran rechazos en este departamento.
+                            </td>
+                          </tr>
+                        ) : (
+                          detailedRejectionsList.map(log => (
+                            <tr key={log.id}>
+                              <td style={{ fontFamily: 'monospace', color: '#ef4444', fontWeight: 'bold' }}>{log.correlativo}</td>
+                              <td style={{ color: '#cbd5e1', fontSize: '0.85rem' }}>{log.gerencia}</td>
+                              <td style={{ color: '#e2e8f0', fontSize: '0.85rem' }}>{log.solicitante}</td>
+                              <td style={{ color: '#c084fc', fontSize: '0.85rem', fontWeight: '500' }}>{log.usuario_nombre || 'Gerente / Aprobador'}</td>
+                              <td style={{ color: '#f87171', fontSize: '0.85rem', fontStyle: 'italic', wordBreak: 'break-all' }}>"{log.comentario}"</td>
+                              <td style={{ color: '#64748b', fontSize: '0.8rem' }}>{new Date(log.fecha).toLocaleString()}</td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
               {/* CHARTS */}
               <div className="charts-grid">
                 {/* Rejections Bar Chart */}
@@ -619,7 +882,18 @@ export default function AdminAnalytics() {
                             contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '12px', color: 'white', fontFamily: 'Inter' }}
                             formatter={(value) => [`${value}%`, 'Tasa de Rechazo']}
                           />
-                          <Bar dataKey="tasa_rechazo" name="Tasa de Rechazo" fill="#ef4444" radius={[6, 6, 0, 0]} />
+                          <Bar 
+                            dataKey="tasa_rechazo" 
+                            name="Tasa de Rechazo" 
+                            fill="#ef4444" 
+                            radius={[6, 6, 0, 0]} 
+                            style={{ cursor: 'pointer' }}
+                            onClick={(data) => {
+                              setSelectedDeptoFilter(data.departamento);
+                              setShowRejectionDetails(true);
+                              setShowSlaDetails(false);
+                            }}
+                          />
                         </BarChart>
                       </ResponsiveContainer>
                     )}
