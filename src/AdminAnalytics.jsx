@@ -70,6 +70,7 @@ export default function AdminAnalytics() {
   // Operational raw data
   const [requisiciones, setRequisiciones] = useState([]);
   const [requisicionLogs, setRequisicionLogs] = useState([]);
+  const [ticketsDirectos, setTicketsDirectos] = useState([]);
   const [perfiles, setPerfiles] = useState([]);
   const [authAttempts, setAuthAttempts] = useState([]);
   const [profileChanges, setProfileChanges] = useState([]);
@@ -78,6 +79,7 @@ export default function AdminAnalytics() {
   const [showSlaDetails, setShowSlaDetails] = useState(false);
   const [showRejectionDetails, setShowRejectionDetails] = useState(false);
   const [selectedDeptoFilter, setSelectedDeptoFilter] = useState('TODOS');
+  const [traceabilityDeptoFilter, setTraceabilityDeptoFilter] = useState('TODOS');
 
   // Check Auth & Role
   useEffect(() => {
@@ -226,6 +228,12 @@ export default function AdminAnalytics() {
         .order('created_at', { ascending: false });
       setProfileChanges(actLogs || []);
 
+      // 11. Fetch tickets_directos for operational comparison
+      const { data: tkts } = await supabase
+        .from('tickets_directos')
+        .select('id, created_at, fecha_emision, departamento, total_usd');
+      setTicketsDirectos(tkts || []);
+
     } catch (err) {
       console.error("Error cargando métricas de telemetría:", err);
     } finally {
@@ -309,6 +317,127 @@ export default function AdminAnalytics() {
       return date >= start && date <= end;
     });
   }, [profileChanges, dateLimits]);
+
+  // Traceability Memo Calculations
+  const listTraceabilityDeptos = useMemo(() => {
+    const deptos = new Set();
+    requisiciones.forEach(r => {
+      if (r.gerencia) deptos.add(r.gerencia);
+    });
+    ticketsDirectos.forEach(t => {
+      if (t.departamento) deptos.add(t.departamento);
+    });
+    return Array.from(deptos).sort();
+  }, [requisiciones, ticketsDirectos]);
+
+  const filteredReqsForTraceability = useMemo(() => {
+    const { start, end } = dateLimits;
+    let list = requisiciones;
+    if (start && end) {
+      list = list.filter(r => {
+        const date = new Date(r.created_at);
+        return date >= start && date <= end;
+      });
+    }
+    if (traceabilityDeptoFilter !== 'TODOS') {
+      list = list.filter(r => (r.gerencia || '').toUpperCase() === traceabilityDeptoFilter.toUpperCase());
+    }
+    return list;
+  }, [requisiciones, dateLimits, traceabilityDeptoFilter]);
+
+  const filteredTicketsForTraceability = useMemo(() => {
+    const { start, end } = dateLimits;
+    let list = ticketsDirectos;
+    if (start && end) {
+      list = list.filter(t => {
+        const date = t.fecha_emision ? new Date(t.fecha_emision + 'T12:00:00') : new Date(t.created_at);
+        return date >= start && date <= end;
+      });
+    }
+    if (traceabilityDeptoFilter !== 'TODOS') {
+      list = list.filter(t => (t.departamento || '').toUpperCase() === traceabilityDeptoFilter.toUpperCase());
+    }
+    return list;
+  }, [ticketsDirectos, dateLimits, traceabilityDeptoFilter]);
+
+  const filteredLogsForTraceability = useMemo(() => {
+    const { start, end } = dateLimits;
+    let list = requisicionLogs;
+    if (start && end) {
+      list = list.filter(l => {
+        const date = new Date(l.fecha || l.created_at);
+        return date >= start && date <= end;
+      });
+    }
+    return list.filter(l => {
+      const req = requisiciones.find(r => r.id === l.requisicion_id);
+      if (!req) return false;
+      if (traceabilityDeptoFilter !== 'TODOS') {
+        return (req.gerencia || '').toUpperCase() === traceabilityDeptoFilter.toUpperCase();
+      }
+      return true;
+    });
+  }, [requisicionLogs, requisiciones, dateLimits, traceabilityDeptoFilter]);
+
+  const dailyTraceabilityData = useMemo(() => {
+    const { start, end } = dateLimits;
+    if (!start || !end) return [];
+
+    const datesMap = {};
+    let current = new Date(start);
+    const endLimit = new Date(end);
+
+    while (current <= endLimit) {
+      const dateStr = current.toISOString().split('T')[0];
+      const [year, month, day] = dateStr.split('-');
+      const label = `${day}/${month}`;
+      datesMap[dateStr] = {
+        dateStr,
+        label,
+        emitidas: 0,
+        aprobadas: 0,
+        rechazadas: 0,
+        tickets: 0
+      };
+      current.setDate(current.getDate() + 1);
+    }
+
+    filteredReqsForTraceability.forEach(r => {
+      if (r.created_at) {
+        const dateStr = new Date(r.created_at).toISOString().split('T')[0];
+        if (datesMap[dateStr]) {
+          datesMap[dateStr].emitidas += 1;
+        }
+      }
+    });
+
+    filteredReqsForTraceability.forEach(r => {
+      if (r.fecha_aprobacion_final && (r.estado_aprobacion === 'aprobado_final' || r.estado_aprobacion === 'APROBADO_FINAL')) {
+        const dateStr = new Date(r.fecha_aprobacion_final).toISOString().split('T')[0];
+        if (datesMap[dateStr]) {
+          datesMap[dateStr].aprobadas += 1;
+        }
+      }
+    });
+
+    filteredLogsForTraceability.forEach(l => {
+      if (l.accion === 'RECHAZADA' || l.accion === 'RECHAZADO') {
+        const dateStr = new Date(l.fecha || l.created_at).toISOString().split('T')[0];
+        if (datesMap[dateStr]) {
+          datesMap[dateStr].rechazadas += 1;
+        }
+      }
+    });
+
+    filteredTicketsForTraceability.forEach(t => {
+      const dateStr = t.fecha_emision ? t.fecha_emision : new Date(t.created_at).toISOString().split('T')[0];
+      if (datesMap[dateStr]) {
+        datesMap[dateStr].tickets += 1;
+      }
+    });
+
+    return Object.values(datesMap).sort((a, b) => a.dateStr.localeCompare(b.dateStr));
+  }, [filteredReqsForTraceability, filteredTicketsForTraceability, filteredLogsForTraceability, dateLimits]);
 
   // Timeline of Daily Active Users (DAU)
   const dauTimelineData = useMemo(() => {
@@ -633,6 +762,13 @@ export default function AdminAnalytics() {
         >
           <TrendingUp size={18} />
           <span>SLA y Eficiencia Gerencial</span>
+        </button>
+        <button 
+          className={`tab-btn ${activeTab === 'traceability' ? 'active' : ''}`}
+          onClick={() => setActiveTab('traceability')}
+        >
+          <Activity size={18} />
+          <span>Trazabilidad de Requisiciones y Tickets</span>
         </button>
         <button 
           className={`tab-btn ${activeTab === 'user_audit' ? 'active' : ''}`}
@@ -1392,6 +1528,173 @@ export default function AdminAnalytics() {
                       )}
                     </tbody>
                   </table>
+                </div>
+              </div>
+            </div>
+          ) : activeTab === 'traceability' ? (
+            /* TRAZABILIDAD DE REQUISICIONES Y TICKETS */
+            <div className="animate-fade">
+              {/* FILTRO DE DEPARTAMENTO ESPECÍFICO */}
+              <div 
+                className="chart-card animate-fade" 
+                style={{ 
+                  marginBottom: '25px', 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  gap: '15px',
+                  background: 'rgba(30, 41, 59, 0.4)',
+                  padding: '16px 24px',
+                  borderRadius: '12px',
+                  border: '1px solid rgba(255, 255, 255, 0.05)'
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: '0.9rem', color: '#94a3b8', fontWeight: '600' }}>Filtrar por Gerencia:</span>
+                  <select 
+                    value={traceabilityDeptoFilter} 
+                    onChange={(e) => setTraceabilityDeptoFilter(e.target.value)}
+                    style={{
+                      backgroundColor: '#0f172a',
+                      border: '1px solid #1e293b',
+                      color: 'white',
+                      padding: '8px 16px',
+                      borderRadius: '8px',
+                      fontSize: '0.85rem',
+                      outline: 'none',
+                      cursor: 'pointer',
+                      minWidth: '220px'
+                    }}
+                  >
+                    <option value="TODOS">Todas las Gerencias</option>
+                    {listTraceabilityDeptos.map(d => (
+                      <option key={d} value={d}>{d}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* METRIC CARDS */}
+              <div className="metrics-grid">
+                <div className="metric-card">
+                  <div className="metric-icon-wrapper" style={{ backgroundColor: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8' }}>
+                    <TrendingUp size={22} />
+                  </div>
+                  <div className="metric-info">
+                    <h4>Requisiciones Emitidas</h4>
+                    <div className="metric-value">{filteredReqsForTraceability.length}</div>
+                  </div>
+                </div>
+
+                <div className="metric-card">
+                  <div className="metric-icon-wrapper" style={{ backgroundColor: 'rgba(52, 211, 153, 0.15)', color: '#34d399' }}>
+                    <UserCheck size={22} />
+                  </div>
+                  <div className="metric-info">
+                    <h4>Requisiciones Aprobadas</h4>
+                    <div className="metric-value">
+                      {filteredReqsForTraceability.filter(r => r.estado_aprobacion?.toUpperCase() === 'APROBADO_FINAL' || r.estado_aprobacion?.toUpperCase() === 'APROBADA_FINAL').length}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="metric-card">
+                  <div className="metric-icon-wrapper" style={{ backgroundColor: 'rgba(248, 113, 113, 0.15)', color: '#f87171' }}>
+                    <Ban size={22} />
+                  </div>
+                  <div className="metric-info">
+                    <h4>Requisiciones Rechazadas</h4>
+                    <div className="metric-value">
+                      {filteredLogsForTraceability.filter(l => l.accion === 'RECHAZADA' || l.accion === 'RECHAZADO').length}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="metric-card">
+                  <div className="metric-icon-wrapper" style={{ backgroundColor: 'rgba(251, 191, 36, 0.15)', color: '#fbbf24' }}>
+                    <Activity size={22} />
+                  </div>
+                  <div className="metric-info">
+                    <h4>Tickets de Pago</h4>
+                    <div className="metric-value">{filteredTicketsForTraceability.length}</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* CHARTS GRID */}
+              <div className="charts-grid" style={{ marginTop: '25px' }}>
+                {/* 1. Movimiento Diario de Requisiciones */}
+                <div className="chart-card">
+                  <div className="chart-card-title">
+                    <TrendingUp size={20} color="#38bdf8" />
+                    <span>Movimiento de Requisiciones por Día</span>
+                  </div>
+                  <div style={{ width: '100%', height: 320 }}>
+                    {dailyTraceabilityData.length === 0 ? (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#64748b' }}>
+                        No hay suficientes datos registrados para este período
+                      </div>
+                    ) : (
+                      <ResponsiveContainer>
+                        <LineChart
+                          data={dailyTraceabilityData}
+                          margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                          <XAxis dataKey="label" stroke="#64748b" style={{ fontSize: '10px' }} />
+                          <YAxis stroke="#64748b" style={{ fontSize: '11px' }} allowDecimals={false} />
+                          <Tooltip 
+                            contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '12px', color: 'white', fontFamily: 'Inter' }}
+                          />
+                          <Legend wrapperStyle={{ fontSize: '12px', marginTop: '10px' }} />
+                          <Line type="monotone" dataKey="emitidas" name="Emitidas (Creadas)" stroke="#38bdf8" strokeWidth={3} dot={{ r: 3 }} activeDot={{ r: 6 }} />
+                          <Line type="monotone" dataKey="aprobadas" name="Aprobadas Final" stroke="#34d399" strokeWidth={3} dot={{ r: 3 }} activeDot={{ r: 6 }} />
+                          <Line type="monotone" dataKey="rechazadas" name="Rechazadas" stroke="#f87171" strokeWidth={3} dot={{ r: 3 }} activeDot={{ r: 6 }} />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    )}
+                  </div>
+                </div>
+
+                {/* 2. Densidad Comparativa: Requisiciones vs. Tickets de Pago */}
+                <div className="chart-card">
+                  <div className="chart-card-title">
+                    <Activity size={20} color="#fbbf24" />
+                    <span>Densidad Operativa: Requisiciones vs. Tickets de Pago</span>
+                  </div>
+                  <div style={{ width: '100%', height: 320 }}>
+                    {dailyTraceabilityData.length === 0 ? (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#64748b' }}>
+                        No hay suficientes datos registrados para este período
+                      </div>
+                    ) : (
+                      <ResponsiveContainer>
+                        <AreaChart
+                          data={dailyTraceabilityData}
+                          margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
+                        >
+                          <defs>
+                            <linearGradient id="colorReqs" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#6366f1" stopOpacity={0.4}/>
+                              <stop offset="95%" stopColor="#6366f1" stopOpacity={0.0}/>
+                            </linearGradient>
+                            <linearGradient id="colorTickets" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#fbbf24" stopOpacity={0.4}/>
+                              <stop offset="95%" stopColor="#fbbf24" stopOpacity={0.0}/>
+                            </linearGradient>
+                          </defs>
+                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                          <XAxis dataKey="label" stroke="#64748b" style={{ fontSize: '10px' }} />
+                          <YAxis stroke="#64748b" style={{ fontSize: '11px' }} allowDecimals={false} />
+                          <Tooltip 
+                            contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '12px', color: 'white', fontFamily: 'Inter' }}
+                          />
+                          <Legend wrapperStyle={{ fontSize: '12px', marginTop: '10px' }} />
+                          <Area type="monotone" dataKey="emitidas" name="Requisiciones Emitidas" stroke="#6366f1" strokeWidth={2} fillOpacity={1} fill="url(#colorReqs)" />
+                          <Area type="monotone" dataKey="tickets" name="Tickets de Pago Emitidos" stroke="#fbbf24" strokeWidth={2} fillOpacity={1} fill="url(#colorTickets)" />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
