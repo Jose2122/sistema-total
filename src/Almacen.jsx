@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from './supabaseClient';
 import toast from 'react-hot-toast';
 import { 
-  Search, FileText, Loader2, FileSpreadsheet, Trash2, ShieldAlert
+  Search, FileText, Loader2, FileSpreadsheet, Trash2, ShieldAlert, History
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -261,6 +261,14 @@ const Almacen = () => {
     const bajoGrande = comprasRaw.filter(c => c.ubicacion_almacen && cleanAccents(c.ubicacion_almacen).includes('grande')).length;
 
     return { total, recibidos, pendientes, boscan, maracaibo, bajoGrande };
+  }, [comprasRaw]);
+
+  // Group only the received items sorted by received date desc for history list
+  const historialAsignaciones = useMemo(() => {
+    return comprasRaw
+      .filter(c => c.recibido && c.fecha_entrada_almacen)
+      .sort((a, b) => new Date(b.fecha_entrada_almacen) - new Date(a.fecha_entrada_almacen))
+      .slice(0, 10);
   }, [comprasRaw]);
 
   const handleRecibir = async (compra) => {
@@ -1014,6 +1022,63 @@ const Almacen = () => {
             )}
           </table>
         </div>
+      </div>
+
+      {/* HISTORIAL DE ASIGNACIONES RECIENTES */}
+      <div style={{ marginTop: '30px', backgroundColor: 'white', borderRadius: '24px', padding: '25px', border: '1px solid #e2e8f0', boxShadow: '0 10px 30px rgba(0,0,0,0.03)' }}>
+        <h4 style={{ margin: '0 0 20px 0', display: 'flex', alignItems: 'center', gap: '10px', color: '#1e293b', fontSize: '1.1rem', fontWeight: '800' }}>
+          <History size={20} color="#16a34a" /> Historial de Asignación y Ubicación Reciente (Bitácora de Entradas)
+        </h4>
+
+        {historialAsignaciones.length === 0 ? (
+          <div style={{ padding: '30px', textAlign: 'center', color: '#94a3b8', fontSize: '0.85rem', fontStyle: 'italic', border: '1px dashed #cbd5e1', borderRadius: '16px' }}>
+            No se han registrado asignaciones de ubicación recientemente.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            {historialAsignaciones.map((h) => {
+              const fechaObj = new Date(h.fecha_entrada_almacen);
+              const diaStr = fechaObj.toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+              const horaStr = fechaObj.toLocaleTimeString('es-ES', { hour: 'numeric', minute: '2-digit', hour12: true });
+
+              return (
+                <div 
+                  key={h.id} 
+                  style={{ 
+                    padding: '16px', 
+                    borderRadius: '12px', 
+                    backgroundColor: '#f8fafc', 
+                    borderLeft: '4px solid #16a34a', 
+                    display: 'flex', 
+                    justifyContent: 'space-between', 
+                    alignItems: 'center', 
+                    flexWrap: 'wrap', 
+                    gap: '15px' 
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: '280px' }}>
+                    <p style={{ margin: 0, fontSize: '0.85rem', color: '#334155' }}>
+                      El material <strong style={{ color: '#0f172a' }}>{h.descripcion}</strong> (Requisición <strong style={{ color: '#1e40af' }}>{h.correlativo}</strong>) 
+                      fue ubicado en <strong style={{ color: '#16a34a' }}>{h.ubicacion_almacen}</strong>.
+                    </p>
+                    <div style={{ marginTop: '6px', display: 'flex', gap: '15px', fontSize: '0.75rem', color: '#64748b', fontWeight: '500' }}>
+                      <span>👤 Asignado por: <strong style={{ color: '#1e293b' }}>{h.usuario_almacen_nombre || 'SITC Operator'}</strong></span>
+                      <span>📅 {diaStr} a las {horaStr}</span>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <span style={{ fontSize: '0.75rem', fontWeight: 'bold', padding: '4px 8px', borderRadius: '6px', backgroundColor: '#e2e8f0', color: '#475569' }}>
+                      Cant: {h.cantidad_comprada}
+                    </span>
+                    <span style={{ fontSize: '0.75rem', fontWeight: 'bold', padding: '4px 8px', borderRadius: '6px', backgroundColor: '#dcfce7', color: '#16a34a' }}>
+                      Factura: {h.numero_factura}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
       
       {/* Estilos adicionales */}
