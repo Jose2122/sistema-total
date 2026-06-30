@@ -586,26 +586,19 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
   const obtenerEstructuraCorrelativo = (depto, user) => {
     const sigla = obtenerSiglaGerencia(depto);
     const aa = new Date().getFullYear().toString().slice(-2);
-    const deptoLower = depto ? depto.toLowerCase() : '';
     
-    if (deptoLower === 'operaciones' || deptoLower === 'mantenimiento') {
+    if (depto && depto.toLowerCase() === 'operaciones') {
       const bloque = (user?.bloque_operativo || '').toLowerCase();
-      
-      let subSigla = '';
-      if (bloque.includes('jose luis') || bloque.includes('jl')) {
-        subSigla = 'A';
-      } else if (bloque.includes('habner') || bloque.includes('herrera') || bloque.includes('hh') || bloque.includes('hab') || bloque.includes('campo') || bloque.includes('cmp')) {
-        subSigla = 'B';
-      } else if (bloque.includes('mantenimiento mayor') || bloque.includes('mtto') || bloque.includes('mantenimiento') || bloque.includes('hilda') || bloque.trim() === 'a') {
-        subSigla = 'A';
-      } else if (bloque.includes('excelencia') || bloque.includes('vacuum') || bloque.includes('exva') || bloque.includes('johannel') || bloque.trim() === 'b') {
-        subSigla = 'B';
-      }
-      
-      if (subSigla) {
+      if (bloque.includes('mantenimiento mayor') || bloque.includes('mtto') || bloque.includes('mantenimiento') || bloque.includes('hilda') || bloque.trim() === 'a') {
         return {
-          likePattern: `${sigla}-${subSigla}-${aa}-%`,
-          prefix: `${sigla}-${subSigla}-${aa}-`
+          likePattern: `OPE-MTT-${aa}-%`,
+          prefix: `OPE-MTT-${aa}-`
+        };
+      }
+      if (bloque.includes('excelencia') || bloque.includes('vacuum') || bloque.includes('exva') || bloque.includes('johannel') || bloque.trim() === 'b') {
+        return {
+          likePattern: `OPE-EXVA-${aa}-%`,
+          prefix: `OPE-EXVA-${aa}-`
         };
       }
     }
