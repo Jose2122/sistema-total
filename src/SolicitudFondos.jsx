@@ -1253,10 +1253,14 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       bLower.includes('exva')) {
       return 'EXVA';
     }
+    if (bLower.includes('habner') || bLower.includes('herrera') || bLower.includes('hh') || bLower.includes('hab')) {
+      return 'HH';
+    }
     return '';
   };
 
-  const siglasBloque = (form.gerencia || currentUser?.departamento || '').toLowerCase() === 'operaciones'
+  const deptoLower = (form.gerencia || currentUser?.departamento || '').toLowerCase();
+  const siglasBloque = (deptoLower === 'operaciones' || deptoLower === 'mantenimiento')
     ? getSiglasBloque(form.bloque_operativo || currentUser?.bloque_operativo)
     : '';
 
@@ -1321,7 +1325,9 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         .gte('fecha_operativa', fStart)
         .lte('fecha_operativa', fEnd);
 
-      if (depto && depto.toLowerCase() === 'operaciones') {
+      const deptoLowerCheck = depto ? depto.toLowerCase() : '';
+      const isBlockDepto = deptoLowerCheck === 'operaciones' || deptoLowerCheck === 'mantenimiento';
+      if (isBlockDepto) {
         checkQuery = checkQuery.eq('bloque_operativo', currentUser?.bloque_operativo || '');
       }
 
@@ -1332,7 +1338,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       if (existencias && existencias.length > 0) {
         const sol = existencias[0];
         setSolicitudConflictiva(sol);
-        setErrorCheck(`Error: El departamento de ${depto}${depto.toLowerCase() === 'operaciones' ? ' (' + (sol.bloque_operativo || 'Sin bloque') + ')' : ''} ya tiene una solicitud abierta para la Semana ${week} por ${sol.responsable_nombre}. Por favor, colabora en esa solicitud o espera a que se finalice.`);
+        setErrorCheck(`Error: El departamento de ${depto}${isBlockDepto ? ' (' + (sol.bloque_operativo || 'Sin bloque') + ')' : ''} ya tiene una solicitud abierta para la Semana ${week} por ${sol.responsable_nombre}. Por favor, colabora en esa solicitud o espera a que se finalice.`);
         setSolCheckExitosa(isPrivileged); // Si es admin, dejamos el check en éxito parcial
       } else {
         setSolCheckExitosa(true);
@@ -2026,7 +2032,11 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         responsable_nombre: targetForm.responsable,
         total_bs: totalBsCalc,
         total_usd: totalUsdCalc,
-        bloque_operativo: isEditing ? targetForm.bloque_operativo : ((targetForm.gerencia || currentUser?.departamento || '').toLowerCase() === 'operaciones' ? (targetForm.bloque_operativo || currentUser?.bloque_operativo) : null)
+        bloque_operativo: isEditing 
+          ? targetForm.bloque_operativo 
+          : (['operaciones', 'mantenimiento'].includes((targetForm.gerencia || currentUser?.departamento || '').toLowerCase())
+              ? (targetForm.bloque_operativo || currentUser?.bloque_operativo || null)
+              : null)
       };
 
       let cabeceraId;
@@ -4198,7 +4208,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                         fecha: fechaPreVal,
                         sede: 'MARACAIBO',
                         gerencia: currentUser?.departamento || '',
-                        bloque_operativo: (currentUser?.departamento || '').toLowerCase() === 'operaciones' ? (currentUser?.bloque_operativo || null) : null,
+                        bloque_operativo: ['operaciones', 'mantenimiento'].includes((currentUser?.departamento || '').toLowerCase()) ? (currentUser?.bloque_operativo || null) : null,
                         responsable: (['Gerente', 'Coordinador', 'Analista', 'Admin'].includes(currentUser?.rol) || currentUser?.esAdminReal)
                           ? `${currentUser.nombre} ${currentUser.apellido}`
                           : '',
@@ -4244,7 +4254,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                           fecha: fechaPreVal,
                           sede: 'MARACAIBO',
                           gerencia: currentUser?.departamento || '',
-                          bloque_operativo: (currentUser?.departamento || '').toLowerCase() === 'operaciones' ? (currentUser?.bloque_operativo || null) : null,
+                          bloque_operativo: ['operaciones', 'mantenimiento'].includes((currentUser?.departamento || '').toLowerCase()) ? (currentUser?.bloque_operativo || null) : null,
                           responsable: `${currentUser.nombre} ${currentUser.apellido}`,
                           partidas: [{ id: Date.now(), selected: false, cc: ccPreVal, clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '' }],
                           imprevistos: [{ id: Date.now() + 1, selected: false, cc: ccPreVal, clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '' }]
