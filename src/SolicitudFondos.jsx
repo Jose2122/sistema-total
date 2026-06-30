@@ -1098,14 +1098,14 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
             emisor: p.emisor_nombre || 'S/E',
             requisicion_id: p.requisicion_id || null,
             ticket_id: p.ticket_id || null,
-            codigo_ticket: p.codigo_ticket || null,
-            codigo_ref: p.codigo_ticket || p.requisiciones?.correlativo_req || null,
+            codigo_ticket: (p.codigo_ticket?.startsWith('RR-') && !p.requisicion_id) ? null : (p.codigo_ticket || null),
+            codigo_ref: (p.codigo_ticket?.startsWith('RR-') && !p.requisicion_id) ? null : (p.codigo_ticket || p.requisiciones?.correlativo_req || null),
             isReqCompletada,
-            status: p.status || 'Disponible',
+            status: (p.status === 'Bloqueado' && !p.requisicion_id) ? 'Disponible' : (p.status || 'Disponible'),
             selected: false,
             montoReal,
             montoPendiente,
-            requisiciones: p.requisiciones || null
+            requisiciones: p.requisicion_id ? (p.requisiciones || null) : null
           };
         }),
         imprevistos: partidasRaw.filter(p => p.clasificacion.includes('[*]') || p.clasificacion === 'Gastos Imprevistos' || p.clasificacion === 'Ticket de Pago' || p.clasificacion === 'Solicitud de ticket').length > 0
@@ -1127,14 +1127,14 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
               emisor: p.emisor_nombre || 'S/E',
               requisicion_id: p.requisicion_id || null,
               ticket_id: p.ticket_id || null,
-              codigo_ticket: p.codigo_ticket || null,
-              codigo_ref: p.codigo_ticket || p.requisiciones?.correlativo_req || null,
+              codigo_ticket: (p.codigo_ticket?.startsWith('RR-') && !p.requisicion_id) ? null : (p.codigo_ticket || null),
+              codigo_ref: (p.codigo_ticket?.startsWith('RR-') && !p.requisicion_id) ? null : (p.codigo_ticket || p.requisiciones?.correlativo_req || null),
               isReqCompletada,
-              status: p.status || 'Disponible',
+              status: (p.status === 'Bloqueado' && !p.requisicion_id) ? 'Disponible' : (p.status || 'Disponible'),
               selected: false,
               montoReal,
               montoPendiente,
-              requisiciones: p.requisiciones || null
+              requisiciones: p.requisicion_id ? (p.requisiciones || null) : null
             };
           })
           : [{ id: Date.now() + 1, selected: false, cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '', pago_realizado: false, isReqCompletada: false, montoReal: 0, montoPendiente: 0 }]
@@ -2159,13 +2159,13 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
             emisor: p.emisor_nombre || 'S/E',
             requisicion_id: p.requisicion_id || null,
             ticket_id: p.ticket_id || null,
-            codigo_ticket: p.codigo_ticket || null,
-            codigo_ref: p.codigo_ticket || p.requisiciones?.correlativo_req || null,
-            status: p.status || 'Disponible',
+            codigo_ticket: (p.codigo_ticket?.startsWith('RR-') && !p.requisicion_id) ? null : (p.codigo_ticket || null),
+            codigo_ref: (p.codigo_ticket?.startsWith('RR-') && !p.requisicion_id) ? null : (p.codigo_ticket || p.requisiciones?.correlativo_req || null),
+            status: (p.status === 'Bloqueado' && !p.requisicion_id) ? 'Disponible' : (p.status || 'Disponible'),
             selected: false,
             montoReal: 0,
             montoPendiente: (p.pu_bs || p.pu_usd || 0) * (p.cantidad || 1),
-            requisiciones: p.requisiciones || null
+            requisiciones: p.requisicion_id ? (p.requisiciones || null) : null
           }));
 
           const mappedImprevistos = dbPartidas.filter(p => p.clasificacion.includes('[*]') || p.clasificacion === 'Gastos Imprevistos' || p.clasificacion === 'Ticket de Pago' || p.clasificacion === 'Solicitud de ticket').map(p => ({
@@ -2183,13 +2183,13 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
             emisor: p.emisor_nombre || 'S/E',
             requisicion_id: p.requisicion_id || null,
             ticket_id: p.ticket_id || null,
-            codigo_ticket: p.codigo_ticket || null,
-            codigo_ref: p.codigo_ticket || p.requisiciones?.correlativo_req || null,
-            status: p.status || 'Disponible',
+            codigo_ticket: (p.codigo_ticket?.startsWith('RR-') && !p.requisicion_id) ? null : (p.codigo_ticket || null),
+            codigo_ref: (p.codigo_ticket?.startsWith('RR-') && !p.requisicion_id) ? null : (p.codigo_ticket || p.requisiciones?.correlativo_req || null),
+            status: (p.status === 'Bloqueado' && !p.requisicion_id) ? 'Disponible' : (p.status || 'Disponible'),
             selected: false,
             montoReal: 0,
             montoPendiente: (p.pu_bs || p.pu_usd || 0) * (p.cantidad || 1),
-            requisiciones: p.requisiciones || null
+            requisiciones: p.requisicion_id ? (p.requisiciones || null) : null
           }));
 
           setForm(prev => ({

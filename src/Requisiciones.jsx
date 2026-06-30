@@ -753,7 +753,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     try {
       const { error } = await supabase
         .from('partidas_fondos')
-        .update({ status: 'Disponible', requisicion_id: null })
+        .update({ status: 'Disponible', requisicion_id: null, codigo_ticket: null })
         .eq('requisicion_id', requisicionId);
       if (error) throw error;
     } catch (err) {
