@@ -583,6 +583,32 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     return mappingSiglasGerencia[depto] || 'GER';
   };
 
+  const obtenerEstructuraCorrelativo = (depto, user) => {
+    const sigla = obtenerSiglaGerencia(depto);
+    const aa = new Date().getFullYear().toString().slice(-2);
+    
+    if (depto && depto.toLowerCase() === 'operaciones') {
+      const bloque = (user?.bloque_operativo || '').toLowerCase();
+      if (bloque.includes('mantenimiento mayor') || bloque.includes('mtto') || bloque.includes('mantenimiento')) {
+        return {
+          likePattern: `OPE-MTT-${aa}-%`,
+          prefix: `OPE-MTT-${aa}-`
+        };
+      }
+      if (bloque.includes('excelencia') || bloque.includes('vacuum') || bloque.includes('exva')) {
+        return {
+          likePattern: `OPE-EXVA-${aa}-%`,
+          prefix: `OPE-EXVA-${aa}-`
+        };
+      }
+    }
+    
+    return {
+      likePattern: `RR-${sigla}-${aa}-%`,
+      prefix: `RR-${sigla}-${aa}-`
+    };
+  };
+
   const GERENCIAS_ESTATICAS = [
     "Administración Maracaibo", "Administración El Tigre", "Dirección Corporativa", "Operaciones", "Mantenimiento",
     "Seguridad", "Recursos Humanos", "Estimación", "Almacén", "Gerencia General",
@@ -673,17 +699,15 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     }
   }, [isOpen, datosPredefinidos, currentUser]);
 
-  // --- LÓGICA DE PREVIEW DE CORRELATIVO ---
   useEffect(() => {
     const actualizarPreview = async () => {
       if (!showModal || editandoId) return;
-      const sigla = obtenerSiglaGerencia(departamento);
-      const aa = new Date().getFullYear().toString().slice(-2);
+      const { likePattern, prefix } = obtenerEstructuraCorrelativo(departamento, currentUser);
 
       const { data } = await supabase
         .from('requisiciones')
         .select('correlativo_req')
-        .like('correlativo_req', `RR-${sigla}-${aa}-%`)
+        .like('correlativo_req', likePattern)
         .order('correlativo_req', { ascending: false })
         .limit(1);
 
@@ -691,15 +715,15 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       if (data && data.length > 0) {
         const correlativoMax = data[0].correlativo_req;
         const partes = correlativoMax.split('-');
-        if (partes.length >= 4) {
+        if (partes.length >= 1) {
           const num = parseInt(partes[partes.length - 1], 10);
           if (!isNaN(num)) max = num;
         }
       }
-      setPreviewCorrelativo(`RR-${sigla}-${aa}-${String(max + 1).padStart(4, '0')}`);
+      setPreviewCorrelativo(`${prefix}${String(max + 1).padStart(4, '0')}`);
     };
     actualizarPreview();
-  }, [departamento, showModal, editandoId]);
+  }, [departamento, showModal, editandoId, currentUser]);
 
   // --- MANEJADORES DE ACCIÓN ---
   const actualizarFila = (id, campo, valor) => {
@@ -1818,14 +1842,13 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       return;
     }
 
-    const siglaGerencia = obtenerSiglaGerencia(departamento);
-    const aa = new Date().getFullYear().toString().slice(-2);
-
     // --- LÓGICA DE CORRELATIVO INDEPENDIENTE CON RESETEO ANUAL ---
+    const { likePattern, prefix } = obtenerEstructuraCorrelativo(departamento, currentUser);
+
     const { data: registrosMismaSigla } = await supabase
       .from('requisiciones')
       .select('correlativo_req')
-      .like('correlativo_req', `RR-${siglaGerencia}-${aa}-%`)
+      .like('correlativo_req', likePattern)
       .order('correlativo_req', { ascending: false })
       .limit(1);
 
@@ -1833,12 +1856,12 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     if (registrosMismaSigla && registrosMismaSigla.length > 0) {
       const correlativoMax = registrosMismaSigla[0].correlativo_req;
       const partes = correlativoMax.split('-');
-      if (partes.length >= 4) {
+      if (partes.length >= 1) {
         const num = parseInt(partes[partes.length - 1], 10);
         if (!isNaN(num)) maxNumero = num;
       }
     }
-    const nuevoCorrelativo = `RR-${siglaGerencia}-${aa}-${String(maxNumero + 1).padStart(4, '0')}`;
+    const nuevoCorrelativo = `${prefix}${String(maxNumero + 1).padStart(4, '0')}`;
 
     const rangoSolicitante = getRank(currentUser?.rol);
     let estadoInicial = 'pendiente_area';
