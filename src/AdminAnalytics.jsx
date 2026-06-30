@@ -515,6 +515,17 @@ export default function AdminAnalytics() {
     return { avgSlaHours, rejectionRates, volumeStats, listDeptos };
   }, [filteredRequisiciones, filteredRequisicionLogs, requisiciones]);
 
+  // Resolve Uploader Name and Department from cached perfiles list
+  const getUploaderInfo = (ownerId) => {
+    if (!ownerId) return { nombre: 'Desconocido', depto: 'N/A' };
+    const p = perfiles.find(prof => prof.id === ownerId);
+    if (!p) return { nombre: 'Uploader / Admin', depto: 'SITC System' };
+    return {
+      nombre: `${p.nombre} ${p.apellido || ''}`.trim(),
+      depto: p.departamento || 'Operaciones'
+    };
+  };
+
   // Compute storage utilization percent
   const storageTotalPercent = useMemo(() => {
     if (storageStats.length === 0) return 0;
