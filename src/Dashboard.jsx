@@ -273,8 +273,9 @@ function Dashboard() {
         .order('created_at', { ascending: false })
         .limit(20);
 
+      let mapped = [];
       if (data) {
-        setNotificacionesLog(data.map(n => {
+        mapped = data.map(n => {
           const date = new Date(n.created_at);
           const fCorta = date.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' });
           const hCorta = date.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', hour12: true });
@@ -285,11 +286,80 @@ function Dashboard() {
             nuevo: !n.leido,
             requisicion_id: n.requisicion_id
           };
-        }));
+        });
+      }
+
+      // Consultar alertas administrativas virtuales
+      const rolUpper = (usuario.rol || '').toUpperCase();
+      const emailLower = (usuario.correo || usuario.email || '').toLowerCase();
+      const esAdmin = rolUpper === 'ADMINISTRADOR' || rolUpper === 'ADMIN' || rolUpper === 'DESARROLLADOR' || emailLower === 'jcontreras.totalclean@gmail.com';
+      
+      if (esAdmin) {
+        const alerts = [];
+        const unDiaAtras = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+        const dosDiasAtras = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+
+        try {
+          // 1. Errores de Sistema Recientes
+          const { count: errCount } = await supabase
+            .from('system_errors')
+            .select('*', { count: 'exact', head: true })
+            .gt('created_at', unDiaAtras);
+
+          if (errCount && errCount > 0) {
+            alerts.push({
+              id: `alert-sys-err-${Date.now()}`,
+              msg: `🚨 [SISTEMA] Se han registrado ${errCount} errores en las últimas 24 horas.`,
+              hora: 'Alerta Activa ⚠️',
+              nuevo: true,
+              tipo_alerta: 'critico'
+            });
+          }
+
+          // 2. Incumplimiento de SLA (Requisición en Espera / Pendiente por más de 48h)
+          const { count: slaCount } = await supabase
+            .from('requisiciones')
+            .select('*', { count: 'exact', head: true })
+            .or('estado_aprobacion.ilike.pendiente%,estado_aprobacion.eq.En Espera')
+            .lt('created_at', dosDiasAtras);
+
+          if (slaCount && slaCount > 0) {
+            alerts.push({
+              id: `alert-sla-${Date.now()}`,
+              msg: `⏱️ [SLA] Hay ${slaCount} requisiciones esperando aprobación por más de 48 horas.`,
+              hora: 'Alerta Activa ⚠️',
+              nuevo: true,
+              tipo_alerta: 'sla'
+            });
+          }
+
+          // 3. Intentos de inicio fallidos (Seguridad)
+          const { count: authFailCount } = await supabase
+            .from('user_auth_logs')
+            .select('*', { count: 'exact', head: true })
+            .eq('exitoso', false)
+            .gt('created_at', unDiaAtras);
+
+          if (authFailCount && authFailCount > 0) {
+            alerts.push({
+              id: `alert-sec-${Date.now()}`,
+              msg: `🔒 [SEGURIDAD] Se registraron ${authFailCount} inicios de sesión fallidos en las últimas 24h.`,
+              hora: 'Alerta Activa ⚠️',
+              nuevo: true,
+              tipo_alerta: 'seguridad'
+            });
+          }
+
+        } catch (err) {
+          console.warn("Error al cargar alertas administrativas:", err.message);
+        }
+        setNotificacionesLog([...alerts, ...mapped]);
+      } else {
+        setNotificacionesLog(mapped);
       }
     };
     fetchNotificaciones();
-  }, [usuario?.id]);
+  }, [usuario?.id, usuario?.rol, usuario?.correo, usuario?.email]);
 
   // --- REALTIME NOTIFICATIONS ---
   useEffect(() => {
@@ -503,12 +573,21 @@ function Dashboard() {
   const manejarClicNotificacion = async (notif) => {
     // 1. Marcar como leído individualmente
     if (notif.nuevo) {
-      supabase.from('notificaciones').update({ leido: true }).eq('id', notif.id).then();
+      if (notif.id && !notif.id.toString().startsWith('alert-')) {
+        supabase.from('notificaciones').update({ leido: true }).eq('id', notif.id).then();
+      }
       setNotificacionesLog(prev => prev.map(n => n.id === notif.id ? { ...n, nuevo: false } : n));
     }
 
-    // 2. Deep Linking
-    if (notif.requisicion_id) {
+    // 2. Deep Linking & Redirección de Alertas
+    if (notif.tipo_alerta === 'critico' || notif.tipo_alerta === 'seguridad') {
+      setSeccionActiva('admin_analytics');
+      navigate('/admin/analytics');
+      setVerNotificaciones(false); // Cerrar panel
+    } else if (notif.tipo_alerta === 'sla') {
+      setSeccionActiva('requisiciones');
+      setVerNotificaciones(false); // Cerrar panel
+    } else if (notif.requisicion_id) {
       setSeccionActiva('requisiciones');
       setVerNotificaciones(false); // Cerrar panel
 
