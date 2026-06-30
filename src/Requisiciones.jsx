@@ -586,19 +586,26 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
   const obtenerEstructuraCorrelativo = (depto, user) => {
     const sigla = obtenerSiglaGerencia(depto);
     const aa = new Date().getFullYear().toString().slice(-2);
+    const deptoLower = depto ? depto.toLowerCase() : '';
     
-    if (depto && depto.toLowerCase() === 'operaciones') {
+    if (deptoLower === 'operaciones' || deptoLower === 'mantenimiento') {
       const bloque = (user?.bloque_operativo || '').toLowerCase();
-      if (bloque.includes('mantenimiento mayor') || bloque.includes('mtto') || bloque.includes('mantenimiento')) {
-        return {
-          likePattern: `OPE-MTT-${aa}-%`,
-          prefix: `OPE-MTT-${aa}-`
-        };
+      
+      let subSigla = '';
+      if (bloque.includes('jose luis') || bloque.includes('jl')) {
+        subSigla = 'A';
+      } else if (bloque.includes('habner') || bloque.includes('herrera') || bloque.includes('hh') || bloque.includes('hab') || bloque.includes('campo') || bloque.includes('cmp')) {
+        subSigla = 'B';
+      } else if (bloque.includes('mantenimiento mayor') || bloque.includes('mtto') || bloque.includes('mantenimiento') || bloque.includes('hilda') || bloque.trim() === 'a') {
+        subSigla = 'A';
+      } else if (bloque.includes('excelencia') || bloque.includes('vacuum') || bloque.includes('exva') || bloque.includes('johannel') || bloque.trim() === 'b') {
+        subSigla = 'B';
       }
-      if (bloque.includes('excelencia') || bloque.includes('vacuum') || bloque.includes('exva')) {
+      
+      if (subSigla) {
         return {
-          likePattern: `OPE-EXVA-${aa}-%`,
-          prefix: `OPE-EXVA-${aa}-`
+          likePattern: `${sigla}-${subSigla}-${aa}-%`,
+          prefix: `${sigla}-${subSigla}-${aa}-`
         };
       }
     }

@@ -1242,20 +1242,31 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
   const getSiglasBloque = (bloque) => {
     if (!bloque) return '';
     const bLower = bloque.toLowerCase();
-    if (bLower.includes('mantenimiento mayor boscan') ||
-      bLower.includes('mantenimiento mayor bajo grande') ||
-      bLower.includes('mantenimiento mayor') ||
-      bLower.includes('mtto')) {
-      return 'MTTO';
-    }
-    if (bLower.includes('excelencia operacional') ||
-      bLower.includes('vacuum') ||
-      bLower.includes('exva')) {
-      return 'EXVA';
+    
+    // Específico Mantenimiento (Jose Luis -> A, Habner -> B)
+    if (bLower.includes('jose luis') || bLower.includes('jl')) {
+      return 'A';
     }
     if (bLower.includes('habner') || bLower.includes('herrera') || bLower.includes('hh') || bLower.includes('hab') || bLower.includes('campo') || bLower.includes('cmp')) {
-      return 'CMP';
+      return 'B';
     }
+    
+    // Operaciones (Hilda/MTT -> A, Johannel/Excelencia/Vacuum -> B)
+    if (bLower.includes('mantenimiento mayor') ||
+      bLower.includes('mtto') ||
+      bLower.includes('mantenimiento') ||
+      bLower.includes('hilda') ||
+      bLower.trim() === 'a') {
+      return 'A';
+    }
+    if (bLower.includes('excelencia') ||
+      bLower.includes('vacuum') ||
+      bLower.includes('exva') ||
+      bLower.includes('johannel') ||
+      bLower.trim() === 'b') {
+      return 'B';
+    }
+    
     return '';
   };
 
