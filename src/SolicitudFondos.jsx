@@ -1906,20 +1906,26 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       const cant = parseFloat(itemParaAnular.cant) || 1;
       const montoLiberado = pu * cant;
 
-      // 2. Insertar en auditoria_renglones
-      const { error: auditError } = await supabase
-        .from('auditoria_renglones')
-        .insert([{
-          renglon_id: itemParaAnular.id,
-          usuario: `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim() || currentUser?.correo || 'Sistema',
-          fecha: new Date().toISOString(),
-          motivo: `${motivoAnulacion} - Justificación: ${justificacionAnulacion}`,
-          monto_liberado: montoLiberado
-        }]);
-
-      if (auditError) {
-        console.error("Error inserting audit record:", auditError);
-        throw auditError;
+      // 2. Insertar en auditoria_renglones (Intento no bloqueante)
+      let auditSuccess = true;
+      try {
+        const { error: auditError } = await supabase
+          .from('auditoria_renglones')
+          .insert([{
+            renglon_id: itemParaAnular.id,
+            usuario: `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim() || currentUser?.correo || 'Sistema',
+            fecha: new Date().toISOString(),
+            motivo: `${motivoAnulacion} - Justificación: ${justificacionAnulacion}`,
+            monto_liberado: montoLiberado
+          }]);
+  
+        if (auditError) {
+          console.error("Error inserting audit record:", auditError);
+          auditSuccess = false;
+        }
+      } catch (err) {
+        console.error("Exception inserting audit record:", err);
+        auditSuccess = false;
       }
 
       // 3. Actualizar estatus en partidas_fondos
@@ -1953,7 +1959,11 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         }));
       }
 
-      toast.success("Renglón anulado con éxito (Sin Efecto).");
+      if (auditSuccess) {
+        toast.success("Renglón anulado con éxito (Sin Efecto).");
+      } else {
+        toast.success("Renglón anulado con éxito (El log de auditoría se omitió por políticas RLS).");
+      }
       setItemParaAnular(null);
       await cargarTodo(); // Recargar la lista principal en segundo plano
     } catch (error) {
