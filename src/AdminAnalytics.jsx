@@ -19,7 +19,8 @@ import {
   Calendar,
   Smartphone,
   Shield,
-  Search
+  Search,
+  AlertTriangle
 } from 'lucide-react';
 import { 
   ResponsiveContainer, 
@@ -58,7 +59,7 @@ export default function AdminAnalytics() {
     return new Date().toISOString().split('T')[0];
   });
 
-  // Telemetry data
+  // Telemetry raw data from Supabase
   const [systemErrors, setSystemErrors] = useState([]);
   const [hourlyTraffic, setHourlyTraffic] = useState([]);
   const [storageStats, setStorageStats] = useState([]);
@@ -66,12 +67,10 @@ export default function AdminAnalytics() {
   const [testingLatency, setTestingLatency] = useState(false);
   const [largestFiles, setLargestFiles] = useState([]);
 
-  // Requisition / general metrics
+  // Operational raw data
   const [requisiciones, setRequisiciones] = useState([]);
   const [requisicionLogs, setRequisicionLogs] = useState([]);
   const [perfiles, setPerfiles] = useState([]);
-
-  // User auth and activity logs states
   const [authAttempts, setAuthAttempts] = useState([]);
   const [profileChanges, setProfileChanges] = useState([]);
 
@@ -139,7 +138,7 @@ export default function AdminAnalytics() {
         .from('system_errors')
         .select('*')
         .order('created_at', { ascending: false })
-        .limit(20);
+        .limit(50);
       setSystemErrors(errorsData || []);
 
       // 3. Fetch storage bucket metrics
@@ -179,7 +178,7 @@ export default function AdminAnalytics() {
       // 5. Fetch requisiciones for gerencia reports
       const { data: reqs } = await supabase
         .from('requisiciones')
-        .select('id, correlativo_req, created_at, fecha_aprobacion_final, gerencia, estado_aprobacion, total_bs, solicitante');
+        .select('id, correlativo_req, created_at, fecha_aprobacion_final, gerencia, estado_aprobacion, total_bs, solicitante, items');
       setRequisiciones(reqs || []);
 
       // 6. Fetch requisiciones audit action logs
@@ -212,14 +211,11 @@ export default function AdminAnalytics() {
         setLargestFiles(mapped);
       }
 
-      // 9. Fetch user auth logs (for dates traceability)
-      const { data: authLogs, error: authLogsErr } = await supabase
+      // 9. Fetch user auth logs
+      const { data: authLogs } = await supabase
         .from('user_auth_logs')
         .select('*')
         .order('created_at', { ascending: false });
-      if (authLogsErr) {
-        console.warn("Error consultando user_auth_logs (posible tabla sin crear en Supabase):", authLogsErr.message);
-      }
       setAuthAttempts(authLogs || []);
 
       // 10. Fetch user profiles modification logs
@@ -259,27 +255,60 @@ export default function AdminAnalytics() {
   };
 
   // ----------------------------------------------------
-  // CLIENT-SIDE FILTERING BY DATE RANGE FOR USER AUDIT
+  // GLOBAL CLIENT-SIDE FILTERING BY DATE RANGE Picker
   // ----------------------------------------------------
+  const dateLimits = useMemo(() => {
+    if (!startDate || !endDate) return { start: null, end: null };
+    return {
+      start: new Date(startDate + 'T00:00:00'),
+      end: new Date(endDate + 'T23:59:59')
+    };
+  }, [startDate, endDate]);
+
+  const filteredRequisiciones = useMemo(() => {
+    const { start, end } = dateLimits;
+    if (!start || !end) return requisiciones;
+    return requisiciones.filter(r => {
+      const date = new Date(r.created_at);
+      return date >= start && date <= end;
+    });
+  }, [requisiciones, dateLimits]);
+
+  const filteredRequisicionLogs = useMemo(() => {
+    const { start, end } = dateLimits;
+    if (!start || !end) return requisicionLogs;
+    return requisicionLogs.filter(l => {
+      const date = new Date(l.fecha || l.created_at);
+      return date >= start && date <= end;
+    });
+  }, [requisicionLogs, dateLimits]);
+
+  const filteredSystemErrors = useMemo(() => {
+    const { start, end } = dateLimits;
+    if (!start || !end) return systemErrors;
+    return systemErrors.filter(e => {
+      const date = new Date(e.created_at);
+      return date >= start && date <= end;
+    });
+  }, [systemErrors, dateLimits]);
+
   const filteredAuthAttempts = useMemo(() => {
-    if (!startDate || !endDate) return authAttempts;
-    const start = new Date(startDate + 'T00:00:00');
-    const end = new Date(endDate + 'T23:59:59');
+    const { start, end } = dateLimits;
+    if (!start || !end) return authAttempts;
     return authAttempts.filter(log => {
       const date = new Date(log.created_at);
       return date >= start && date <= end;
     });
-  }, [authAttempts, startDate, endDate]);
+  }, [authAttempts, dateLimits]);
 
   const filteredProfileChanges = useMemo(() => {
-    if (!startDate || !endDate) return profileChanges;
-    const start = new Date(startDate + 'T00:00:00');
-    const end = new Date(endDate + 'T23:59:59');
+    const { start, end } = dateLimits;
+    if (!start || !end) return profileChanges;
     return profileChanges.filter(log => {
       const date = new Date(log.created_at);
       return date >= start && date <= end;
     });
-  }, [profileChanges, startDate, endDate]);
+  }, [profileChanges, dateLimits]);
 
   // Timeline of Daily Active Users (DAU)
   const dauTimelineData = useMemo(() => {
@@ -288,7 +317,6 @@ export default function AdminAnalytics() {
     const end = new Date(endDate + 'T12:00:00');
     const dataList = [];
     
-    // Generate dates one by one
     for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
       const dateString = d.toISOString().split('T')[0];
       
@@ -298,7 +326,6 @@ export default function AdminAnalytics() {
         return logDate === dateString && log.exitoso === true;
       });
       
-      // Unique users set
       const uniqueUsers = new Set(dayLogs.map(l => l.correo.toLowerCase().trim()));
       
       dataList.push({
@@ -330,12 +357,110 @@ export default function AdminAnalytics() {
     return hours;
   }, [filteredAuthAttempts]);
 
-  // Computations for SLA & Performance Tab
+  // ----------------------------------------------------
+  // NEW: REQUISITION LIFECYCLE PIPELINE CLASSIFIER
+  // ----------------------------------------------------
+  const getRequisitionLifecycleStatus = (r) => {
+    if (['pendiente_proyecto', 'pendiente_area', 'enviada_general'].includes(r.estado_aprobacion)) {
+      return 'En Proceso';
+    }
+    if (r.estado_aprobacion === 'aprobado_final') {
+      const items = Array.isArray(r.items) ? r.items : [];
+      let hasPurchases = false;
+      let allReceived = true;
+      
+      items.forEach(it => {
+        const hist = Array.isArray(it.historial_compras) ? it.historial_compras : [];
+        const compras = hist.filter(h => h.tipo !== 'JUSTIFICACION' && h.tipo !== 'ANULACION');
+        if (compras.length > 0) {
+          hasPurchases = true;
+          compras.forEach(h => {
+            const statusAlmacen = h.estatus_almacen || (h.enviado_almacen ? 'Ubicado' : 'Pendiente_Compras');
+            if (statusAlmacen !== 'Ubicado') {
+              allReceived = false;
+            }
+          });
+        }
+      });
+
+      if (!hasPurchases) {
+        return 'Completamente Aprobadas';
+      }
+      if (allReceived) {
+        return 'En Almacén';
+      }
+      return 'En Compras';
+    }
+    return null; // Ignore rechazada and ANULADA in lifecycle
+  };
+
+  const lifecycleStats = useMemo(() => {
+    const counts = {
+      'En Proceso': 0,
+      'Completamente Aprobadas': 0,
+      'En Compras': 0,
+      'En Almacén': 0
+    };
+    
+    filteredRequisiciones.forEach(r => {
+      const status = getRequisitionLifecycleStatus(r);
+      if (status && counts[status] !== undefined) {
+        counts[status]++;
+      }
+    });
+
+    return [
+      { name: 'En Proceso', cantidad: counts['En Proceso'], fill: '#fbbf24' },
+      { name: 'Completamente Aprobadas', cantidad: counts['Completamente Aprobadas'], fill: '#818cf8' },
+      { name: 'En Compras', cantidad: counts['En Compras'], fill: '#f59e0b' },
+      { name: 'En Almacén', cantidad: counts['En Almacén'], fill: '#10b981' }
+    ];
+  }, [filteredRequisiciones]);
+
+  // ----------------------------------------------------
+  // NEW: RE-REJECTION ALERTS LOGIC (REPLICAS DE RECHAZO >= 2)
+  // ----------------------------------------------------
+  const reincidenciaAlerts = useMemo(() => {
+    const grouped = {};
+    filteredRequisicionLogs.forEach(l => {
+      if (l.accion === 'RECHAZADA') {
+        const reqId = l.requisicion_id;
+        if (!grouped[reqId]) {
+          grouped[reqId] = [];
+        }
+        grouped[reqId].push(l);
+      }
+    });
+
+    const alerts = [];
+    Object.keys(grouped).forEach(reqId => {
+      const logs = grouped[reqId];
+      if (logs.length >= 2) {
+        const req = requisiciones.find(r => r.id === parseInt(reqId));
+        if (req) {
+          const sortedLogs = [...logs].sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
+          alerts.push({
+            requisicion_id: parseInt(reqId),
+            correlativo: req.correlativo_req || `#${reqId}`,
+            solicitante: req.solicitante || 'N/A',
+            gerencia: req.gerencia || 'N/A',
+            rejectionCount: logs.length,
+            history: sortedLogs,
+            lastRejectionDate: sortedLogs[sortedLogs.length - 1].fecha
+          });
+        }
+      }
+    });
+
+    return alerts.sort((a, b) => new Date(b.lastRejectionDate) - new Date(a.lastRejectionDate));
+  }, [filteredRequisicionLogs, requisiciones]);
+
+  // SLA & general operational calculations using filtered arrays
   const statsGerenciales = useMemo(() => {
-    if (requisiciones.length === 0) return { avgSlaHours: 0, rejectionRates: [], volumeStats: [], listDeptos: [] };
+    if (filteredRequisiciones.length === 0) return { avgSlaHours: 0, rejectionRates: [], volumeStats: [], listDeptos: [] };
 
     // 1. SLA Average Approval Time
-    const approvedReqs = requisiciones.filter(r => r.estado_aprobacion === 'aprobado_final' && r.fecha_aprobacion_final);
+    const approvedReqs = filteredRequisiciones.filter(r => r.estado_aprobacion === 'aprobado_final' && r.fecha_aprobacion_final);
     let totalSlaMs = 0;
     approvedReqs.forEach(r => {
       const diff = new Date(r.fecha_aprobacion_final) - new Date(r.created_at);
@@ -345,13 +470,13 @@ export default function AdminAnalytics() {
 
     // 2. Rejection Rate by Department
     const deptoTotals = {};
-    requisiciones.forEach(r => {
+    filteredRequisiciones.forEach(r => {
       const d = r.gerencia || 'Desconocida';
       deptoTotals[d] = (deptoTotals[d] || 0) + 1;
     });
 
     const deptoRejections = {};
-    requisicionLogs.forEach(l => {
+    filteredRequisicionLogs.forEach(l => {
       if (l.accion === 'RECHAZADA') {
         const req = requisiciones.find(r => r.id === l.requisicion_id);
         if (req) {
@@ -373,12 +498,11 @@ export default function AdminAnalytics() {
       };
     }).sort((a, b) => b.tasa_rechazo - a.tasa_rechazo);
 
-    // Get list of departments for filters
     const listDeptos = Object.keys(deptoTotals).sort();
 
     // 3. Requisitions Status Volume
     const volumeGroups = {};
-    requisiciones.forEach(r => {
+    filteredRequisiciones.forEach(r => {
       const status = r.estado_aprobacion || 'Indefinida';
       volumeGroups[status] = (volumeGroups[status] || 0) + 1;
     });
@@ -389,7 +513,7 @@ export default function AdminAnalytics() {
     }));
 
     return { avgSlaHours, rejectionRates, volumeStats, listDeptos };
-  }, [requisiciones, requisicionLogs]);
+  }, [filteredRequisiciones, filteredRequisicionLogs, requisiciones]);
 
   // Compute storage utilization percent
   const storageTotalPercent = useMemo(() => {
@@ -399,20 +523,9 @@ export default function AdminAnalytics() {
     return Math.min(parseFloat(((totalBytes / planLimitBytes) * 100).toFixed(2)), 100);
   }, [storageStats]);
 
-  // Resolve Uploader Name and Department from cached perfiles list
-  const getUploaderInfo = (ownerId) => {
-    if (!ownerId) return { nombre: 'Desconocido', depto: 'N/A' };
-    const p = perfiles.find(prof => prof.id === ownerId);
-    if (!p) return { nombre: 'Uploader / Admin', depto: 'SITC System' };
-    return {
-      nombre: `${p.nombre} ${p.apellido || ''}`.trim(),
-      depto: p.departamento || 'Operaciones'
-    };
-  };
-
   // Detailed list for SLA Drill-Down
   const detailedSlaList = useMemo(() => {
-    return requisiciones
+    return filteredRequisiciones
       .filter(r => r.estado_aprobacion === 'aprobado_final' && r.fecha_aprobacion_final)
       .map(r => {
         const diffMs = new Date(r.fecha_aprobacion_final) - new Date(r.created_at);
@@ -424,11 +537,11 @@ export default function AdminAnalytics() {
         };
       })
       .sort((a, b) => b.horas_aprobacion - a.horas_aprobacion);
-  }, [requisiciones]);
+  }, [filteredRequisiciones]);
 
   // Detailed list for Rejection Reasons Drill-Down
   const detailedRejectionsList = useMemo(() => {
-    return requisicionLogs
+    return filteredRequisicionLogs
       .filter(l => l.accion === 'RECHAZADA')
       .map(l => {
         const req = requisiciones.find(r => r.id === l.requisicion_id);
@@ -441,7 +554,7 @@ export default function AdminAnalytics() {
       })
       .filter(l => selectedDeptoFilter === 'TODOS' || l.gerencia === selectedDeptoFilter)
       .sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
-  }, [requisicionLogs, requisiciones, selectedDeptoFilter]);
+  }, [filteredRequisicionLogs, requisiciones, selectedDeptoFilter]);
 
   const bytesToSize = (bytes) => {
     if (!bytes || bytes === 0) return '0 Bytes';
@@ -519,6 +632,71 @@ export default function AdminAnalytics() {
         </button>
       </div>
 
+      {/* GLOBAL DATE RANGE PICKER (APPLIES TO ALL TABS) */}
+      <div 
+        className="chart-card" 
+        style={{ 
+          marginBottom: '25px', 
+          display: 'flex', 
+          alignItems: 'center', 
+          gap: '20px', 
+          flexWrap: 'wrap', 
+          background: 'rgba(30, 41, 59, 0.6)', 
+          border: '1px solid rgba(255, 255, 255, 0.05)',
+          padding: '16px 24px',
+          borderRadius: '16px'
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <Calendar size={18} color="#38bdf8" />
+          <span style={{ fontSize: '0.9rem', fontWeight: 'bold', color: 'white' }}>Filtro de Fecha Global:</span>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '15px', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>Desde:</span>
+            <input 
+              type="date" 
+              value={startDate} 
+              onChange={(e) => setStartDate(e.target.value)}
+              style={{
+                backgroundColor: '#0f172a',
+                border: '1px solid #1e293b',
+                color: 'white',
+                padding: '6px 12px',
+                borderRadius: '8px',
+                fontSize: '0.85rem',
+                outline: 'none',
+                cursor: 'pointer'
+              }}
+            />
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>Hasta:</span>
+            <input 
+              type="date" 
+              value={endDate} 
+              onChange={(e) => setEndDate(e.target.value)}
+              style={{
+                backgroundColor: '#0f172a',
+                border: '1px solid #1e293b',
+                color: 'white',
+                padding: '6px 12px',
+                borderRadius: '8px',
+                fontSize: '0.85rem',
+                outline: 'none',
+                cursor: 'pointer'
+              }}
+            />
+          </div>
+          
+          <span style={{ fontSize: '0.8rem', color: '#64748b', fontStyle: 'italic' }}>
+            * Todos los datos, gráficos e historiales del panel responden reactivamente a este rango de fechas.
+          </span>
+        </div>
+      </div>
+
       {loading ? (
         <div style={{ padding: '60px 0', textAlign: 'center' }}>
           <RefreshCw className="animate-spin" size={32} color="#38bdf8" style={{ margin: '0 auto 15px auto' }} />
@@ -557,7 +735,7 @@ export default function AdminAnalytics() {
                   </div>
                   <div className="metric-info">
                     <h4>Logs de Error Activos</h4>
-                    <div className="metric-value">{systemErrors.length}</div>
+                    <div className="metric-value">{filteredSystemErrors.length}</div>
                   </div>
                 </div>
 
@@ -740,7 +918,7 @@ export default function AdminAnalytics() {
                     <span>LOGS DE ERROR DE SISTEMA (Client-side & Supabase REST client)</span>
                     <span className="console-blink"></span>
                   </div>
-                  <span style={{ fontSize: '0.75rem', color: '#64748b' }}>Últimos 20 registros</span>
+                  <span style={{ fontSize: '0.75rem', color: '#64748b' }}>Registros del período</span>
                 </div>
 
                 <div style={{ overflowX: 'auto' }}>
@@ -755,14 +933,14 @@ export default function AdminAnalytics() {
                       </tr>
                     </thead>
                     <tbody>
-                      {systemErrors.length === 0 ? (
+                      {filteredSystemErrors.length === 0 ? (
                         <tr>
                           <td colSpan="5" style={{ textAlign: 'center', color: '#475569', padding: '20px' }}>
-                            // No se registran fallos en system_errors. ¡El sistema está funcionando óptimamente!
+                            // No se registran fallos en system_errors en este período. ¡El sistema está funcionando óptimamente!
                           </td>
                         </tr>
                       ) : (
-                        systemErrors.map(err => (
+                        filteredSystemErrors.map(err => (
                           <tr key={err.id}>
                             <td>
                               <span className={err.status_code >= 500 ? 'badge-error' : 'badge-warning'}>
@@ -831,7 +1009,7 @@ export default function AdminAnalytics() {
                       <ChevronDown size={14} style={{ transform: showRejectionDetails ? 'rotate(180deg)' : 'none', transition: '0.2s', color: '#64748b', marginLeft: 'auto' }} />
                     </div>
                     <div className="metric-value">
-                      {requisicionLogs.filter(l => l.accion === 'RECHAZADA').length}
+                      {filteredRequisicionLogs.filter(l => l.accion === 'RECHAZADA').length}
                     </div>
                   </div>
                 </div>
@@ -842,7 +1020,7 @@ export default function AdminAnalytics() {
                   </div>
                   <div className="metric-info">
                     <h4>Total Requisiciones</h4>
-                    <div className="metric-value">{requisiciones.length}</div>
+                    <div className="metric-value">{filteredRequisiciones.length}</div>
                   </div>
                 </div>
 
@@ -852,7 +1030,7 @@ export default function AdminAnalytics() {
                   </div>
                   <div className="metric-info">
                     <h4>Acciones Auditadas</h4>
-                    <div className="metric-value">{requisicionLogs.length}</div>
+                    <div className="metric-value">{filteredRequisicionLogs.length}</div>
                   </div>
                 </div>
               </div>
@@ -880,7 +1058,7 @@ export default function AdminAnalytics() {
                         {detailedSlaList.length === 0 ? (
                           <tr>
                             <td colSpan="6" style={{ textAlign: 'center', color: '#64748b', padding: '20px' }}>
-                              No se registran requisiciones aprobadas en la base de datos.
+                              No se registran requisiciones aprobadas en la base de datos para este período.
                             </td>
                           </tr>
                         ) : (
@@ -952,7 +1130,7 @@ export default function AdminAnalytics() {
                         {detailedRejectionsList.length === 0 ? (
                           <tr>
                             <td colSpan="6" style={{ textAlign: 'center', color: '#64748b', padding: '20px' }}>
-                              No se registran rechazos en este departamento.
+                              No se registran rechazos en este departamento para este período.
                             </td>
                           </tr>
                         ) : (
@@ -973,9 +1151,64 @@ export default function AdminAnalytics() {
                 </div>
               )}
 
-              {/* CHARTS */}
-              <div className="charts-grid">
-                {/* Rejections Bar Chart */}
+              {/* OPERATIONAL CHARTS ROW (3 CHARTS GRID NOW) */}
+              <div className="charts-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))' }}>
+                {/* 1. Requisitions Status Volume */}
+                <div className="chart-card">
+                  <div className="chart-card-title">
+                    <TrendingUp size={20} color="#6366f1" />
+                    <span>Volumen General de Requisiciones por Estado</span>
+                  </div>
+                  <div style={{ width: '100%', height: 260 }}>
+                    {statsGerenciales.volumeStats.length === 0 ? (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#64748b' }}>
+                        No hay suficientes datos registrados
+                      </div>
+                    ) : (
+                      <ResponsiveContainer>
+                        <BarChart
+                          data={statsGerenciales.volumeStats}
+                          margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                          <XAxis dataKey="name" stroke="#64748b" style={{ fontSize: '9px' }} />
+                          <YAxis stroke="#64748b" style={{ fontSize: '11px' }} />
+                          <Tooltip 
+                            contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '12px', color: 'white', fontFamily: 'Inter' }}
+                          />
+                          <Bar dataKey="cantidad" name="Requisiciones" fill="#6366f1" radius={[6, 6, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    )}
+                  </div>
+                </div>
+
+                {/* 2. NEW: Requisitions Lifecycle Distribution pipeline */}
+                <div className="chart-card">
+                  <div className="chart-card-title">
+                    <Activity size={20} color="#fbbf24" />
+                    <span>Pipeline de Compra y Almacén (Ciclo de Vida)</span>
+                  </div>
+                  <div style={{ width: '100%', height: 260 }}>
+                    <ResponsiveContainer>
+                      <BarChart
+                        data={lifecycleStats}
+                        layout="vertical"
+                        margin={{ top: 10, right: 10, left: 15, bottom: 0 }}
+                      >
+                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                        <XAxis type="number" stroke="#64748b" style={{ fontSize: '10px' }} />
+                        <YAxis type="category" dataKey="name" stroke="#64748b" style={{ fontSize: '10px' }} width={120} />
+                        <Tooltip 
+                          contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '12px', color: 'white', fontFamily: 'Inter' }}
+                        />
+                        <Bar dataKey="cantidad" name="Requisiciones" radius={[0, 6, 6, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                {/* 3. Rejections Bar Chart */}
                 <div className="chart-card">
                   <div className="chart-card-title">
                     <Ban size={20} color="#ef4444" />
@@ -1016,36 +1249,79 @@ export default function AdminAnalytics() {
                     )}
                   </div>
                 </div>
+              </div>
 
-                {/* Status Volume Chart */}
-                <div className="chart-card">
-                  <div className="chart-card-title">
-                    <TrendingUp size={20} color="#6366f1" />
-                    <span>Volumen de Transacciones por Estado de Aprobación</span>
-                  </div>
-                  <div style={{ width: '100%', height: 260 }}>
-                    {statsGerenciales.volumeStats.length === 0 ? (
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#64748b' }}>
-                        No hay suficientes datos registrados
-                      </div>
-                    ) : (
-                      <ResponsiveContainer>
-                        <BarChart
-                          data={statsGerenciales.volumeStats}
-                          margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
-                        >
-                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                          <XAxis dataKey="name" stroke="#64748b" style={{ fontSize: '9px' }} />
-                          <YAxis stroke="#64748b" style={{ fontSize: '11px' }} />
-                          <Tooltip 
-                            contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '12px', color: 'white', fontFamily: 'Inter' }}
-                          />
-                          <Bar dataKey="cantidad" name="Requisiciones" fill="#6366f1" radius={[6, 6, 0, 0]} />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    )}
-                  </div>
+              {/* NEW: RE-REJECTION ALERTS LIST (REPLICAS DE RECHAZO) */}
+              <div className="chart-card" style={{ marginBottom: '30px', border: '1px solid rgba(239, 68, 68, 0.25)', background: 'rgba(239, 68, 68, 0.02)' }}>
+                <div className="chart-card-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <AlertTriangle size={20} color="#ef4444" />
+                  <span>Alertas de Reincidencia: Replicas de Rechazo (Rechazada 2 o más veces)</span>
                 </div>
+                
+                {reincidenciaAlerts.length === 0 ? (
+                  <div style={{ padding: '20px', borderRadius: '12px', background: 'rgba(16, 185, 129, 0.05)', color: '#34d399', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '10px', border: '1px solid rgba(16, 185, 129, 0.15)' }}>
+                    <span>✓</span>
+                    <span>No hay requisiciones reincidentes en rechazo en este período. ¡Los flujos de corrección y aprobación marchan rápido!</span>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                    <p style={{ color: '#94a3b8', fontSize: '0.85rem', margin: '0 0 5px 0' }}>
+                      Las siguientes requisiciones han sido rebotadas/rechazadas múltiples veces por los gerentes. Requieren atención prioritaria para resolver bloqueos de cotización o especificación técnica:
+                    </p>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '15px' }}>
+                      {reincidenciaAlerts.map(alert => (
+                        <div 
+                          key={alert.requisicion_id} 
+                          style={{
+                            padding: '16px',
+                            borderRadius: '12px',
+                            background: 'rgba(15, 23, 42, 0.6)',
+                            border: `1px solid ${alert.rejectionCount >= 3 ? '#ef4444' : '#f59e0b'}`,
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '10px'
+                          }}
+                        >
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span style={{ fontFamily: 'monospace', fontSize: '1rem', fontWeight: 'bold', color: '#ef4444' }}>
+                              {alert.correlativo}
+                            </span>
+                            <span 
+                              style={{ 
+                                fontSize: '0.75rem', 
+                                fontWeight: 'bold', 
+                                padding: '4px 8px', 
+                                borderRadius: '6px',
+                                color: 'white',
+                                backgroundColor: alert.rejectionCount >= 3 ? '#ef4444' : '#f59e0b' 
+                              }}
+                            >
+                              {alert.rejectionCount} Rechazos
+                            </span>
+                          </div>
+
+                          <div style={{ fontSize: '0.8rem', color: '#94a3b8' }}>
+                            <div><strong>Solicitante:</strong> {alert.solicitante} ({alert.gerencia})</div>
+                            <div style={{ marginTop: '3px' }}><strong>Último Rechazo:</strong> {new Date(alert.lastRejectionDate).toLocaleString()}</div>
+                          </div>
+
+                          <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '8px' }}>
+                            <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#cbd5e1', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                              Historial de observaciones:
+                            </span>
+                            <ul style={{ margin: '5px 0 0 0', paddingLeft: '15px', color: '#f87171', fontSize: '0.75rem', listStyleType: 'disc', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                              {alert.history.map((h, hIdx) => (
+                                <li key={h.id}>
+                                  <strong>{h.usuario_nombre || 'Gerente'}:</strong> "{h.comentario}"
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* AUDIT LOG TABLE */}
@@ -1067,14 +1343,14 @@ export default function AdminAnalytics() {
                       </tr>
                     </thead>
                     <tbody>
-                      {requisicionLogs.length === 0 ? (
+                      {filteredRequisicionLogs.length === 0 ? (
                         <tr>
                           <td colSpan="5" style={{ textAlign: 'center', color: '#64748b', padding: '20px' }}>
-                            No hay logs registrados en requisicion_logs
+                            No hay logs registrados en requisicion_logs para este período
                           </td>
                         </tr>
                       ) : (
-                        requisicionLogs.slice(0, 15).map(log => {
+                        filteredRequisicionLogs.slice(0, 15).map(log => {
                           const req = requisiciones.find(r => r.id === log.requisicion_id);
                           return (
                             <tr key={log.id}>
@@ -1109,72 +1385,8 @@ export default function AdminAnalytics() {
               </div>
             </div>
           ) : (
-            /* TRAZABILIDAD Y AUDITORIA DE SESIONES (NUEVO TAB) */
+            /* TRAZABILIDAD Y AUDITORIA DE SESIONES (TABS) */
             <div className="animate-fade">
-              {/* DATE RANGE CONTROLLERS */}
-              <div 
-                className="chart-card" 
-                style={{ 
-                  marginBottom: '25px', 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  gap: '20px', 
-                  flexWrap: 'wrap', 
-                  background: 'rgba(56, 189, 248, 0.03)', 
-                  border: '1px solid rgba(56, 189, 248, 0.15)',
-                  padding: '16px 24px' 
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <Calendar size={18} color="#38bdf8" />
-                  <span style={{ fontSize: '0.9rem', fontWeight: 'bold', color: 'white' }}>Rango de Auditoría:</span>
-                </div>
-
-                <div style={{ display: 'flex', alignItems: 'center', gap: '15px', flexWrap: 'wrap' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>Desde:</span>
-                    <input 
-                      type="date" 
-                      value={startDate} 
-                      onChange={(e) => setStartDate(e.target.value)}
-                      style={{
-                        backgroundColor: '#0f172a',
-                        border: '1px solid #1e293b',
-                        color: 'white',
-                        padding: '6px 12px',
-                        borderRadius: '8px',
-                        fontSize: '0.85rem',
-                        outline: 'none',
-                        cursor: 'pointer'
-                      }}
-                    />
-                  </div>
-
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>Hasta:</span>
-                    <input 
-                      type="date" 
-                      value={endDate} 
-                      onChange={(e) => setEndDate(e.target.value)}
-                      style={{
-                        backgroundColor: '#0f172a',
-                        border: '1px solid #1e293b',
-                        color: 'white',
-                        padding: '6px 12px',
-                        borderRadius: '8px',
-                        fontSize: '0.85rem',
-                        outline: 'none',
-                        cursor: 'pointer'
-                      }}
-                    />
-                  </div>
-                  
-                  <span style={{ fontSize: '0.8rem', color: '#64748b', fontStyle: 'italic' }}>
-                    * Los gráficos y registros inferiores se filtran de forma dinámica.
-                  </span>
-                </div>
-              </div>
-
               {/* AUDIT SUMMARY STATS */}
               <div className="metrics-grid">
                 <div className="metric-card">
