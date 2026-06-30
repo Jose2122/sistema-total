@@ -2817,10 +2817,16 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                       <Eye size={18} />
                     </button>
 
-                    {req.estado_aprobacion !== 'ANULADA' && (currentUser?.correo?.toLowerCase() === 'jcontreras.totalclean@gmail.com' || (currentUser?.rol || '').toLowerCase().includes('analista')) && (
+                    {req.estado_aprobacion !== 'ANULADA' && (
+                      currentUser?.correo?.toLowerCase() === 'jcontreras.totalclean@gmail.com' || 
+                      (currentUser?.rol || '').toLowerCase().includes('analista') ||
+                      req.user_id === currentUser?.id ||
+                      compararNombres(req.solicitante, `${currentUser?.nombre} ${currentUser?.apellido}`)
+                    ) && (
                       <button
                         onClick={(e) => { e.stopPropagation(); anularRequisicion(req.id); }}
                         style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#94a3b8' }}
+                        title="Anular Requisición"
                       >
                         <Ban size={18} />
                       </button>
