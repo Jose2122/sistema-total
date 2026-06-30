@@ -587,22 +587,6 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     const sigla = obtenerSiglaGerencia(depto);
     const aa = new Date().getFullYear().toString().slice(-2);
     
-    if (depto && depto.toLowerCase() === 'operaciones') {
-      const bloque = (user?.bloque_operativo || '').toLowerCase();
-      if (bloque.includes('mantenimiento mayor') || bloque.includes('mtto') || bloque.includes('mantenimiento') || bloque.includes('hilda') || bloque.trim() === 'a') {
-        return {
-          likePattern: `OPE-MTT-${aa}-%`,
-          prefix: `OPE-MTT-${aa}-`
-        };
-      }
-      if (bloque.includes('excelencia') || bloque.includes('vacuum') || bloque.includes('exva') || bloque.includes('johannel') || bloque.trim() === 'b') {
-        return {
-          likePattern: `OPE-EXVA-${aa}-%`,
-          prefix: `OPE-EXVA-${aa}-`
-        };
-      }
-    }
-    
     return {
       likePattern: `RR-${sigla}-${aa}-%`,
       prefix: `RR-${sigla}-${aa}-`
