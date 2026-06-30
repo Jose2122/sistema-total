@@ -40,8 +40,12 @@ if (typeof window !== 'undefined') {
   };
 }
 
+import { ErrorBoundary } from './ErrorBoundary.jsx'
+
 createRoot(document.getElementById('root')).render(
   <StrictMode>
-    <App />
+    <ErrorBoundary componentName="Global App">
+      <App />
+    </ErrorBoundary>
   </StrictMode>,
 )

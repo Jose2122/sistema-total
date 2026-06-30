@@ -994,6 +994,15 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       const { error } = await supabase.from('requisiciones').update(updatePayload).eq('id', editandoId);
       if (error) throw error;
 
+      // Log the rejection event in requisicion_logs
+      await supabase.from('requisicion_logs').insert([{
+        requisicion_id: editandoId,
+        usuario_id: currentUser?.id,
+        usuario_nombre: `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim() || 'Aprobador',
+        accion: 'RECHAZADA',
+        comentario: motivoRechazo
+      }]);
+
       toast.success('Requisición rechazada.');
 
       // NOTIFICAR AL SOLICITANTE
@@ -1439,6 +1448,15 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
         toast.error("ERROR RLS: La base de datos no permitió actualizar el registro. Es posible que existan políticas de seguridad bloqueando el acceso de escritura para su cuenta.");
         throw new Error("No se pudo actualizar el registro (RLS restriction).");
       }
+
+      // Log final approval in requisicion_logs
+      await supabase.from('requisicion_logs').insert([{
+        requisicion_id: editandoId,
+        usuario_id: currentUser?.id,
+        usuario_nombre: `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim() || 'Aprobador',
+        accion: 'APROBADA_FINAL',
+        comentario: 'Aprobación final por Gerencia General.'
+      }]);
 
       toast.success("¡APROBACIÓN COMPLETADA CON ÉXITO!");
 
@@ -1984,6 +2002,15 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     try {
       const { data: nuevaReq, error } = await supabase.from('requisiciones').insert([payload]).select().single();
       if (error) throw error;
+
+      // Log the creation event in requisicion_logs
+      await supabase.from('requisicion_logs').insert([{
+        requisicion_id: nuevaReq.id,
+        usuario_id: currentUser?.id,
+        usuario_nombre: `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim() || 'Creador',
+        accion: 'CREACION',
+        comentario: 'Requisición creada.'
+      }]);
 
       // SI VIENE DE SOLICITUD DE FONDOS, VINCULAR LAS PARTIDAS USADAS
       let idsPartidas = [];

@@ -99,7 +99,8 @@ const Usuarios = ({ currentUser: currentUserProp, onUserUpdate }) => {
     { id: 'usuarios', label: 'Gestión de Usuarios' },
     { id: 'atributos', label: 'Atributos' },
     { id: 'liquidacion', label: 'Cuentas por Pagar (Procura)' },
-    { id: 'administracion', label: 'Administración' }
+    { id: 'administracion', label: 'Administración' },
+    { id: 'admin_analytics', label: 'Telemetría de Desarrollo' }
   ];
 
   const ADMIN_EMAIL = 'jcontreras.totalclean@gmail.com';

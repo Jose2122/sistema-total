@@ -7,6 +7,8 @@ import Dashboard from './Dashboard';
 import SolicitudFondos from './SolicitudFondos';
 import Almacen from './Almacen';
 
+import AdminAnalytics from './AdminAnalytics';
+
 function App() {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -108,6 +110,7 @@ function App() {
         <Route path="/dashboard" element={session ? <Dashboard /> : <Navigate to="/" />} />
         <Route path="/SolicitudFondos" element={session ? <SolicitudFondos /> : <Navigate to="/" />} />
         <Route path="/almacen" element={session ? <Almacen /> : <Navigate to="/" />} />
+        <Route path="/admin/analytics" element={session ? <AdminAnalytics /> : <Navigate to="/" />} />
       </Routes>
     </Router>
   );

@@ -74,7 +74,7 @@ function Dashboard() {
     const todosModulos = [
       'dashboard', 'requisiciones', 'fondos', 'tickets', 'almacen',
       'compras', 'reportesmaestro', 'reporte_operaciones', 'reportes', 'proveedores',
-      'analytics_compras', 'ejecutivo', 'control_precios', 'usuarios', 'atributos', 'administracion', 'liquidacion'
+      'analytics_compras', 'ejecutivo', 'control_precios', 'usuarios', 'atributos', 'administracion', 'liquidacion', 'admin_analytics'
     ];
     todosModulos.forEach(modId => {
       permisos[modId] = modulos.includes(modId);
@@ -857,7 +857,8 @@ function Dashboard() {
                 iconCategory: 'fa-gears',
                 items: [
                   { id: 'usuarios', icon: 'fa-users', label: 'Usuarios' },
-                  { id: 'atributos', icon: 'fa-database', label: 'Atributos' }
+                  { id: 'atributos', icon: 'fa-database', label: 'Atributos' },
+                  { id: 'admin_analytics', icon: 'fa-terminal', label: 'Telemetría de Desarrollo' }
                 ]
               }
             ].map(group => {
@@ -946,7 +947,7 @@ function Dashboard() {
                           <div
                             key={item.id}
                             className={`menu-item-new ${seccionActiva === item.id ? 'active' : ''}`}
-                            onClick={() => { setSeccionActiva(item.id); if (isMobile) setSidebarAbierto(false); }}
+                            onClick={() => { if (item.id === 'admin_analytics') { navigate('/admin/analytics'); } else { setSeccionActiva(item.id); } if (isMobile) setSidebarAbierto(false); }}
                             title={item.label}
                             style={{ position: 'relative' }}
                           >

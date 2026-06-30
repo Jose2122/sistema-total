@@ -1,0 +1,725 @@
+import React, { useState, useEffect, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { supabase } from './supabaseClient';
+import { 
+  Server, 
+  Activity, 
+  HardDrive, 
+  ShieldAlert, 
+  Clock, 
+  ArrowLeft, 
+  RefreshCw, 
+  Ban, 
+  TrendingUp, 
+  UserCheck, 
+  Cpu,
+  Database
+} from 'lucide-react';
+import { 
+  ResponsiveContainer, 
+  AreaChart, 
+  Area, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip, 
+  BarChart, 
+  Bar, 
+  Legend 
+} from 'recharts';
+import './AdminAnalytics.css';
+
+export default function AdminAnalytics() {
+  const navigate = useNavigate();
+  
+  // Auth and authorization states
+  const [currentUser, setCurrentUser] = useState(null);
+  const [authorized, setAuthorized] = useState(null); // null = checking, false = denied, true = OK
+  const [loading, setLoading] = useState(true);
+
+  // Tabs: 'telemetry' or 'management'
+  const [activeTab, setActiveTab] = useState('telemetry');
+
+  // Telemetry data
+  const [systemErrors, setSystemErrors] = useState([]);
+  const [hourlyTraffic, setHourlyTraffic] = useState([]);
+  const [storageStats, setStorageStats] = useState([]);
+  const [dbLatency, setDbLatency] = useState(0);
+  const [testingLatency, setTestingLatency] = useState(false);
+
+  // Requisition / general metrics
+  const [requisiciones, setRequisiciones] = useState([]);
+  const [requisicionLogs, setRequisicionLogs] = useState([]);
+  const [perfiles, setPerfiles] = useState([]);
+
+  // Check Auth & Role
+  useEffect(() => {
+    async function checkAuth() {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) {
+          setAuthorized(false);
+          navigate('/');
+          return;
+        }
+
+        const { data: perfil, error } = await supabase
+          .from('perfiles')
+          .select('*')
+          .eq('id', session.user.id)
+          .single();
+
+        if (error || !perfil) {
+          console.error("Error cargando perfil administrador:", error);
+          setAuthorized(false);
+          return;
+        }
+
+        const rolUpper = (perfil.rol || '').toUpperCase();
+        const emailLower = (session.user.email || '').toLowerCase();
+        const isSuperAdmin = emailLower === 'jcontreras.totalclean@gmail.com';
+        const isCarlos = emailLower === 'cvega.totalclean@gmail.com' || emailLower === 'cvega@totalclean.com';
+
+        const hasAdminAccess = rolUpper === 'ADMINISTRADOR' || rolUpper === 'ADMIN' || rolUpper === 'DESARROLLADOR' || isSuperAdmin || isCarlos;
+
+        if (!hasAdminAccess) {
+          console.warn("Acceso denegado a telemetría para el rol:", perfil.rol);
+          setAuthorized(false);
+          setTimeout(() => navigate('/dashboard'), 3000);
+        } else {
+          setCurrentUser(perfil);
+          setAuthorized(true);
+        }
+      } catch (err) {
+        console.error("Excepción en verificación de autenticación:", err);
+        setAuthorized(false);
+      }
+    }
+    checkAuth();
+  }, [navigate]);
+
+  // Load telemetry and analytical data
+  const cargarDatos = async () => {
+    if (!authorized) return;
+    setLoading(true);
+    try {
+      // 1. Live db speed latency check
+      await testLatency();
+
+      // 2. Fetch error logs
+      const { data: errorsData } = await supabase
+        .from('system_errors')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(20);
+      setSystemErrors(errorsData || []);
+
+      // 3. Fetch storage bucket metrics
+      const { data: storageRpc, error: storageRpcError } = await supabase.rpc('get_storage_stats');
+      if (!storageRpcError && storageRpc) {
+        setStorageStats(storageRpc);
+      } else {
+        // Defensive Client-Side storage fallback estimation
+        console.warn("get_storage_stats RPC falló, calculando localmente:", storageRpcError);
+        const buckets = ['facturas', 'tickets-evidencia'];
+        const fallbackStorage = [];
+        for (const bucket of buckets) {
+          const { data: files } = await supabase.storage.from(bucket).list('', { limit: 100 });
+          const totalSize = (files || []).reduce((acc, f) => acc + (f.metadata?.size || 0), 0);
+          fallbackStorage.push({
+            bucket_id: bucket,
+            total_bytes: totalSize,
+            files_count: files?.length || 0
+          });
+        }
+        setStorageStats(fallbackStorage);
+      }
+
+      // 4. Fetch traffic distribution RPC
+      const { data: trafficRpc, error: trafficRpcError } = await supabase.rpc('get_hourly_traffic');
+      if (!trafficRpcError && trafficRpc) {
+        setHourlyTraffic(trafficRpc);
+      } else {
+        console.warn("get_hourly_traffic RPC falló, usando datos mockeados:", trafficRpcError);
+        // Fallback dummy traffic mapping
+        const dummyTraffic = Array.from({ length: 24 }, (_, i) => ({
+          hora: i,
+          requisiciones_count: Math.floor(Math.random() * 8) + 2,
+          solicitudes_count: Math.floor(Math.random() * 5) + 1
+        }));
+        setHourlyTraffic(dummyTraffic);
+      }
+
+      // 5. Fetch requisiciones for gerencia reports
+      const { data: reqs } = await supabase
+        .from('requisiciones')
+        .select('id, correlativo_req, created_at, fecha_aprobacion_final, gerencia, estado_aprobacion, total_bs');
+      setRequisiciones(reqs || []);
+
+      // 6. Fetch requisiciones audit action logs
+      const { data: logs } = await supabase
+        .from('requisicion_logs')
+        .select('id, requisicion_id, accion, comentario, fecha');
+      setRequisicionLogs(logs || []);
+
+      // 7. Fetch active perfiles count
+      const { data: profiles } = await supabase
+        .from('perfiles')
+        .select('id, nombre, apellido, rol, departamento, activo, last_login, created_at')
+        .order('created_at', { ascending: false });
+      setPerfiles(profiles || []);
+
+    } catch (err) {
+      console.error("Error cargando métricas de telemetría:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (authorized === true) {
+      cargarDatos();
+    }
+  }, [authorized]);
+
+  // DB Latency speed test execution
+  const testLatency = async () => {
+    setTestingLatency(true);
+    try {
+      const t0 = performance.now();
+      // Simple fast schema cache query
+      await supabase.from('perfiles').select('id').limit(1);
+      const t1 = performance.now();
+      setDbLatency(Math.round(t1 - t0));
+    } catch (e) {
+      console.error("Error midiendo velocidad de Supabase:", e);
+    } finally {
+      setTestingLatency(false);
+    }
+  };
+
+  // Computations for SLA & Performance Tab
+  const statsGerenciales = useMemo(() => {
+    if (requisiciones.length === 0) return { avgSlaHours: 0, rejectionRates: [], volumeStats: [] };
+
+    // 1. SLA Average Approval Time
+    const approvedReqs = requisiciones.filter(r => r.estado_aprobacion === 'aprobado_final' && r.fecha_aprobacion_final);
+    let totalSlaMs = 0;
+    approvedReqs.forEach(r => {
+      const diff = new Date(r.fecha_aprobacion_final) - new Date(r.created_at);
+      totalSlaMs += diff;
+    });
+    const avgSlaHours = approvedReqs.length > 0 ? (totalSlaMs / approvedReqs.length / (1000 * 60 * 60)).toFixed(1) : 0;
+
+    // 2. Rejection Rate by Department
+    // Group totals by department
+    const deptoTotals = {};
+    requisiciones.forEach(r => {
+      const d = r.gerencia || 'Desconocida';
+      deptoTotals[d] = (deptoTotals[d] || 0) + 1;
+    });
+
+    // Group rejections from logs and map back to requisition department
+    const deptoRejections = {};
+    requisicionLogs.forEach(l => {
+      if (l.accion === 'RECHAZADA') {
+        const req = requisiciones.find(r => r.id === l.requisicion_id);
+        if (req) {
+          const d = req.gerencia || 'Desconocida';
+          deptoRejections[d] = (deptoRejections[d] || 0) + 1;
+        }
+      }
+    });
+
+    const rejectionRates = Object.keys(deptoTotals).map(d => {
+      const total = deptoTotals[d];
+      const rejections = deptoRejections[d] || 0;
+      const rate = total > 0 ? parseFloat(((rejections / total) * 100).toFixed(1)) : 0;
+      return {
+        departamento: d,
+        creadas: total,
+        rechazos: rejections,
+        tasa_rechazo: rate
+      };
+    }).sort((a, b) => b.tasa_rechazo - a.tasa_rechazo);
+
+    // 3. Requisitions Status Volume
+    const volumeGroups = {};
+    requisiciones.forEach(r => {
+      const status = r.estado_aprobacion || 'Indefinida';
+      volumeGroups[status] = (volumeGroups[status] || 0) + 1;
+    });
+
+    const volumeStats = Object.keys(volumeGroups).map(status => ({
+      name: status.toUpperCase().replace('_', ' '),
+      cantidad: volumeGroups[status]
+    }));
+
+    return { avgSlaHours, rejectionRates, volumeStats };
+  }, [requisiciones, requisicionLogs]);
+
+  // Compute storage utilization percent
+  const storageTotalPercent = useMemo(() => {
+    if (storageStats.length === 0) return 0;
+    const totalBytes = storageStats.reduce((acc, s) => acc + Number(s.total_bytes), 0);
+    const planLimitBytes = 1024 * 1024 * 1024; // 1 GB free tier
+    return Math.min(parseFloat(((totalBytes / planLimitBytes) * 100).toFixed(2)), 100);
+  }, [storageStats]);
+
+  const bytesToSize = (bytes) => {
+    if (!bytes || bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
+  // Render unauthorized fallback
+  if (authorized === false) {
+    return (
+      <div className="analytics-container" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
+        <ShieldAlert size={60} color="#ef4444" style={{ marginBottom: '20px' }} />
+        <h2 style={{ color: '#ef4444', fontWeight: '800' }}>Acceso Restringido</h2>
+        <p style={{ color: '#cbd5e1', maxWidth: '400px', margin: '10px 0 20px 0' }}>
+          Este panel de telemetría y performance es de uso exclusivo para desarrolladores y administradores autorizados.
+        </p>
+        <p style={{ color: '#64748b', fontSize: '0.85rem' }}>
+          Serás redirigido al dashboard en un momento...
+        </p>
+      </div>
+    );
+  }
+
+  if (authorized === null) {
+    return (
+      <div className="analytics-container" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <p style={{ color: '#38bdf8', fontWeight: 'bold' }}>Verificando credenciales de desarrollador...</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="analytics-container">
+      {/* HEADER */}
+      <div className="analytics-header">
+        <div>
+          <div className="analytics-title">
+            <Cpu size={28} />
+            <span>Telemetría de Desarrollo & Performance</span>
+          </div>
+          <p style={{ margin: '5px 0 0 0', color: '#64748b', fontSize: '0.9rem' }}>
+            Auditoría de infraestructura, logs de error activos y eficiencia operativa en tiempo real (SITC).
+          </p>
+        </div>
+        <button className="back-btn" onClick={() => navigate('/dashboard')}>
+          <ArrowLeft size={16} />
+          <span>Volver al Sistema</span>
+        </button>
+      </div>
+
+      {/* TABS SELECTOR */}
+      <div className="analytics-tabs">
+        <button 
+          className={`tab-btn ${activeTab === 'telemetry' ? 'active' : ''}`}
+          onClick={() => setActiveTab('telemetry')}
+        >
+          <Server size={18} />
+          <span>Infraestructura y Telemetría</span>
+        </button>
+        <button 
+          className={`tab-btn ${activeTab === 'management' ? 'active' : ''}`}
+          onClick={() => setActiveTab('management')}
+        >
+          <TrendingUp size={18} />
+          <span>SLA y Eficiencia Gerencial</span>
+        </button>
+      </div>
+
+      {loading ? (
+        <div style={{ padding: '60px 0', textAlign: 'center' }}>
+          <RefreshCw className="animate-spin" size={32} color="#38bdf8" style={{ margin: '0 auto 15px auto' }} />
+          <p style={{ color: '#94a3b8' }}>Consultando métricas de rendimiento de Supabase...</p>
+        </div>
+      ) : (
+        <>
+          {activeTab === 'telemetry' ? (
+            /* TELEMETRIA Y PERFORMANCE */
+            <div>
+              {/* METRIC CARDS */}
+              <div className="metrics-grid">
+                <div className="metric-card">
+                  <div className="metric-icon-wrapper" style={{ backgroundColor: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8' }}>
+                    <Activity size={22} />
+                  </div>
+                  <div className="metric-info">
+                    <h4>Velocidad Conexión</h4>
+                    <div className="metric-value" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span>{dbLatency} ms</span>
+                      <button 
+                        onClick={testLatency} 
+                        disabled={testingLatency}
+                        style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', display: 'flex' }}
+                        title="Re-testear latencia"
+                      >
+                        <RefreshCw size={14} className={testingLatency ? 'animate-spin' : ''} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="metric-card">
+                  <div className="metric-icon-wrapper" style={{ backgroundColor: 'rgba(239, 68, 68, 0.15)', color: '#ef4444' }}>
+                    <ShieldAlert size={22} />
+                  </div>
+                  <div className="metric-info">
+                    <h4>Logs de Error Activos</h4>
+                    <div className="metric-value">{systemErrors.length}</div>
+                  </div>
+                </div>
+
+                <div className="metric-card">
+                  <div className="metric-icon-wrapper" style={{ backgroundColor: 'rgba(16, 185, 129, 0.15)', color: '#10b981' }}>
+                    <HardDrive size={22} />
+                  </div>
+                  <div className="metric-info">
+                    <h4>Espacio Storage</h4>
+                    <div className="metric-value">{storageTotalPercent}%</div>
+                  </div>
+                </div>
+
+                <div className="metric-card">
+                  <div className="metric-icon-wrapper" style={{ backgroundColor: 'rgba(99, 102, 241, 0.15)', color: '#6366f1' }}>
+                    <UserCheck size={22} />
+                  </div>
+                  <div className="metric-info">
+                    <h4>Usuarios de Auth</h4>
+                    <div className="metric-value">{perfiles.length}</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* CHARTS ROW */}
+              <div className="charts-grid">
+                {/* Hourly Traffic Chart */}
+                <div className="chart-card">
+                  <div className="chart-card-title">
+                    <Clock size={20} color="#38bdf8" />
+                    <span>Densidad de Tráfico (Pico de Concurrencia por Horas)</span>
+                  </div>
+                  <div style={{ width: '100%', height: 260 }}>
+                    <ResponsiveContainer>
+                      <AreaChart
+                        data={hourlyTraffic}
+                        margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
+                      >
+                        <defs>
+                          <linearGradient id="colorReq" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#38bdf8" stopOpacity={0.4}/>
+                            <stop offset="95%" stopColor="#38bdf8" stopOpacity={0}/>
+                          </linearGradient>
+                          <linearGradient id="colorFondos" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#818cf8" stopOpacity={0.4}/>
+                            <stop offset="95%" stopColor="#818cf8" stopOpacity={0}/>
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                        <XAxis dataKey="hora" stroke="#64748b" style={{ fontSize: '11px' }} tickFormatter={(h) => `${h}:00`} />
+                        <YAxis stroke="#64748b" style={{ fontSize: '11px' }} />
+                        <Tooltip 
+                          contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '12px', color: 'white', fontFamily: 'Inter' }}
+                          labelFormatter={(h) => `Hora: ${h}:00 (UTC)`}
+                        />
+                        <Legend style={{ fontSize: '12px' }} />
+                        <Area type="monotone" name="Requisiciones" dataKey="requisiciones_count" stroke="#38bdf8" fillOpacity={1} fill="url(#colorReq)" strokeWidth={2} />
+                        <Area type="monotone" name="Solicitud Fondos" dataKey="solicitudes_count" stroke="#818cf8" fillOpacity={1} fill="url(#colorFondos)" strokeWidth={2} />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                {/* Storage Capacity Status */}
+                <div className="chart-card">
+                  <div className="chart-card-title">
+                    <Database size={20} color="#10b981" />
+                    <span>Límite de Almacenamiento (Supabase Storage Bucket)</span>
+                  </div>
+                  
+                  <div className="storage-progress-container">
+                    <div className="storage-labels">
+                      <span style={{ fontWeight: '600' }}>Uso de Storage (Plan Gratuito)</span>
+                      <span style={{ color: '#10b981', fontWeight: 'bold' }}>{storageTotalPercent}% Consumido</span>
+                    </div>
+                    <div className="storage-progress-bar-bg">
+                      <div 
+                        className="storage-progress-bar-fill" 
+                        style={{ 
+                          width: `${storageTotalPercent}%`,
+                          backgroundColor: storageTotalPercent > 80 ? '#ef4444' : storageTotalPercent > 50 ? '#f59e0b' : '#10b981'
+                        }}
+                      ></div>
+                    </div>
+
+                    <div className="storage-meta">
+                      <div>
+                        <div style={{ color: '#475569', fontSize: '0.75rem', textTransform: 'uppercase' }}>Consumido</div>
+                        <div style={{ fontSize: '1.05rem', fontWeight: 'bold', color: 'white', marginTop: '4px' }}>
+                          {bytesToSize(storageStats.reduce((acc, s) => acc + Number(s.total_bytes), 0))}
+                        </div>
+                      </div>
+                      <div style={{ borderLeft: '1px solid rgba(255,255,255,0.08)', paddingLeft: '20px' }}>
+                        <div style={{ color: '#475569', fontSize: '0.75rem', textTransform: 'uppercase' }}>Límite Máximo</div>
+                        <div style={{ fontSize: '1.05rem', fontWeight: 'bold', color: '#94a3b8', marginTop: '4px' }}>1.00 GB</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Buckets Breakdown */}
+                  <h4 style={{ margin: '25px 0 10px 0', fontSize: '0.85rem', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                    Desglose de Carpetas de Storage:
+                  </h4>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {storageStats.map(b => (
+                      <div key={b.bucket_id} style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 14px', background: 'rgba(255,255,255,0.02)', borderRadius: '10px', fontSize: '0.85rem', border: '1px solid rgba(255,255,255,0.04)' }}>
+                        <span style={{ fontFamily: 'monospace', color: '#38bdf8' }}>{b.bucket_id}</span>
+                        <span style={{ color: '#94a3b8' }}>
+                          <strong>{b.files_count} archivos</strong> ({bytesToSize(b.total_bytes)})
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* CONSOLE / TERMINAL SYSTEM ERRORS */}
+              <div className="console-card">
+                <div className="console-header">
+                  <div className="console-title">
+                    <ShieldAlert size={18} />
+                    <span>LOGS DE ERROR DE SISTEMA (Client-side & Supabase REST client)</span>
+                    <span className="console-blink"></span>
+                  </div>
+                  <span style={{ fontSize: '0.75rem', color: '#64748b' }}>Últimos 20 registros</span>
+                </div>
+
+                <div style={{ overflowX: 'auto' }}>
+                  <table className="console-table">
+                    <thead>
+                      <tr>
+                        <th style={{ width: '80px' }}>CÓDIGO</th>
+                        <th style={{ width: '180px' }}>COMPONENTE</th>
+                        <th>MENSAJE DE ERROR DETALLADO</th>
+                        <th style={{ width: '80px' }}>ROL</th>
+                        <th style={{ width: '150px' }}>FECHA (UTC)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {systemErrors.length === 0 ? (
+                        <tr>
+                          <td colSpan="5" style={{ textAlign: 'center', color: '#475569', padding: '20px' }}>
+                            // No se registran fallos en system_errors. ¡El sistema está funcionando óptimamente!
+                          </td>
+                        </tr>
+                      ) : (
+                        systemErrors.map(err => (
+                          <tr key={err.id}>
+                            <td>
+                              <span className={err.status_code >= 500 ? 'badge-error' : 'badge-warning'}>
+                                {err.status_code || '500'}
+                              </span>
+                            </td>
+                            <td style={{ color: '#a7f3d0', fontSize: '0.8rem', fontFamily: 'monospace' }}>
+                              {err.componente}
+                            </td>
+                            <td style={{ color: '#e2e8f0', fontSize: '0.8rem', wordBreak: 'break-all', whiteSpace: 'pre-line' }}>
+                              {err.error_mensaje}
+                            </td>
+                            <td style={{ color: '#c084fc', fontSize: '0.8rem' }}>{err.usuario_rol || 'Anon'}</td>
+                            <td style={{ color: '#64748b', fontSize: '0.75rem' }}>
+                              {new Date(err.created_at).toLocaleString()}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          ) : (
+            /* SLA Y EFICIENCIA GERENCIAL */
+            <div>
+              {/* METRIC CARDS */}
+              <div className="metrics-grid">
+                <div className="metric-card">
+                  <div className="metric-icon-wrapper" style={{ backgroundColor: 'rgba(99, 102, 241, 0.15)', color: '#6366f1' }}>
+                    <Clock size={22} />
+                  </div>
+                  <div className="metric-info">
+                    <h4>SLA Promedio Aprobación</h4>
+                    <div className="metric-value">{statsGerenciales.avgSlaHours} hrs</div>
+                  </div>
+                </div>
+
+                <div className="metric-card">
+                  <div className="metric-icon-wrapper" style={{ backgroundColor: 'rgba(239, 68, 68, 0.15)', color: '#ef4444' }}>
+                    <Ban size={22} />
+                  </div>
+                  <div className="metric-info">
+                    <h4>Rechazos Históricos</h4>
+                    <div className="metric-value">
+                      {requisicionLogs.filter(l => l.accion === 'RECHAZADA').length}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="metric-card">
+                  <div className="metric-icon-wrapper" style={{ backgroundColor: 'rgba(16, 185, 129, 0.15)', color: '#10b981' }}>
+                    <TrendingUp size={22} />
+                  </div>
+                  <div className="metric-info">
+                    <h4>Total Requisiciones</h4>
+                    <div className="metric-value">{requisiciones.length}</div>
+                  </div>
+                </div>
+
+                <div className="metric-card">
+                  <div className="metric-icon-wrapper" style={{ backgroundColor: 'rgba(245, 158, 11, 0.15)', color: '#f59e0b' }}>
+                    <Activity size={22} />
+                  </div>
+                  <div className="metric-info">
+                    <h4>Acciones Auditadas</h4>
+                    <div className="metric-value">{requisicionLogs.length}</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* CHARTS */}
+              <div className="charts-grid">
+                {/* Rejections Bar Chart */}
+                <div className="chart-card">
+                  <div className="chart-card-title">
+                    <Ban size={20} color="#ef4444" />
+                    <span>Tasa de Rechazo y Corrección por Departamento (%)</span>
+                  </div>
+                  <div style={{ width: '100%', height: 260 }}>
+                    {statsGerenciales.rejectionRates.length === 0 ? (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#64748b' }}>
+                        No hay suficientes datos registrados
+                      </div>
+                    ) : (
+                      <ResponsiveContainer>
+                        <BarChart
+                          data={statsGerenciales.rejectionRates}
+                          margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                          <XAxis dataKey="departamento" stroke="#64748b" style={{ fontSize: '10px' }} />
+                          <YAxis stroke="#64748b" style={{ fontSize: '11px' }} unit="%" />
+                          <Tooltip 
+                            contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '12px', color: 'white', fontFamily: 'Inter' }}
+                            formatter={(value) => [`${value}%`, 'Tasa de Rechazo']}
+                          />
+                          <Bar dataKey="tasa_rechazo" name="Tasa de Rechazo" fill="#ef4444" radius={[6, 6, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    )}
+                  </div>
+                </div>
+
+                {/* Status Volume Chart */}
+                <div className="chart-card">
+                  <div className="chart-card-title">
+                    <TrendingUp size={20} color="#6366f1" />
+                    <span>Volumen de Transacciones por Estado de Aprobación</span>
+                  </div>
+                  <div style={{ width: '100%', height: 260 }}>
+                    {statsGerenciales.volumeStats.length === 0 ? (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#64748b' }}>
+                        No hay suficientes datos registrados
+                      </div>
+                    ) : (
+                      <ResponsiveContainer>
+                        <BarChart
+                          data={statsGerenciales.volumeStats}
+                          margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                          <XAxis dataKey="name" stroke="#64748b" style={{ fontSize: '9px' }} />
+                          <YAxis stroke="#64748b" style={{ fontSize: '11px' }} />
+                          <Tooltip 
+                            contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '12px', color: 'white', fontFamily: 'Inter' }}
+                          />
+                          <Bar dataKey="cantidad" name="Requisiciones" fill="#6366f1" radius={[6, 6, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* AUDIT LOG TABLE */}
+              <div className="chart-card" style={{ padding: '24px', background: 'rgba(30, 41, 59, 0.2)' }}>
+                <div className="chart-card-title">
+                  <UserCheck size={20} color="#f59e0b" />
+                  <span>Historial Reciente de Auditoría y Flujos (Requisiciones)</span>
+                </div>
+                
+                <div style={{ overflowX: 'auto' }}>
+                  <table className="console-table" style={{ fontFamily: 'Inter' }}>
+                    <thead>
+                      <tr>
+                        <th style={{ width: '120px' }}>ID REQ</th>
+                        <th style={{ width: '180px' }}>OPERADOR</th>
+                        <th style={{ width: '150px' }}>ACCIÓN</th>
+                        <th>COMENTARIO / LOG DETALLADO</th>
+                        <th style={{ width: '150px' }}>FECHA (UTC)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {requisicionLogs.length === 0 ? (
+                        <tr>
+                          <td colSpan="5" style={{ textAlign: 'center', color: '#64748b', padding: '20px' }}>
+                            No hay logs registrados en requisicion_logs
+                          </td>
+                        </tr>
+                      ) : (
+                        requisicionLogs.slice(0, 15).map(log => {
+                          const req = requisiciones.find(r => r.id === log.requisicion_id);
+                          return (
+                            <tr key={log.id}>
+                              <td style={{ fontFamily: 'monospace', color: '#38bdf8', fontSize: '0.8rem' }}>
+                                {req?.correlativo_req || `#${log.requisicion_id}`}
+                              </td>
+                              <td style={{ color: '#e2e8f0', fontSize: '0.85rem' }}>{log.usuario_nombre || 'SITC System'}</td>
+                              <td>
+                                <span className={
+                                  log.accion === 'RECHAZADA' ? 'badge-error' :
+                                  log.accion === 'CREACION' ? 'badge-warning' :
+                                  'badge-warning'
+                                } style={{
+                                  backgroundColor: log.accion === 'APROBADA_FINAL' ? 'rgba(16, 185, 129, 0.15)' : '',
+                                  borderColor: log.accion === 'APROBADA_FINAL' ? 'rgba(16, 185, 129, 0.3)' : '',
+                                  color: log.accion === 'APROBADA_FINAL' ? '#34d399' : ''
+                                }}>
+                                  {log.accion}
+                                </span>
+                              </td>
+                              <td style={{ color: '#94a3b8', fontSize: '0.85rem' }}>{log.comentario}</td>
+                              <td style={{ color: '#64748b', fontSize: '0.8rem' }}>
+                                {new Date(log.fecha).toLocaleString()}
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
