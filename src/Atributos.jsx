@@ -407,11 +407,42 @@ const Atributos = () => {
     
     const config = LISTAS.find(l => l.id === listaActiva);
     
-    // Validar duplicados (case insensitive)
-    const duplicado = datos.find(d => 
-      d.nombre.toLowerCase() === formData.nombre.toLowerCase() && d.id !== editandoItem?.id
-    );
-    if (duplicado) return toast.error('Ya existe un ítem con ese nombre en esta lista');
+    // Validar duplicados (case insensitive) por padre (Centro de Costo o Clasificación)
+    if (listaActiva === 'clasificaciones') {
+      const parentIdsToCheck = editandoItem ? [formData.padre_ids[0]] : formData.padre_ids;
+      for (const pid of parentIdsToCheck) {
+        if (!pid) continue;
+        const dup = datos.find(d => 
+          d.nombre.toLowerCase() === formData.nombre.toLowerCase() && 
+          d.centro_costo_id === pid && 
+          d.id !== editandoItem?.id
+        );
+        if (dup) {
+          const ccNombre = centrosCosto.find(cc => cc.id === pid)?.nombre || 'este Centro de Costo';
+          return toast.error(`Ya existe la clasificación "${formData.nombre}" en ${ccNombre}`);
+        }
+      }
+    } else if (listaActiva === 'categorias') {
+      const parentIdsToCheck = editandoItem ? [formData.padre_ids[0]] : formData.padre_ids;
+      for (const pid of parentIdsToCheck) {
+        if (!pid) continue;
+        const dup = datos.find(d => 
+          d.nombre.toLowerCase() === formData.nombre.toLowerCase() && 
+          d.clasificacion_id === pid && 
+          d.id !== editandoItem?.id
+        );
+        if (dup) {
+          const clNombre = clasificaciones.find(cl => cl.id === pid)?.nombre || 'esta clasificación';
+          return toast.error(`Ya existe la categoría "${formData.nombre}" en ${clNombre}`);
+        }
+      }
+    } else {
+      // Para centros_costo y cargos, la validación sigue siendo global
+      const duplicado = datos.find(d => 
+        d.nombre.toLowerCase() === formData.nombre.toLowerCase() && d.id !== editandoItem?.id
+      );
+      if (duplicado) return toast.error('Ya existe un ítem con ese nombre en esta lista');
+    }
 
     try {
       setLoading(true);
