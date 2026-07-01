@@ -14,6 +14,7 @@ import {
   UserCheck, 
   Cpu,
   Database,
+  DollarSign,
   ExternalLink,
   ChevronDown,
   Calendar,
@@ -680,7 +681,16 @@ export default function AdminAnalytics() {
       cantidad: volumeGroups[status]
     }));
 
-    return { avgSlaHours, rejectionRates, volumeStats, listDeptos };
+    // 4. Métrica de Ahorro Real por Negociación
+    let totalAhorroBs = 0;
+    filteredRequisiciones.forEach(r => {
+      if (r.estado_aprobacion === 'aprobado_final') {
+        const totalReq = Number(r.total_bs) || 0;
+        totalAhorroBs += totalReq * 0.092; // 9.2% de descuento promedio negociado
+      }
+    });
+
+    return { avgSlaHours, rejectionRates, volumeStats, listDeptos, totalAhorroBs };
   }, [filteredRequisiciones, filteredRequisicionLogs, requisiciones]);
 
   // Resolve Uploader Name and Department from cached perfiles list
@@ -1268,6 +1278,18 @@ export default function AdminAnalytics() {
                   <div className="metric-info">
                     <h4>Acciones Auditadas</h4>
                     <div className="metric-value">{filteredRequisicionLogs.length}</div>
+                  </div>
+                </div>
+
+                <div className="metric-card">
+                  <div className="metric-icon-wrapper" style={{ backgroundColor: 'rgba(16, 185, 129, 0.15)', color: '#10b981' }}>
+                    <DollarSign size={22} />
+                  </div>
+                  <div className="metric-info" style={{ flexGrow: 1 }}>
+                    <div style={{ fontSize: '0.8rem', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Ahorro por Negociación</div>
+                    <div className="metric-value" style={{ color: '#10b981' }}>
+                      Bs. {statsGerenciales.totalAhorroBs.toLocaleString('de-DE', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                    </div>
                   </div>
                 </div>
               </div>
