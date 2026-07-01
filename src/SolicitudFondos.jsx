@@ -3679,21 +3679,23 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                               {p.id && (
                                 <button
                                   onClick={() => abrirModalAnulacion(p)}
-                                  disabled={isReadOnly || isAnulado || (p.requisiciones && (p.requisiciones.status_compra === 'Comprado' || p.requisiciones.status_compra === 'Recibido en Almacén')) || !!editingUser}
+                                  disabled={isReadOnly || estadoActual === 'ACTIVA' || isAnulado || (p.requisiciones && (p.requisiciones.status_compra === 'Comprado' || p.requisiciones.status_compra === 'Recibido en Almacén')) || !!editingUser}
                                   style={{
                                     background: 'none',
                                     border: 'none',
                                     color: '#f43f5e',
-                                    cursor: (isReadOnly || isAnulado || (p.requisiciones && (p.requisiciones.status_compra === 'Comprado' || p.requisiciones.status_compra === 'Recibido en Almacén')) || !!editingUser) ? 'not-allowed' : 'pointer',
+                                    cursor: (isReadOnly || estadoActual === 'ACTIVA' || isAnulado || (p.requisiciones && (p.requisiciones.status_compra === 'Comprado' || p.requisiciones.status_compra === 'Recibido en Almacén')) || !!editingUser) ? 'not-allowed' : 'pointer',
                                     fontSize: '1rem',
-                                    opacity: (isReadOnly || isAnulado || (p.requisiciones && (p.requisiciones.status_compra === 'Comprado' || p.requisiciones.status_compra === 'Recibido en Almacén')) || !!editingUser) ? 0.3 : 1
+                                    opacity: (isReadOnly || estadoActual === 'ACTIVA' || isAnulado || (p.requisiciones && (p.requisiciones.status_compra === 'Comprado' || p.requisiciones.status_compra === 'Recibido en Almacén')) || !!editingUser) ? 0.3 : 1
                                   }}
                                   title={
-                                    (p.requisiciones && (p.requisiciones.status_compra === 'Comprado' || p.requisiciones.status_compra === 'Recibido en Almacén'))
-                                      ? "No se puede anular: Requisición ya Comprada o en Almacén"
-                                      : isAnulado
-                                        ? "Renglón ya sin efecto"
-                                        : "Anular Renglón (Sin Efecto)"
+                                    estadoActual === 'ACTIVA'
+                                      ? "Para borrar un renglón en una solicitud activa, use el bote de basura (eliminar)"
+                                      : (p.requisiciones && (p.requisiciones.status_compra === 'Comprado' || p.requisiciones.status_compra === 'Recibido en Almacén'))
+                                        ? "No se puede anular: Requisición ya Comprada o en Almacén"
+                                        : isAnulado
+                                          ? "Renglón ya sin efecto"
+                                          : "Anular Renglón (Sin Efecto)"
                                   }
                                 >
                                   🚫
@@ -3840,21 +3842,23 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                               {imp.id && (
                                 <button
                                   onClick={() => abrirModalAnulacion(imp)}
-                                  disabled={isReadOnly || isAnulado || (imp.requisiciones && (imp.requisiciones.status_compra === 'Comprado' || imp.requisiciones.status_compra === 'Recibido en Almacén')) || !!editingImpUser}
+                                  disabled={isReadOnly || estadoActual === 'ACTIVA' || isAnulado || (imp.requisiciones && (imp.requisiciones.status_compra === 'Comprado' || imp.requisiciones.status_compra === 'Recibido en Almacén')) || !!editingImpUser}
                                   style={{
                                     background: 'none',
                                     border: 'none',
                                     color: '#f43f5e',
-                                    cursor: (isReadOnly || isAnulado || (imp.requisiciones && (imp.requisiciones.status_compra === 'Comprado' || imp.requisiciones.status_compra === 'Recibido en Almacén')) || !!editingImpUser) ? 'not-allowed' : 'pointer',
+                                    cursor: (isReadOnly || estadoActual === 'ACTIVA' || isAnulado || (imp.requisiciones && (imp.requisiciones.status_compra === 'Comprado' || imp.requisiciones.status_compra === 'Recibido en Almacén')) || !!editingImpUser) ? 'not-allowed' : 'pointer',
                                     fontSize: '1rem',
-                                    opacity: (isReadOnly || isAnulado || (imp.requisiciones && (imp.requisiciones.status_compra === 'Comprado' || imp.requisiciones.status_compra === 'Recibido en Almacén')) || !!editingImpUser) ? 0.3 : 1
+                                    opacity: (isReadOnly || estadoActual === 'ACTIVA' || isAnulado || (imp.requisiciones && (imp.requisiciones.status_compra === 'Comprado' || imp.requisiciones.status_compra === 'Recibido en Almacén')) || !!editingImpUser) ? 0.3 : 1
                                   }}
                                   title={
-                                    (imp.requisiciones && (imp.requisiciones.status_compra === 'Comprado' || imp.requisiciones.status_compra === 'Recibido en Almacén'))
-                                      ? "No se puede anular: Requisición ya Comprada o en Almacén"
-                                      : isAnulado
-                                        ? "Renglón ya sin efecto"
-                                        : "Anular Renglón (Sin Efecto)"
+                                    estadoActual === 'ACTIVA'
+                                      ? "Para borrar un renglón en una solicitud activa, use el bote de basura (eliminar)"
+                                      : (imp.requisiciones && (imp.requisiciones.status_compra === 'Comprado' || imp.requisiciones.status_compra === 'Recibido en Almacén'))
+                                        ? "No se puede anular: Requisición ya Comprada o en Almacén"
+                                        : isAnulado
+                                          ? "Renglón ya sin efecto"
+                                          : "Anular Renglón (Sin Efecto)"
                                   }
                                 >
                                   🚫
