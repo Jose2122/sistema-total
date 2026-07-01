@@ -942,7 +942,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
         const miNombre = `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim();
         puedeRechazar = compararNombres(miNombre, gerenteEsperado) || rolUser.includes('proyecto');
       } else {
-        puedeRechazar = rolUser.includes('proyecto') || (rolUser.includes('gerente') && currentUser?.departamento === reqActual?.gerencia);
+        puedeRechazar = rolUser.includes('proyecto');
       }
     }
 
@@ -1322,7 +1322,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
         const miNombre = `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim();
         puedeAprobar = compararNombres(miNombre, gerenteEsperado) || rolUser.includes('proyecto');
       } else {
-        puedeAprobar = rolUser.includes('proyecto') || (rolUser.includes('gerente') && currentUser?.departamento === reqActual?.gerencia);
+        puedeAprobar = rolUser.includes('proyecto');
       }
     }
 
@@ -4128,9 +4128,9 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                                   puedeVerBotonesProyecto = currentUser?.nombre?.toUpperCase().includes('HILDA');
                                 } else if (gerenteEsperado) {
                                   const miNombre = `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim();
-                                  puedeVerBotonesProyecto = compararNombres(miNombre, gerenteEsperado) || rolUser.includes('proyecto') || (rolUser.includes('gerente') && currentUser?.departamento === reqActual?.gerencia);
+                                  puedeVerBotonesProyecto = compararNombres(miNombre, gerenteEsperado) || rolUser.includes('proyecto');
                                 } else {
-                                  puedeVerBotonesProyecto = rolUser.includes('proyecto') || (rolUser.includes('gerente') && currentUser?.departamento === reqActual?.gerencia);
+                                  puedeVerBotonesProyecto = rolUser.includes('proyecto');
                                 }
                               }
                             }
