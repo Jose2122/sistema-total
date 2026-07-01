@@ -721,6 +721,127 @@ const Compras = () => {
     doc.save(`Minuta_Compra_${requisicionActiva.correlativo}.pdf`);
   };
 
+  const generarGuiaChoferPDF = () => {
+    if (!requisicionActiva) return;
+    const doc = new jsPDF('p', 'pt', 'letter');
+    const margins = 40;
+    let y = 50;
+
+    // --- LOGO / NOMBRE EMPRESA ---
+    doc.setFontSize(14);
+    doc.setFont("Helvetica", "bold");
+    doc.setTextColor(15, 23, 42);
+    doc.text("TOTAL CLEAN C.A.", margins, y);
+    doc.setFontSize(9);
+    doc.setFont("Helvetica", "normal");
+    doc.setTextColor(100, 116, 139);
+    y += 12;
+    doc.text("J-303658587-0", margins, y);
+
+    // FECHA Y FOLIO AL LADO DERECHO
+    doc.setFontSize(9);
+    doc.setFont("Helvetica", "normal");
+    doc.text(`Fecha: ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`, doc.internal.pageSize.width - margins, 50, { align: 'right' });
+    y += 28;
+
+    // --- TÍTULO DE REQUISICIÓN ---
+    doc.setFontSize(14);
+    doc.setFont("Helvetica", "bold");
+    doc.setTextColor(15, 23, 42);
+    doc.text(`GUÍA DE COMPRA (CHOFER): ${requisicionActiva.correlativo || ''}`, margins, y);
+    
+    // Emergencia Badge
+    const esEmergencia = requisicionActiva.prioridad === 'Emergencia';
+    if (esEmergencia) {
+      doc.setFontSize(10);
+      doc.setTextColor(239, 68, 68); // Rojo
+      doc.text("⚠️ EMERGENCIA (COMPRA INMEDIATA)", doc.internal.pageSize.width - margins, y, { align: 'right' });
+    } else {
+      doc.setFontSize(10);
+      doc.setTextColor(100, 116, 139);
+      doc.text("Prioridad: Normal", doc.internal.pageSize.width - margins, y, { align: 'right' });
+    }
+    
+    y += 15;
+    doc.setDrawColor(226, 232, 240);
+    doc.line(margins, y, doc.internal.pageSize.width - margins, y);
+    y += 20;
+
+    // --- RECUADRO DE DATOS ---
+    doc.setFillColor(248, 250, 252);
+    doc.rect(margins, y, doc.internal.pageSize.width - (margins * 2), 65, "F");
+    doc.setDrawColor(226, 232, 240);
+    doc.rect(margins, y, doc.internal.pageSize.width - (margins * 2), 65, "S");
+
+    doc.setFontSize(9);
+    doc.setTextColor(100, 116, 139);
+    doc.setFont("Helvetica", "bold");
+    
+    // Fila 1 del recuadro
+    doc.text("GERENCIA / DEPTO:", margins + 15, y + 20);
+    doc.text("SOLICITANTE:", margins + 280, y + 20);
+    
+    // Fila 2 del recuadro
+    doc.text("RESPONSABLE COMPRA:", margins + 15, y + 45);
+    doc.text("CENTRO DE COSTO:", margins + 280, y + 45);
+
+    doc.setFont("Helvetica", "normal");
+    doc.setTextColor(15, 23, 42);
+    doc.text(requisicionActiva.gerencia || 'Compras', margins + 130, y + 20);
+    doc.text(requisicionActiva.solicitante || '---', margins + 380, y + 20);
+    doc.text(requisicionActiva.asignado_nombre || 'Sin asignar', margins + 150, y + 45);
+    doc.text(requisicionActiva.centro_costo || '---', margins + 395, y + 45);
+
+    y += 95;
+
+    // --- TABLA DE ITEMS ---
+    doc.setFontSize(11);
+    doc.setFont("Helvetica", "bold");
+    doc.text("Listado de Materiales por Comprar", margins, y);
+    y += 15;
+
+    const headers = [["C.COSTO", "CATEGORÍA", "DESCRIPCIÓN", "SOLICITADA", "COMPRADA", "PENDIENTE"]];
+    const data = renglones.map(r => [
+      requisicionActiva.centro_costo || '---',
+      r.categoria || 'Generales',
+      r.descripcion || '',
+      `${r.cantidad_pedida} ${r.uni || r.unidad || ''}`,
+      `${r.cantidad_comprada || 0} ${r.uni || r.unidad || ''}`,
+      `${r.cantidad_pendiente || 0} ${r.uni || r.unidad || ''}`
+    ]);
+
+    autoTable(doc, {
+      startY: y,
+      head: headers,
+      body: data,
+      theme: 'grid',
+      headStyles: { fillColor: [15, 23, 42], textColor: 255, fontStyle: 'bold' },
+      styles: { fontSize: 8 },
+      columnStyles: {
+        0: { cellWidth: 100 },
+        1: { cellWidth: 100 },
+        2: { cellWidth: 200 },
+        3: { cellWidth: 60, halign: 'center' },
+        4: { cellWidth: 60, halign: 'center' },
+        5: { cellWidth: 60, halign: 'center', fontStyle: 'bold' }
+      }
+    });
+
+    y = doc.lastAutoTable.finalY + 40;
+
+    // --- SECCIÓN DE FIRMAS ---
+    doc.setDrawColor(203, 213, 225);
+    doc.line(margins + 50, y, margins + 200, y);
+    doc.line(doc.internal.pageSize.width - margins - 200, y, doc.internal.pageSize.width - margins - 50, y);
+    y += 15;
+    doc.setFontSize(8);
+    doc.setTextColor(100, 116, 139);
+    doc.text("ENTREGADO POR (COMPRAS)", margins + 125, y, { align: 'center' });
+    doc.text("RECIBIDO POR (CHOFER)", doc.internal.pageSize.width - margins - 125, y, { align: 'center' });
+
+    doc.save(`Guia_Chofer_${requisicionActiva.correlativo}.pdf`);
+  };
+
   const liberarPartidasFondos = async (requisicionId) => {
     try {
       const { error } = await supabase
@@ -2556,6 +2677,30 @@ const Compras = () => {
                       </div>
                     );
                   })()}
+
+                  <button
+                    onClick={generarGuiaChoferPDF}
+                    style={{
+                      padding: '8px 16px',
+                      borderRadius: '10px',
+                      border: '1px solid #10b981',
+                      backgroundColor: '#ecfdf5',
+                      color: '#10b981',
+                      fontSize: '0.75rem',
+                      fontWeight: 'bold',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      transition: 'all 0.2s',
+                      boxShadow: '0 2px 4px rgba(16, 185, 129, 0.05)'
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#d1fae5'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#ecfdf5'; }}
+                    title="Descargar Guía para el Chofer (Sin Precios)"
+                  >
+                    📄 IMPRIMIR GUÍA CHOFER
+                  </button>
 
                   <div style={{ textAlign: 'right' }}>
                     <div style={{ fontSize: '0.65rem', fontWeight: 'bold', color: '#94a3b8', textTransform: 'uppercase' }}>Status de Compra</div>
