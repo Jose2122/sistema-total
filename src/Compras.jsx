@@ -725,6 +725,7 @@ const Compras = () => {
     if (!requisicionActiva) return;
     const doc = new jsPDF('p', 'pt', 'letter');
     const margins = 40;
+    const pageWidth = doc.internal.pageSize.width;
     let y = 50;
 
     // --- LOGO / NOMBRE EMPRESA ---
@@ -738,40 +739,50 @@ const Compras = () => {
     y += 12;
     doc.text("J-303658587-0", margins, y);
 
-    // FECHA Y FOLIO AL LADO DERECHO
+    // FECHA AL LADO DERECHO
     doc.setFontSize(9);
     doc.setFont("Helvetica", "normal");
-    doc.text(`Fecha: ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`, doc.internal.pageSize.width - margins, 50, { align: 'right' });
-    y += 28;
+    doc.text(`Fecha: ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`, pageWidth - margins, 50, { align: 'right' });
+    y += 35;
 
-    // --- TÍTULO DE REQUISICIÓN ---
-    doc.setFontSize(14);
+    // --- TÍTULO PRINCIPAL CENTRADO ---
+    doc.setFontSize(16);
     doc.setFont("Helvetica", "bold");
     doc.setTextColor(15, 23, 42);
-    doc.text(`GUÍA DE COMPRA (CHOFER): ${requisicionActiva.correlativo || ''}`, margins, y);
-    
-    // Emergencia Badge
+    doc.text("GUÍA DE COMPRA PARA CHOFER", pageWidth / 2, y, { align: 'center' });
+    y += 22;
+
+    // --- NÚMERO DE REQUISICIÓN CENTRADO Y DESTAQUED ---
+    doc.setFontSize(20);
+    doc.setFont("Helvetica", "bold");
+    doc.setTextColor(14, 165, 233); // Azul sky
+    doc.text(requisicionActiva.correlativo || '', pageWidth / 2, y, { align: 'center' });
+    y += 22;
+
+    // --- PRIORIDAD DESTACADA Y CENTRADA ---
     const esEmergencia = requisicionActiva.prioridad === 'Emergencia';
     if (esEmergencia) {
-      doc.setFontSize(10);
+      doc.setFontSize(11);
       doc.setTextColor(239, 68, 68); // Rojo
-      doc.text("⚠️ EMERGENCIA (COMPRA INMEDIATA)", doc.internal.pageSize.width - margins, y, { align: 'right' });
+      doc.setFont("Helvetica", "bold");
+      doc.text("🚨 COMPRA DE EMERGENCIA (ATENCIÓN INMEDIATA) 🚨", pageWidth / 2, y, { align: 'center' });
     } else {
       doc.setFontSize(10);
-      doc.setTextColor(100, 116, 139);
-      doc.text("Prioridad: Normal", doc.internal.pageSize.width - margins, y, { align: 'right' });
+      doc.setTextColor(100, 116, 139); // Gris
+      doc.setFont("Helvetica", "normal");
+      doc.text("Prioridad: Normal", pageWidth / 2, y, { align: 'center' });
     }
-    
+
     y += 15;
     doc.setDrawColor(226, 232, 240);
-    doc.line(margins, y, doc.internal.pageSize.width - margins, y);
+    doc.line(margins, y, pageWidth - margins, y);
     y += 20;
 
     // --- RECUADRO DE DATOS ---
     doc.setFillColor(248, 250, 252);
-    doc.rect(margins, y, doc.internal.pageSize.width - (margins * 2), 65, "F");
+    doc.rect(margins, y, pageWidth - (margins * 2), 65, "F");
     doc.setDrawColor(226, 232, 240);
-    doc.rect(margins, y, doc.internal.pageSize.width - (margins * 2), 65, "S");
+    doc.rect(margins, y, pageWidth - (margins * 2), 65, "S");
 
     doc.setFontSize(9);
     doc.setTextColor(100, 116, 139);
@@ -797,6 +808,7 @@ const Compras = () => {
     // --- TABLA DE ITEMS ---
     doc.setFontSize(11);
     doc.setFont("Helvetica", "bold");
+    doc.setTextColor(15, 23, 42);
     doc.text("Listado de Materiales por Comprar", margins, y);
     y += 15;
 
@@ -827,17 +839,17 @@ const Compras = () => {
       }
     });
 
-    y = doc.lastAutoTable.finalY + 40;
+    y = doc.lastAutoTable.finalY + 45;
 
     // --- SECCIÓN DE FIRMAS ---
     doc.setDrawColor(203, 213, 225);
     doc.line(margins + 50, y, margins + 200, y);
-    doc.line(doc.internal.pageSize.width - margins - 200, y, doc.internal.pageSize.width - margins - 50, y);
+    doc.line(pageWidth - margins - 200, y, pageWidth - margins - 50, y);
     y += 15;
     doc.setFontSize(8);
     doc.setTextColor(100, 116, 139);
     doc.text("ENTREGADO POR (COMPRAS)", margins + 125, y, { align: 'center' });
-    doc.text("RECIBIDO POR (CHOFER)", doc.internal.pageSize.width - margins - 125, y, { align: 'center' });
+    doc.text("RECIBIDO POR (CHOFER)", pageWidth - margins - 125, y, { align: 'center' });
 
     doc.save(`Guia_Chofer_${requisicionActiva.correlativo}.pdf`);
   };
@@ -2678,29 +2690,7 @@ const Compras = () => {
                     );
                   })()}
 
-                  <button
-                    onClick={generarGuiaChoferPDF}
-                    style={{
-                      padding: '8px 16px',
-                      borderRadius: '10px',
-                      border: '1px solid #10b981',
-                      backgroundColor: '#ecfdf5',
-                      color: '#10b981',
-                      fontSize: '0.75rem',
-                      fontWeight: 'bold',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '6px',
-                      transition: 'all 0.2s',
-                      boxShadow: '0 2px 4px rgba(16, 185, 129, 0.05)'
-                    }}
-                    onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#d1fae5'; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#ecfdf5'; }}
-                    title="Descargar Guía para el Chofer (Sin Precios)"
-                  >
-                    📄 IMPRIMIR GUÍA CHOFER
-                  </button>
+
 
                   <div style={{ textAlign: 'right' }}>
                     <div style={{ fontSize: '0.65rem', fontWeight: 'bold', color: '#94a3b8', textTransform: 'uppercase' }}>Status de Compra</div>
@@ -3457,6 +3447,27 @@ const Compras = () => {
               </button>
 
               <div style={{ display: 'flex', gap: '12px' }}>
+                <button
+                  onClick={generarGuiaChoferPDF}
+                  style={{
+                    padding: '12px 25px',
+                    backgroundColor: '#f1f5f9',
+                    border: '1px solid #cbd5e1',
+                    color: '#475569',
+                    fontWeight: 'bold',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    transition: 'all 0.2s'
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#e2e8f0'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#f1f5f9'; }}
+                  title="Descargar Guía para el Chofer (Sin Precios)"
+                >
+                  📄 IMPRIMIR GUÍA CHOFER
+                </button>
                 <button
                   className="btn-tc"
                   onClick={() => guardarCambiosProcesamiento(true)}
