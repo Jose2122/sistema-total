@@ -662,21 +662,17 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       setHistorial(dataHist.map(h => {
         const misPartidas = (pagosData || []).filter(p => p.solicitud_id === h.id);
 
-        let calculatedTotalBs = 0;
-        let calculatedTotalUsd = 0;
+        const calculatedTotalBs = parseFloat(h.total_bs || 0);
+        const calculatedTotalUsd = parseFloat(h.total_usd || 0);
         let totalPagado = 0;
         let pendingBs = 0;
         let pendingUsd = 0;
 
         if (misPartidas.length > 0) {
-          calculatedTotalBs = misPartidas.reduce((acc, p) => acc + (parseFloat(p.pu_bs) || 0) * (p.cantidad || 1), 0);
-          calculatedTotalUsd = misPartidas.reduce((acc, p) => acc + (parseFloat(p.pu_usd) || 0) * (p.cantidad || 1), 0);
           totalPagado = misPartidas.reduce((acc, p) => acc + (p.pago_realizado ? (parseFloat(p.pu_bs) || parseFloat(p.pu_usd) || 0) * (p.cantidad || 1) : 0), 0);
           pendingBs = misPartidas.reduce((acc, p) => acc + (!p.pago_realizado ? (parseFloat(p.pu_bs) || 0) * (p.cantidad || 1) : 0), 0);
           pendingUsd = misPartidas.reduce((acc, p) => acc + (!p.pago_realizado ? (parseFloat(p.pu_usd) || 0) * (p.cantidad || 1) : 0), 0);
         } else {
-          calculatedTotalBs = parseFloat(h.total_bs || 0);
-          calculatedTotalUsd = parseFloat(h.total_usd || 0);
           totalPagado = h.pago_realizado ? (calculatedTotalBs + calculatedTotalUsd) : 0;
           pendingBs = h.pago_realizado ? 0 : calculatedTotalBs;
           pendingUsd = h.pago_realizado ? 0 : calculatedTotalUsd;
