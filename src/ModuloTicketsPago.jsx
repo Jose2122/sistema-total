@@ -624,10 +624,16 @@ const ModuloTicketsPago = () => {
           rolUpper.includes('ADMINISTRA') ||
           rolUpper.includes('COMPRA') ||
           rolUpper.includes('COMPRADOR') ||
+          rolUpper.includes('DIRECTOR') ||
           deptoUpper.includes('ADMINISTRA') ||
           deptoUpper.includes('CONTABIL') ||
           deptoUpper.includes('COMPRA') ||
-          activeUser.capacidades?.ver_tickets_global === true;
+          deptoUpper.includes('DIRECTOR') ||
+          emailLower.includes('tostitomas') ||
+          (activeUser.nombre || '').toLowerCase().includes('tostitomas') ||
+          (activeUser.usuario || '').toLowerCase() === 'tostitomas' ||
+          activeUser.capacidades?.ver_tickets_global === true ||
+          activeUser.capacidades?.ver_todos_tickets === true;
 
         if (!tieneVisibilidadGlobal) {
           const rawUserId = activeUser.id || '';

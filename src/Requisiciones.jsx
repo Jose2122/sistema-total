@@ -280,11 +280,18 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       // --- NUEVA LÓGICA DE SEGURIDAD JERÁRQUICA (SOLICITUD 24/04) ---
       const rolUserLower = (currentUser.rol || '').toLowerCase();
       const deptoUserLower = (currentUser.departamento || '').toLowerCase();
+      const esDirector = rolUserLower.includes('director') || deptoUserLower.includes('director');
+      const esTostitomas = (currentUser.correo || '').toLowerCase().includes('tostitomas') ||
+        (currentUser.nombre || '').toLowerCase().includes('tostitomas') ||
+        (currentUser.usuario || '').toLowerCase() === 'tostitomas';
 
       const esAdminRealOCarlos = esAdminReal ||
         (currentUser.correo || '').toLowerCase() === 'cvega@totalclean.com' ||
         (currentUser.nombre || '').toLowerCase().includes('carlos') ||
-        currentUser.capacidades?.ver_requisiciones_global === true;
+        currentUser.capacidades?.ver_requisiciones_global === true ||
+        currentUser.capacidades?.ver_requisiciones_todos_deptos === true ||
+        esDirector ||
+        esTostitomas;
 
       if (!esAdminRealOCarlos) {
         const rawUserId = currentUser.id || '';

@@ -100,30 +100,43 @@ const ResumenEjecutivo = ({ currentUser }) => {
         ((currentUser?.nombre || '').trim().toLowerCase() === 'perla' && 
          (currentUser?.apellido || '').trim().toLowerCase() === 'delgado');
 
+    const esDirector = userRole.toLowerCase().includes('director') || userDept.toLowerCase().includes('director');
+    const esTostitomas = (currentUser?.correo || '').toLowerCase().includes('tostitomas') ||
+        (currentUser?.nombre || '').toLowerCase().includes('tostitomas') ||
+        (currentUser?.usuario || '').toLowerCase() === 'tostitomas';
+
     const esAdminGlobal = currentUser?.correo === 'jcontreras.totalclean@gmail.com' ||
         currentUser?.correo === 'cvega.totalclean@gmail.com' ||
         currentUser?.esAdminReal ||
         userRole === 'Admin' ||
         userRole === 'Gerente General' ||
-        esPerlaDelgado;
+        esPerlaDelgado ||
+        esDirector ||
+        esTostitomas;
     const restrictToDept = !esAdminGlobal;
     const userDeptoName = userDept.trim();
 
     // Datasets restringidos o globales según rol/capacidades
     const myReqs = useMemo(() => {
-        const canViewGlobalReqs = esAdminGlobal || currentUser?.capacidades?.ver_requisiciones_global === true;
+        const canViewGlobalReqs = esAdminGlobal || 
+            currentUser?.capacidades?.ver_requisiciones_global === true ||
+            currentUser?.capacidades?.ver_requisiciones_todos_deptos === true;
         if (canViewGlobalReqs || !userDeptoName) return rawReqs;
         return rawReqs.filter(r => (r.gerencia || '').toLowerCase().includes(userDeptoName.toLowerCase()));
     }, [rawReqs, esAdminGlobal, currentUser, userDeptoName]);
 
     const myFunds = useMemo(() => {
-        const canViewGlobalFunds = esAdminGlobal || currentUser?.capacidades?.ver_solicitudes_global === true;
+        const canViewGlobalFunds = esAdminGlobal || 
+            currentUser?.capacidades?.ver_solicitudes_global === true ||
+            currentUser?.capacidades?.ver_historial_global === true;
         if (canViewGlobalFunds || !userDeptoName) return rawFunds;
         return rawFunds.filter(s => (s.gerencia_nombre || '').toLowerCase().includes(userDeptoName.toLowerCase()));
     }, [rawFunds, esAdminGlobal, currentUser, userDeptoName]);
 
     const myTickets = useMemo(() => {
-        const canViewGlobalTickets = esAdminGlobal || currentUser?.capacidades?.ver_tickets_global === true;
+        const canViewGlobalTickets = esAdminGlobal || 
+            currentUser?.capacidades?.ver_tickets_global === true ||
+            currentUser?.capacidades?.ver_todos_tickets === true;
         if (canViewGlobalTickets || !userDeptoName) return rawTickets;
         return rawTickets.filter(t => (t.departamento || '').toLowerCase().includes(userDeptoName.toLowerCase()));
     }, [rawTickets, esAdminGlobal, currentUser, userDeptoName]);
@@ -285,18 +298,39 @@ const ResumenEjecutivo = ({ currentUser }) => {
 
         // 1. Incorporar Planificación y Fondos (Budget)
         filteredFunds.forEach(s => {
+            // Solo considerar si el estado de aprobación es conforme (aprobado_final)
+            if ((s.estado_aprobacion || '').toLowerCase() !== 'aprobado_final') return;
+
             const gName = s.gerencia_nombre || 'S/G';
             if (!aggregated[gName]) {
                 aggregated[gName] = { name: gName, estimado: 0, gastado: 0, count: 0, topCategories: {}, reqCount: 0, ticketCount: 0, gastoReqs: 0, gastoTickets: 0 };
             }
 
-            const estimado = (Number(s.total_usd) || 0) + (Number(s.total_bs) || 0);
-            aggregated[gName].estimado += estimado;
-            aggregated[gName].count += 1;
+            // Sumar de forma real las partidas de la solicitud, descartando las anuladas por el usuario
+            const deptoPartidas = rawPartidas.filter(p => p.solicitud_id === s.id && p.status !== 'ANULADO_POR_USUARIO');
+            let estimado = 0;
+            if (deptoPartidas.length > 0) {
+                estimado = deptoPartidas.reduce((sumPartida, p) => {
+                    const usd = (Number(p.puUsd) || 0) * (Number(p.cant) || 1);
+                    const bs = (Number(p.puBs) || 0) * (Number(p.cant) || 1);
+                    return sumPartida + usd + bs;
+                }, 0);
+            } else {
+                estimado = (Number(s.total_usd) || 0) + (Number(s.total_bs) || 0);
+            }
+
+            if (estimado > 0) {
+                aggregated[gName].estimado += estimado;
+                aggregated[gName].count += 1;
+            }
         });
 
         // 2. Incorporar Requisiciones en el Gasto Real (Spend)
         filteredReqs.forEach(r => {
+            // Solo considerar si el estado de aprobación es conforme (aprobado_final)
+            const status = (r.estado_aprobacion || '').toLowerCase();
+            if (status !== 'aprobado_final') return;
+
             const gName = r.gerencia || 'S/G';
             if (!aggregated[gName]) {
                 aggregated[gName] = { name: gName, estimado: 0, gastado: 0, count: 0, topCategories: {}, reqCount: 0, ticketCount: 0, gastoReqs: 0, gastoTickets: 0 };
@@ -308,17 +342,21 @@ const ResumenEjecutivo = ({ currentUser }) => {
                 return s + h.reduce((acc, comp) => acc + ((Number(comp.cant) || 0) * (Number(comp.pu) || 0)), 0);
             }, 0) * (r.con_iva !== false ? 1.16 : 1.00);
 
-            aggregated[gName].gastado += ejec;
-            aggregated[gName].gastoReqs += ejec;
-            aggregated[gName].reqCount += 1;
-            aggregated[gName].count += 1;
+            if (ejec > 0) {
+                aggregated[gName].gastado += ejec;
+                aggregated[gName].gastoReqs += ejec;
+                aggregated[gName].reqCount += 1;
+                aggregated[gName].count += 1;
 
-            items.forEach(i => {
-                const cat = i.categoria || 'S/C';
-                const h = Array.isArray(i.historial_compras) ? i.historial_compras : [];
-                const m_it = h.reduce((acc, comp) => acc + (Number(comp.cant) * (Number(comp.pu) || 0)), 0);
-                aggregated[gName].topCategories[cat] = (aggregated[gName].topCategories[cat] || 0) + m_it;
-            });
+                items.forEach(i => {
+                    const cat = i.categoria || 'S/C';
+                    const h = Array.isArray(i.historial_compras) ? i.historial_compras : [];
+                    const m_it = h.reduce((acc, comp) => acc + (Number(comp.cant) * (Number(comp.pu) || 0)), 0);
+                    if (m_it > 0) {
+                        aggregated[gName].topCategories[cat] = (aggregated[gName].topCategories[cat] || 0) + m_it;
+                    }
+                });
+            }
         });
 
         // 3. Incorporar Tickets Directos en el Gasto Real (Gasto sin orden previa)
@@ -385,16 +423,20 @@ const ResumenEjecutivo = ({ currentUser }) => {
                 if (diffDays > 5) stagnant.push(r);
             }
 
-            const cc = r.centro_costo?.split('(')[0]?.trim() || 'S/CC';
-            if (!byCC[cc]) byCC[cc] = 0;
-            const items = Array.isArray(r.items) ? r.items : [];
-            const ejec = Number(r.total_ejecutado) || items.reduce((s, i) => {
-                const h = Array.isArray(i.historial_compras) ? i.historial_compras : [];
-                return s + h.reduce((acc, comp) => acc + ((Number(comp.cant) || 0) * (Number(comp.pu) || 0)), 0);
-            }, 0) * (r.con_iva !== false ? 1.16 : 1.00);
-            
-            byCC[cc] += ejec;
-            totalEjecutadoGlobal += ejec;
+            if (status === 'aprobado_final') {
+                const cc = r.centro_costo?.split('(')[0]?.trim() || 'S/CC';
+                if (!byCC[cc]) byCC[cc] = 0;
+                const items = Array.isArray(r.items) ? r.items : [];
+                const ejec = Number(r.total_ejecutado) || items.reduce((s, i) => {
+                    const h = Array.isArray(i.historial_compras) ? i.historial_compras : [];
+                    return s + h.reduce((acc, comp) => acc + ((Number(comp.cant) || 0) * (Number(comp.pu) || 0)), 0);
+                }, 0) * (r.con_iva !== false ? 1.16 : 1.00);
+                
+                if (ejec > 0) {
+                    byCC[cc] += ejec;
+                    totalEjecutadoGlobal += ejec;
+                }
+            }
         });
 
         // Sumar e integrar los Tickets de Pago en el análisis por centro de costo
@@ -419,7 +461,22 @@ const ResumenEjecutivo = ({ currentUser }) => {
         });
 
         // Alinear totalEstimadoGlobal con la suma de la planificación en filteredFunds
-        const totalEstimadoGlobal = filteredFunds.reduce((sum, s) => sum + (Number(s.total_usd) || 0) + (Number(s.total_bs) || 0), 0);
+        const totalEstimadoGlobal = filteredFunds.reduce((sum, s) => {
+            if ((s.estado_aprobacion || '').toLowerCase() !== 'aprobado_final') return sum;
+            
+            const deptoPartidas = rawPartidas.filter(p => p.solicitud_id === s.id && p.status !== 'ANULADO_POR_USUARIO');
+            let estimado = 0;
+            if (deptoPartidas.length > 0) {
+                estimado = deptoPartidas.reduce((sumPartida, p) => {
+                    const usd = (Number(p.puUsd) || 0) * (Number(p.cant) || 1);
+                    const bs = (Number(p.puBs) || 0) * (Number(p.cant) || 1);
+                    return sumPartida + usd + bs;
+                }, 0);
+            } else {
+                estimado = (Number(s.total_usd) || 0) + (Number(s.total_bs) || 0);
+            }
+            return sum + estimado;
+        }, 0);
 
         const gastoConsolidadoReal = totalEjecutadoGlobal + totalTicketsGlobal;
 
@@ -437,10 +494,22 @@ const ResumenEjecutivo = ({ currentUser }) => {
         const slaStats = { proyecto: [], area: [], general: [], compras: [] };
         filteredReqs.forEach(r => {
             const created = parseISO(r.created_at || r.fecha_emision);
-            if (r.f_aprobacion_proyecto) slaStats.proyecto.push(Math.max(0, (parseISO(r.f_aprobacion_proyecto) - created) / (1000 * 60 * 60 * 24)));
-            if (r.f_aprobacion_area && r.f_aprobacion_proyecto) slaStats.area.push(Math.max(0, (parseISO(r.f_aprobacion_area) - parseISO(r.f_aprobacion_proyecto)) / (1000 * 60 * 60 * 24)));
-            if (r.f_aprobacion_general && r.f_aprobacion_area) slaStats.general.push(Math.max(0, (parseISO(r.f_aprobacion_general) - parseISO(r.f_aprobacion_area)) / (1000 * 60 * 60 * 24)));
-            if (r.f_inicio_compras && r.f_aprobacion_general) slaStats.compras.push(Math.max(0, (parseISO(r.f_inicio_compras) - parseISO(r.f_aprobacion_general)) / (1000 * 60 * 60 * 24)));
+            if (r.f_aprobacion_proyecto) {
+                const diff = (parseISO(r.f_aprobacion_proyecto) - created) / (1000 * 60 * 60 * 24);
+                if (diff > 0.01) slaStats.proyecto.push(diff);
+            }
+            if (r.f_aprobacion_area && r.f_aprobacion_proyecto) {
+                const diff = (parseISO(r.f_aprobacion_area) - parseISO(r.f_aprobacion_proyecto)) / (1000 * 60 * 60 * 24);
+                if (diff > 0.01) slaStats.area.push(diff);
+            }
+            if (r.f_aprobacion_general && r.f_aprobacion_area) {
+                const diff = (parseISO(r.f_aprobacion_general) - parseISO(r.f_aprobacion_area)) / (1000 * 60 * 60 * 24);
+                if (diff > 0.01) slaStats.general.push(diff);
+            }
+            if (r.f_inicio_compras && r.f_aprobacion_general) {
+                const diff = (parseISO(r.f_inicio_compras) - parseISO(r.f_aprobacion_general)) / (1000 * 60 * 60 * 24);
+                if (diff > 0.01) slaStats.compras.push(diff);
+            }
         });
 
         const avg_f = (arr) => arr.length ? (arr.reduce((a, b) => a + b, 0) / arr.length).toFixed(1) : 0;
@@ -487,11 +556,45 @@ const ResumenEjecutivo = ({ currentUser }) => {
             .sort((a, b) => b.count - a.count)
             .slice(0, 5);
 
+        // Calcular pendiente por pagar
+        let pendienteReqs = 0;
+        filteredReqs.forEach(r => {
+            const status = (r.estado_aprobacion || '').toLowerCase();
+            if (status === 'aprobado_final') {
+                const items = Array.isArray(r.items) ? r.items : [];
+                let subPendiente = 0;
+                items.forEach(i => {
+                    const h = Array.isArray(i.historial_compras) ? i.historial_compras : [];
+                    h.forEach(comp => {
+                        const esNC = comp.doc_tipo === 'NC' || comp.metodo_pago?.includes('CRÉDITO');
+                        const esLiquidado = comp.metodo_pago?.includes('PAGADO');
+                        if (esNC && !esLiquidado) {
+                            subPendiente += (Number(comp.cant) || 0) * (Number(comp.pu) || 0);
+                        }
+                    });
+                });
+                pendienteReqs += subPendiente * (r.con_iva !== false ? 1.16 : 1.00);
+            }
+        });
+
+        let pendienteTickets = 0;
+        filteredTickets.forEach(t => {
+            const statusUpper = (t.status || '').toUpperCase();
+            if (statusUpper !== 'COMPLETADO' && statusUpper !== 'RECHAZADO' && statusUpper !== 'ANULADO') {
+                pendienteTickets += getTicketTotal(t);
+            }
+        });
+
+        const pendientePagar = pendienteReqs + pendienteTickets;
+
         return {
             gastoActual: totalEjecutadoGlobal,
             gastoConsolidadoReal,
             totalTicketsGlobal,
-            ahorroTotal: totalEstimadoGlobal - totalEjecutadoGlobal,
+            ahorroTotal: Math.max(0, totalEstimadoGlobal - gastoConsolidadoReal),
+            pendientePagar,
+            pendienteReqs,
+            pendienteTickets,
             solicitudesAnalisis,
             funnel,
             stagnantCount: stagnant.length,
@@ -508,7 +611,7 @@ const ResumenEjecutivo = ({ currentUser }) => {
             ticketsCount: filteredTickets.length,
             emergenciesCount: filteredReqs.filter(r => (r.prioridad || '').toLowerCase() === 'emergencia').length,
             approvedReqsCount: filteredReqs.filter(r => (r.estado_aprobacion || '').toLowerCase() === 'aprobado_final').length,
-            approvedTicketsCount: filteredTickets.filter(t => (t.status || '').toLowerCase() === 'aprobado_final' || (t.status || '').toLowerCase() === 'pagado').length,
+            approvedTicketsCount: filteredTickets.filter(t => (t.status || '').toLowerCase() === 'aprobado_final' || (t.status || '').toLowerCase() === 'pagado' || (t.status || '').toLowerCase() === 'completado').length,
             pendingTicketsCount: filteredTickets.filter(t => (t.status || '').toLowerCase() === 'en_espera').length,
             topDelayed: (() => {
                 return filteredReqs
@@ -523,6 +626,7 @@ const ResumenEjecutivo = ({ currentUser }) => {
                         const created = parseISO(dateStr);
                         const diffDays = Math.max(0, Math.floor((new Date() - created) / (1000 * 60 * 60 * 24)));
                         return {
+                            id: r.id,
                             correlativo: r.correlativo_req || `REQ-${r.id}`,
                             dias: diffDays,
                             analista: r.asignado_nombre || 'Sin Asignar'
@@ -786,17 +890,17 @@ const ResumenEjecutivo = ({ currentUser }) => {
                     {/* GRID DE KPIs FINANCIEROS */}
                     <div style={kpiGridStyle}>
                         <ExecutiveKPI 
-                            label="Gasto Real Consolidado" 
+                            label="Gasto Total del Mes" 
                             value={`$ ${formatCurrency(stats.gastoConsolidadoReal)}`} 
-                            sub={`Reqs: $${formatCurrency(stats.gastoActual)} + Tickets: $${formatCurrency(stats.totalTicketsGlobal)}`} 
+                            sub={`Reqs: $${formatCurrency(stats.gastoActual)} | Tickets: $${formatCurrency(stats.totalTicketsGlobal)}`} 
                             icon={<TrendingUp />} 
                             color="#10b981"
                             trend={stats.totalEstimadoGlobal > 0 ? `${((stats.gastoConsolidadoReal / stats.totalEstimadoGlobal) * 100).toFixed(0)}% de Ejecución` : null}
                             details={
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                     <div style={{ fontSize: '0.65rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', marginBottom: '4px', borderBottom: '1px solid #f1f5f9', paddingBottom: '4px' }}>Consumo Consolidado por Categoría</div>
-                                    {stats.topCategoriesGlobal.map((cat, ci) => (
-                                        <div key={ci} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    {stats.topCategoriesGlobal.map((cat) => (
+                                        <div key={cat.name} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                             <span style={{ fontSize: '0.7rem', color: '#475569', fontWeight: 600, maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cat.name}</span>
                                             <span style={{ fontSize: '0.7rem', color: '#1e293b', fontWeight: 800 }}>$ {formatCurrency(cat.total)}</span>
                                         </div>
@@ -806,16 +910,17 @@ const ResumenEjecutivo = ({ currentUser }) => {
                         />
 
                         <ExecutiveKPI 
-                            label="Presupuesto de Fondos" 
-                            value={`$ ${formatCurrency(stats.totalEstimadoGlobal)}`} 
-                            sub="Presupuesto Solicitado en Período" 
+                            label="Presupuesto Ejecutado" 
+                            value={`$ ${formatCurrency(stats.gastoConsolidadoReal)}`} 
+                            sub={`De un presupuesto total de $${formatCurrency(stats.totalEstimadoGlobal)}`} 
                             icon={<DollarSign />} 
                             color="#0ea5e9"
+                            trend={stats.totalEstimadoGlobal > 0 ? `${((stats.gastoConsolidadoReal / stats.totalEstimadoGlobal) * 100).toFixed(1)}%` : '0%'}
                             details={
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                     <div style={{ fontSize: '0.65rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', marginBottom: '4px', borderBottom: '1px solid #f1f5f9', paddingBottom: '4px' }}>Presupuesto por Gerencia</div>
-                                    {stats.solicitudesAnalisis.map((g, gi) => (
-                                        <div key={gi} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    {stats.solicitudesAnalisis.map((g) => (
+                                        <div key={g.name} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                             <span style={{ fontSize: '0.7rem', color: '#475569', fontWeight: 600, maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.name}</span>
                                             <span style={{ fontSize: '0.7rem', color: '#1e293b', fontWeight: 800 }}>$ {formatCurrency(g.estimado)}</span>
                                         </div>
@@ -825,22 +930,39 @@ const ResumenEjecutivo = ({ currentUser }) => {
                         />
 
                         <ExecutiveKPI
-                            label="Tickets de Pago Directo"
-                            value={`$ ${formatCurrency(stats.totalTicketsGlobal)}`}
-                            sub="Egresos directos por canal rápido"
+                            label="Ahorro Generado"
+                            value={`$ ${formatCurrency(stats.ahorroTotal)}`}
+                            sub="Diferencia de Planificado vs Gasto Real"
+                            icon={<Zap />}
+                            color="#8b5cf6"
+                            trend={stats.totalEstimadoGlobal > 0 ? `${(Math.max(0, (stats.ahorroTotal / stats.totalEstimadoGlobal) * 100)).toFixed(0)}% Ahorrado` : null}
+                            details={
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                    <div style={{ fontSize: '0.65rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', marginBottom: '4px', borderBottom: '1px solid #f1f5f9', paddingBottom: '4px' }}>Ahorro estimado</div>
+                                    <div style={{ fontSize: '0.7rem', color: '#475569' }}>
+                                        Representa la diferencia positiva entre los fondos planificados aprobados y lo realmente gastado.
+                                    </div>
+                                </div>
+                            }
+                        />
+
+                        <ExecutiveKPI
+                            label="Pendiente por Pagar"
+                            value={`$ ${formatCurrency(stats.pendientePagar)}`}
+                            sub="Notas de Crédito y Tickets sin liquidar"
                             icon={<FileText />}
                             color="#f59e0b"
                             details={
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                    <div style={{ fontSize: '0.65rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', marginBottom: '4px', borderBottom: '1px solid #f1f5f9', paddingBottom: '4px' }}>Gasto Directo por Departamento</div>
-                                    {stats.solicitudesAnalisis.filter(g => g.gastoTickets > 0).map((g, gi) => {
-                                        return (
-                                            <div key={gi} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                                <span style={{ fontSize: '0.7rem', color: '#475569', fontWeight: 600, maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.name}</span>
-                                                <span style={{ fontSize: '0.7rem', color: '#1e293b', fontWeight: 800 }}>$ {formatCurrency(g.gastoTickets)} ({g.ticketCount} tk)</span>
-                                            </div>
-                                        );
-                                    })}
+                                    <div style={{ fontSize: '0.65rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', marginBottom: '4px', borderBottom: '1px solid #f1f5f9', paddingBottom: '4px' }}>Detalle de Deudas</div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                        <span style={{ fontSize: '0.7rem', color: '#475569' }}>Notas de Crédito (NC)</span>
+                                        <span style={{ fontSize: '0.7rem', fontWeight: 800, color: '#e11d48' }}>$ {formatCurrency(stats.pendienteReqs)}</span>
+                                    </div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                        <span style={{ fontSize: '0.7rem', color: '#475569' }}>Tickets de Pago Directo</span>
+                                        <span style={{ fontSize: '0.7rem', fontWeight: 800, color: '#d97706' }}>$ {formatCurrency(stats.pendienteTickets)}</span>
+                                    </div>
                                 </div>
                             }
                         />
@@ -1194,7 +1316,7 @@ const ResumenEjecutivo = ({ currentUser }) => {
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', minHeight: '110px', justifyContent: 'center' }}>
                                     {stats.topDelayed && stats.topDelayed.length > 0 ? (
                                         stats.topDelayed.map((req, idx) => (
-                                            <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.72rem', padding: '6px 0', borderBottom: idx < 2 ? '1px solid #f1f5f9' : 'none' }}>
+                                            <div key={req.id || `delayed-${idx}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.72rem', padding: '6px 0', borderBottom: idx < 2 ? '1px solid #f1f5f9' : 'none' }}>
                                                 <span style={{ fontWeight: 800, color: '#ef4444' }}>{req.correlativo}</span>
                                                 <span style={{ color: '#475569', fontWeight: 700, maxWidth: '100px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{req.analista}</span>
                                                 <span style={{ fontWeight: 900, color: '#b91c1c', backgroundColor: '#fee2e2', padding: '2px 6px', borderRadius: '6px', fontSize: '0.65rem' }}>{req.dias}d</span>
@@ -1214,7 +1336,7 @@ const ResumenEjecutivo = ({ currentUser }) => {
                             <h3 style={{ ...chartTitleStyle, fontSize: '1rem', marginBottom: '20px' }}>Auditoría de Aprobaciones de Procura Recientes</h3>
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '15px' }}>
                                 {stats.recentApprovals.map((app, idx) => (
-                                    <div key={idx} style={{ display: 'flex', gap: '12px', alignItems: 'center', padding: '12px', backgroundColor: '#f8fafc', borderRadius: '12px', border: '1px solid #f1f5f9' }}>
+                                    <div key={app.id || `app-${idx}`} style={{ display: 'flex', gap: '12px', alignItems: 'center', padding: '12px', backgroundColor: '#f8fafc', borderRadius: '12px', border: '1px solid #f1f5f9' }}>
                                         <div style={{ width: '36px', height: '36px', borderRadius: '10px', backgroundColor: '#6366f115', color: '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                             <ShieldCheck size={18} />
                                         </div>
