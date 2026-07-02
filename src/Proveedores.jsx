@@ -6,6 +6,12 @@ import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
 import './Proveedores.css';
 
+const LISTA_CATEGORIAS = [
+  "SERVICIO", "REPUESTO", "ALIMENTACIÓN", "TECNOLOGÍA", "PAPELERÍA", 
+  "LIMPIEZA", "MANTENIMIENTO", "FERRETERÍA", "CONSUMIBLE", "EQUIPO",
+  "TRANSPORTE", "OTROS"
+];
+
 const Proveedores = () => {
   const [proveedores, setProveedores] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -13,12 +19,8 @@ const Proveedores = () => {
   const [busqueda, setBusqueda] = useState('');
   const [filtroCategoria, setFiltroCategoria] = useState('Todos');
   const [saving, setSaving] = useState(false);
-
-  const LISTA_CATEGORIAS = [
-    "SERVICIO", "REPUESTO", "ALIMENTACIÓN", "TECNOLOGÍA", "PAPELERÍA", 
-    "LIMPIEZA", "MANTENIMIENTO", "FERRETERÍA", "CONSUMIBLE", "EQUIPO",
-    "TRANSPORTE", "OTROS"
-  ];
+  const [sessionCategories, setSessionCategories] = useState([]);
+  const [nuevaCategoriaText, setNuevaCategoriaText] = useState('');
 
   const [formData, setFormData] = useState({
     id: null,
@@ -195,6 +197,29 @@ const Proveedores = () => {
       categoria: [],
       status: true
     });
+    setNuevaCategoriaText('');
+  };
+
+  const agregarCategoriaSession = () => {
+    const trimmed = nuevaCategoriaText.trim().toUpperCase();
+    if (!trimmed) {
+      toast.error('La categoría no puede estar vacía');
+      return;
+    }
+    // Verificar si ya existe
+    const yaExiste = categoriasUnicas.includes(trimmed);
+    if (yaExiste) {
+      toast.error('La categoría ya existe');
+      if (!formData.categoria.includes(trimmed)) {
+        setFormData(prev => ({ ...prev, categoria: [...prev.categoria, trimmed] }));
+      }
+      setNuevaCategoriaText('');
+      return;
+    }
+    setSessionCategories(prev => [...prev, trimmed]);
+    setFormData(prev => ({ ...prev, categoria: [...prev.categoria, trimmed] }));
+    setNuevaCategoriaText('');
+    toast.success(`Categoría "${trimmed}" agregada`);
   };
 
   const cargarHistorialCompras = async (p) => {
@@ -593,13 +618,14 @@ const Proveedores = () => {
     proveedores.forEach(p => {
       if (p.categoria) {
         const pCats = p.categoria.split(', ').filter(c => c);
-        pCats.forEach(c => cats.add(c));
+        pCats.forEach(c => cats.add(c.trim().toUpperCase()));
       }
     });
-    // Asegurar que las categorías de la lista también estén presentes si se desea
+    // Asegurar que las categorías de la lista y de sesión estén presentes
     LISTA_CATEGORIAS.forEach(c => cats.add(c));
+    sessionCategories.forEach(c => cats.add(c));
     return Array.from(cats).sort();
-  }, [proveedores]);
+  }, [proveedores, sessionCategories]);
 
   const proveedoresFiltrados = proveedores.filter(p => {
     const matchTexto = p.razon_social?.toLowerCase().includes(busqueda.toLowerCase()) ||
@@ -707,7 +733,7 @@ const Proveedores = () => {
                 </tr>
               </thead>
               <tbody>
-                {proveedoresFiltrados.map((p, index) => (
+                {proveedoresFiltrados.map((p) => (
                   <tr key={p.id}>
                     <td className="rif-cell">{p.rif}</td>
                     <td className="name-cell">{p.razon_social}</td>
@@ -1074,48 +1100,118 @@ const Proveedores = () => {
                 </div>
 
                 <div className="prov-field prov-form-full">
-                  <label className="prov-label">Categorías del Proveedor (Multi-selección)</label>
-                  <div style={{ 
-                    display: 'flex', 
-                    flexWrap: 'wrap', 
-                    gap: '8px', 
-                    padding: '12px', 
-                    border: '1px solid #e2e8f0', 
-                    borderRadius: '12px',
-                    backgroundColor: '#f8fafc'
-                  }}>
-                    {LISTA_CATEGORIAS.map(cat => {
-                      const isSelected = formData.categoria.includes(cat);
-                      return (
-                        <button
+                  <label className="prov-label">Categorías del Proveedor</label>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {/* El dropdown select y nueva categoria */}
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                      <select
+                        className="prov-input"
+                        value=""
+                        onChange={(e) => {
+                          const cat = e.target.value;
+                          if (cat && !formData.categoria.includes(cat)) {
+                            setFormData({...formData, categoria: [...formData.categoria, cat]});
+                          }
+                        }}
+                        style={{ flex: 1, minWidth: '200px' }}
+                      >
+                        <option value="">-- Seleccionar Categoría --</option>
+                        {categoriasUnicas.map(cat => (
+                          <option key={cat} value={cat} disabled={formData.categoria.includes(cat)}>
+                            {cat} {formData.categoria.includes(cat) ? '(Ya seleccionada)' : ''}
+                          </option>
+                        ))}
+                      </select>
+
+                      <input
+                        type="text"
+                        placeholder="NUEVA CATEGORÍA (EJ. CONSTRUCCIÓN)"
+                        value={nuevaCategoriaText}
+                        onChange={(e) => setNuevaCategoriaText(e.target.value.toUpperCase())}
+                        style={{
+                          flex: 1,
+                          minWidth: '240px',
+                          padding: '12px 18px',
+                          borderRadius: '12px',
+                          border: '1px solid #cbd5e1',
+                          fontSize: '0.85rem',
+                          outline: 'none',
+                          backgroundColor: 'white',
+                          fontWeight: '600'
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            agregarCategoriaSession();
+                          }
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={agregarCategoriaSession}
+                        style={{
+                          padding: '12px 18px',
+                          backgroundColor: '#3b82f6',
+                          color: 'white',
+                          borderRadius: '12px',
+                          border: 'none',
+                          fontSize: '0.8rem',
+                          fontWeight: '800',
+                          cursor: 'pointer',
+                          boxShadow: '0 2px 4px rgba(59, 130, 246, 0.2)'
+                        }}
+                      >
+                        + AGREGAR
+                      </button>
+                    </div>
+
+                    {/* Las tags/badges de las categorías seleccionadas */}
+                    <div style={{ 
+                      display: 'flex', 
+                      flexWrap: 'wrap', 
+                      gap: '6px', 
+                      padding: formData.categoria.length > 0 ? '10px' : '0px', 
+                      border: formData.categoria.length > 0 ? '1px solid #e2e8f0' : 'none', 
+                      borderRadius: '12px',
+                      backgroundColor: '#f8fafc'
+                    }}>
+                      {formData.categoria.map(cat => (
+                        <span
                           key={cat}
-                          type="button"
-                          onClick={() => {
-                            if (isSelected) {
-                              setFormData({...formData, categoria: formData.categoria.filter(c => c !== cat)});
-                            } else {
-                              setFormData({...formData, categoria: [...formData.categoria, cat]});
-                            }
-                          }}
                           style={{
-                            padding: '6px 12px',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            backgroundColor: '#eff6ff',
+                            color: '#1d4ed8',
+                            padding: '4px 10px',
                             borderRadius: '20px',
                             fontSize: '0.7rem',
                             fontWeight: '800',
-                            cursor: 'pointer',
-                            transition: 'all 0.2s',
-                            border: isSelected ? '2px solid #3b82f6' : '2px solid transparent',
-                            backgroundColor: isSelected ? '#eff6ff' : 'white',
-                            color: isSelected ? '#1d4ed8' : '#64748b',
-                            boxShadow: isSelected ? '0 2px 4px rgba(59, 130, 246, 0.1)' : '0 1px 2px rgba(0,0,0,0.05)'
+                            border: '1px solid #bfdbfe'
                           }}
                         >
-                          {cat} {isSelected && '✓'}
-                        </button>
-                      );
-                    })}
+                          {cat}
+                          <button
+                            type="button"
+                            onClick={() => setFormData({...formData, categoria: formData.categoria.filter(c => c !== cat)})}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: '#3b82f6',
+                              cursor: 'pointer',
+                              fontWeight: 'bold',
+                              padding: '0 2px',
+                              fontSize: '0.75rem',
+                              lineHeight: 1
+                            }}
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                    </div>
                   </div>
-                  <p style={{ fontSize: '0.65rem', color: '#94a3b8', marginTop: '5px', fontWeight: '500' }}>Seleccione todas las categorías que apliquen a este proveedor.</p>
                 </div>
 
                   <div className="prov-field">

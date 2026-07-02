@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, Component } from 'react';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 // === ERROR BOUNDARY — evita pantalla en blanco por crashes internos ===
 class TicketErrorBoundary extends Component {
@@ -813,6 +815,143 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
     }
   };
 
+  const formatName = (fullName) => {
+    if (!fullName) return '';
+    const parts = fullName.trim().split(/\s+/);
+    if (parts.length <= 2) return fullName;
+    return `${parts[0]} ${parts[parts.length - 1]}`;
+  };
+
+  const generarTicketPDF = () => {
+    const doc = new jsPDF('p', 'mm', 'a4');
+    const fontPrimary = 'helvetica';
+    
+    // --- CABECERA ---
+    doc.setFont(fontPrimary, 'bold');
+    doc.setFontSize(13);
+    doc.setTextColor(15, 23, 42); // Slate-900
+    doc.text("TOTAL CLEAN C.A.", 15, 20);
+    
+    doc.setFont(fontPrimary, 'normal');
+    doc.setFontSize(9);
+    doc.setTextColor(71, 85, 105); // Slate-600
+    doc.text("J-303658587-0", 15, 25);
+    
+    // Derecha: Fecha y Ticket #
+    const fechaEmision = form.fecha 
+      ? format(new Date(form.fecha), 'dd/MM/yyyy hh:mm a') 
+      : format(new Date(), 'dd/MM/yyyy hh:mm a');
+    
+    doc.setFontSize(9);
+    doc.setTextColor(71, 85, 105);
+    doc.text(`Fecha Emisión: ${fechaEmision}`, 195, 20, { align: 'right' });
+    doc.text(`Ticket ID: ${form.id_control || form.id || 'N/A'}`, 195, 25, { align: 'right' });
+    
+    // --- TÍTULO CENTRAL ---
+    doc.setFont(fontPrimary, 'bold');
+    doc.setFontSize(12);
+    doc.setTextColor(15, 23, 42);
+    const titulo = `TICKET DE PAGO / RECIBO: ${form.id_control || 'N/A'}`;
+    const textWidth = doc.getTextWidth(titulo);
+    const posX = (210 - textWidth) / 2;
+    doc.text(titulo, posX, 38);
+    
+    // Línea subrayada del título
+    doc.setDrawColor(15, 23, 42);
+    doc.setLineWidth(0.4);
+    doc.line(posX, 40, posX + textWidth, 40);
+    
+    // --- CUADRO DE METADATA ---
+    const startY = 46;
+    doc.setDrawColor(226, 232, 240); // Borde gris claro
+    doc.setFillColor(248, 250, 252); // Fondo gris muy claro
+    doc.setLineWidth(0.3);
+    doc.roundedRect(15, startY, 180, 28, 2, 2, 'FD');
+    
+    // Texto dentro de la Metadata
+    doc.setFontSize(9.5);
+    doc.setTextColor(15, 23, 42);
+    
+    // Columna Izquierda
+    doc.setFont(fontPrimary, 'bold');
+    doc.text("Beneficiario: ", 20, startY + 8);
+    doc.setFont(fontPrimary, 'normal');
+    doc.setTextColor(51, 65, 85);
+    doc.text(formatName(form.solicitante || form.gerente) || 'Varios', 42, startY + 8);
+    
+    doc.setFont(fontPrimary, 'bold');
+    doc.setTextColor(15, 23, 42);
+    doc.text("Concepto / Motivo: ", 20, startY + 16);
+    doc.setFont(fontPrimary, 'normal');
+    doc.setTextColor(51, 65, 85);
+    
+    const conceptoText = form.justificacion || form.justificacion_detallada || 'Sin asunto especificado';
+    const conceptoLines = doc.splitTextToSize(conceptoText, 140);
+    doc.text(conceptoLines, 50, startY + 16);
+    
+    // Columna Derecha
+    doc.setFont(fontPrimary, 'bold');
+    doc.setTextColor(15, 23, 42);
+    doc.text("Estatus: ", 145, startY + 8);
+    doc.setFont(fontPrimary, 'normal');
+    doc.setTextColor(51, 65, 85);
+    doc.text((form.status || 'EMITIDO').toUpperCase(), 160, startY + 8);
+    
+    // --- TABLA DE ITEMS ---
+    const tableY = startY + 36;
+    
+    const headers = [["DESCRIPCIÓN DEL ÍTEM", "CC", "CATEGORÍA", "CANTIDAD", "P.U. ($)", "TOTAL ($)"]];
+    const data = (form.partidas || []).map(r => {
+      const cant = r.cantidad || r.cantidad_pedida || r.cant || 0;
+      const pu = r.pu || r.puUsd || 0;
+      return [
+        r.desc || r.descripcion || '',
+        r.cc || 'N/A',
+        r.categoria || 'N/A',
+        cant,
+        `$ ${pu.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+        `$ ${(cant * pu).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+      ];
+    });
+    
+    autoTable(doc, {
+      startY: tableY,
+      head: headers,
+      body: data,
+      theme: 'grid',
+      headStyles: { fillColor: [15, 23, 42], textColor: 255, fontStyle: 'bold' },
+      styles: { fontSize: 8.5 },
+      columnStyles: {
+        0: { cellWidth: 70 },
+        1: { cellWidth: 35 },
+        2: { cellWidth: 35 },
+        3: { cellWidth: 15, halign: 'center' },
+        4: { cellWidth: 20, halign: 'right' },
+        5: { cellWidth: 20, halign: 'right' }
+      }
+    });
+    
+    let currentY = doc.lastAutoTable.finalY + 15;
+    
+    // --- SECCIÓN DE TOTALES ---
+    const totalPresupuesto = (form.partidas || []).reduce((acc, r) => {
+      const cant = r.cantidad || r.cantidad_pedida || r.cant || 0;
+      const pu = r.pu || r.puUsd || 0;
+      return acc + (cant * pu);
+    }, 0);
+    const totalConIva = totalPresupuesto * (form.con_iva !== false ? 1.16 : 1.00);
+    
+    doc.setFont(fontPrimary, 'bold');
+    doc.setFontSize(9.5);
+    doc.setTextColor(15, 23, 42);
+    
+    doc.text(`Sub-Total Estimado: $ ${totalPresupuesto.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 195, currentY, { align: 'right' });
+    currentY += 5;
+    doc.text(`Total Estimado ${form.con_iva !== false ? '(C/IVA)' : '(S/IVA)'}: $ ${totalConIva.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 195, currentY, { align: 'right' });
+    
+    doc.save(`ticket_${form.id_control || form.id || 'N/A'}.pdf`);
+  };
+
   const anularTicket = async (t) => {
     const esAutorizado = currentUser?.esSuperAdmin === true ||
       currentUser?.esAdminReal === true ||
@@ -919,7 +1058,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
   }, [historial, busqueda, filtroStatus, filtroGerencia]);
 
   return (
-    <div className="te-container animate-fade-in" style={datosPredefinidos ? { background: 'transparent', padding: 0, boxShadow: 'none', border: 'none' } : {}}>
+    <div className={datosPredefinidos ? "" : "te-container animate-fade-in"} style={datosPredefinidos ? { display: 'contents' } : {}}>
 
       {!datosPredefinidos ? (
         <div className="te-content">
@@ -1223,7 +1362,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
                         lineHeight: '1',
                         letterSpacing: '0.05em'
                       }}>
-                        {idControlAutomatico}
+                        {isEditing ? form.id_control : idControlAutomatico}
                       </div>
                       <div style={{
                         fontSize: '0.6rem',
@@ -1581,6 +1720,27 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
                     {(form.con_iva !== false) ? 'CON IVA (16%)' : 'SIN IVA'}
                   </span>
                 )}
+                {isEditing && (
+                  <button
+                    onClick={generarTicketPDF}
+                    style={{
+                      padding: '10px 25px',
+                      borderRadius: '12px',
+                      border: 'none',
+                      background: '#1e293b',
+                      color: 'white',
+                      fontWeight: 'bold',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      cursor: 'pointer',
+                      fontSize: '0.85rem',
+                      boxShadow: '0 4px 12px rgba(30, 41, 59, 0.2)'
+                    }}
+                  >
+                    <FileText size={16} /> PDF
+                  </button>
+                )}
                 <button
                   onClick={() => setShowModal(false)}
                   style={{
@@ -1599,23 +1759,25 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
                 >
                   <ArrowLeft size={16} /> VOLVER
                 </button>
-                <button
-                  onClick={emitirTicket}
-                  disabled={loading}
-                  style={{
-                    padding: '10px 35px',
-                    borderRadius: '12px',
-                    border: 'none',
-                    background: '#2563eb',
-                    color: 'white',
-                    fontWeight: 'bold',
-                    cursor: 'pointer',
-                    boxShadow: '0 4px 12px rgba(37, 99, 235, 0.2)',
-                    fontSize: '0.85rem'
-                  }}
-                >
-                  {loading ? 'PROCESANDO...' : (isEditing ? 'ACTUALIZAR TICKET' : 'EMITIR Y FINALIZAR TICKET')}
-                </button>
+                {!isEditing && (
+                  <button
+                    onClick={emitirTicket}
+                    disabled={loading}
+                    style={{
+                      padding: '10px 35px',
+                      borderRadius: '12px',
+                      border: 'none',
+                      background: '#2563eb',
+                      color: 'white',
+                      fontWeight: 'bold',
+                      cursor: 'pointer',
+                      boxShadow: '0 4px 12px rgba(37, 99, 235, 0.2)',
+                      fontSize: '0.85rem'
+                    }}
+                  >
+                    {loading ? 'PROCESANDO...' : 'EMITIR Y FINALIZAR TICKET'}
+                  </button>
+                )}
               </div>
             </div>
           </div>

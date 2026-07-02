@@ -4,10 +4,253 @@ import autoTable from 'jspdf-autotable';
 import html2canvas from 'html2canvas';
 import { supabase } from './supabaseClient';
 import toast from 'react-hot-toast';
+import { format } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Loader2, Upload, FileText, MessageSquare, Paperclip, Clock, CheckCircle2, AlertCircle, ShoppingBag, ChevronDown, X } from 'lucide-react';
 import './Requisiciones.css';
 import './ReportesMaestro.css';
+
+const FormularioAdjuntoToast = ({ cantProcesar, onConfirm, onCancel }) => {
+  const [docNumero, setDocNumero] = useState('');
+  const [docTipo, setDocTipo] = useState('FAC');
+  const [fileName, setFileName] = useState('Soporte Compra');
+  const [file, setFile] = useState(null);
+  const [duplicateUrl, setDuplicateUrl] = useState(null);
+  const [loadingCheck, setLoadingCheck] = useState(false);
+  const [alertaVisual, setAlertaVisual] = useState('');
+
+  // Debounce check for duplicate invoice
+  useEffect(() => {
+    if (!docNumero.trim()) {
+      setDuplicateUrl(null);
+      setAlertaVisual('');
+      return;
+    }
+
+    const delayDebounceFn = setTimeout(async () => {
+      setLoadingCheck(true);
+      try {
+        const { data, error } = await supabase
+          .from('requisiciones')
+          .select('items')
+          .not('items', 'is', null);
+
+        if (error) throw error;
+
+        let foundUrl = null;
+        if (data) {
+          for (const req of data) {
+            if (Array.isArray(req.items)) {
+              for (const it of req.items) {
+                if (Array.isArray(it.historial_compras)) {
+                  for (const h of it.historial_compras) {
+                    if (h.doc_numero && String(h.doc_numero).trim().toUpperCase() === docNumero.trim().toUpperCase()) {
+                      if (h.factura_url) {
+                        foundUrl = h.factura_url;
+                        break;
+                      }
+                    }
+                  }
+                }
+                if (foundUrl) break;
+              }
+            }
+            if (foundUrl) break;
+          }
+        }
+
+        if (foundUrl) {
+          setDuplicateUrl(foundUrl);
+          setAlertaVisual('Factura existente detectada. Soporte vinculado automáticamente');
+          setFile(null); // Clear manual file if any
+        } else {
+          setDuplicateUrl(null);
+          setAlertaVisual('');
+        }
+      } catch (err) {
+        console.error("Error al buscar factura duplicada:", err);
+      } finally {
+        setLoadingCheck(false);
+      }
+    }, 500); // 500ms debounce
+
+    return () => clearTimeout(delayDebounceFn);
+  }, [docNumero]);
+
+  const inputStyle = {
+    padding: '8px 12px',
+    border: '1px solid #cbd5e1',
+    borderRadius: '8px',
+    fontSize: '12px',
+    width: '100%',
+    outline: 'none',
+    boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+    backgroundColor: '#f8fafc',
+    boxSizing: 'border-box',
+    color: '#1e293b'
+  };
+
+  const labelStyle = {
+    fontSize: '11px',
+    fontWeight: '700',
+    color: '#64748b',
+    textTransform: 'uppercase',
+    letterSpacing: '0.5px',
+    marginBottom: '4px',
+    display: 'block'
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '5px', minWidth: '280px' }}>
+      <p style={{ margin: 0, fontSize: '0.85rem', fontWeight: '700', color: '#1e293b', display: 'flex', alignItems: 'center', gap: '6px' }}>
+        <FileText size={16} color="#22c55e" />
+        Adjuntar Soporte de Compra
+      </p>
+
+      {/* Info de la compra */}
+      <div style={{ fontSize: '11px', color: '#475569', backgroundColor: '#f1f5f9', padding: '8px', borderRadius: '6px' }}>
+        <strong>Cant a Procesar:</strong> {cantProcesar}
+      </div>
+
+      {/* Factura / Documento */}
+      <div>
+        <label style={labelStyle}>Factura # / Documento <span style={{ color: '#ef4444' }}>*</span></label>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <select
+            value={docTipo}
+            onChange={(e) => setDocTipo(e.target.value)}
+            style={{ ...inputStyle, width: '70px', padding: '6px' }}
+          >
+            <option value="FAC">FAC</option>
+            <option value="NC">NC</option>
+          </select>
+          <input
+            type="text"
+            value={docNumero}
+            onChange={(e) => setDocNumero(e.target.value)}
+            style={{ ...inputStyle, flex: 1 }}
+            placeholder="Número de Factura"
+          />
+        </div>
+      </div>
+
+      {/* Alerta de duplicado */}
+      {loadingCheck && (
+        <div style={{ fontSize: '10px', color: '#64748b', fontStyle: 'italic' }}>
+          Verificando factura en el sistema...
+        </div>
+      )}
+      {alertaVisual && (
+        <div style={{
+          fontSize: '11px',
+          color: '#15803d',
+          backgroundColor: '#f0fdf4',
+          border: '1px solid #bbf7d0',
+          padding: '6px 10px',
+          borderRadius: '6px',
+          fontWeight: 'bold',
+          lineHeight: '1.2'
+        }}>
+          {alertaVisual}
+        </div>
+      )}
+
+      {/* Adjuntar Soporte File Input */}
+      {!duplicateUrl && (
+        <div>
+          <label style={labelStyle}>Adjuntar Soporte (Obligatorio) <span style={{ color: '#ef4444' }}>*</span></label>
+          <input
+            type="file"
+            accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv"
+            onChange={(e) => {
+              if (e.target.files && e.target.files[0]) {
+                const selectedFile = e.target.files[0];
+                if (selectedFile.size > 5 * 1024 * 1024) {
+                  toast.error("El archivo supera el límite de 5MB. Por favor, redúzcalo antes de subirlo.");
+                  e.target.value = '';
+                  setFile(null);
+                  return;
+                }
+                setFile(selectedFile);
+                const cleanName = selectedFile.name.split('.')[0];
+                setFileName(cleanName);
+              }
+            }}
+            style={{ ...inputStyle, padding: '6px', cursor: 'pointer', backgroundColor: 'white' }}
+          />
+        </div>
+      )}
+
+      {/* Nombre del Soporte */}
+      {!duplicateUrl && (
+        <div>
+          <label style={labelStyle}>Nombre del Documento <span style={{ color: '#ef4444' }}>*</span></label>
+          <input
+            type="text"
+            value={fileName}
+            onChange={(e) => setFileName(e.target.value)}
+            style={inputStyle}
+            placeholder="Ej: Factura Compra, Recibo..."
+          />
+        </div>
+      )}
+
+      {/* Acciones */}
+      <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '4px' }}>
+        <button
+          onClick={() => {
+            if (!docNumero.trim()) {
+              toast.error('Debe ingresar el número de factura/documento.');
+              return;
+            }
+            if (!duplicateUrl && !file) {
+              toast.error('Debe adjuntar el documento de soporte.');
+              return;
+            }
+            if (!duplicateUrl && !fileName.trim()) {
+              toast.error('Debe ingresar un nombre para el soporte.');
+              return;
+            }
+            onConfirm({
+              file,
+              fileName: duplicateUrl ? 'Soporte Factura Existente' : fileName.trim(),
+              docNumero: docNumero.trim(),
+              docTipo,
+              duplicateUrl
+            });
+          }}
+          style={{
+            padding: '6px 14px',
+            backgroundColor: '#22c55e',
+            color: 'white',
+            border: 'none',
+            borderRadius: '8px',
+            cursor: 'pointer',
+            fontSize: '0.75rem',
+            fontWeight: 'bold',
+            boxShadow: '0 2px 4px rgba(34, 197, 94, 0.2)'
+          }}
+        >
+          CONFIRMAR
+        </button>
+        <button
+          onClick={onCancel}
+          style={{
+            padding: '6px 12px',
+            backgroundColor: '#f1f5f9',
+            color: '#64748b',
+            border: '1px solid #cbd5e1',
+            borderRadius: '8px',
+            cursor: 'pointer',
+            fontSize: '0.75rem'
+          }}
+        >
+          CANCELAR
+        </button>
+      </div>
+    </div>
+  );
+};
 
 const Compras = () => {
   const [historial, setHistorial] = useState([]);
@@ -28,6 +271,17 @@ const Compras = () => {
   const [filtroCategoria, setFiltroCategoria] = useState('Todos');
   const [filtroCentroCosto, setFiltroCentroCosto] = useState('Todos');
   const [proveedores, setProveedores] = useState([]);
+
+  const categoriasProveedores = useMemo(() => {
+    const cats = new Set();
+    proveedores.forEach(p => {
+      if (p.categoria) {
+        const pCats = String(p.categoria).split(',').map(c => c.trim().toUpperCase()).filter(Boolean);
+        pCats.forEach(c => cats.add(c));
+      }
+    });
+    return Array.from(cats).sort();
+  }, [proveedores]);
 
   const categoriasUnicas = useMemo(() => {
     const cats = new Set();
@@ -75,6 +329,15 @@ const Compras = () => {
   const [filtroAnalista, setFiltroAnalista] = useState('Todos');
   const [verSoloMisAsignadas, setVerSoloMisAsignadas] = useState(true);
   const [loadingAsignacion, setLoadingAsignacion] = useState(false);
+
+  const proveedoresFiltradosPorFila = (f) => {
+    if (!f.categoria_proveedor) return proveedores;
+    return proveedores.filter(p => {
+      if (!p.categoria) return false;
+      const pCats = String(p.categoria).split(',').map(c => c.trim().toUpperCase()).filter(Boolean);
+      return pCats.includes(f.categoria_proveedor.toUpperCase());
+    });
+  };
 
   // --- ROLES & PERMISOS COMPUTADOS ---
   const rolUpperFinal = (currentUser?.rol || '').toUpperCase();
@@ -306,8 +569,9 @@ const Compras = () => {
         compra_actual_cant: 0,
         compra_actual_pu: item.pu || 0, // Iniciamos con el último PU sugerido
         doc_tipo_actual: item.doc_tipo || 'FAC',
-        doc_numero_actual: '', // Siempre vacío por defecto para evitar errores
-        proveedor_seleccionado_id: '' // Siempre vacío por defecto
+         doc_numero_actual: '', // Siempre vacío por defecto para evitar errores
+        proveedor_seleccionado_id: '', // Siempre vacío por defecto
+        categoria_proveedor: ''
       };
     });
 
@@ -492,8 +756,13 @@ const Compras = () => {
   };
 
   const eliminarEntradaHistorial = async (idRenglon, indexHistorial) => {
-    const esAutorizado = currentUser?.correo?.toLowerCase() === 'jcontreras.totalclean@gmail.com';
-    if (!esAutorizado) return toast.error("Solo el Administrador jcontreras.totalclean@gmail.com tiene permisos para eliminar registros del historial de compras.");
+    const r = renglones.find(x => x.id === idRenglon);
+    const entrada = r ? r.historial_compras[indexHistorial] : null;
+    const esAutorizado = 
+      currentUser?.correo?.toLowerCase() === 'jcontreras.totalclean@gmail.com' ||
+      (entrada && entrada.usuario_id === currentUser?.id);
+
+    if (!esAutorizado) return toast.error("Solo el Administrador jcontreras.totalclean@gmail.com o el autor de esta transacción tienen permisos para eliminarla.");
 
     toast((t) => (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -512,8 +781,14 @@ const Compras = () => {
   };
 
   const ejecutarEliminacionHistorial = async (idRenglon, indexHistorial) => {
-    if (currentUser?.correo?.toLowerCase() !== 'jcontreras.totalclean@gmail.com') {
-      toast.error("Solo el Administrador jcontreras.totalclean@gmail.com tiene permisos para eliminar registros del historial de compras.");
+    const r = renglones.find(x => x.id === idRenglon);
+    const entrada = r ? r.historial_compras[indexHistorial] : null;
+    const esAutorizado = 
+      currentUser?.correo?.toLowerCase() === 'jcontreras.totalclean@gmail.com' ||
+      (entrada && entrada.usuario_id === currentUser?.id);
+
+    if (!esAutorizado) {
+      toast.error("Solo el Administrador jcontreras.totalclean@gmail.com o el autor de esta transacción tienen permisos para eliminarla.");
       return;
     }
     setLoading(true);
@@ -721,6 +996,321 @@ const Compras = () => {
     doc.save(`Minuta_Compra_${requisicionActiva.correlativo}.pdf`);
   };
 
+  const obtenerTextoObservaciones = (obsRaw) => {
+    if (!obsRaw) return "Sin observaciones.";
+    const trimmed = obsRaw.trim();
+    if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+      try {
+        const arr = JSON.parse(trimmed);
+        if (Array.isArray(arr)) {
+          return arr.map(c => `[${c.author || c.autor || 'Usuario'} (${c.rol || 'Rol'})]: ${c.text || c.texto || ''}`).join('\n');
+        }
+      } catch (e) {
+        console.error("Error parsing observations JSON:", e);
+      }
+    }
+    return obsRaw;
+  };
+
+  const parsearObservaciones = (obsRaw) => {
+    if (!obsRaw) return [];
+    const trimmed = obsRaw.trim();
+    if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) return parsed;
+      } catch (e) {
+        console.error("Error al parsear observaciones:", e);
+      }
+    }
+    return [{
+      author: 'Sistema',
+      rol: 'Histórico',
+      text: obsRaw,
+      date: new Date().toISOString()
+    }];
+  };
+
+  const generarRequisicionPDF = () => {
+    if (!requisicionActiva) {
+      toast.error("No se encontraron datos para exportar.");
+      return;
+    }
+
+    // Inicializar jsPDF (A4 en mm)
+    const pdf = new jsPDF('p', 'mm', 'a4');
+    const fontPrimary = 'helvetica';
+    
+    // --- CABECERA ---
+    pdf.setFont(fontPrimary, 'bold');
+    pdf.setFontSize(13);
+    pdf.setTextColor(15, 23, 42); // Slate-900
+    pdf.text("TOTAL CLEAN C.A.", 15, 20);
+    
+    pdf.setFont(fontPrimary, 'normal');
+    pdf.setFontSize(9);
+    pdf.setTextColor(71, 85, 105); // Slate-600
+    pdf.text("J-303658587-0", 15, 25);
+    
+    // Derecha: Fecha y Solicitud #
+    const fechaEmision = requisicionActiva.fecha 
+      ? format(new Date(requisicionActiva.fecha + 'T12:00:00'), 'dd/MM/yyyy hh:mm a') 
+      : format(new Date(), 'dd/MM/yyyy hh:mm a');
+    
+    pdf.setFontSize(9);
+    pdf.setTextColor(71, 85, 105);
+    pdf.text(`Fecha : ${fechaEmision}`, 195, 20, { align: 'right' });
+    pdf.text("Solicitud 1 de 1", 195, 25, { align: 'right' });
+    
+    // --- TÍTULO CENTRAL ---
+    const correlativoStr = requisicionActiva.correlativo || `REQ-${String(requisicionActiva.id).padStart(3, '0')}`;
+    pdf.setFont(fontPrimary, 'bold');
+    pdf.setFontSize(12);
+    pdf.setTextColor(15, 23, 42);
+    const titulo = `REQUISICIÓN DE RECURSOS: ${correlativoStr}`;
+    const textWidth = pdf.getTextWidth(titulo);
+    const posX = (210 - textWidth) / 2;
+    pdf.text(titulo, posX, 38);
+    
+    // Línea subrayada del título
+    pdf.setDrawColor(15, 23, 42);
+    pdf.setLineWidth(0.4);
+    pdf.line(posX, 40, posX + textWidth, 40);
+    
+    // --- CUADRO DE METADATA ---
+    const startY = 46;
+    pdf.setDrawColor(226, 232, 240); // Borde gris claro
+    pdf.setFillColor(248, 250, 252); // Fondo gris muy claro
+    pdf.setLineWidth(0.3);
+    pdf.roundedRect(15, startY, 180, 22, 2, 2, 'FD');
+    
+    // Texto dentro de la Metadata
+    pdf.setFontSize(9.5);
+    pdf.setTextColor(15, 23, 42);
+    
+    // Columna Izquierda
+    pdf.setFont(fontPrimary, 'bold');
+    pdf.text("Gerencia: ", 20, startY + 8);
+    pdf.setFont(fontPrimary, 'normal');
+    pdf.setTextColor(51, 65, 85);
+    pdf.text(requisicionActiva.gerencia || 'N/A', 38, startY + 8);
+    
+    pdf.setFont(fontPrimary, 'bold');
+    pdf.setTextColor(15, 23, 42);
+    pdf.text("Responsable: ", 20, startY + 15);
+    pdf.setFont(fontPrimary, 'normal');
+    pdf.setTextColor(51, 65, 85);
+    pdf.text(requisicionActiva.solicitante || 'N/A', 43, startY + 15);
+    
+    // Columna Derecha
+    const fechaEmisionMeta = requisicionActiva.fecha 
+      ? format(new Date(requisicionActiva.fecha + 'T12:00:00'), 'dd/MM/yyyy') 
+      : 'N/A';
+      
+    pdf.setFont(fontPrimary, 'bold');
+    pdf.setTextColor(15, 23, 42);
+    pdf.text("Fecha Emisión: ", 125, startY + 8);
+    pdf.setFont(fontPrimary, 'normal');
+    pdf.setTextColor(51, 65, 85);
+    pdf.text(fechaEmisionMeta, 151, startY + 8);
+    
+    // --- TABLA DE ITEMS ---
+    const tableY = startY + 30;
+    
+    // Cabecera de la tabla
+    pdf.setFont(fontPrimary, 'bold');
+    pdf.setFontSize(9.5);
+    pdf.setTextColor(15, 23, 42);
+    
+    // Dibujar líneas superior e inferior de la cabecera de la tabla
+    pdf.setDrawColor(15, 23, 42);
+    pdf.setLineWidth(0.5);
+    pdf.line(15, tableY, 195, tableY);
+    
+    pdf.text("C.COSTO", 16, tableY + 5);
+    pdf.text("CLASIF.", 46, tableY + 5);
+    pdf.text("DESCRIPCIÓN", 76, tableY + 5);
+    pdf.text("CANT.", 145, tableY + 5, { align: 'right' });
+    pdf.text("PAGO Bs ($)", 170, tableY + 5, { align: 'right' });
+    pdf.text("PAGO USD ($)", 194, tableY + 5, { align: 'right' });
+    
+    pdf.line(15, tableY + 8, 195, tableY + 8);
+    
+    // Renglones de la tabla
+    pdf.setFont(fontPrimary, 'normal');
+    pdf.setFontSize(8.5);
+    pdf.setTextColor(51, 65, 85);
+    
+    let currentY = tableY + 13;
+    
+    // Renglones de la requisición activa
+    const items = renglones || [];
+    
+    items.forEach((item, idx) => {
+      // Ajuste de descripción si es muy larga
+      const descText = item.descripcion || 'N/A';
+      const descLines = pdf.splitTextToSize(descText, 60);
+      
+      // Mostrar Centro de Costo de la req
+      const ccText = requisicionActiva.centro_costo || requisicionActiva.centroCosto || 'N/A';
+      const ccLines = pdf.splitTextToSize(ccText, 28);
+      
+      // Mostrar Clasificación del renglón
+      const clasifText = item.clasificacion || 'N/A';
+      const clasifLines = pdf.splitTextToSize(clasifText, 28);
+      
+      // Altura requerida para este renglón
+      const linesCount = Math.max(descLines.length, ccLines.length, clasifLines.length);
+      const rowHeight = linesCount * 4 + 4;
+      
+      // Renderizar columnas de texto multilínea
+      pdf.text(ccLines, 16, currentY);
+      pdf.text(clasifLines, 46, currentY);
+      pdf.text(descLines, 76, currentY);
+      
+      // Renderizar columnas simples
+      pdf.text(`${item.cantidad_pedida || item.cant || 1} ${item.uni || item.unidad || ''}`, 145, currentY, { align: 'right' });
+      
+      // Calcular valores acumulados de pago (Bs o USD) para el ítem
+      const hCompras = Array.isArray(item.historial_compras) ? item.historial_compras : [];
+      const tieneCompras = hCompras.some(h => h.tipo !== 'JUSTIFICACION' && h.tipo !== 'ANULACION');
+      
+      let totalPaidBs = 0;
+      let totalPaidUsd = 0;
+      
+      if (tieneCompras) {
+        hCompras.forEach(h => {
+          if (h.tipo === 'JUSTIFICACION' || h.tipo === 'ANULACION') return;
+          const monto = (Number(h.cant) || 0) * (Number(h.pu) || 0);
+          const esBs = h.metodo_pago && (h.metodo_pago.toUpperCase().includes('BS') || h.metodo_pago.toUpperCase().includes('B/S'));
+          if (esBs) {
+            totalPaidBs += monto;
+          } else {
+            totalPaidUsd += monto;
+          }
+        });
+      } else {
+        const cantOri = Number(item.cantidad_pedida ?? item.cant) || 1;
+        const puEst = Number(item.pu_estimado ?? item.precio_unitario ?? item.pu) || 0;
+        totalPaidUsd = cantOri * puEst;
+      }
+      
+      if (totalPaidBs > 0) {
+        pdf.text(`$ ${totalPaidBs.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 170, currentY, { align: 'right' });
+      } else {
+        pdf.text("-", 170, currentY, { align: 'right' });
+      }
+      
+      if (totalPaidUsd > 0) {
+        pdf.text(`$ ${totalPaidUsd.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 194, currentY, { align: 'right' });
+      } else {
+        pdf.text("-", 194, currentY, { align: 'right' });
+      }
+      
+      // Beneficiario si existe
+      if (item.beneficiario) {
+        pdf.setFont(fontPrimary, 'italic');
+        pdf.setFontSize(7.5);
+        pdf.setTextColor(100, 116, 139); // Slate-500
+        pdf.text(`Benef: ${item.beneficiario}`, 76, currentY + (descLines.length * 4));
+        pdf.setFont(fontPrimary, 'normal');
+        pdf.setFontSize(8.5);
+        pdf.setTextColor(51, 65, 85);
+      }
+      
+      currentY += rowHeight;
+      
+      // Dibujar una sutil línea divisoria
+      pdf.setDrawColor(241, 245, 249);
+      pdf.setLineWidth(0.2);
+      pdf.line(15, currentY - 1, 195, currentY - 1);
+    });
+    
+    // --- CUADRO DE TOTALES ---
+    let totalPagoBs = 0;
+    let totalPagoUsd = 0;
+    
+    items.forEach(item => {
+      const hCompras = Array.isArray(item.historial_compras) ? item.historial_compras : [];
+      const tieneCompras = hCompras.some(h => h.tipo !== 'JUSTIFICACION' && h.tipo !== 'ANULACION');
+      
+      let itemBs = 0;
+      let itemUsd = 0;
+      
+      if (tieneCompras) {
+        hCompras.forEach(h => {
+          if (h.tipo === 'JUSTIFICACION' || h.tipo === 'ANULACION') return;
+          const monto = (Number(h.cant) || 0) * (Number(h.pu) || 0);
+          const esBs = h.metodo_pago && (h.metodo_pago.toUpperCase().includes('BS') || h.metodo_pago.toUpperCase().includes('B/S'));
+          if (esBs) {
+            itemBs += monto;
+          } else {
+            itemUsd += monto;
+          }
+        });
+      } else {
+        const cantOri = Number(item.cantidad_pedida ?? item.cant) || 1;
+        const puEst = Number(item.pu_estimado ?? item.precio_unitario ?? item.pu) || 0;
+        itemUsd = cantOri * puEst;
+      }
+      
+      totalPagoBs += itemBs;
+      totalPagoUsd += itemUsd;
+    });
+
+    const aplicaIva = requisicionActiva.con_iva !== false;
+    const labelIva = aplicaIva ? "(Con IVA)" : "(Sin IVA)";
+    const totalPagoBsConIva = totalPagoBs * (aplicaIva ? 1.16 : 1.00);
+    const totalPagoUsdConIva = totalPagoUsd * (aplicaIva ? 1.16 : 1.00);
+    
+    let finalPagoBs = totalPagoBsConIva;
+    let finalPagoUsd = totalPagoUsdConIva;
+    
+    if (totalPagoBs > 0 && totalPagoUsd === 0) {
+      finalPagoBs = Number(requisicionActiva.total) || totalPagoBsConIva;
+      finalPagoUsd = 0;
+    } else if (totalPagoUsd > 0 && totalPagoBs === 0) {
+      finalPagoUsd = Number(requisicionActiva.total) || totalPagoUsdConIva;
+      finalPagoBs = 0;
+    }
+    
+    const finalTotal = finalPagoBs + finalPagoUsd;
+
+    currentY += 5;
+    const boxWidth = 70;
+    const boxHeight = 18;
+    const boxX = 195 - boxWidth;
+    
+    pdf.setDrawColor(15, 23, 42);
+    pdf.setLineWidth(0.4);
+    pdf.rect(boxX, currentY, boxWidth, boxHeight);
+    
+    pdf.setFont(fontPrimary, 'normal');
+    pdf.setFontSize(8.5);
+    pdf.setTextColor(15, 23, 42);
+    
+    // Fila 1: Pago Bs
+    pdf.text(`Pago Bs ${labelIva}`, boxX + 3, currentY + 5);
+    pdf.text(`$ ${finalPagoBs.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 192, currentY + 5, { align: 'right' });
+    
+    // Fila 2: Pago USD
+    pdf.text(`Pago USD ${labelIva}`, boxX + 3, currentY + 10);
+    pdf.text(`$ ${finalPagoUsd.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 192, currentY + 10, { align: 'right' });
+    
+    // Línea divisoria interna
+    pdf.setDrawColor(226, 232, 240);
+    pdf.setLineWidth(0.2);
+    pdf.line(boxX, currentY + 12, 195, currentY + 12);
+    
+    // Fila 3: Total General
+    pdf.setFont(fontPrimary, 'bold');
+    pdf.text(`TOTAL ${labelIva}`, boxX + 3, currentY + 15);
+    pdf.text(`$ ${finalTotal.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 192, currentY + 15, { align: 'right' });
+    
+    // Guardar el PDF
+    pdf.save(`REQ_${correlativoStr}.pdf`);
+  };
+
   const generarGuiaChoferPDF = () => {
     if (!requisicionActiva) return;
     const doc = new jsPDF('p', 'pt', 'letter');
@@ -839,7 +1429,26 @@ const Compras = () => {
       }
     });
 
-    y = doc.lastAutoTable.finalY + 45;
+    y = doc.lastAutoTable.finalY + 30;
+
+    // --- SECCIÓN DE OBSERVACIONES ---
+    const textObs = obtenerTextoObservaciones(requisicionActiva.observaciones);
+    doc.setFontSize(10);
+    doc.setFont("Helvetica", "bold");
+    doc.setTextColor(15, 23, 42);
+    doc.text("Observaciones de la Requisición:", margins, y);
+    y += 15;
+    
+    doc.setFontSize(8);
+    doc.setFont("Helvetica", "normal");
+    doc.setTextColor(51, 65, 85);
+    
+    // Ajustar texto multilínea al ancho de página
+    const splitObs = doc.splitTextToSize(textObs, pageWidth - (margins * 2));
+    doc.text(splitObs, margins, y);
+    
+    // Ajustar altura dinámica según cantidad de líneas de observaciones
+    y += splitObs.length * 11 + 45;
 
     // --- SECCIÓN DE FIRMAS ---
     doc.setDrawColor(203, 213, 225);
@@ -1114,156 +1723,54 @@ const Compras = () => {
       toast.error(`No puede comprar más de la cantidad pendiente (${item.cantidad_pendiente})`, { id: 'error-cantidad' });
       return;
     }
-    if (!item.doc_numero_actual || !item.doc_numero_actual.trim()) {
-      toast.error("Error: El número de " + (item.doc_tipo_actual || 'FAC/NC') + " es obligatorio para procesar la compra.");
-      return;
-    }
     if (!item.proveedor_seleccionado_id) {
       toast.error("Error: Debe seleccionar un PROVEEDOR para procesar la compra.");
       return;
     }
 
+    if (overrideValues) {
+      if (!overrideValues.docNumero || !overrideValues.docNumero.trim()) {
+        toast.error("Error: El número de documento es obligatorio para procesar la compra.");
+        return;
+      }
+    }
+
     // Si no tenemos el soporte adjunto ni su nombre/etiqueta, lo pedimos con un toast interactivo
     if (!overrideValues) {
-      let tempFile = null;
-      let tempFileName = '';
-
-      toast((t) => {
-        const inputStyle = {
-          padding: '8px 12px',
-          border: '1px solid #cbd5e1',
-          borderRadius: '8px',
-          fontSize: '12px',
-          width: '100%',
-          outline: 'none',
-          boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
-          backgroundColor: '#f8fafc',
-          boxSizing: 'border-box',
-          color: '#1e293b'
-        };
-        const labelStyle = {
-          fontSize: '11px',
-          fontWeight: '700',
-          color: '#64748b',
-          textTransform: 'uppercase',
-          letterSpacing: '0.5px',
-          marginBottom: '4px',
-          display: 'block'
-        };
-        return (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '5px', minWidth: '280px' }}>
-            <p style={{ margin: 0, fontSize: '0.85rem', fontWeight: '700', color: '#1e293b', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <FileText size={16} color="#22c55e" />
-              Adjuntar Soporte de Compra
-            </p>
-
-            {/* Info de la compra */}
-            <div style={{ fontSize: '11px', color: '#475569', backgroundColor: '#f1f5f9', padding: '8px', borderRadius: '6px' }}>
-              <strong>Cant:</strong> {cantProcesar} | <strong>Doc:</strong> {item.doc_numero_actual}
-            </div>
-
-            {/* Adjuntar Soporte */}
-            <div>
-              <label style={labelStyle}>Adjuntar Soporte (Obligatorio) <span style={{ color: '#ef4444' }}>*</span></label>
-              <input
-                type="file"
-                accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv"
-                onChange={(e) => {
-                  if (e.target.files && e.target.files[0]) {
-                    const selectedFile = e.target.files[0];
-                    if (selectedFile.size > 5 * 1024 * 1024) {
-                      toast.error("El archivo supera el límite de 5MB. Por favor, redúzcalo antes de subirlo.");
-                      e.target.value = '';
-                      tempFile = null;
-                      return;
-                    }
-                    tempFile = selectedFile;
-                    const nameInput = document.getElementById('toast-compras-name');
-                    if (nameInput && !nameInput.value) {
-                      const cleanName = tempFile.name.split('.')[0];
-                      nameInput.value = cleanName;
-                      tempFileName = cleanName;
-                    }
-                  }
-                }}
-                style={{ ...inputStyle, padding: '6px', cursor: 'pointer', backgroundColor: 'white' }}
-              />
-            </div>
-
-            {/* Nombre del Soporte */}
-            <div>
-              <label style={labelStyle}>Nombre del Documento <span style={{ color: '#ef4444' }}>*</span></label>
-              <input
-                id="toast-compras-name"
-                type="text"
-                defaultValue={tempFileName}
-                onChange={(e) => { tempFileName = e.target.value; }}
-                style={inputStyle}
-                placeholder="Ej: Factura Compra, Recibo..."
-              />
-            </div>
-
-            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '4px' }}>
-              <button
-                onClick={() => {
-                  if (!tempFile) {
-                    toast.error('Debe adjuntar el documento de soporte.');
-                    return;
-                  }
-                  if (!tempFileName.trim()) {
-                    toast.error('Debe ingresar un nombre para el soporte.');
-                    return;
-                  }
-                  toast.dismiss(t.id);
-                  guardarUnicoRenglon(id, {
-                    file: tempFile,
-                    fileName: tempFileName.trim()
-                  });
-                }}
-                style={{
-                  padding: '6px 14px',
-                  backgroundColor: '#22c55e',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '8px',
-                  cursor: 'pointer',
-                  fontSize: '0.75rem',
-                  fontWeight: 'bold',
-                  boxShadow: '0 2px 4px rgba(34, 197, 94, 0.2)'
-                }}
-              >
-                CONFIRMAR
-              </button>
-              <button
-                onClick={() => toast.dismiss(t.id)}
-                style={{
-                  padding: '6px 12px',
-                  backgroundColor: '#f1f5f9',
-                  color: '#64748b',
-                  border: '1px solid #cbd5e1',
-                  borderRadius: '8px',
-                  cursor: 'pointer',
-                  fontSize: '0.75rem'
-                }}
-              >
-                CANCELAR
-              </button>
-            </div>
-          </div>
-        );
-      }, { duration: 60000 });
+      toast((t) => (
+        <FormularioAdjuntoToast
+          t={t}
+          item={item}
+          cantProcesar={cantProcesar}
+          onConfirm={(values) => {
+            toast.dismiss(t.id);
+            guardarUnicoRenglon(id, values);
+          }}
+          onCancel={() => toast.dismiss(t.id)}
+        />
+      ), { duration: 60000 });
       return;
     }
 
     setLoading(true);
     try {
-      // SUBIR SOPORTE AL STORAGE BUCKET facturas
+      // SUBIR SOPORTE AL STORAGE BUCKET facturas o vincular duplicado
       let uploadedFileObj = null;
-      if (overrideValues?.file) {
+      if (overrideValues?.duplicateUrl) {
+        uploadedFileObj = {
+          url: overrideValues.duplicateUrl,
+          etiqueta: overrideValues.fileName || 'Soporte Factura Existente'
+        };
+      } else if (overrideValues?.file) {
         const file = overrideValues.file;
         const customName = overrideValues.fileName || file.name.split('.')[0] || 'Soporte';
         const fileExt = file.name.split('.').pop();
-        const fileName = `factura_${editandoId}_${Date.now()}.${fileExt}`;
+        
+        // Sanitizar variables del renglón para la nomenclatura mandatoria
+        const cleanCorrelativo = (requisicionActiva?.correlativo || '').replace(/[^a-zA-Z0-9_-]/g, '');
+        const cleanDoc = (overrideValues.docNumero || 'SINDOC').replace(/[^a-zA-Z0-9]/g, '');
+        const cleanDesc = (item.descripcion || 'Articulo').replace(/[^a-zA-Z0-9]/g, '').slice(0, 30);
+        const fileName = `${cleanCorrelativo}_${cleanDoc}_${cleanDesc}.${fileExt}`;
         const filePath = `${fileName}`;
 
         const { error: uploadError } = await supabase.storage
@@ -1301,11 +1808,11 @@ const Compras = () => {
         proveedor_nombre: proveedores.find(p => p.id === item.proveedor_seleccionado_id)?.razon_social || 'Desconocido',
         usuario_id: currentUser?.id,
         usuario_nombre: `${currentUser?.nombre} ${currentUser?.apellido}`,
-        doc_tipo: item.doc_tipo_actual,
-        doc_numero: item.doc_numero_actual,
+        doc_tipo: overrideValues?.docTipo || item.doc_tipo_actual || 'FAC',
+        doc_numero: overrideValues?.docNumero || item.doc_numero_actual || '',
         estatus_almacen: 'Pendiente_Compras',
         ubicacion_almacen: null,
-        factura_url: uploadedFileObj?.url || null
+        factura_url: uploadedFileObj?.url || overrideValues?.duplicateUrl || null
       };
 
       const nuevaCantComprada = (item.cantidad_comprada || 0) + cantProcesar;
@@ -1313,7 +1820,7 @@ const Compras = () => {
 
       // LÓGICA DE STATUS CON CRÉDITO (NC)
       let nuevoStatus = item.status;
-      const esCredito = item.doc_tipo_actual === 'NC';
+      const esCredito = (overrideValues?.docTipo || item.doc_tipo_actual) === 'NC';
 
       if (esCredito) {
         nuevoStatus = 'POR PAGAR (NC)';
@@ -1338,8 +1845,8 @@ const Compras = () => {
         status: nuevoStatus,
         pu: item.compra_actual_pu || item.pu,
         compra_actual_cant: 0,
-        doc_tipo: item.doc_tipo_actual,
-        doc_numero: item.doc_numero_actual,
+        doc_tipo: overrideValues?.docTipo || item.doc_tipo_actual || 'FAC',
+        doc_numero: overrideValues?.docNumero || item.doc_numero_actual || '',
         doc_numero_actual: '', // LIMPIAR DESPUÉS DE GUARDAR
         proveedor_seleccionado_id: '', // LIMPIAR DESPUÉS DE GUARDAR
         hasChanges: false
@@ -1543,7 +2050,11 @@ const Compras = () => {
 
       const uploadPromises = files.map(async (file, index) => {
         const fileExt = file.name.split('.').pop();
-        const fileName = `factura_${editandoId}_${Date.now()}_${index}.${fileExt}`;
+        const cleanCorrelativo = (requisicionActiva?.correlativo || '').replace(/[^a-zA-Z0-9_-]/g, '');
+        const firstItem = renglones.find(r => r.compra_actual_cant > 0) || renglones[0] || {};
+        const cleanDoc = (firstItem.doc_numero_actual || 'SOPORTE').replace(/[^a-zA-Z0-9]/g, '');
+        const cleanDesc = (firstItem.descripcion || 'General').replace(/[^a-zA-Z0-9]/g, '').slice(0, 30);
+        const fileName = `${cleanCorrelativo}_${cleanDoc}_${cleanDesc}_${index}_${Date.now()}.${fileExt}`;
         const filePath = `${fileName}`; // Subir a la raíz para máxima compatibilidad publicUrl
 
         const { error: uploadError } = await supabase.storage
@@ -2355,7 +2866,8 @@ const Compras = () => {
 
                       const msCreationDiff = hoy.getTime() - new Date(req.fecha_emision).getTime();
                       const hoursSinceCreation = msCreationDiff / (1000 * 60 * 60);
-                      const isUnattendedOverDay = hoursSinceCreation >= 24 && (req.status_compra === 'En espera' || !req.status_compra) && !isJustificada;
+                      const isUnattendedNormal = req.prioridad !== 'Emergencia' && hoursSinceCreation >= 48 && (req.status_compra === 'En espera' || !req.status_compra) && !isJustificada;
+                      const isUnattendedEmergencia = req.prioridad === 'Emergencia' && hoursSinceCreation >= 24 && (req.status_compra === 'En espera' || !req.status_compra) && !isJustificada;
 
                       return (
                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
@@ -2370,7 +2882,7 @@ const Compras = () => {
                           }}>
                             {label}
                           </div>
-                          {isUnattendedOverDay && (
+                          {isUnattendedNormal && (
                             <span className="animate-pulse" style={{
                               fontSize: '0.65rem',
                               fontWeight: '900',
@@ -2383,7 +2895,24 @@ const Compras = () => {
                               alignItems: 'center',
                               gap: '3px',
                               cursor: 'help'
-                            }} title="Esta requisición lleva más de 24 horas sin compras ni justificaciones registradas. Requiere acción inmediata.">
+                            }} title="Esta requisición de prioridad Normal lleva más de 48 horas sin compras ni justificaciones registradas. Requiere acción inmediata.">
+                              {"⚠️ SIN ATENDER (>48h)"}
+                            </span>
+                          )}
+                          {isUnattendedEmergencia && (
+                            <span className="animate-pulse" style={{
+                              fontSize: '0.65rem',
+                              fontWeight: '900',
+                              backgroundColor: '#fee2e2',
+                              color: '#ef4444',
+                              border: '1px solid #fca5a5',
+                              padding: '2px 6px',
+                              borderRadius: '4px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '3px',
+                              cursor: 'help'
+                            }} title="Esta requisición de prioridad Emergencia lleva más de 24 horas sin compras ni justificaciones registradas. Requiere acción inmediata.">
                               {"⚠️ SIN ATENDER (>24h)"}
                             </span>
                           )}
@@ -2804,9 +3333,45 @@ const Compras = () => {
                       </div>
                     </div>
                   ) : (
-                    <p style={{ margin: 0, color: '#1e293b', fontSize: '0.9rem', fontWeight: '500', lineHeight: '1.4' }}>
-                      {requisicionActiva?.observaciones || 'Sin observaciones registradas'}
-                    </p>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '180px', overflowY: 'auto', paddingRight: '4px' }}>
+                      {parsearObservaciones(requisicionActiva?.observaciones).length === 0 ? (
+                        <span style={{ fontSize: '0.8rem', color: '#94a3b8', fontStyle: 'italic' }}>Sin observaciones registradas</span>
+                      ) : (
+                        parsearObservaciones(requisicionActiva?.observaciones).map((c, idx) => (
+                          <div
+                            key={idx}
+                            style={{
+                              backgroundColor: '#f8fafc',
+                              border: '1px solid #e2e8f0',
+                              padding: '8px 12px',
+                              borderRadius: '8px',
+                              fontSize: '0.8rem'
+                            }}
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px', gap: '15px' }}>
+                              <span style={{ fontWeight: 'bold', color: '#1e293b', fontSize: '0.75rem' }}>
+                                {c.author || c.autor || 'Usuario'} {c.rol ? `(${c.rol})` : ''}
+                              </span>
+                              {c.date && (
+                                <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>
+                                  {(() => {
+                                    try {
+                                      const d = new Date(c.date);
+                                      return d.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' }) + ' - ' + d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', hour12: true });
+                                    } catch (_e) {
+                                      return '';
+                                    }
+                                  })()}
+                                </span>
+                              )}
+                            </div>
+                            <p style={{ margin: 0, color: '#334155', fontSize: '0.8rem', whiteSpace: 'pre-wrap', lineHeight: '1.4' }}>
+                              {c.text || c.texto || ''}
+                            </p>
+                          </div>
+                        ))
+                      )}
+                    </div>
                   )}
                 </div>
               </div>
@@ -2822,7 +3387,7 @@ const Compras = () => {
                     <th style={{ textAlign: 'center', width: '60px' }}>PED.</th>
                     <th style={{ textAlign: 'center', width: '60px' }}>COMP.</th>
                     <th style={{ textAlign: 'center', width: '60px' }}>PEND.</th>
-                    <th style={{ textAlign: 'center', width: '320px' }}>DETALLE PAGO / PROVEEDOR</th>
+                    <th style={{ textAlign: 'center', width: '260px' }}>DETALLE PAGO / PROVEEDOR</th>
                     <th style={{ textAlign: 'right', width: '100px' }}>CANT. REAL</th>
                     <th style={{ textAlign: 'right', width: '110px' }}>P.U. REAL</th>
                     <th style={{ textAlign: 'right', width: '100px' }}>TOTAL $</th>
@@ -2854,62 +3419,48 @@ const Compras = () => {
 
                         {/* CELDA COMPACTA PAGO / PROVEEDOR */}
                         <td>
-                          <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr', gap: '12px', alignItems: 'center' }}>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                              <span style={{ fontSize: '9px', fontWeight: '900', color: '#94a3b8', textTransform: 'uppercase' }}>Factura # / Documento</span>
-                              <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-                                <div style={{ 
-                                  fontSize: '10px', 
-                                  fontWeight: '900', 
-                                  color: '#475569', 
-                                  backgroundColor: '#f1f5f9', 
-                                  padding: '4px 8px', 
-                                  borderRadius: '6px',
-                                  height: '32px',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  border: '1px solid #e2e8f0'
-                                }}>
-                                  FAC
-                                </div>
-                                <input
-                                  className="input-tc focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                                  style={{ fontSize: '11px', padding: '4px 8px', flex: 1, border: '1px solid #cbd5e1', fontWeight: 'bold', height: '32px' }}
-                                  value={f.doc_numero_actual || ''}
-                                  onChange={(e) => actualizarFila(f.id, 'doc_numero_actual', e.target.value)}
-                                  onKeyDown={(e) => handleKeyDown(e, f.id, 'doc_numero')}
-                                  ref={el => { if (!inputRefs.current[f.id]) inputRefs.current[f.id] = {}; inputRefs.current[f.id].doc_numero = el; }}
-                                  placeholder="000"
-                                  disabled={f.cantidad_pendiente === 0 || f.anulado}
-                                />
-                              </div>
-                            </div>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                              <span style={{ fontSize: '9px', fontWeight: '900', color: '#94a3b8', textTransform: 'uppercase' }}>Proveedor y Moneda de Pago</span>
-                              <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                                <select
-                                  className="input-tc focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                                  style={{ flex: 1, fontSize: '11px', padding: '4px', fontWeight: 'bold', border: '1px solid #cbd5e1', height: '32px' }}
-                                  value={f.proveedor_seleccionado_id || ''}
-                                  onChange={(e) => actualizarFila(f.id, 'proveedor_seleccionado_id', Number(e.target.value))}
-                                  onKeyDown={(e) => handleKeyDown(e, f.id, 'proveedor')}
-                                  ref={el => { if (!inputRefs.current[f.id]) inputRefs.current[f.id] = {}; inputRefs.current[f.id].proveedor = el; }}
-                                  disabled={f.cantidad_pendiente === 0 || f.anulado}
-                                >
-                                  <option value="">Proveedor</option>
-                                  {proveedores.map(p => <option key={p.id} value={p.id}>{p.razon_social}</option>)}
-                                </select>
-                                <select
-                                  className="input-tc focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
-                                  style={{ width: '65px', fontSize: '10px', padding: '2px', height: '32px', border: '1px solid #cbd5e1', fontWeight: '800' }}
-                                  value={f.metodo_pago_actual || '$ / BS'}
-                                  onChange={(e) => actualizarFila(f.id, 'metodo_pago_actual', e.target.value)}
-                                  disabled={f.cantidad_pendiente === 0 || f.anulado}
-                                >
-                                  <option value="$ / BS">$ / BS</option>
-                                  <option value="$ / $">$ / $</option>
-                                </select>
-                              </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', width: '100%' }}>
+                            <span style={{ fontSize: '9px', fontWeight: '900', color: '#94a3b8', textTransform: 'uppercase' }}>Categoría, Proveedor y Moneda</span>
+                            <div style={{ display: 'flex', gap: '6px', alignItems: 'center', width: '100%' }}>
+                              <select
+                                className="input-tc focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                                style={{ flex: 1, minWidth: '80px', fontSize: '11px', padding: '4px', fontWeight: 'bold', border: '1px solid #cbd5e1', height: '32px' }}
+                                value={f.categoria_proveedor || ''}
+                                onChange={(e) => {
+                                  actualizarFila(f.id, 'categoria_proveedor', e.target.value);
+                                  actualizarFila(f.id, 'proveedor_seleccionado_id', '');
+                                }}
+                                disabled={f.cantidad_pendiente === 0 || f.anulado}
+                              >
+                                <option value="">Categoría</option>
+                                {categoriasProveedores.map(cat => (
+                                  <option key={cat} value={cat}>{cat}</option>
+                                ))}
+                              </select>
+                              <select
+                                className="input-tc focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                                style={{ flex: 1.2, minWidth: '90px', fontSize: '11px', padding: '4px', fontWeight: 'bold', border: '1px solid #cbd5e1', height: '32px' }}
+                                value={f.proveedor_seleccionado_id || ''}
+                                onChange={(e) => actualizarFila(f.id, 'proveedor_seleccionado_id', Number(e.target.value))}
+                                onKeyDown={(e) => handleKeyDown(e, f.id, 'proveedor')}
+                                ref={el => { if (!inputRefs.current[f.id]) inputRefs.current[f.id] = {}; inputRefs.current[f.id].proveedor = el; }}
+                                disabled={f.cantidad_pendiente === 0 || f.anulado}
+                              >
+                                <option value="">Proveedor</option>
+                                {proveedoresFiltradosPorFila(f).map(p => (
+                                  <option key={p.id} value={p.id}>{p.razon_social}</option>
+                                ))}
+                              </select>
+                              <select
+                                className="input-tc focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                                style={{ width: '65px', fontSize: '10px', padding: '2px', height: '32px', border: '1px solid #cbd5e1', fontWeight: '800' }}
+                                value={f.metodo_pago_actual || '$ / BS'}
+                                onChange={(e) => actualizarFila(f.id, 'metodo_pago_actual', e.target.value)}
+                                disabled={f.cantidad_pendiente === 0 || f.anulado}
+                              >
+                                <option value="$ / BS">$ / BS</option>
+                                <option value="$ / $">$ / $</option>
+                              </select>
                             </div>
                           </div>
                         </td>
@@ -3448,25 +3999,28 @@ const Compras = () => {
 
               <div style={{ display: 'flex', gap: '12px' }}>
                 <button
+                  className="btn-tc btn-tc-secondary"
                   onClick={generarGuiaChoferPDF}
                   style={{
-                    padding: '12px 25px',
-                    backgroundColor: '#f1f5f9',
-                    border: '1px solid #cbd5e1',
-                    color: '#475569',
-                    fontWeight: 'bold',
-                    borderRadius: '8px',
-                    cursor: 'pointer',
-                    display: 'flex',
+                    display: 'inline-flex',
                     alignItems: 'center',
-                    gap: '6px',
-                    transition: 'all 0.2s'
+                    gap: '6px'
                   }}
-                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#e2e8f0'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#f1f5f9'; }}
                   title="Descargar Guía para el Chofer (Sin Precios)"
                 >
                   📄 IMPRIMIR GUÍA CHOFER
+                </button>
+                <button
+                  className="btn-tc btn-tc-secondary"
+                  onClick={generarRequisicionPDF}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px'
+                  }}
+                  title="Descargar Requisición en PDF"
+                >
+                  📄 IMPRIMIR REQUISICIÓN
                 </button>
                 <button
                   className="btn-tc"
@@ -3479,7 +4033,7 @@ const Compras = () => {
                 <button
                   className="btn-tc btn-tc-success"
                   onClick={() => guardarCambiosProcesamiento(false)}
-                  disabled={loading || !renglones.every(r => r.compra_actual_cant > 0 ? (r.doc_numero_actual?.trim() && r.proveedor_seleccionado_id) : true)}
+                  disabled={loading || renglones.some(r => r.compra_actual_cant > 0)}
                   style={{ padding: '12px 30px', backgroundColor: '#16a34a', color: 'white', fontWeight: '900', boxShadow: '0 4px 14px rgba(22, 163, 74, 0.3)' }}
                 >
                   {loading ? <Loader2 className="animate-spin" size={16} /> : 'PROCESAR COMPRA'}

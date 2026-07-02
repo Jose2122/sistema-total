@@ -1,10 +1,13 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from './supabaseClient';
+import TicketExpress from './TicketExpress';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 import { motion, AnimatePresence } from 'framer-motion';
 import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import {
   Plus,
   ChevronDown,
@@ -33,7 +36,8 @@ import {
   X,
   Landmark,
   FileSpreadsheet,
-  MessageSquare
+  MessageSquare,
+  Ban
 } from 'lucide-react';
 import './ModuloTicketsPago.css';
 
@@ -408,6 +412,8 @@ const ModuloTicketsPago = () => {
   const [showModalBancos, setShowModalBancos] = useState(false);
   const [nuevoBancoForm, setNuevoBancoForm] = useState({ nombre: '', cbu: '', moneda: 'USD' });
   const [guardandoBanco, setGuardandoBanco] = useState(false);
+  const [showTicketExpress, setShowTicketExpress] = useState(false);
+  const [datosParaTicketExpress, setDatosParaTicketExpress] = useState(null);
 
   const [solicitudSeleccionada, setSolicitudSeleccionada] = useState('');
   const [bancoOrigen, setBancoOrigen] = useState('');
@@ -616,8 +622,11 @@ const ModuloTicketsPago = () => {
           rolUpper.includes('GERENTE GENERAL') ||
           rolUpper.includes('CONTABIL') ||
           rolUpper.includes('ADMINISTRA') ||
+          rolUpper.includes('COMPRA') ||
+          rolUpper.includes('COMPRADOR') ||
           deptoUpper.includes('ADMINISTRA') ||
           deptoUpper.includes('CONTABIL') ||
+          deptoUpper.includes('COMPRA') ||
           activeUser.capacidades?.ver_tickets_global === true;
 
         if (!tieneVisibilidadGlobal) {
@@ -702,6 +711,14 @@ const ModuloTicketsPago = () => {
   };
 
   const abrirDetalleTicket = async (ticket) => {
+    if (!esPrivilegiado) {
+      setDatosParaTicketExpress({
+        isExistingTicket: true,
+        ticket: ticket
+      });
+      setShowTicketExpress(true);
+      return;
+    }
     setLoading(true);
     try {
       const renglonesIniciados = (ticket.items || []).map(item => {
@@ -945,9 +962,14 @@ const ModuloTicketsPago = () => {
   };
 
   const eliminarEntradaHistorial = async (idRenglon, indexHistorial) => {
-    const esAutorizado = currentUser?.correo?.toLowerCase() === 'jcontreras.totalclean@gmail.com';
+    const r = renglones.find(x => x.id === idRenglon);
+    const entrada = r ? r.historial_compras[indexHistorial] : null;
+    const esAutorizado = 
+      currentUser?.correo?.toLowerCase() === 'jcontreras.totalclean@gmail.com' ||
+      (entrada && entrada.usuario_id === currentUser?.id);
+
     if (!esAutorizado) {
-      toast.error('Solo el Administrador jcontreras.totalclean@gmail.com tiene permisos para eliminar registros de pago.');
+      toast.error('Solo el Administrador jcontreras.totalclean@gmail.com o el autor de esta transacción tienen permisos para eliminarla.');
       return;
     }
     toast((t) => (
@@ -967,9 +989,14 @@ const ModuloTicketsPago = () => {
   };
 
   const ejecutarEliminacionHistorial = async (idRenglon, indexHistorial) => {
-    const esAutorizado = currentUser?.correo?.toLowerCase() === 'jcontreras.totalclean@gmail.com';
+    const r = renglones.find(x => x.id === idRenglon);
+    const entrada = r ? r.historial_compras[indexHistorial] : null;
+    const esAutorizado = 
+      currentUser?.correo?.toLowerCase() === 'jcontreras.totalclean@gmail.com' ||
+      (entrada && entrada.usuario_id === currentUser?.id);
+
     if (!esAutorizado) {
-      toast.error('Solo el Administrador jcontreras.totalclean@gmail.com tiene permisos para eliminar registros de pago.');
+      toast.error('Solo el Administrador jcontreras.totalclean@gmail.com o el autor de esta transacción tienen permisos para eliminarla.');
       return;
     }
     const renglonesActualizados = renglones.map(r => {
@@ -1161,6 +1188,137 @@ const ModuloTicketsPago = () => {
     setImagenesUrlsPreview(prev => prev.filter((_, i) => i !== index));
     setImagenesNombres(prev => prev.filter((_, i) => i !== index));
   };
+  const generarTicketPDF = () => {
+    if (!ticketSeleccionado) {
+      toast.error("No se encontraron datos del ticket para exportar.");
+      return;
+    }
+    const t = ticketSeleccionado;
+    const doc = new jsPDF('p', 'mm', 'a4');
+    const fontPrimary = 'helvetica';
+    
+    // --- CABECERA ---
+    doc.setFont(fontPrimary, 'bold');
+    doc.setFontSize(13);
+    doc.setTextColor(15, 23, 42); // Slate-900
+    doc.text("TOTAL CLEAN C.A.", 15, 20);
+    
+    doc.setFont(fontPrimary, 'normal');
+    doc.setFontSize(9);
+    doc.setTextColor(71, 85, 105); // Slate-600
+    doc.text("J-303658587-0", 15, 25);
+    
+    // Derecha: Fecha y Ticket #
+    const fechaEmision = t.fecha_emision 
+      ? format(new Date(t.fecha_emision), 'dd/MM/yyyy hh:mm a') 
+      : format(new Date(), 'dd/MM/yyyy hh:mm a');
+    
+    doc.setFontSize(9);
+    doc.setTextColor(71, 85, 105);
+    doc.text(`Fecha Emisión: ${fechaEmision}`, 195, 20, { align: 'right' });
+    doc.text(`Ticket ID: ${t.codigo_control || t.id}`, 195, 25, { align: 'right' });
+    
+    // --- TÍTULO CENTRAL ---
+    doc.setFont(fontPrimary, 'bold');
+    doc.setFontSize(12);
+    doc.setTextColor(15, 23, 42);
+    const titulo = `TICKET DE PAGO / RECIBO: ${t.codigo_control || 'N/A'}`;
+    const textWidth = doc.getTextWidth(titulo);
+    const posX = (210 - textWidth) / 2;
+    doc.text(titulo, posX, 38);
+    
+    // Línea subrayada del título
+    doc.setDrawColor(15, 23, 42);
+    doc.setLineWidth(0.4);
+    doc.line(posX, 40, posX + textWidth, 40);
+    
+    // --- CUADRO DE METADATA ---
+    const startY = 46;
+    doc.setDrawColor(226, 232, 240); // Borde gris claro
+    doc.setFillColor(248, 250, 252); // Fondo gris muy claro
+    doc.setLineWidth(0.3);
+    doc.roundedRect(15, startY, 180, 28, 2, 2, 'FD');
+    
+    // Texto dentro de la Metadata
+    doc.setFontSize(9.5);
+    doc.setTextColor(15, 23, 42);
+    
+    // Columna Izquierda
+    doc.setFont(fontPrimary, 'bold');
+    doc.text("Beneficiario: ", 20, startY + 8);
+    doc.setFont(fontPrimary, 'normal');
+    doc.setTextColor(51, 65, 85);
+    doc.text(formatName(t.gerente_nombre) || 'Varios', 42, startY + 8);
+    
+    doc.setFont(fontPrimary, 'bold');
+    doc.setTextColor(15, 23, 42);
+    doc.text("Concepto / Motivo: ", 20, startY + 16);
+    doc.setFont(fontPrimary, 'normal');
+    doc.setTextColor(51, 65, 85);
+    
+    const conceptoText = t.justificacion || (t.items && t.items[0]?.justificacion_detallada) || 'Sin asunto especificado';
+    const conceptoLines = doc.splitTextToSize(conceptoText, 140);
+    doc.text(conceptoLines, 50, startY + 16);
+    
+    // Columna Derecha
+    doc.setFont(fontPrimary, 'bold');
+    doc.setTextColor(15, 23, 42);
+    doc.text("Estatus: ", 145, startY + 8);
+    doc.setFont(fontPrimary, 'normal');
+    doc.setTextColor(51, 65, 85);
+    doc.text((t.status || 'EMITIDO').toUpperCase(), 160, startY + 8);
+    
+    // --- TABLA DE ITEMS ---
+    const tableY = startY + 36;
+    
+    const headers = [["DESCRIPCIÓN DEL ÍTEM", "CC", "CATEGORÍA", "CANTIDAD", "P.U. ($)", "TOTAL ($)"]];
+    const data = (renglones || []).map(r => [
+      r.desc || r.descripcion || '',
+      r.cc || 'N/A',
+      r.categoria || 'N/A',
+      r.cantidad_pedida || 0,
+      `$ ${(r.pu || r.puUsd || 0).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+      `$ ${(r.cantidad_pedida * (r.pu || r.puUsd || 0)).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    ]);
+    
+    autoTable(doc, {
+      startY: tableY,
+      head: headers,
+      body: data,
+      theme: 'grid',
+      headStyles: { fillColor: [15, 23, 42], textColor: 255, fontStyle: 'bold' },
+      styles: { fontSize: 8.5 },
+      columnStyles: {
+        0: { cellWidth: 70 },
+        1: { cellWidth: 35 },
+        2: { cellWidth: 35 },
+        3: { cellWidth: 15, halign: 'center' },
+        4: { cellWidth: 20, halign: 'right' },
+        5: { cellWidth: 20, halign: 'right' }
+      }
+    });
+    
+    let currentY = doc.lastAutoTable.finalY + 15;
+    
+    // --- SECCIÓN DE TOTALES ---
+    const totalPresupuesto = (renglones || []).reduce((acc, r) => acc + (r.cantidad_pedida * (r.pu || r.puUsd || 0)), 0);
+    const totalEjecutado = (renglones || []).reduce((acc, r) => acc + (r.historial_compras || []).reduce((sum, h) => sum + (h.cant * h.pu), 0), 0);
+    const saldoPendiente = (renglones || []).reduce((acc, r) => acc + (r.cantidad_pendiente * (r.pu || r.puUsd || 0)), 0);
+    
+    doc.setFont(fontPrimary, 'bold');
+    doc.setFontSize(9.5);
+    doc.setTextColor(15, 23, 42);
+    
+    doc.text(`Total Presupuestado: $ ${totalPresupuesto.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 195, currentY, { align: 'right' });
+    currentY += 5;
+    doc.text(`Total Ejecutado: $ ${totalEjecutado.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 195, currentY, { align: 'right' });
+    currentY += 5;
+    doc.text(`Saldo Pendiente: $ ${saldoPendiente.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 195, currentY, { align: 'right' });
+    
+    // Guardar el PDF
+    doc.save(`Ticket_Pago_${t.codigo_control || t.id}.pdf`);
+  };
+
   const actualizarPago = async () => {
     const existingUrls = parsearFacturaUrls(ticketSeleccionado.factura_url);
     if (!modoEdicion && !imagenesArchivos.length && existingUrls.length === 0) {
@@ -1504,6 +1662,68 @@ const ModuloTicketsPago = () => {
       await fetchHistorial();
     } catch (err) {
       toast.error("Error al eliminar: " + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const anularTicket = async (ticket) => {
+    const esAdmin = currentUser?.esSuperAdmin || currentUser?.esAdminReal || currentUser?.correo?.toLowerCase() === 'jcontreras.totalclean@gmail.com';
+    const esCreador = ticket.user_id === currentUser?.id || (ticket.gerente_nombre && ticket.gerente_nombre.toLowerCase().includes(currentUser?.nombre?.toLowerCase()));
+    const esAsignado = ticket.asignado_a === currentUser?.id;
+
+    if (!esAdmin && !esCreador && !esAsignado) {
+      toast.error("No tienes permisos para anular este ticket.");
+      return;
+    }
+
+    toast((t) => (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: '500' }}>
+          ¿Estás seguro de ANULAR este ticket de pago ({ticket.codigo_control || 'Sin correlativo'})? Los renglones asociados en Fondos quedarán disponibles nuevamente.
+        </p>
+        <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+          <button
+            onClick={() => { toast.dismiss(t.id); ejecutarAnularTicket(ticket); }}
+            style={{ padding: '4px 12px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}
+          >
+            SÍ, ANULAR
+          </button>
+          <button onClick={() => toast.dismiss(t.id)} style={{ padding: '4px 12px', backgroundColor: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}>NO</button>
+        </div>
+      </div>
+    ), { duration: 6000, position: 'top-center' });
+  };
+
+  const ejecutarAnularTicket = async (ticket) => {
+    setLoading(true);
+    try {
+      const { error: ticketError } = await supabase
+        .from('tickets_directos')
+        .update({ status: 'ANULADO' })
+        .eq('id', ticket.id);
+      
+      if (ticketError) throw ticketError;
+
+      const { error: fondosError } = await supabase
+        .from('partidas_fondos')
+        .update({ 
+          status: 'Disponible', 
+          ticket_id: null, 
+          codigo_ticket: null, 
+          codigo_ref: null 
+        })
+        .eq('ticket_id', ticket.id);
+
+      if (fondosError) {
+        console.error("Error al liberar fondos de ticket:", fondosError);
+      }
+
+      toast.success("Ticket de pago ANULADO correctamente y fondos liberados.");
+      setTicketSeleccionado(null);
+      await fetchHistorial();
+    } catch (err) {
+      toast.error("Error al anular ticket: " + err.message);
     } finally {
       setLoading(false);
     }
@@ -2448,6 +2668,16 @@ const ModuloTicketsPago = () => {
                           >
                             <Eye size={18} />
                           </button>
+                          {ticket.status?.toUpperCase() !== 'ANULADO' && ticket.status?.toUpperCase() !== 'PAGADO' && ticket.status?.toUpperCase() !== 'COMPLETADO' && (
+                            <button
+                              onClick={() => anularTicket(ticket)}
+                              className="btn-tc btn-tc-secondary"
+                              style={{ padding: '8px', borderRadius: '10px', color: '#f59e0b' }}
+                              title="Anular Ticket"
+                            >
+                              <Ban size={18} />
+                            </button>
+                          )}
                           {currentUser?.correo?.toLowerCase() === 'jcontreras.totalclean@gmail.com' && (
                             <button
                               onClick={() => manejarEliminarTicket(ticket.id)}
@@ -3584,6 +3814,66 @@ const ModuloTicketsPago = () => {
                 * El estatus cambiará según el saldo restante.
               </div>
 
+              {/* Botón de Imprimir PDF del Ticket */}
+              <motion.button
+                onClick={generarTicketPDF}
+                whileHover={{ scale: 1.04 }}
+                whileTap={{ scale: 0.97 }}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px',
+                  padding: '12px 24px',
+                  background: 'linear-gradient(135deg, #64748b, #475569)',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '10px',
+                  cursor: 'pointer',
+                  fontSize: '13px',
+                  fontWeight: '700',
+                  boxShadow: '0 4px 12px rgba(100,116,139,0.25)',
+                  transition: 'all 0.2s',
+                  minWidth: '140px',
+                  height: '46px',
+                  boxSizing: 'border-box'
+                }}
+              >
+                <FileText size={15} />
+                Imprimir Ticket
+              </motion.button>
+
+              {/* Botón de Anulación */}
+              {ticketSeleccionado?.status?.toUpperCase() !== 'ANULADO' && ticketSeleccionado?.status?.toUpperCase() !== 'PAGADO' && ticketSeleccionado?.status?.toUpperCase() !== 'COMPLETADO' && (
+                <motion.button
+                  onClick={() => anularTicket(ticketSeleccionado)}
+                  whileHover={{ scale: 1.04 }}
+                  whileTap={{ scale: 0.97 }}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '8px',
+                    padding: '12px 24px',
+                    background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '10px',
+                    cursor: 'pointer',
+                    fontSize: '13px',
+                    fontWeight: '700',
+                    boxShadow: '0 4px 12px rgba(245,158,11,0.25)',
+                    transition: 'all 0.2s',
+                    minWidth: '140px',
+                    height: '46px',
+                    boxSizing: 'border-box'
+                  }}
+                >
+                  <Ban size={15} />
+                  Anular Ticket
+                </motion.button>
+              )}
+
               {/* Habilitar Edición — movido abajo al lado de finalizar ticket */}
               {(esPrivilegiado || (ticketSeleccionado?.usuario_id === currentUser?.id && ticketSeleccionado?.status !== 'Pagado')) && (
                 <motion.button
@@ -3862,6 +4152,22 @@ const ModuloTicketsPago = () => {
         {vistaActual === 'detalle' && renderDetalle()}
       </AnimatePresence>
       {renderModalBancos()}
+      {showTicketExpress && (
+        <TicketExpress
+          isOpen={showTicketExpress}
+          onClose={() => {
+            setShowTicketExpress(false);
+            setDatosParaTicketExpress(null);
+            fetchHistorial();
+          }}
+          datosPredefinidos={datosParaTicketExpress}
+          onSuccess={() => {
+            setShowTicketExpress(false);
+            setDatosParaTicketExpress(null);
+            fetchHistorial();
+          }}
+        />
+      )}
     </>
   );
 };
