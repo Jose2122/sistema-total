@@ -298,9 +298,6 @@ const ResumenEjecutivo = ({ currentUser }) => {
 
         // 1. Incorporar Planificación y Fondos (Budget)
         filteredFunds.forEach(s => {
-            // Solo considerar si el estado de aprobación es conforme (aprobado_final)
-            if ((s.estado_aprobacion || '').toLowerCase() !== 'aprobado_final') return;
-
             const gName = s.gerencia_nombre || 'S/G';
             if (!aggregated[gName]) {
                 aggregated[gName] = { name: gName, estimado: 0, gastado: 0, count: 0, topCategories: {}, reqCount: 0, ticketCount: 0, gastoReqs: 0, gastoTickets: 0 };
@@ -462,8 +459,6 @@ const ResumenEjecutivo = ({ currentUser }) => {
 
         // Alinear totalEstimadoGlobal con la suma de la planificación en filteredFunds
         const totalEstimadoGlobal = filteredFunds.reduce((sum, s) => {
-            if ((s.estado_aprobacion || '').toLowerCase() !== 'aprobado_final') return sum;
-            
             const deptoPartidas = rawPartidas.filter(p => p.solicitud_id === s.id && p.status !== 'ANULADO_POR_USUARIO');
             let estimado = 0;
             if (deptoPartidas.length > 0) {
