@@ -555,7 +555,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
 
   const mappingSiglasGerencia = {
     "Administración Maracaibo": "ADM-MCB",
-    "Administración El Tigre": "ADM-TGR",
+    "Administración El Tigre": "ADM-TG",
     "Operaciones": "OPE",
     "Mantenimiento": "MTT",
     "Seguridad": "SHA",
@@ -2206,6 +2206,35 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     pdf.setFont(fontPrimary, 'normal');
     pdf.setTextColor(51, 65, 85);
     pdf.text(fechaEmisionMeta, 151, startY + 8);
+
+    // Estado de Aprobación
+    let estadoTexto = 'PENDIENTE';
+    if (reqActual.estado_aprobacion === 'aprobado_final') {
+      estadoTexto = 'APROBADA';
+    } else if (reqActual.estado_aprobacion === 'rechazada') {
+      estadoTexto = 'RECHAZADA';
+    } else if (reqActual.estado_aprobacion === 'ANULADA') {
+      estadoTexto = 'ANULADA';
+    } else if (reqActual.estado_aprobacion === 'pendiente_proyecto') {
+      estadoTexto = 'PENDIENTE PROYECTO';
+    } else if (reqActual.estado_aprobacion === 'pendiente_area' || reqActual.estado_aprobacion === 'enviada_area') {
+      estadoTexto = 'PENDIENTE ÁREA';
+    } else if (reqActual.estado_aprobacion === 'enviada_general') {
+      estadoTexto = 'PENDIENTE GENERAL';
+    }
+
+    pdf.setFont(fontPrimary, 'bold');
+    pdf.setTextColor(15, 23, 42);
+    pdf.text("Estado: ", 125, startY + 15);
+    
+    if (estadoTexto === 'APROBADA') {
+      pdf.setTextColor(22, 163, 74); // Verde
+    } else if (estadoTexto === 'RECHAZADA' || estadoTexto === 'ANULADA') {
+      pdf.setTextColor(220, 38, 38); // Rojo
+    } else {
+      pdf.setTextColor(217, 119, 6); // Naranja
+    }
+    pdf.text(estadoTexto, 140, startY + 15);
     
     // --- TABLA DE ITEMS ---
     const tableY = startY + 30;

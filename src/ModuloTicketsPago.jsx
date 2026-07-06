@@ -54,6 +54,30 @@ const obtenerNombreDeUrl = (url) => {
   }
 };
 
+const sanitizeFileName = (name) => {
+  if (!name) return 'soporte';
+  
+  const lastDotIndex = name.lastIndexOf('.');
+  let baseName = lastDotIndex !== -1 ? name.substring(0, lastDotIndex) : name;
+  const ext = lastDotIndex !== -1 ? name.substring(lastDotIndex + 1) : '';
+  
+  let cleanBase = baseName
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/ñ/g, 'n')
+    .replace(/Ñ/g, 'N');
+    
+  cleanBase = cleanBase.replace(/[\s,]+/g, '_');
+  cleanBase = cleanBase.replace(/[^a-zA-Z0-9_-]/g, '');
+  cleanBase = cleanBase.replace(/^_+|_+$/g, '').replace(/^-+|-+$/g, '');
+  
+  if (!cleanBase) {
+    cleanBase = 'archivo';
+  }
+  
+  return ext ? `${cleanBase}.${ext}` : cleanBase;
+};
+
 const parseSafeDate = (dateVal) => {
   if (!dateVal) return null;
   try {
@@ -133,6 +157,7 @@ const FormularioPagoToast = ({
   const defaultPu = item.compra_actual_pu || item.pu || item.puUsd || 0;
 
   const [sinFactura, setSinFactura] = useState(false);
+  const [usarSoporteExistente, setUsarSoporteExistente] = useState(false);
   const [docNum, setDocNum] = useState(item.doc_numero_actual || '');
   const [bancoId, setBancoId] = useState('');
   const [file, setFile] = useState(null);
@@ -171,9 +196,20 @@ const FormularioPagoToast = ({
   const handleSinFacturaChange = (checked) => {
     setSinFactura(checked);
     if (checked) {
+      setUsarSoporteExistente(false);
       setDocNum('N/A');
     } else {
       setDocNum(item.doc_numero_actual || '');
+    }
+  };
+
+  const handleUsarSoporteExistenteChange = (checked) => {
+    setUsarSoporteExistente(checked);
+    if (checked) {
+      setSinFactura(false);
+      if (docNum === 'N/A') {
+        setDocNum(item.doc_numero_actual || '');
+      }
     }
   };
 
@@ -182,7 +218,7 @@ const FormularioPagoToast = ({
       toast.error('El número de documento es obligatorio.');
       return;
     }
-    if (!sinFactura && !file) {
+    if (!sinFactura && !usarSoporteExistente && !file) {
       toast.error('Debe adjuntar el documento de la factura para poder marcar como pagado.');
       return;
     }
@@ -207,8 +243,8 @@ const FormularioPagoToast = ({
       pu: finalPu,
       docNum: docNum.trim(),
       bancoPagoId: bancoId || null,
-      file: file || null,
-      fileName: file ? fileName.trim() : 'N/A',
+      file: (sinFactura || usarSoporteExistente) ? null : (file || null),
+      fileName: (sinFactura || usarSoporteExistente) ? 'N/A' : (file ? fileName.trim() : 'N/A'),
       proveedorId: proveedorId || null,
       efectivo: false,
       nroReferencia: nroReferencia.trim(),
@@ -281,10 +317,16 @@ const FormularioPagoToast = ({
         <div className="toast-pago-grid-2">
           <div>
             <label className="toast-pago-label">Estatus Factura</label>
-            <label className={`toast-pago-checkbox-card ${sinFactura ? 'active' : ''}`}>
-              <input type="checkbox" checked={sinFactura} onChange={(e) => handleSinFacturaChange(e.target.checked)} />
-              Sin Factura (N/A)
-            </label>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <label className={`toast-pago-checkbox-card ${sinFactura ? 'active' : ''}`} style={{ margin: 0 }}>
+                <input type="checkbox" checked={sinFactura} onChange={(e) => handleSinFacturaChange(e.target.checked)} />
+                Sin Factura (N/A)
+              </label>
+              <label className={`toast-pago-checkbox-card ${usarSoporteExistente ? 'active' : ''}`} style={{ margin: 0 }}>
+                <input type="checkbox" checked={usarSoporteExistente} onChange={(e) => handleUsarSoporteExistenteChange(e.target.checked)} />
+                Soporte ya subido
+              </label>
+            </div>
           </div>
           <div>
             <label className="toast-pago-label">
@@ -295,13 +337,13 @@ const FormularioPagoToast = ({
         </div>
         <div className="toast-pago-grid-2">
           <div>
-            <label className="toast-pago-label">Soporte {!sinFactura && <span className="toast-pago-label-req">*</span>}</label>
-            <label className={`toast-pago-upload-zone ${file ? 'has-file' : ''}`}>
+            <label className="toast-pago-label">Soporte {!sinFactura && !usarSoporteExistente && <span className="toast-pago-label-req">*</span>}</label>
+            <label className={`toast-pago-upload-zone ${(sinFactura || usarSoporteExistente) ? 'disabled' : ''} ${file ? 'has-file' : ''}`} style={(sinFactura || usarSoporteExistente) ? { cursor: 'not-allowed', backgroundColor: '#e2e8f0', borderColor: '#cbd5e1' } : {}}>
               <Upload size={14} />
               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {file ? `${file.name.slice(0, 18)}${file.name.length > 18 ? '...' : ''}` : 'Subir Imagen/PDF'}
               </span>
-              <input type="file" accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv" onChange={(e) => {
+              <input type="file" accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv" disabled={sinFactura || usarSoporteExistente} onChange={(e) => {
                 if (e.target.files && e.target.files[0]) {
                   const selectedFile = e.target.files[0];
                   if (selectedFile.size > 5 * 1024 * 1024) {
@@ -316,8 +358,8 @@ const FormularioPagoToast = ({
             </label>
           </div>
           <div>
-            <label className="toast-pago-label">Nombre Documento {!sinFactura && file && <span className="toast-pago-label-req">*</span>}</label>
-            <input type="text" className="toast-pago-input" value={fileName} onChange={(e) => setFileName(e.target.value)} placeholder="Ej: Factura Mayo..." />
+            <label className="toast-pago-label">Nombre Documento {!sinFactura && !usarSoporteExistente && file && <span className="toast-pago-label-req">*</span>}</label>
+            <input type="text" className="toast-pago-input" value={fileName} onChange={(e) => setFileName(e.target.value)} disabled={sinFactura || usarSoporteExistente} placeholder={(sinFactura || usarSoporteExistente) ? 'N/A' : 'Ej: Factura Mayo...'} />
           </div>
         </div>
       </div>
@@ -591,11 +633,13 @@ const ModuloTicketsPago = () => {
     if (!currentUser) return false;
     const rol = (currentUser.rol || '').toLowerCase().trim();
     const depto = (currentUser.departamento || '').toLowerCase().trim();
+    const email = (currentUser.correo || '').toLowerCase().trim();
 
     const matchRol = rol.includes('administra') || rol.includes('contabil');
     const matchDepto = depto.includes('administra') || depto.includes('contabil');
+    const esZuleika = email === 'larazuleika9@gmail.com';
 
-    return matchRol || matchDepto || currentUser.esAdminReal === true || currentUser.esSuperAdmin === true;
+    return matchRol || matchDepto || currentUser.esAdminReal === true || currentUser.esSuperAdmin === true || esZuleika;
   }, [currentUser]);
 
   const fetchHistorial = async (userParam = null) => {
@@ -615,7 +659,10 @@ const ModuloTicketsPago = () => {
           emailLower === 'cvega@totalclean.com' ||
           emailLower === 'karincmm1@gmail.com';
 
+        const esZuleika = emailLower === 'larazuleika9@gmail.com';
+
         const tieneVisibilidadGlobal = esAdminReal ||
+          esZuleika ||
           emailLower === 'cvega@totalclean.com' ||
           (activeUser.nombre || '').toLowerCase().includes('carlos') ||
           rolUpper.includes('ADMIN') ||
@@ -717,7 +764,7 @@ const ModuloTicketsPago = () => {
   };
 
   const abrirDetalleTicket = async (ticket) => {
-    if (!esPrivilegiado) {
+    if (!esPrivilegiado && ticket?.usuario_id !== currentUser?.id) {
       setDatosParaTicketExpress({
         isExistingTicket: true,
         ticket: ticket
@@ -872,7 +919,7 @@ const ModuloTicketsPago = () => {
       if (overrideValues?.file) {
         const file = overrideValues.file;
         const customName = overrideValues.fileName || file.name.split('.')[0] || 'Factura';
-        const fileName = `recibos/${Date.now()}_${file.name}`;
+        const fileName = `recibos/${Date.now()}_${sanitizeFileName(file.name)}`;
 
         const { error: uploadError } = await supabase.storage
           .from('tickets-evidencia')
@@ -1064,7 +1111,7 @@ const ModuloTicketsPago = () => {
 
   const guardarEdicionTx = async (renglonId, index) => {
     if (loading) return;
-    if (!esPrivilegiado) {
+    if (!esPrivilegiado && ticketSeleccionado?.usuario_id !== currentUser?.id) {
       toast.error('No tiene privilegios para modificar la información de pago.');
       return;
     }
@@ -1344,7 +1391,7 @@ const ModuloTicketsPago = () => {
         for (let i = 0; i < imagenesArchivos.length; i++) {
           const file = imagenesArchivos[i];
           const customName = imagenesNombres[i] || file.name.split('.')[0] || 'Soporte';
-          const fileName = `recibos/${Date.now()}_${file.name}`;
+          const fileName = `recibos/${Date.now()}_${sanitizeFileName(file.name)}`;
           const { error: uploadError } = await supabase.storage
             .from('tickets-evidencia')
             .upload(fileName, file);
@@ -1675,7 +1722,7 @@ const ModuloTicketsPago = () => {
 
   const anularTicket = async (ticket) => {
     const esAdmin = currentUser?.esSuperAdmin || currentUser?.esAdminReal || currentUser?.correo?.toLowerCase() === 'jcontreras.totalclean@gmail.com';
-    const esCreador = ticket.user_id === currentUser?.id || (ticket.gerente_nombre && ticket.gerente_nombre.toLowerCase().includes(currentUser?.nombre?.toLowerCase()));
+    const esCreador = ticket.usuario_id === currentUser?.id || (ticket.gerente_nombre && ticket.gerente_nombre.toLowerCase().includes(currentUser?.nombre?.toLowerCase()));
     const esAsignado = ticket.asignado_a === currentUser?.id;
 
     if (!esAdmin && !esCreador && !esAsignado) {
@@ -1704,25 +1751,47 @@ const ModuloTicketsPago = () => {
   const ejecutarAnularTicket = async (ticket) => {
     setLoading(true);
     try {
-      const { error: ticketError } = await supabase
+      // 1. Anular el ticket en tickets_directos
+      const { data: ticketUpdated, error: ticketError } = await supabase
         .from('tickets_directos')
         .update({ status: 'ANULADO' })
-        .eq('id', ticket.id);
+        .eq('id', ticket.id)
+        .select('id');
       
       if (ticketError) throw ticketError;
+      if (!ticketUpdated || ticketUpdated.length === 0) {
+        throw new Error('No se pudo anular el ticket. Verifica que tienes permisos para anular este registro.');
+      }
 
-      const { error: fondosError } = await supabase
-        .from('partidas_fondos')
-        .update({ 
-          status: 'Disponible', 
-          ticket_id: null, 
-          codigo_ticket: null, 
-          codigo_ref: null 
-        })
-        .eq('ticket_id', ticket.id);
+      // 2. Liberar partidas_fondos vinculadas.
+      // Buscamos por ticket_id (UUID) O por codigo_ticket (string) para cubrir
+      // tickets emitidos antes de que existiera la columna ticket_id.
+      const codigoTicket = ticket.codigo_control || ticket.codigo_ticket || '';
 
-      if (fondosError) {
-        console.error("Error al liberar fondos de ticket:", fondosError);
+      // Intento 1: por ticket_id UUID
+      if (ticket.id) {
+        await supabase
+          .from('partidas_fondos')
+          .update({ 
+            status: 'Disponible', 
+            ticket_id: null, 
+            codigo_ticket: null,
+            pago_realizado: false
+          })
+          .eq('ticket_id', ticket.id);
+      }
+
+      // Intento 2: por codigo_ticket string (tickets históricos sin ticket_id)
+      if (codigoTicket) {
+        await supabase
+          .from('partidas_fondos')
+          .update({ 
+            status: 'Disponible', 
+            ticket_id: null, 
+            codigo_ticket: null,
+            pago_realizado: false
+          })
+          .eq('codigo_ticket', codigoTicket);
       }
 
       toast.success("Ticket de pago ANULADO correctamente y fondos liberados.");
@@ -1730,10 +1799,12 @@ const ModuloTicketsPago = () => {
       await fetchHistorial();
     } catch (err) {
       toast.error("Error al anular ticket: " + err.message);
+      console.error("Error al anular ticket:", err);
     } finally {
       setLoading(false);
     }
   };
+
   // ==========================================
   // FILTRADO COMPARTIDO DE TICKETS PARA EXCEL Y TABLA
   // ==========================================
@@ -2543,8 +2614,8 @@ const ModuloTicketsPago = () => {
                       >
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <div style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#0ea5e9', flexShrink: 0 }} />
                             <motion.span
+                              onClick={() => abrirDetalleTicket(ticket)}
                               whileHover={{
                                 scale: 1.1,
                                 x: 5,
@@ -2566,6 +2637,20 @@ const ModuloTicketsPago = () => {
                             >
                               {ticket.codigo_control || `TX-${String(ticket.id).padStart(4, '0')}`}
                             </motion.span>
+                            {ticket.prioridad === 'Emergencia' && (
+                              <span style={{
+                                fontSize: '8px',
+                                fontWeight: '900',
+                                color: 'white',
+                                backgroundColor: '#ef4444',
+                                padding: '2px 6px',
+                                borderRadius: '4px',
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.05em'
+                              }}>
+                                Emergencia
+                              </span>
+                            )}
                           </div>
                           <div style={{ fontSize: '10px', color: '#94a3b8', marginLeft: '14px', fontWeight: '600' }}>
                             {fechaStr}
@@ -3125,7 +3210,7 @@ const ModuloTicketsPago = () => {
                         </tr>
 
                         {/* --- HISTORIAL EXPANDIBLES --- */}
-                        {(expandirHistorial[r.id] || (modoEdicion && esPrivilegiado)) && (
+                        {(expandirHistorial[r.id] || (modoEdicion && (esPrivilegiado || ticketSeleccionado?.usuario_id === currentUser?.id))) && (
                           <tr key={`expand-${r.id}`} style={{ backgroundColor: '#f8fafc' }}>
                             <td colSpan="10" style={{ padding: 0 }}>
                               <motion.div
@@ -3334,7 +3419,7 @@ const ModuloTicketsPago = () => {
                                           <td style={{ textAlign: 'right', padding: '10px 8px', fontWeight: '800', color: '#0f172a' }}>$ {(h.cant * h.pu).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
                                           {/* 8. ACCIONES */}
                                           <td style={{ textAlign: 'center', padding: '10px 8px' }}>
-                                            {esPrivilegiado && modoEdicion && (
+                                            {((esPrivilegiado || ticketSeleccionado?.usuario_id === currentUser?.id) && modoEdicion) && (
                                               <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', alignItems: 'center' }}>
                                                 <button
                                                   onClick={() => iniciarEdicionTx(r.id, hIdx, h)}
@@ -3403,7 +3488,7 @@ const ModuloTicketsPago = () => {
                     >
                       {mostrarSoportes ? 'Ocultar Soportes' : 'Ver Soportes'}
                     </button>
-                    {esPrivilegiado && (
+                    {(esPrivilegiado || (ticketSeleccionado?.usuario_id === currentUser?.id && ticketSeleccionado?.status !== 'Pagado')) && (
                       <label className="btn-tc btn-tc-primary" style={{ cursor: 'pointer', padding: '6px 12px', fontSize: '0.7rem' }}>
                         <Upload size={14} /> Adjuntar
                         <input type="file" multiple style={{ display: 'none' }} onChange={handleImagenChange} accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv" />
@@ -3507,7 +3592,7 @@ const ModuloTicketsPago = () => {
                                 {item.name}
                               </span>
 
-                              {esPrivilegiado && (
+                              {(esPrivilegiado || (ticketSeleccionado?.usuario_id === currentUser?.id && ticketSeleccionado?.status !== 'Pagado')) && (
                                 <button
                                   onClick={() => borrarComprobanteDB(item.url)}
                                   style={{

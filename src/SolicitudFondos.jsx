@@ -197,7 +197,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
     }
     const mappingGerencias = {
       "Administración Maracaibo": "ADM-MCB",
-      "Administración El Tigre": "ADM-TGR",
+      "Administración El Tigre": "ADM-TG",
       "Operaciones": "OPE",
       "Mantenimiento": "MTT",
       "Seguridad": "SHA",
@@ -393,7 +393,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
   // --- LÓGICA DE FILTRADO ---
   const mappingGerenciasDropdown = {
     "ADM-MCB": "Administración Maracaibo",
-    "ADM-TGR": "Administración El Tigre",
+    "ADM-TG": "Administración El Tigre",
     "OPE": "Operaciones",
     "MTT": "Mantenimiento",
     "SHA": "Seguridad",
@@ -656,22 +656,31 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       // Obtenemos un resumen de pagos por solicitud para los stats
       const { data: pagosData } = await supabase
         .from('partidas_fondos')
-        .select('solicitud_id, pu_bs, pu_usd, cantidad, pago_realizado, requisicion_id, requisiciones(id, items)')
+        .select('solicitud_id, pu_bs, pu_usd, cantidad, pago_realizado, status, requisicion_id, requisiciones(id, items)')
         .in('solicitud_id', dataHist.map(h => h.id));
 
       setHistorial(dataHist.map(h => {
         const misPartidas = (pagosData || []).filter(p => p.solicitud_id === h.id);
 
-        const calculatedTotalBs = parseFloat(h.total_bs || 0);
-        const calculatedTotalUsd = parseFloat(h.total_usd || 0);
+        let calculatedTotalBs = parseFloat(h.total_bs || 0);
+        let calculatedTotalUsd = parseFloat(h.total_usd || 0);
+
+        if (misPartidas.length > 0) {
+          // Siempre usar la suma dinámica de los items como fuente de verdad.
+          // El valor de cabecera (total_bs/total_usd) puede estar desactualizado
+          // o ser incorrecto por migraciones, por lo que confiamos en los renglones.
+          calculatedTotalBs = misPartidas.reduce((acc, p) => acc + (p.status === 'ANULADO_POR_USUARIO' ? 0 : (parseFloat(p.pu_bs) || 0) * (p.cantidad || 1)), 0);
+          calculatedTotalUsd = misPartidas.reduce((acc, p) => acc + (p.status === 'ANULADO_POR_USUARIO' ? 0 : (parseFloat(p.pu_usd) || 0) * (p.cantidad || 1)), 0);
+        }
+
         let totalPagado = 0;
         let pendingBs = 0;
         let pendingUsd = 0;
 
         if (misPartidas.length > 0) {
-          totalPagado = misPartidas.reduce((acc, p) => acc + (p.pago_realizado ? (parseFloat(p.pu_bs) || parseFloat(p.pu_usd) || 0) * (p.cantidad || 1) : 0), 0);
-          pendingBs = misPartidas.reduce((acc, p) => acc + (!p.pago_realizado ? (parseFloat(p.pu_bs) || 0) * (p.cantidad || 1) : 0), 0);
-          pendingUsd = misPartidas.reduce((acc, p) => acc + (!p.pago_realizado ? (parseFloat(p.pu_usd) || 0) * (p.cantidad || 1) : 0), 0);
+          totalPagado = misPartidas.reduce((acc, p) => acc + (p.status === 'ANULADO_POR_USUARIO' ? 0 : (p.pago_realizado ? (parseFloat(p.pu_bs) || parseFloat(p.pu_usd) || 0) * (p.cantidad || 1) : 0)), 0);
+          pendingBs = misPartidas.reduce((acc, p) => acc + (p.status === 'ANULADO_POR_USUARIO' ? 0 : (!p.pago_realizado ? (parseFloat(p.pu_bs) || 0) * (p.cantidad || 1) : 0)), 0);
+          pendingUsd = misPartidas.reduce((acc, p) => acc + (p.status === 'ANULADO_POR_USUARIO' ? 0 : (!p.pago_realizado ? (parseFloat(p.pu_usd) || 0) * (p.cantidad || 1) : 0)), 0);
         } else {
           totalPagado = h.pago_realizado ? (calculatedTotalBs + calculatedTotalUsd) : 0;
           pendingBs = h.pago_realizado ? 0 : calculatedTotalBs;
@@ -1845,9 +1854,11 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
   }, [form.partidas, form.imprevistos]);
 
   const dashEjecucion = useMemo(() => {
-    const estimado = (sumas.bs + sumas.usd);
-    const ejecutado = form.partidas.reduce((acc, p) => acc + (p.montoReal || 0), 0);
-    const pendiente = form.partidas.reduce((acc, p) => acc + (p.montoPendiente || 0), 0);
+    const estimado = (sumas.bs + sumas.usd) + (sumas.imprevistosBs + sumas.imprevistosUsd);
+    const ejecutado = form.partidas.reduce((acc, p) => acc + (p.montoReal || 0), 0) +
+                      form.imprevistos.reduce((acc, p) => acc + (p.montoReal || 0), 0);
+    const pendiente = form.partidas.reduce((acc, p) => acc + (p.montoPendiente || 0), 0) +
+                      form.imprevistos.reduce((acc, p) => acc + (p.montoPendiente || 0), 0);
 
     return {
       estimado,
@@ -1859,7 +1870,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
 
   const categoriasEjecucion = useMemo(() => {
     const categoriesMap = {};
-    const todas = [...form.partidas];
+    const todas = [...form.partidas, ...form.imprevistos];
     todas.forEach(p => {
       if (p.status === 'ANULADO_POR_USUARIO') return;
       const cat = p.cat || 'S/C';
@@ -1931,6 +1942,24 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         .eq('id', itemParaAnular.id);
 
       if (updateError) throw updateError;
+
+      // 3.1 Recalcular y actualizar totales en la cabecera (solicitudes_fondos)
+      const nuevasPartidas = form.partidas.map(p => p.id === itemParaAnular.id ? { ...p, status: 'ANULADO_POR_USUARIO' } : p);
+      const nuevosImprevistos = form.imprevistos.map(imp => imp.id === itemParaAnular.id ? { ...imp, status: 'ANULADO_POR_USUARIO' } : imp);
+
+      const totalBs = nuevasPartidas.reduce((acc, p) => acc + (p.status === 'ANULADO_POR_USUARIO' ? 0 : (parseFloat(p.puBs) || 0) * (p.cant || 1)), 0) +
+                      nuevosImprevistos.reduce((acc, p) => acc + (p.status === 'ANULADO_POR_USUARIO' ? 0 : (parseFloat(p.puBs) || 0) * (p.cant || 1)), 0);
+      const totalUsd = nuevasPartidas.reduce((acc, p) => acc + (p.status === 'ANULADO_POR_USUARIO' ? 0 : (parseFloat(p.puUsd) || 0) * (p.cant || 1)), 0) +
+                       nuevosImprevistos.reduce((acc, p) => acc + (p.status === 'ANULADO_POR_USUARIO' ? 0 : (parseFloat(p.puUsd) || 0) * (p.cant || 1)), 0);
+
+      const { error: cabeceraError } = await supabase
+        .from('solicitudes_fondos')
+        .update({ total_bs: totalBs, total_usd: totalUsd })
+        .eq('id', form.id_db);
+
+      if (cabeceraError) {
+        console.error("Error updating solicitudes_fondos totals on annulment:", cabeceraError);
+      }
 
       // 4. Actualizar estado local
       const esImprevisto = form.imprevistos.some(imp => imp.id === itemParaAnular.id);
@@ -2024,8 +2053,8 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         ? targetForm.imprevistos.filter(tieneContenido)
         : [];
 
-      const totalBsCalc = [...pFiltradas, ...iFiltradas].reduce((acc, p) => acc + (parseFloat(p.puBs) || 0) * (parseFloat(p.cant) || 1), 0);
-      const totalUsdCalc = [...pFiltradas, ...iFiltradas].reduce((acc, p) => acc + (parseFloat(p.puUsd) || 0) * (parseFloat(p.cant) || 1), 0);
+      const totalBsCalc = [...pFiltradas, ...iFiltradas].reduce((acc, p) => acc + (p.status === 'ANULADO_POR_USUARIO' ? 0 : (parseFloat(p.puBs) || 0) * (parseFloat(p.cant) || 1)), 0);
+      const totalUsdCalc = [...pFiltradas, ...iFiltradas].reduce((acc, p) => acc + (p.status === 'ANULADO_POR_USUARIO' ? 0 : (parseFloat(p.puUsd) || 0) * (parseFloat(p.cant) || 1)), 0);
 
       // --- VALIDACIÓN DE UNICIDAD SEMANAL (NO DUPLICADOS) ---
       if (!isEditing) {
@@ -2392,6 +2421,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       gerencia: form.gerencia,
       solicitante: form.responsable,
       solicitud_ref: idDinamico,
+      prioridad: form.prioridad || 'Normal',
       partidasSeleccionadas: seleccionados.map(imp => ({
         id: imp.id,
         cc: imp.cc,

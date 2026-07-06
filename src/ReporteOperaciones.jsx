@@ -957,6 +957,7 @@ const ReporteOperaciones = ({ currentUser }) => {
                                                                 <div className="ro-min-card"><strong>Proyecto CC:</strong> {ticket.centro_costo || 'N/A'}</div>
                                                                 <div className="ro-min-card"><strong>Monto:</strong> $ {(Number(ticket.total_usd) || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</div>
                                                                 <div className="ro-min-card"><strong>Tipo de Pago:</strong> Pago {metodoPago}</div>
+                                                                <div className="ro-min-card"><strong>Prioridad:</strong> <span style={{ color: (ticket.prioridad || 'Normal').toLowerCase() === 'emergencia' ? '#ef4444' : '#0ea5e9', fontWeight: 'bold' }}>{(ticket.prioridad || 'Normal').toUpperCase()}</span></div>
                                                             </div>
                                                         </div>
 

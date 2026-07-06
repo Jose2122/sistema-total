@@ -329,6 +329,7 @@ const Compras = () => {
   const [filtroAnalista, setFiltroAnalista] = useState('Todos');
   const [verSoloMisAsignadas, setVerSoloMisAsignadas] = useState(true);
   const [loadingAsignacion, setLoadingAsignacion] = useState(false);
+  const [zuleikaPerfil, setZuleikaPerfil] = useState(null);
 
   const proveedoresFiltradosPorFila = (f) => {
     if (!f.categoria_proveedor) return proveedores;
@@ -342,19 +343,23 @@ const Compras = () => {
   // --- ROLES & PERMISOS COMPUTADOS ---
   const rolUpperFinal = (currentUser?.rol || '').toUpperCase();
   const deptoUpperFinal = (currentUser?.departamento || '').toUpperCase();
+  const emailLowerFinal = (currentUser?.correo || '').toLowerCase().trim();
+  const esZuleika = emailLowerFinal === 'larazuleika9@gmail.com';
 
   const esDeCompras = deptoUpperFinal.includes('COMPRAS') ||
     deptoUpperFinal.includes('ADMINISTRACIÓN') ||
     !!currentUser?.esAdminReal ||
     rolUpperFinal === 'GERENTE GENERAL' ||
-    rolUpperFinal === 'ADMIN';
+    rolUpperFinal === 'ADMIN' ||
+    esZuleika;
 
   const esGerenteDeCompras = 
     (rolUpperFinal === 'GERENTE' && deptoUpperFinal.includes('COMPRAS')) ||
     (currentUser?.nombre === 'Ricardo' && currentUser?.apellido === 'Herrera') ||
     !!currentUser?.esAdminReal ||
     rolUpperFinal === 'GERENTE GENERAL' ||
-    rolUpperFinal === 'ADMIN';
+    rolUpperFinal === 'ADMIN' ||
+    esZuleika;
 
   const obtenerSesionUsuario = useCallback(async () => {
     const { data: { session } } = await supabase.auth.getSession();
@@ -368,7 +373,7 @@ const Compras = () => {
 
       if (perfil) {
         const esAdminReal = email === 'jcontreras.totalclean@gmail.com' || email === 'cvega.totalclean@gmail.com';
-        setCurrentUser({ ...perfil, esAdminReal });
+        setCurrentUser({ ...perfil, correo: email, esAdminReal });
       }
     }
   }, []);
@@ -376,6 +381,19 @@ const Compras = () => {
   const cargarRequisicionesAprobadas = useCallback(async () => {
     setLoading(true);
     try {
+      let zProfile = zuleikaPerfil;
+      if (!zProfile) {
+        const { data: zData } = await supabase
+          .from('perfiles')
+          .select('id, nombre, apellido')
+          .ilike('correo', 'larazuleika9@gmail.com')
+          .single();
+        if (zData) {
+          zProfile = zData;
+          setZuleikaPerfil(zData);
+        }
+      }
+
       const { data, error } = await supabase
         .from('requisiciones')
         .select('*')
@@ -383,19 +401,26 @@ const Compras = () => {
         .order('fecha_emision', { ascending: false });
 
       if (error) throw error;
-      setHistorial(data.map(db => ({
-        ...db,
-        correlativo: db.correlativo_req,
-        total: db.total_bs,
-        detalles: db.items,
-        fecha: db.fecha_emision ? db.fecha_emision.split('T')[0] : ''
-      })));
+      setHistorial(data.map(db => {
+        const esCcTigre = (db.centro_costo || '').toLowerCase().includes('tigre');
+        return {
+          ...db,
+          correlativo: db.correlativo_req,
+          total: db.total_bs,
+          detalles: db.items,
+          fecha: db.fecha_emision ? db.fecha_emision.split('T')[0] : '',
+          ...(esCcTigre && zProfile ? {
+            asignado_a: zProfile.id,
+            asignado_nombre: `${zProfile.nombre} ${zProfile.apellido}`
+          } : {})
+        };
+      }));
     } catch (err) {
       console.error("Error cargando compras:", err.message);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [zuleikaPerfil]);
 
   const cargarProveedores = useCallback(async () => {
     const { data, error } = await supabase
@@ -1113,6 +1138,35 @@ const Compras = () => {
     pdf.setFont(fontPrimary, 'normal');
     pdf.setTextColor(51, 65, 85);
     pdf.text(fechaEmisionMeta, 151, startY + 8);
+
+    // Estado de Aprobación
+    let estadoTexto = 'PENDIENTE';
+    if (requisicionActiva.estado_aprobacion === 'aprobado_final') {
+      estadoTexto = 'APROBADA';
+    } else if (requisicionActiva.estado_aprobacion === 'rechazada') {
+      estadoTexto = 'RECHAZADA';
+    } else if (requisicionActiva.estado_aprobacion === 'ANULADA') {
+      estadoTexto = 'ANULADA';
+    } else if (requisicionActiva.estado_aprobacion === 'pendiente_proyecto') {
+      estadoTexto = 'PENDIENTE PROYECTO';
+    } else if (requisicionActiva.estado_aprobacion === 'pendiente_area' || requisicionActiva.estado_aprobacion === 'enviada_area') {
+      estadoTexto = 'PENDIENTE ÁREA';
+    } else if (requisicionActiva.estado_aprobacion === 'enviada_general') {
+      estadoTexto = 'PENDIENTE GENERAL';
+    }
+
+    pdf.setFont(fontPrimary, 'bold');
+    pdf.setTextColor(15, 23, 42);
+    pdf.text("Estado: ", 125, startY + 15);
+    
+    if (estadoTexto === 'APROBADA') {
+      pdf.setTextColor(22, 163, 74); // Verde
+    } else if (estadoTexto === 'RECHAZADA' || estadoTexto === 'ANULADA') {
+      pdf.setTextColor(220, 38, 38); // Rojo
+    } else {
+      pdf.setTextColor(217, 119, 6); // Naranja
+    }
+    pdf.text(estadoTexto, 140, startY + 15);
     
     // --- TABLA DE ITEMS ---
     const tableY = startY + 30;

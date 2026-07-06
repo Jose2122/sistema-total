@@ -1073,7 +1073,7 @@ const ReportesMaestro = () => {
                             disabled={activeTab === 'operaciones'}
                         >
                             <option value="Todos">Todas</option>
-                            {["Administración Maracaibo", "Operaciones", "Mantenimiento", "Seguridad", "Recursos Humanos", "Gerencia General"].map(g => <option key={g} value={g}>{g}</option>)}
+                            {["Administración Maracaibo", "Administración El Tigre", "Operaciones", "Mantenimiento", "Seguridad", "Recursos Humanos", "Gerencia General"].map(g => <option key={g} value={g}>{g}</option>)}
                         </select>
                     </div>
 
@@ -1782,8 +1782,9 @@ const ReportesMaestro = () => {
                                                             <div className="rm-modal-info-grid" style={{ gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px', marginBottom: 0 }}>
                                                                 <div className="rm-min-card"><strong>Responsable:</strong> {ticket.responsable_nombre || ticket.gerente_nombre || 'N/A'}</div>
                                                                 <div className="rm-min-card"><strong>Gerencia:</strong> {ticket.departamento || 'N/A'}</div>
-                                                                <div className="rm-min-card"><strong>Centro de Costo:</strong> {ticket.centro_costo || 'N/A'}</div>
                                                                 <div className="rm-min-card"><strong>Monto Total:</strong> $ {(Number(ticket.total_usd) || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</div>
+                                                                <div className="rm-min-card"><strong>Prioridad:</strong> <span style={{ color: (ticket.prioridad || 'Normal').toLowerCase() === 'emergencia' ? '#ef4444' : '#0ea5e9', fontWeight: 'bold' }}>{(ticket.prioridad || 'Normal').toUpperCase()}</span></div>
+                                                                <div className="rm-min-card"><strong>Centro de Costo:</strong> {ticket.centro_costo || 'N/A'}</div>
                                                             </div>
                                                         </div>
 

@@ -254,7 +254,7 @@ const Reportes = () => {
             cantComprada: Number(item.cant || 1),
             puReal: Number(item.pu || 0),
             categoria: item.cat || item.categoria || 'S/C',
-            prioridad: 'Normal',
+            prioridad: doc.prioridad || 'Normal',
             totalEstimado: Number(item.total || (Number(item.cant || 1) * Number(item.pu || 0))),
             totalEjecutado: Number(item.total || (Number(item.cant || 1) * Number(item.pu || 0))),
             total: Number(item.total || (Number(item.cant || 1) * Number(item.pu || 0))),

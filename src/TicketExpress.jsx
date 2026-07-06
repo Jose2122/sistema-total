@@ -142,7 +142,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
     }
     const mapeo = {
       "Administración Maracaibo": "ADM-MCB",
-      "Administración El Tigre": "ADM-TGR",
+      "Administración El Tigre": "ADM-TG",
       "Operaciones": "OPE",
       "Mantenimiento": "MTT",
       "Seguridad": "SHA",
@@ -211,6 +211,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
     justificacion: '',
     justificacion_detallada: '',
     con_iva: true,
+    prioridad: 'Normal',
     partidas: [{
       id: Date.now(),
       cc: '',
@@ -307,7 +308,8 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
             justificacion: t.justificacion || '',
             justificacion_detallada: t.items?.[0]?.justificacion_detallada || '',
             centro_costo: t.centro_costo || t.items?.[0]?.cc || '',
-            con_iva: t.con_iva !== false
+            con_iva: t.con_iva !== false,
+            prioridad: t.prioridad || 'Normal'
           });
           const hasSoportes = parsearFacturaUrls(factUrls).length > 0;
           setMostrarSoportes(hasSoportes);
@@ -351,6 +353,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
               solicitud_ref: datosPredefinidos.solicitud_ref || '',
               centro_costo: partidas[0]?.cc || '',
               justificacion: datosPredefinidos.observaciones || datosPredefinidos.justificacion || '',
+              prioridad: datosPredefinidos.prioridad || prev.prioridad || 'Normal',
               partidas
             };
           });
@@ -693,7 +696,8 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
         clasificacion_admin: form.clasificacion_admin || null,
         justificacion: form.justificacion || form.justificacion_detallada || null,
         centro_costo: form.centro_costo || form.partidas?.[0]?.cc || null,
-        con_iva: form.con_iva !== false
+        con_iva: form.con_iva !== false,
+        prioridad: form.prioridad || 'Normal'
       };
 
       console.log("[TicketExpress] Payload de inserción:", payload);
@@ -764,7 +768,8 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
         }],
         facturas_url: [],
         status: 'EMITIDO',
-        con_iva: true
+        con_iva: true,
+        prioridad: 'Normal'
       });
     } catch (err) {
       toast.error("Error al emitir ticket: " + err.message);
@@ -789,7 +794,8 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
           status: form.status,
           clasificacion_admin: form.clasificacion_admin,
           justificacion: form.justificacion || form.justificacion_detallada || null,
-          con_iva: form.con_iva !== false
+          con_iva: form.con_iva !== false,
+          prioridad: form.prioridad || 'Normal'
         })
         .eq('id', form.id);
 
@@ -953,12 +959,14 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
   };
 
   const anularTicket = async (t) => {
-    const esAutorizado = currentUser?.esSuperAdmin === true ||
+    const esAdmin = currentUser?.esSuperAdmin === true ||
       currentUser?.esAdminReal === true ||
       ['jcontreras.totalclean@gmail.com', 'karincmm1@gmail.com', 'cvega@totalclean.com', 'cvega.totalclean@gmail.com'].includes(currentUser?.correo?.toLowerCase());
+    const esCreador = t.usuario_id === currentUser?.id || (t.gerente_nombre && t.gerente_nombre.toLowerCase().includes(currentUser?.nombre?.toLowerCase()));
+    const esAsignado = t.asignado_a === currentUser?.id;
 
-    if (!esAutorizado) {
-      toast.error("Solo el SuperAdministrador tiene permisos para anular tickets.");
+    if (!esAdmin && !esCreador && !esAsignado) {
+      toast.error("No tienes permisos para anular este ticket.");
       return;
     }
 
@@ -981,33 +989,56 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
   const ejecutarAnulacionTicket = async (t) => {
     setLoading(true);
     try {
-      // 1. Marcar ticket como ANULADO
-      const { error: errorT } = await supabase
+      // 1. Marcar ticket como ANULADO y verificar que realmente se actualizó
+      const { data: ticketUpdated, error: errorT } = await supabase
         .from('tickets_directos')
         .update({ status: 'ANULADO' })
-        .eq('id', t.id);
+        .eq('id', t.id)
+        .select('id');
       if (errorT) throw errorT;
+      if (!ticketUpdated || ticketUpdated.length === 0) {
+        throw new Error('No se pudo anular el ticket. Verifica que tienes permisos para anular este registro.');
+      }
 
-      // 2. Liberar renglones vinculados
-      const { error: errorF } = await supabase
-        .from('partidas_fondos')
-        .update({
-          ticket_id: null,
-          status: 'Disponible',
-          codigo_ticket: null,
-          pago_realizado: false
-        })
-        .eq('ticket_id', t.id);
-      if (errorF) throw errorF;
+      // 2. Liberar renglones vinculados.
+      // Doble búsqueda: por ticket_id UUID y por codigo_ticket string
+      // para cubrir tickets históricos que solo tienen codigo_ticket guardado.
+      const codigoTicket = t.codigo_control || t.codigo_ticket || '';
+
+      if (t.id) {
+        await supabase
+          .from('partidas_fondos')
+          .update({
+            ticket_id: null,
+            status: 'Disponible',
+            codigo_ticket: null,
+            pago_realizado: false
+          })
+          .eq('ticket_id', t.id);
+      }
+
+      if (codigoTicket) {
+        await supabase
+          .from('partidas_fondos')
+          .update({
+            ticket_id: null,
+            status: 'Disponible',
+            codigo_ticket: null,
+            pago_realizado: false
+          })
+          .eq('codigo_ticket', codigoTicket);
+      }
 
       toast.success("Ticket ANULADO y renglones liberados.");
       cargarHistorial();
     } catch (err) {
       toast.error("Error al anular: " + err.message);
+      console.error("Error al anular ticket:", err);
     } finally {
       setLoading(false);
     }
   };
+
 
   const handleVerDetalle = (t) => {
     setIsEditing(true); // Usamos isEditing para modo "Ver/Solo Lectura"
@@ -1381,7 +1412,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
 
               {/* --- CUERPO DESPLAZABLE --- */}
               <div style={{ flexGrow: 1, overflowY: 'auto', padding: '30px', backgroundColor: 'rgba(241, 245, 249, 0.4)' }}>
-                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(140px, 160px) 1.5fr 1fr 1fr', gap: '20px', marginBottom: '25px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(130px, 150px) 1.2fr 1fr 1fr 1.2fr', gap: '20px', marginBottom: '25px' }}>
                   <div>
                     <label className="te-label" style={{ color: '#1e293b', fontSize: '10px', fontWeight: '800', display: 'block', marginBottom: '5px' }}>FECHA EMISIÓN <span style={{ color: '#ef4444' }}>*</span></label>
                     <div style={{ position: 'relative' }}>
@@ -1441,6 +1472,71 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
                       <span style={{ fontSize: '0.9rem', fontWeight: '600', color: '#1e293b' }}>
                         {form.departamento || 'Sin asignar'}
                       </span>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="te-label" style={{ color: '#1e293b', fontSize: '10px', fontWeight: '800', display: 'block', marginBottom: '5px' }}>
+                      PRIORIDAD <span style={{ color: '#ef4444', fontWeight: 'bold' }}>*</span>
+                    </label>
+                    <div style={{
+                      display: 'flex',
+                      background: '#f1f5f9',
+                      padding: '3px',
+                      borderRadius: '12px',
+                      height: '42px',
+                      border: '1px solid #cbd5e1',
+                      gap: '3px',
+                      boxSizing: 'border-box',
+                      transition: 'all 0.3s ease'
+                    }}>
+                      <button
+                        onClick={() => setForm({ ...form, prioridad: 'Normal' })}
+                        disabled={isEditing}
+                        type="button"
+                        style={{
+                          flex: 1,
+                          border: 'none',
+                          borderRadius: '9px',
+                          background: (form.prioridad || 'Normal') === 'Normal' ? 'white' : 'transparent',
+                          boxShadow: (form.prioridad || 'Normal') === 'Normal' ? '0 2px 4px rgba(0,0,0,0.05)' : 'none',
+                          color: (form.prioridad || 'Normal') === 'Normal' ? '#0ea5e9' : '#64748b',
+                          fontSize: '0.65rem',
+                          fontWeight: '900',
+                          cursor: isEditing ? 'not-allowed' : 'pointer',
+                          transition: 'all 0.2s',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '4px'
+                        }}
+                      >
+                        {form.prioridad === 'Normal' && <CheckCircle2 size={12} />}
+                        NORMAL
+                      </button>
+                      <button
+                        onClick={() => setForm({ ...form, prioridad: 'Emergencia' })}
+                        disabled={isEditing}
+                        type="button"
+                        style={{
+                          flex: 1,
+                          border: 'none',
+                          borderRadius: '9px',
+                          background: form.prioridad === 'Emergencia' ? 'white' : 'transparent',
+                          boxShadow: form.prioridad === 'Emergencia' ? '0 2px 4px rgba(0,0,0,0.05)' : 'none',
+                          color: form.prioridad === 'Emergencia' ? '#ef4444' : '#64748b',
+                          fontSize: '0.65rem',
+                          fontWeight: '900',
+                          cursor: isEditing ? 'not-allowed' : 'pointer',
+                          transition: 'all 0.2s',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '4px'
+                        }}
+                      >
+                        {form.prioridad === 'Emergencia' && <CheckCircle2 size={12} color="#ef4444" />}
+                        EMERGENCIA
+                      </button>
                     </div>
                   </div>
                 </div>

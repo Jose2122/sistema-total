@@ -2,12 +2,95 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from './supabaseClient';
 import toast from 'react-hot-toast';
 import { 
-  Search, FileText, Loader2, FileSpreadsheet, Trash2, ShieldAlert, History
+  Search, FileText, Loader2, FileSpreadsheet, Trash2, ShieldAlert, History, X, DollarSign
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
+import './ReportesMaestro.css';
+
+// Helpers for modal detail view
+const parsearFacturaUrls = (facturaUrlField) => {
+  if (!facturaUrlField) return [];
+
+  let rawItems = [];
+
+  const extractRaw = (field) => {
+    if (!field) return;
+    if (Array.isArray(field)) {
+      field.forEach(item => extractRaw(item));
+    } else if (typeof field === 'string') {
+      const trimmed = field.trim();
+      if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+        try {
+          const parsed = JSON.parse(trimmed);
+          extractRaw(parsed);
+        } catch {
+          rawItems.push(trimmed);
+        }
+      } else {
+        rawItems.push(trimmed);
+      }
+    } else if (typeof field === 'object' && field !== null) {
+      rawItems.push(field);
+    }
+  };
+
+  extractRaw(facturaUrlField);
+
+  return rawItems.map(item => {
+    if (typeof item === 'string') {
+      const trimmed = item.trim();
+      if (trimmed.startsWith('{')) {
+        try {
+          const obj = JSON.parse(trimmed);
+          if (obj.url) {
+            return {
+              url: obj.url,
+              name: obj.name || obtenerNombreDeUrl(obj.url)
+            };
+          }
+        } catch (e) { }
+      }
+      return {
+        url: trimmed,
+        name: obtenerNombreDeUrl(trimmed)
+      };
+    } else if (typeof item === 'object' && item !== null && item.url) {
+      return {
+        url: item.url,
+        name: item.name || obtenerNombreDeUrl(item.url)
+      };
+    }
+    return null;
+  }).filter(item => item && typeof item.url === 'string' && item.url.trim().length > 10);
+};
+
+const obtenerNombreDeUrl = (url) => {
+  if (!url) return 'Soporte';
+  try {
+    const parts = url.split('/');
+    const lastPart = parts[parts.length - 1].split('?')[0];
+    const decoded = decodeURIComponent(lastPart);
+    const cleanName = decoded.replace(/^\d+_/g, '');
+    return cleanName || 'Soporte';
+  } catch (e) {
+    return 'Soporte';
+  }
+};
+
+const safeFormatDate = (dateVal) => {
+  if (!dateVal) return '-';
+  try {
+    const d = new Date(dateVal);
+    if (isNaN(d.getTime())) return '-';
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
+  } catch {
+    return '-';
+  }
+};
 
 const UBICACIONES_AUTORIZADAS = [
   "Almacén Maracaibo",
@@ -31,10 +114,86 @@ const Almacen = () => {
   const [fechaDesde, setFechaDesde] = useState('');
   const [fechaHasta, setFechaHasta] = useState('');
   const [vistaTab, setVistaTab] = useState('todos'); // 'todos', 'recibidos', 'pendientes'
+  const [activeTab, setActiveTab] = useState('recepcion'); // 'recepcion' | 'historial'
+  const [filtroAnalista, setFiltroAnalista] = useState('Todos'); // filtro por quien hizo el ingreso en historial
   
   // Para llevar el control de qué almacén se selecciona para cada compra antes de recibir
   const [selectedAlmacenes, setSelectedAlmacenes] = useState({}); // { [compraId]: 'Almacen ...' }
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+
+  // Modal de Detalles para Almacén (Reutilizado de ReportesMaestro pero sin precios, banco, etc.)
+  const [modalTicketData, setModalTicketData] = useState(null); // { ticket, req }
+  const [modalLoading, setModalLoading] = useState(false);
+  const [showModal, setShowModal] = useState(false);
+  const [selectedFileIndex, setSelectedFileIndex] = useState(0);
+
+  const handleVerDetalleTicket = async (compra) => {
+    setModalLoading(true);
+    setShowModal(true);
+    setSelectedFileIndex(0);
+    try {
+      // 1. Fetch ticket matching the requisition reference
+      const { data: tickets, error: ticketErr } = await supabase
+        .from('tickets_directos')
+        .select('*')
+        .or(`solicitud_ref.eq.${compra.req_id},solicitud_ref.eq.${compra.correlativo}`)
+        .limit(1);
+
+      if (ticketErr) throw ticketErr;
+
+      let ticket = null;
+      if (tickets && tickets.length > 0) {
+        ticket = tickets[0];
+      } else {
+        // Fallback: build a mock ticket object from the requisition/compra data if no ticket is found
+        const { data: reqData } = await supabase
+          .from('requisiciones')
+          .select('*')
+          .eq('id', compra.req_id)
+          .single();
+
+        ticket = {
+          id: `mock-${compra.req_id}`,
+          codigo_control: compra.correlativo,
+          responsable_nombre: compra.solicitante,
+          departamento: compra.gerencia,
+          centro_costo: compra.centro_costo,
+          status: compra.recibido ? 'COMPLETADA' : 'PENDIENTE',
+          fecha_emision: compra.fecha_compra,
+          fecha_pago: compra.fecha_entrada_almacen,
+          items: reqData ? reqData.items : [{ descripcion: compra.descripcion, cant: compra.cantidad_comprada }],
+          factura_url: reqData ? reqData.facturas_url : [],
+          proveedor_nombre: compra.proveedor
+        };
+      }
+
+      // 2. Fetch related requisition
+      let req = null;
+      if (ticket.solicitud_ref) {
+        const { data: rData } = await supabase
+          .from('requisiciones')
+          .select('*')
+          .or(`id.eq.${ticket.solicitud_ref},correlativo_req.eq.${ticket.solicitud_ref}`)
+          .limit(1);
+        if (rData && rData.length > 0) req = rData[0];
+      } else {
+        const { data: rData } = await supabase
+          .from('requisiciones')
+          .select('*')
+          .eq('id', compra.req_id)
+          .limit(1);
+        if (rData && rData.length > 0) req = rData[0];
+      }
+
+      setModalTicketData({ ticket, req });
+    } catch (err) {
+      console.error('Error fetching ticket data for Almacen detail:', err);
+      toast.error('Error al cargar detalles del ticket.');
+      setShowModal(false);
+    } finally {
+      setModalLoading(false);
+    }
+  };
 
   useEffect(() => {
     const fetchUser = async () => {
@@ -265,10 +424,19 @@ const Almacen = () => {
 
   // Group only the received items sorted by received date desc for history list
   const historialAsignaciones = useMemo(() => {
-    return comprasRaw
+    const base = comprasRaw
       .filter(c => c.recibido && c.fecha_entrada_almacen)
-      .sort((a, b) => new Date(b.fecha_entrada_almacen) - new Date(a.fecha_entrada_almacen))
-      .slice(0, 10);
+      .sort((a, b) => new Date(b.fecha_entrada_almacen) - new Date(a.fecha_entrada_almacen));
+    if (filtroAnalista === 'Todos') return base;
+    return base.filter(c => (c.usuario_almacen_nombre || '') === filtroAnalista);
+  }, [comprasRaw, filtroAnalista]);
+
+  // Lista de analistas únicos para el filtro de historial
+  const listaAnalistas = useMemo(() => {
+    const nombres = comprasRaw
+      .filter(c => c.recibido && c.usuario_almacen_nombre)
+      .map(c => c.usuario_almacen_nombre);
+    return ['Todos', ...Array.from(new Set(nombres)).sort()];
   }, [comprasRaw]);
 
   const handleRecibir = async (compra) => {
@@ -674,36 +842,45 @@ const Almacen = () => {
         </div>
       </div>
 
-      {/* TARJETAS ESTADÍSTICAS KPI */}
+      {/* TARJETAS ESTADÍSTICAS KPI — estilo unificado con demás módulos */}
       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(6, 1fr)', gap: '15px', marginBottom: '25px' }}>
-        <div style={{ backgroundColor: 'white', padding: '15px', borderRadius: '16px', borderLeft: '4px solid #3b82f6', boxShadow: '0 4px 10px rgba(0,0,0,0.02)' }}>
-          <div style={{ fontSize: '0.65rem', color: '#64748b', fontWeight: '800', textTransform: 'uppercase' }}>Compras Totales</div>
-          <div style={{ fontSize: '1.4rem', fontWeight: '900', color: '#1e293b', marginTop: '5px' }}>{stats.total}</div>
-        </div>
-        <div style={{ backgroundColor: 'white', padding: '15px', borderRadius: '16px', borderLeft: '4px solid #16a34a', boxShadow: '0 4px 10px rgba(0,0,0,0.02)' }}>
-          <div style={{ fontSize: '0.65rem', color: '#16a34a', fontWeight: '800', textTransform: 'uppercase' }}>Recibido Almacén</div>
-          <div style={{ fontSize: '1.4rem', fontWeight: '900', color: '#1e293b', marginTop: '5px' }}>{stats.recibidos}</div>
-        </div>
-        <div style={{ backgroundColor: 'white', padding: '15px', borderRadius: '16px', borderLeft: '4px solid #f59e0b', boxShadow: '0 4px 10px rgba(0,0,0,0.02)' }}>
-          <div style={{ fontSize: '0.65rem', color: '#f59e0b', fontWeight: '800', textTransform: 'uppercase' }}>Pendiente por Ingresar</div>
-          <div style={{ fontSize: '1.4rem', fontWeight: '900', color: '#1e293b', marginTop: '5px' }}>{stats.pendientes}</div>
-        </div>
-        <div style={{ backgroundColor: 'white', padding: '15px', borderRadius: '16px', borderLeft: '4px solid #06b6d4', boxShadow: '0 4px 10px rgba(0,0,0,0.02)' }}>
-          <div style={{ fontSize: '0.65rem', color: '#06b6d4', fontWeight: '800', textTransform: 'uppercase' }}>Campo Boscán</div>
-          <div style={{ fontSize: '1.4rem', fontWeight: '900', color: '#1e293b', marginTop: '5px' }}>{stats.boscan}</div>
-        </div>
-        <div style={{ backgroundColor: 'white', padding: '15px', borderRadius: '16px', borderLeft: '4px solid #8b5cf6', boxShadow: '0 4px 10px rgba(0,0,0,0.02)' }}>
-          <div style={{ fontSize: '0.65rem', color: '#8b5cf6', fontWeight: '800', textTransform: 'uppercase' }}>Maracaibo</div>
-          <div style={{ fontSize: '1.4rem', fontWeight: '900', color: '#1e293b', marginTop: '5px' }}>{stats.maracaibo}</div>
-        </div>
-        <div style={{ backgroundColor: 'white', padding: '15px', borderRadius: '16px', borderLeft: '4px solid #ec4899', boxShadow: '0 4px 10px rgba(0,0,0,0.02)' }}>
-          <div style={{ fontSize: '0.65rem', color: '#ec4899', fontWeight: '800', textTransform: 'uppercase' }}>Bajo Grande</div>
-          <div style={{ fontSize: '1.4rem', fontWeight: '900', color: '#1e293b', marginTop: '5px' }}>{stats.bajoGrande}</div>
-        </div>
+        {[
+          { label: 'Compras Totales',      value: stats.total,      sub: 'en sistema',           color: '#3b82f6' },
+          { label: 'Recibido Almacén',    value: stats.recibidos,  sub: 'ingresados',            color: '#16a34a' },
+          { label: 'Pendiente Ingreso',    value: stats.pendientes, sub: 'por clasificar',        color: '#f59e0b' },
+          { label: 'Campo Boscán',        value: stats.boscan,     sub: 'almacén ubicados',     color: '#06b6d4' },
+          { label: 'Maracaibo',            value: stats.maracaibo,  sub: 'almacén ubicados',     color: '#8b5cf6' },
+          { label: 'Bajo Grande',          value: stats.bajoGrande, sub: 'almacén ubicados',     color: '#ec4899' },
+        ].map(({ label, value, sub, color }) => (
+          <div
+            key={label}
+            style={{
+              backgroundColor: 'white',
+              padding: '20px 22px',
+              borderRadius: '20px',
+              border: '1px solid #e2e8f0',
+              borderLeft: `6px solid ${color}`,
+              boxShadow: '0 4px 6px -1px rgba(0,0,0,0.02)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '4px',
+              transition: 'transform 0.2s, box-shadow 0.2s',
+              cursor: 'default',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 10px 15px -3px rgba(0,0,0,0.05)'; }}
+            onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0,0,0,0.02)'; }}
+          >
+            <div style={{ fontSize: '0.7rem', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#475569' }}>{label}</div>
+            <div style={{ fontSize: '1.45rem', fontWeight: '900', color: '#0f172a', letterSpacing: '-0.02em', marginTop: '2px' }}>{value}</div>
+            <div style={{ fontSize: '0.7rem', color: '#94a3b8', fontWeight: '500' }}>{sub}</div>
+          </div>
+        ))}
       </div>
 
+
+
       {/* FILTROS E BUSQUEDAS */}
-      <div style={{ backgroundColor: 'white', padding: '20px', borderRadius: '20px', border: '1px solid #e2e8f0', boxShadow: '0 4px 15px rgba(0,0,0,0.03)', marginBottom: '25px' }}>
+      <div style={{ backgroundColor: 'white', padding: '20px', borderRadius: '20px', border: '1px solid #e2e8f0', boxShadow: '0 4px 15px rgba(0,0,0,0.03)', marginBottom: '15px' }}>
         <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1.5fr 1fr 1fr 1fr', gap: '15px', alignItems: 'center' }}>
           <div>
             <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '800', color: '#64748b', marginBottom: '6px', textTransform: 'uppercase' }}>Búsqueda de Compra</label>
@@ -763,59 +940,78 @@ const Almacen = () => {
         </div>
       </div>
 
-      {/* TABS DE VISTA RAPIDA */}
-      <div style={{ display: 'flex', gap: '10px', marginBottom: '15px', flexWrap: 'wrap' }}>
-        <button 
-          onClick={() => setVistaTab('todos')} 
+      {/* BARRA UNIFICADA DE PESTAÑAS — debajo de filtros */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '15px', backgroundColor: 'white', padding: '6px', borderRadius: '14px', border: '1px solid #e2e8f0', boxShadow: '0 2px 8px rgba(0,0,0,0.03)', flexWrap: 'wrap' }}>
+        {/* Grupo: Recepción / Historial */}
+        <button
+          onClick={() => setActiveTab('recepcion')}
           style={{
-            padding: '10px 20px', 
-            borderRadius: '12px', 
-            cursor: 'pointer', 
-            backgroundColor: vistaTab === 'todos' ? '#16a34a' : 'white', 
-            color: vistaTab === 'todos' ? 'white' : '#64748b', 
-            fontWeight: 'bold',
-            boxShadow: '0 2px 4px rgba(0,0,0,0.02)',
-            border: vistaTab === 'todos' ? '1px solid #16a34a' : '1px solid #cbd5e1',
-            transition: 'all 0.2s'
+            padding: '8px 18px', borderRadius: '10px', border: 'none', cursor: 'pointer',
+            fontWeight: '800', fontSize: '0.8rem', transition: 'all 0.2s', whiteSpace: 'nowrap',
+            backgroundColor: activeTab === 'recepcion' ? '#16a34a' : 'transparent',
+            color: activeTab === 'recepcion' ? 'white' : '#64748b',
+            boxShadow: activeTab === 'recepcion' ? '0 4px 12px rgba(22,163,74,0.35)' : 'none',
           }}
         >
-          Relación General
+          📦 Recepción
         </button>
-        <button 
-          onClick={() => setVistaTab('recibidos')} 
+        <button
+          onClick={() => setActiveTab('historial')}
           style={{
-            padding: '10px 20px', 
-            borderRadius: '12px', 
-            cursor: 'pointer', 
-            backgroundColor: vistaTab === 'recibidos' ? '#16a34a' : 'white', 
-            color: vistaTab === 'recibidos' ? 'white' : '#64748b', 
-            fontWeight: 'bold',
-            boxShadow: '0 2px 4px rgba(0,0,0,0.02)',
-            border: vistaTab === 'recibidos' ? '1px solid #16a34a' : '1px solid #cbd5e1',
-            transition: 'all 0.2s'
+            padding: '8px 18px', borderRadius: '10px', border: 'none', cursor: 'pointer',
+            fontWeight: '800', fontSize: '0.8rem', transition: 'all 0.2s', whiteSpace: 'nowrap',
+            backgroundColor: activeTab === 'historial' ? '#16a34a' : 'transparent',
+            color: activeTab === 'historial' ? 'white' : '#64748b',
+            boxShadow: activeTab === 'historial' ? '0 4px 12px rgba(22,163,74,0.35)' : 'none',
           }}
         >
-          Ingresados a Almacén (SÍ) 📦
+          🗂️ Historial
         </button>
-        <button 
-          onClick={() => setVistaTab('pendientes')} 
-          style={{
-            padding: '10px 20px', 
-            borderRadius: '12px', 
-            cursor: 'pointer', 
-            backgroundColor: vistaTab === 'pendientes' ? '#16a34a' : 'white', 
-            color: vistaTab === 'pendientes' ? 'white' : '#64748b', 
-            fontWeight: 'bold',
-            boxShadow: '0 2px 4px rgba(0,0,0,0.02)',
-            border: vistaTab === 'pendientes' ? '1px solid #16a34a' : '1px solid #cbd5e1',
-            transition: 'all 0.2s'
-          }}
-        >
-          Pendientes de Ingreso (NO) 📥
-        </button>
+
+        {/* Divisor vertical y Grupo de vistas rápidas solo para Recepción */}
+        {activeTab === 'recepcion' && (
+          <>
+            <div style={{ width: '1px', height: '26px', backgroundColor: '#e2e8f0', margin: '0 4px', flexShrink: 0 }} />
+
+            <button
+              onClick={() => setVistaTab('todos')}
+              style={{
+                padding: '7px 16px', borderRadius: '10px', border: 'none', cursor: 'pointer',
+                fontWeight: '700', fontSize: '0.78rem', transition: 'all 0.2s', whiteSpace: 'nowrap',
+                backgroundColor: vistaTab === 'todos' ? '#0f172a' : 'transparent',
+                color: vistaTab === 'todos' ? 'white' : '#64748b',
+              }}
+            >
+              Relación General
+            </button>
+            <button
+              onClick={() => setVistaTab('recibidos')}
+              style={{
+                padding: '7px 16px', borderRadius: '10px', border: 'none', cursor: 'pointer',
+                fontWeight: '700', fontSize: '0.78rem', transition: 'all 0.2s', whiteSpace: 'nowrap',
+                backgroundColor: vistaTab === 'recibidos' ? '#0f172a' : 'transparent',
+                color: vistaTab === 'recibidos' ? 'white' : '#64748b',
+              }}
+            >
+              Ingresados 📦
+            </button>
+            <button
+              onClick={() => setVistaTab('pendientes')}
+              style={{
+                padding: '7px 16px', borderRadius: '10px', border: 'none', cursor: 'pointer',
+                fontWeight: '700', fontSize: '0.78rem', transition: 'all 0.2s', whiteSpace: 'nowrap',
+                backgroundColor: vistaTab === 'pendientes' ? '#0f172a' : 'transparent',
+                color: vistaTab === 'pendientes' ? 'white' : '#64748b',
+              }}
+            >
+              Pendientes 📥
+            </button>
+          </>
+        )}
       </div>
 
-      {/* TABLA PRINCIPAL DEL REPORTE */}
+      {/* TABLA PRINCIPAL — solo en pestaña Recepción */}
+      {activeTab === 'recepcion' && (
       <div style={{ backgroundColor: 'white', borderRadius: '24px', overflow: 'hidden', border: '1px solid #e2e8f0', boxShadow: '0 10px 30px rgba(0,0,0,0.03)' }}>
         
         {/* ENCABECERA VERDE EXCEL-STYLE */}
@@ -841,21 +1037,19 @@ const Almacen = () => {
                 <th style={{ padding: '12px 10px', textAlign: 'left', minWidth: '220px' }}>DESCRIPCIÓN</th>
                 <th style={{ padding: '12px 10px', textAlign: 'left' }}>PROVEEDOR</th>
                 <th style={{ padding: '12px 10px', textAlign: 'center' }}>NRO DE FACTURA</th>
-                <th style={{ padding: '12px 10px', textAlign: 'center', minWidth: '130px' }}>LISTO PARA ALMACÉN (COMPRA)</th>
+                <th style={{ padding: '12px 10px', textAlign: 'center', minWidth: '140px' }}>LISTO PARA ALMACÉN</th>
                 <th style={{ padding: '12px 10px', textAlign: 'center', minWidth: '180px' }}>INGRESO ALMACÉN (FECHA/USUARIO)</th>
                 <th style={{ padding: '12px 10px', textAlign: 'center', minWidth: '210px' }}>ALMACÉN DESTINO / INGRESO</th>
-                <th style={{ padding: '12px 10px', textAlign: 'left' }}>SOLICITANTE</th>
-                <th style={{ padding: '12px 10px', textAlign: 'left' }}>GERENCIA</th>
+                <th style={{ padding: '12px 10px', textAlign: 'left', minWidth: '180px' }}>SOLICITANTE / GERENCIA</th>
                 <th style={{ padding: '12px 10px', textAlign: 'left' }}>CENTRO DE COSTO</th>
-                <th style={{ padding: '12px 10px', textAlign: 'center' }}>MONEDA DE PAGO</th>
-                <th style={{ padding: '12px 10px', textAlign: 'right' }}>CANTIDAD COMPRADA</th>
+                <th style={{ padding: '12px 10px', textAlign: 'right' }}>CANTIDAD</th>
                 <th style={{ padding: '12px 10px', textAlign: 'right' }}>TOTAL ($)</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan="14" style={{ padding: '50px', textAlign: 'center', color: '#64748b' }}>
+                  <td colSpan="12" style={{ padding: '50px', textAlign: 'center', color: '#64748b' }}>
                     <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px' }}>
                       <Loader2 className="animate-spin" /> Cargando compras completadas...
                     </div>
@@ -863,7 +1057,7 @@ const Almacen = () => {
                 </tr>
               ) : filteredCompras.length === 0 ? (
                 <tr>
-                  <td colSpan="14" style={{ padding: '50px', textAlign: 'center', color: '#94a3b8', fontWeight: '600' }}>
+                  <td colSpan="12" style={{ padding: '50px', textAlign: 'center', color: '#94a3b8', fontWeight: '600' }}>
                     <ShieldAlert size={24} style={{ display: 'block', margin: '0 auto 10px auto', color: '#94a3b8' }} />
                     No se encontraron registros de compras bajo los filtros actuales.
                   </td>
@@ -884,7 +1078,10 @@ const Almacen = () => {
                     </td>
                     
                     {/* REQUISICIÓN */}
-                    <td style={{ padding: '10px', textAlign: 'center', fontWeight: 'bold', color: '#1e40af' }}>
+                    <td 
+                      onClick={() => handleVerDetalleTicket(compra)}
+                      style={{ padding: '10px', textAlign: 'center', fontWeight: 'bold', color: '#1e40af', cursor: 'pointer', textDecoration: 'underline' }}
+                    >
                       {compra.correlativo}
                     </td>
 
@@ -903,9 +1100,9 @@ const Almacen = () => {
                       {compra.numero_factura}
                     </td>
 
-                    {/* LISTO PARA ALMACÉN (COMPRA) */}
+                    {/* LISTO PARA ALMACÉN — hora en que se hizo clic en Recibir */}
                     <td style={{ padding: '10px', textAlign: 'center', color: '#334155', fontWeight: '600' }}>
-                      {formatFechaHora(compra.fecha_compra)}
+                      {isRecibida ? formatFechaHora(compra.fecha_entrada_almacen) : <span style={{ color: '#94a3b8', fontStyle: 'italic', fontSize: '0.75rem' }}>Pendiente</span>}
                     </td>
 
                     {/* INGRESO ALMACÉN (FECHA/USUARIO) */}
@@ -973,24 +1170,15 @@ const Almacen = () => {
                       )}
                     </td>
 
-                    {/* SOLICITANTE */}
+                    {/* SOLICITANTE / GERENCIA — columna unificada */}
                     <td style={{ padding: '10px', color: '#475569' }}>
-                      {compra.solicitante}
-                    </td>
-
-                    {/* GERENCIA */}
-                    <td style={{ padding: '10px', color: '#475569' }}>
-                      {compra.gerencia}
+                      <div style={{ fontWeight: '600', color: '#0f172a', fontSize: '0.82rem' }}>{compra.solicitante}</div>
+                      <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: '2px' }}>🏢 {compra.gerencia}</div>
                     </td>
 
                     {/* CENTRO DE COSTO */}
                     <td style={{ padding: '10px', color: '#475569', fontSize: '0.8rem' }}>
                       {compra.centro_costo}
-                    </td>
-
-                    {/* MONEDA DE PAGO */}
-                    <td style={{ padding: '10px', textAlign: 'center', fontWeight: '500' }}>
-                      {compra.moneda_pago}
                     </td>
 
                     {/* CANTIDAD COMPRADA */}
@@ -1011,7 +1199,7 @@ const Almacen = () => {
             {!loading && filteredCompras.length > 0 && (
               <tfoot>
                 <tr style={{ backgroundColor: '#f1f5f9', borderTop: '2px solid #cbd5e1', fontWeight: '900', color: '#0f172a' }}>
-                  <td colSpan="12" style={{ padding: '15px 20px', textAlign: 'right', fontSize: '0.9rem' }}>
+                  <td colSpan="11" style={{ padding: '15px 20px', textAlign: 'right', fontSize: '0.9rem' }}>
                     TOTAL GENERAL COMPLETADO ($):
                   </td>
                   <td style={{ padding: '15px 10px', textAlign: 'right', fontSize: '1rem', color: '#16a34a' }}>
@@ -1023,63 +1211,89 @@ const Almacen = () => {
           </table>
         </div>
       </div>
+      )}
 
-      {/* HISTORIAL DE ASIGNACIONES RECIENTES */}
-      <div style={{ marginTop: '30px', backgroundColor: 'white', borderRadius: '24px', padding: '25px', border: '1px solid #e2e8f0', boxShadow: '0 10px 30px rgba(0,0,0,0.03)' }}>
-        <h4 style={{ margin: '0 0 20px 0', display: 'flex', alignItems: 'center', gap: '10px', color: '#1e293b', fontSize: '1.1rem', fontWeight: '800' }}>
-          <History size={20} color="#16a34a" /> Historial de Asignación y Ubicación Reciente (Bitácora de Entradas)
-        </h4>
-
-        {historialAsignaciones.length === 0 ? (
-          <div style={{ padding: '30px', textAlign: 'center', color: '#94a3b8', fontSize: '0.85rem', fontStyle: 'italic', border: '1px dashed #cbd5e1', borderRadius: '16px' }}>
-            No se han registrado asignaciones de ubicación recientemente.
+      {/* HISTORIAL / BITÁCORA — pestaña separada */}
+      {activeTab === 'historial' && (
+        <div style={{ backgroundColor: 'white', borderRadius: '24px', padding: '25px', border: '1px solid #e2e8f0', boxShadow: '0 10px 30px rgba(0,0,0,0.03)' }}>
+          {/* Cabecera con filtro de analista */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '15px', marginBottom: '20px' }}>
+            <h4 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '10px', color: '#1e293b', fontSize: '1.1rem', fontWeight: '800' }}>
+              <History size={20} color="#16a34a" /> Bitácora de Entradas al Almacén
+              <span style={{ fontSize: '0.75rem', fontWeight: '600', padding: '3px 10px', borderRadius: '20px', backgroundColor: '#dcfce7', color: '#16a34a' }}>
+                {historialAsignaciones.length} registros
+              </span>
+            </h4>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#64748b', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>Filtrar por Analista:</label>
+              <select
+                value={filtroAnalista}
+                onChange={e => setFiltroAnalista(e.target.value)}
+                style={{ padding: '8px 12px', border: '1px solid #cbd5e1', borderRadius: '10px', fontSize: '0.85rem', outline: 'none', backgroundColor: 'white', fontWeight: '600', color: '#1e293b', minWidth: '200px' }}
+              >
+                {listaAnalistas.map(a => (
+                  <option key={a} value={a}>{a}</option>
+                ))}
+              </select>
+            </div>
           </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            {historialAsignaciones.map((h) => {
-              const fechaObj = new Date(h.fecha_entrada_almacen);
-              const diaStr = fechaObj.toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-              const horaStr = fechaObj.toLocaleTimeString('es-ES', { hour: 'numeric', minute: '2-digit', hour12: true });
 
-              return (
-                <div 
-                  key={h.id} 
-                  style={{ 
-                    padding: '16px', 
-                    borderRadius: '12px', 
-                    backgroundColor: '#f8fafc', 
-                    borderLeft: '4px solid #16a34a', 
-                    display: 'flex', 
-                    justifyContent: 'space-between', 
-                    alignItems: 'center', 
-                    flexWrap: 'wrap', 
-                    gap: '15px' 
-                  }}
-                >
-                  <div style={{ flex: 1, minWidth: '280px' }}>
-                    <p style={{ margin: 0, fontSize: '0.85rem', color: '#334155' }}>
-                      El material <strong style={{ color: '#0f172a' }}>{h.descripcion}</strong> (Requisición <strong style={{ color: '#1e40af' }}>{h.correlativo}</strong>) 
-                      fue ubicado en <strong style={{ color: '#16a34a' }}>{h.ubicacion_almacen}</strong>.
-                    </p>
-                    <div style={{ marginTop: '6px', display: 'flex', gap: '15px', fontSize: '0.75rem', color: '#64748b', fontWeight: '500' }}>
-                      <span>👤 Asignado por: <strong style={{ color: '#1e293b' }}>{h.usuario_almacen_nombre || 'SITC Operator'}</strong></span>
-                      <span>📅 {diaStr} a las {horaStr}</span>
+          {historialAsignaciones.length === 0 ? (
+            <div style={{ padding: '30px', textAlign: 'center', color: '#94a3b8', fontSize: '0.85rem', fontStyle: 'italic', border: '1px dashed #cbd5e1', borderRadius: '16px' }}>
+              No se han registrado asignaciones{filtroAnalista !== 'Todos' ? ` para ${filtroAnalista}` : ''} aún.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {historialAsignaciones.map((h) => {
+                const fechaObj = new Date(h.fecha_entrada_almacen);
+                const diaStr = fechaObj.toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+                const horaStr = fechaObj.toLocaleTimeString('es-ES', { hour: 'numeric', minute: '2-digit', hour12: true });
+
+                return (
+                  <div 
+                    key={h.id}
+                    style={{ 
+                      padding: '16px', 
+                      borderRadius: '12px', 
+                      backgroundColor: '#f8fafc', 
+                      borderLeft: '4px solid #16a34a', 
+                      display: 'flex', 
+                      justifyContent: 'space-between', 
+                      alignItems: 'center', 
+                      flexWrap: 'wrap', 
+                      gap: '15px' 
+                    }}
+                  >
+                    <div style={{ flex: 1, minWidth: '280px' }}>
+                      <p style={{ margin: 0, fontSize: '0.85rem', color: '#334155' }}>
+                        El material <strong style={{ color: '#0f172a' }}>{h.descripcion}</strong> (Req. <strong style={{ color: '#1e40af' }}>{h.correlativo}</strong>)
+                        {' '}fue ubicado en <strong style={{ color: '#16a34a' }}>{h.ubicacion_almacen}</strong>.
+                      </p>
+                      <div style={{ marginTop: '6px', display: 'flex', flexWrap: 'wrap', gap: '12px', fontSize: '0.75rem', color: '#64748b', fontWeight: '500' }}>
+                        <span>👤 Analista: <strong style={{ color: '#1e293b' }}>{h.usuario_almacen_nombre || 'SITC Operator'}</strong></span>
+                        <span>🧑‍💼 Solicitante: <strong style={{ color: '#1e293b' }}>{h.solicitante}</strong></span>
+                        <span>🏢 {h.gerencia}</span>
+                        <span>📅 {diaStr} a las {horaStr}</span>
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: '0.75rem', fontWeight: 'bold', padding: '4px 8px', borderRadius: '6px', backgroundColor: '#e2e8f0', color: '#475569' }}>
+                        Cant: {h.cantidad_comprada}
+                      </span>
+                      <span style={{ fontSize: '0.75rem', fontWeight: 'bold', padding: '4px 8px', borderRadius: '6px', backgroundColor: '#dcfce7', color: '#16a34a' }}>
+                        Factura: {h.numero_factura}
+                      </span>
+                      <span style={{ fontSize: '0.75rem', fontWeight: 'bold', padding: '4px 8px', borderRadius: '6px', backgroundColor: '#eff6ff', color: '#2563eb' }}>
+                        $ {(h.total || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                      </span>
                     </div>
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <span style={{ fontSize: '0.75rem', fontWeight: 'bold', padding: '4px 8px', borderRadius: '6px', backgroundColor: '#e2e8f0', color: '#475569' }}>
-                      Cant: {h.cantidad_comprada}
-                    </span>
-                    <span style={{ fontSize: '0.75rem', fontWeight: 'bold', padding: '4px 8px', borderRadius: '6px', backgroundColor: '#dcfce7', color: '#16a34a' }}>
-                      Factura: {h.numero_factura}
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
       
       {/* Estilos adicionales */}
       <style>{`
@@ -1087,6 +1301,362 @@ const Almacen = () => {
           background-color: #f1f5f9 !important;
         }
       `}</style>
+
+      {/* MODAL DETALLE DE COMPRA / TICKET SIN PRECIOS/BANCO (Reutilizado de ReportesMaestro) */}
+      {showModal && (
+        <div 
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            width: '100vw',
+            height: '100vh',
+            background: 'rgba(15, 23, 42, 0.4)',
+            backdropFilter: 'blur(4px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 9999
+          }}
+          onClick={() => { setShowModal(false); setModalTicketData(null); }}
+        >
+          <div
+            style={{
+              background: 'white',
+              width: '95%',
+              maxWidth: '1100px',
+              borderRadius: '24px',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+              overflow: 'hidden',
+              display: 'flex',
+              flexDirection: 'column',
+              maxHeight: '90vh'
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            {(() => {
+              if (modalLoading) {
+                return (
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '400px', gap: '15px' }}>
+                    <Loader2 className="animate-spin" size={40} style={{ color: '#16a34a' }} />
+                    <span style={{ color: '#64748b', fontWeight: '600', fontSize: '0.9rem' }}>
+                      Cargando detalles y soportes...
+                    </span>
+                  </div>
+                );
+              }
+
+              if (!modalTicketData) return null;
+
+              const { ticket, req } = modalTicketData;
+              const status = ticket.status?.toUpperCase() || 'EMITIDO';
+              const statusDisplay = (status === 'PAGADO' || status === 'COMPLETADO' || status === 'COMPLETADA') ? 'Completada' : 'Pendiente';
+              
+              // Combined invoice and support URLs from ticket and requisition
+              const rawInvoiceFiles = [
+                ...parsearFacturaUrls(ticket.factura_url),
+                ...parsearFacturaUrls(req?.facturas_url)
+              ];
+              const invoiceFiles = [];
+              const seenUrls = new Set();
+              rawInvoiceFiles.forEach(file => {
+                if (file && file.url && !seenUrls.has(file.url)) {
+                  seenUrls.add(file.url);
+                  invoiceFiles.push(file);
+                }
+              });
+
+              return (
+                <>
+                  <div style={{ background: '#1e293b', padding: '20px 30px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: 'white' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+                      <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800 }}>
+                        Referencia: {ticket.codigo_control || `TX-${String(ticket.id).padStart(4, '0')}`}
+                      </h2>
+                      <span 
+                        style={{
+                          display: 'inline-block',
+                          padding: '4px 8px',
+                          borderRadius: '6px',
+                          fontWeight: 'bold',
+                          fontSize: '0.7rem',
+                          textTransform: 'uppercase',
+                          backgroundColor: statusDisplay === 'Completada' ? '#dcfce7' : '#fee2e2',
+                          color: statusDisplay === 'Completada' ? '#16a34a' : '#ef4444'
+                        }}
+                      >
+                        {statusDisplay.toUpperCase()}
+                      </span>
+                    </div>
+                    <button 
+                      onClick={() => { setShowModal(false); setModalTicketData(null); }}
+                      style={{ background: 'none', border: 'none', color: 'white', fontSize: '1.5rem', cursor: 'pointer' }}
+                    >
+                      ×
+                    </button>
+                  </div>
+                  
+                  <div style={{ padding: '30px', overflowY: 'auto', flex: 1 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '30px' }}>
+                      {/* Left Panel: Info & Items & Signatures */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                        <div>
+                          <h3 style={{ margin: '0 0 10px 0', fontSize: '0.9rem', color: '#64748b', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                            Información General
+                          </h3>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px' }}>
+                            <div className="rm-min-card"><strong>Responsable:</strong> {ticket.responsable_nombre || ticket.gerente_nombre || 'N/A'}</div>
+                            <div className="rm-min-card"><strong>Gerencia:</strong> {ticket.departamento || 'N/A'}</div>
+                            <div className="rm-min-card"><strong>Centro de Costo:</strong> {ticket.centro_costo || 'N/A'}</div>
+                            <div className="rm-min-card"><strong>Proveedor:</strong> {ticket.proveedor_nombre || ticket.proveedor || (ticket.items || []).map(it => it.proveedor_nombre).filter(Boolean)[0] || 'N/A'}</div>
+                          </div>
+                        </div>
+
+                        <div>
+                          <h3 style={{ margin: '0 0 10px 0', fontSize: '0.9rem', color: '#64748b', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                            Trazabilidad Temporal
+                          </h3>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px' }}>
+                            <div className="rm-min-card"><strong>F. Emisión:</strong> {safeFormatDate(ticket.fecha_emision || ticket.created_at)}</div>
+                            <div className="rm-min-card"><strong>F. Pago:</strong> {statusDisplay === 'Completada' ? safeFormatDate(ticket.fecha_pago || ticket.updated_at) : 'Pendiente'}</div>
+                          </div>
+                        </div>
+
+                        <div>
+                          <h3 style={{ margin: '0 0 10px 0', fontSize: '0.9rem', color: '#64748b', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                            Conceptos y Renglones
+                          </h3>
+                          <div style={{ maxHeight: '180px', overflowY: 'auto', border: '1px solid #e2e8f0', borderRadius: '12px' }}>
+                            <table className="rm-mini-table">
+                              <thead>
+                                <tr>
+                                  <th>Descripción</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {ticket.items?.map((it, idx) => (
+                                  <tr key={idx}>
+                                    <td style={{ fontSize: '0.8rem' }}>{it.descripcion || it.desc}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+
+                        {ticket.justificacion && (
+                          <div>
+                            <h3 style={{ margin: '0 0 8px 0', fontSize: '0.9rem', color: '#64748b', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                              Notas de Auditoría
+                            </h3>
+                            <div style={{ padding: '12px 15px', background: '#fffbeb', border: '1px solid #fef3c7', borderRadius: '12px', fontSize: '0.82rem', color: '#78350f', whiteSpace: 'pre-line', fontWeight: '500', lineHeight: '1.4' }}>
+                              {ticket.justificacion}
+                            </div>
+                          </div>
+                        )}
+
+                        <div>
+                          <h3 style={{ margin: '0 0 10px 0', fontSize: '0.9rem', color: '#64748b', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                            Firmas y Aprobaciones
+                          </h3>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px' }}>
+                            {req ? (
+                              <>
+                                <div style={{ padding: '10px', border: '1px dashed #cbd5e1', borderRadius: '10px', background: '#f8fafc', textAlign: 'center' }}>
+                                  <div style={{ fontSize: '0.65rem', fontWeight: '800', color: '#64748b', textTransform: 'uppercase' }}>Aprob. Proyecto</div>
+                                  {req.f_aprobacion_proyecto ? (
+                                    <>
+                                      <div style={{ fontSize: '0.75rem', color: '#16a34a', fontWeight: 'bold', margin: '4px 0' }}>✓ Aprobado</div>
+                                      <div style={{ fontSize: '0.7rem', color: '#334155', fontWeight: 600 }}>{req.n_aprobacion_proyecto?.split(' ')[0]}</div>
+                                      <div style={{ fontSize: '0.6rem', color: '#64748b' }}>{safeFormatDate(req.f_aprobacion_proyecto)}</div>
+                                    </>
+                                  ) : (
+                                    <div style={{ fontSize: '0.75rem', color: '#94a3b8', margin: '10px 0' }}>N/A</div>
+                                  )}
+                                </div>
+
+                                <div style={{ padding: '10px', border: '1px dashed #cbd5e1', borderRadius: '10px', background: '#f8fafc', textAlign: 'center' }}>
+                                  <div style={{ fontSize: '0.65rem', fontWeight: '800', color: '#64748b', textTransform: 'uppercase' }}>Aprob. Área</div>
+                                  {req.f_aprobacion_area ? (
+                                    <>
+                                      <div style={{ fontSize: '0.75rem', color: '#16a34a', fontWeight: 'bold', margin: '4px 0' }}>✓ Aprobado</div>
+                                      <div style={{ fontSize: '0.7rem', color: '#334155', fontWeight: 600 }}>{req.n_aprobacion_area?.split(' ')[0]}</div>
+                                      <div style={{ fontSize: '0.6rem', color: '#64748b' }}>{safeFormatDate(req.f_aprobacion_area)}</div>
+                                    </>
+                                  ) : (
+                                    <div style={{ fontSize: '0.75rem', color: '#94a3b8', margin: '10px 0' }}>N/A</div>
+                                  )}
+                                </div>
+
+                                <div style={{ padding: '10px', border: '1px dashed #cbd5e1', borderRadius: '10px', background: '#f8fafc', textAlign: 'center' }}>
+                                  <div style={{ fontSize: '0.65rem', fontWeight: '800', color: '#64748b', textTransform: 'uppercase' }}>Aprob. General</div>
+                                  {req.f_aprobacion_general ? (
+                                    <>
+                                      <div style={{ fontSize: '0.75rem', color: '#16a34a', fontWeight: 'bold', margin: '4px 0' }}>✓ Aprobado</div>
+                                      <div style={{ fontSize: '0.7rem', color: '#334155', fontWeight: 600 }}>{req.n_aprobacion_general?.split(' ')[0]}</div>
+                                      <div style={{ fontSize: '0.6rem', color: '#64748b' }}>{safeFormatDate(req.f_aprobacion_general)}</div>
+                                    </>
+                                  ) : (
+                                    <div style={{ fontSize: '0.75rem', color: '#94a3b8', margin: '10px 0' }}>N/A</div>
+                                  )}
+                                </div>
+                              </>
+                            ) : (
+                              <>
+                                <div style={{ padding: '10px', border: '1px dashed #cbd5e1', borderRadius: '10px', background: '#f8fafc', textAlign: 'center' }}>
+                                  <div style={{ fontSize: '0.65rem', fontWeight: '800', color: '#64748b', textTransform: 'uppercase' }}>Creado Por</div>
+                                  <div style={{ fontSize: '0.75rem', color: '#2563eb', fontWeight: 'bold', margin: '4px 0' }}>✓ Emitido</div>
+                                  <div style={{ fontSize: '0.7rem', color: '#334155', fontWeight: 600 }}>{ticket.gerente_nombre || ticket.responsable_nombre}</div>
+                                  <div style={{ fontSize: '0.6rem', color: '#64748b' }}>{safeFormatDate(ticket.fecha_emision || ticket.created_at)}</div>
+                                </div>
+
+                                <div style={{ padding: '10px', border: '1px dashed #cbd5e1', borderRadius: '10px', background: '#f8fafc', textAlign: 'center', gridColumn: 'span 2' }}>
+                                  <div style={{ fontSize: '0.65rem', fontWeight: '800', color: '#64748b', textTransform: 'uppercase' }}>Liquidado Por</div>
+                                  {statusDisplay === 'Completada' ? (
+                                    <>
+                                      <div style={{ fontSize: '0.75rem', color: '#16a34a', fontWeight: 'bold', margin: '4px 0' }}>✓ Pagado (Liquidado)</div>
+                                      <div style={{ fontSize: '0.6rem', color: '#64748b' }}>{safeFormatDate(ticket.fecha_pago || ticket.updated_at)}</div>
+                                    </>
+                                  ) : (
+                                    <div style={{ fontSize: '0.75rem', color: '#94a3b8', margin: '10px 0' }}>Pendiente de Liquidación</div>
+                                  )}
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Right Panel: Digital Visor */}
+                      <div style={{ display: 'flex', flexDirection: 'column', borderLeft: '1px solid #e2e8f0', paddingLeft: '25px' }}>
+                        <h3 style={{ margin: '0 0 10px 0', fontSize: '0.9rem', color: '#64748b', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                          Visor de Soportes Digitales
+                        </h3>
+                        {invoiceFiles.length > 0 ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', flex: 1 }}>
+                            {invoiceFiles.length > 1 && (
+                              <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '5px' }}>
+                                {invoiceFiles.map((file, idx) => (
+                                  <button
+                                    key={idx}
+                                    onClick={() => setSelectedFileIndex(idx)}
+                                    style={{
+                                      padding: '6px 12px',
+                                      borderRadius: '6px',
+                                      border: '1px solid',
+                                      borderColor: selectedFileIndex === idx ? '#16a34a' : '#e2e8f0',
+                                      background: selectedFileIndex === idx ? '#f0fdf4' : 'white',
+                                      color: selectedFileIndex === idx ? '#16a34a' : '#475569',
+                                      fontSize: '0.75rem',
+                                      fontWeight: '700',
+                                      cursor: 'pointer',
+                                      whiteSpace: 'nowrap'
+                                    }}
+                                  >
+                                    Doc {idx + 1}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                            <div style={{ flex: 1, minHeight: '400px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                              {(() => {
+                                const url = invoiceFiles[selectedFileIndex]?.url || '';
+                                const lowerUrl = url.split('?')[0].toLowerCase();
+                                const isPdf = lowerUrl.endsWith('.pdf');
+                                const isImg = /\.(jpg|jpeg|png|webp|avif|gif)$/i.test(lowerUrl);
+                                const isExcel = /\.(xls|xlsx|csv)$/i.test(lowerUrl);
+                                const isWord = /\.(doc|docx)$/i.test(lowerUrl);
+                                const isPowerPoint = /\.(ppt|pptx)$/i.test(lowerUrl);
+
+                                if (isPdf) {
+                                  return (
+                                    <iframe
+                                      src={url}
+                                      width="100%"
+                                      height="430px"
+                                      style={{ border: 'none', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)' }}
+                                    />
+                                  );
+                                }
+                                if (isImg) {
+                                  return (
+                                    <div style={{ display: 'flex', justifyContent: 'center', background: '#f8fafc', padding: '10px', borderRadius: '12px', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
+                                      <img
+                                        src={url}
+                                        alt="Soporte Factura"
+                                        style={{ maxWidth: '100%', maxHeight: '410px', objectFit: 'contain', borderRadius: '8px' }}
+                                      />
+                                    </div>
+                                  );
+                                }
+
+                                let fileInfo = { iconColor: '#64748b', label: 'Documento Adjunto', desc: 'Este archivo no se puede previsualizar en el navegador.' };
+                                if (isExcel) {
+                                  fileInfo = { iconColor: '#16a34a', label: 'Hoja de Cálculo Excel', desc: 'Este archivo de Excel no se puede previsualizar directamente en el navegador.' };
+                                } else if (isWord) {
+                                  fileInfo = { iconColor: '#2563eb', label: 'Documento Word', desc: 'Este documento de Word no se puede previsualizar directamente en el navegador.' };
+                                } else if (isPowerPoint) {
+                                  fileInfo = { iconColor: '#f97316', label: 'Presentación PowerPoint', desc: 'Esta presentación de PowerPoint no se puede previsualizar directamente en el navegador.' };
+                                }
+
+                                return (
+                                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#f8fafc', padding: '40px 20px', borderRadius: '12px', border: '1px solid #cbd5e1', textAlign: 'center', minHeight: '300px' }}>
+                                    <FileText size={48} color={fileInfo.iconColor} style={{ marginBottom: '15px' }} />
+                                    <span style={{ fontSize: '1rem', fontWeight: 'bold', color: '#1e293b' }}>
+                                      {fileInfo.label}
+                                    </span>
+                                    <p style={{ fontSize: '0.8rem', color: '#64748b', margin: '8px 0 20px 0', maxWidth: '300px' }}>
+                                      {fileInfo.desc} Por favor use el botón de abajo para descargarlo o abrirlo en una nueva pestaña.
+                                    </p>
+                                    <a
+                                      href={url}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      style={{
+                                        padding: '8px 18px',
+                                        backgroundColor: '#16a34a',
+                                        color: 'white',
+                                        borderRadius: '8px',
+                                        textDecoration: 'none',
+                                        fontWeight: 'bold',
+                                        fontSize: '0.85rem'
+                                      }}
+                                    >
+                                      Descargar Archivo
+                                    </a>
+                                  </div>
+                                );
+                              })()}
+                              {invoiceFiles[selectedFileIndex] && (
+                                <div style={{ marginTop: '8px', textAlign: 'right' }}>
+                                  <a
+                                    href={invoiceFiles[selectedFileIndex].url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    style={{ fontSize: '0.75rem', color: '#16a34a', fontWeight: '700', textDecoration: 'underline' }}
+                                  >
+                                    Ver en pestaña nueva ↗
+                                  </a>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ) : (
+                          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#f8fafc', border: '1px dashed #cbd5e1', borderRadius: '16px', padding: '40px', textAlign: 'center', color: '#94a3b8' }}>
+                            <span style={{ fontSize: '2.5rem', marginBottom: '10px' }}>📁</span>
+                            <strong style={{ display: 'block', marginBottom: '5px', color: '#64748b' }}>Sin archivos cargados</strong>
+                            No se han adjuntado facturas o comprobantes digitalizados para este ticket.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
