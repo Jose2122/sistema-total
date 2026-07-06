@@ -372,7 +372,10 @@ const Compras = () => {
         .single();
 
       if (perfil) {
-        const esAdminReal = email === 'jcontreras.totalclean@gmail.com' || email === 'cvega.totalclean@gmail.com';
+        const esAdminReal = email === 'jcontreras.totalclean@gmail.com' || 
+          email === 'cvega.totalclean@gmail.com' || 
+          email === 'cvega@totalclean.com' || 
+          email === 'karincmm1@gmail.com';
         setCurrentUser({ ...perfil, correo: email, esAdminReal });
       }
     }
