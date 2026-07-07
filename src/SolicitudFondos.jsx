@@ -153,6 +153,11 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
     }
   }, [currentUserProp]);
 
+  const esRrHhOAdm = useMemo(() => {
+    const depto = (currentUser?.departamento || '').toLowerCase();
+    return depto === 'recursos humanos' || depto.includes('administración') || depto.includes('administracion');
+  }, [currentUser]);
+
   // --- ESTADOS DE DATA MAESTRA ---
   const [centrosCosto, setCentrosCosto] = useState([]);
   const [todasClasificaciones, setTodasClasificaciones] = useState([]);
@@ -1074,7 +1079,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       };
 
       const estActual = getEstadoSolicitud(solicitud);
-      setIsReadOnly(estActual === 'COMPLETADA');
+      setIsReadOnly(estActual === 'COMPLETADA' && !esRrHhOAdm);
 
       setForm({
         ...solicitud,
@@ -1152,7 +1157,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       setIsEditing(true);
       const esAdmin = currentUser?.esSuperAdmin || currentUser?.esAdminReal;
       const esPropioDepto = (solicitud.gerencia || solicitud.gerencia_nombre || '').toLowerCase() === (currentUser?.departamento || '').toLowerCase();
-      setIsReadOnly(estActual === 'COMPLETADA' || (!esAdmin && !esPropioDepto));
+      setIsReadOnly((estActual === 'COMPLETADA' && !esRrHhOAdm) || (!esAdmin && !esPropioDepto && !esRrHhOAdm));
       setShowModal(true);
     } catch (err) { toast.error("Error cargando detalles."); }
   };
@@ -1304,7 +1309,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
   };
 
   const deadlineDate = calculateDeadline(form.fecha);
-  const isExpired = estadoActual !== 'ACTIVA';
+  const isExpired = estadoActual !== 'ACTIVA' && !esRrHhOAdm;
 
   const verificarDisponibilidad = async () => {
     if (!fechaPreVal) return setErrorCheck("Por favor, seleccione una fecha operativa.");
@@ -2013,7 +2018,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       if (error) throw error;
 
       toast.success("Solicitud finalizada con éxito.");
-      setIsReadOnly(true);
+      setIsReadOnly(!esRrHhOAdm);
       setForm(prev => ({ ...prev, estado: 'COMPLETADA' }));
       await cargarTodo();
     } catch (err) {
@@ -3661,13 +3666,13 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                               )}
                             </div>
                             <div style={{ width: '180px', padding: '6px' }}>
-                              <select className="sf-table-input" value={p.cc} onChange={(e) => manejarCambioPartida(p.originalIndex, 'cc', e.target.value)} style={{ fontWeight: 'bold' }} disabled={isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow}>
+                              <select className="sf-table-input" value={p.cc} onChange={(e) => manejarCambioPartida(p.originalIndex, 'cc', e.target.value)} style={{ fontWeight: 'bold' }} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow}>
                                 <option value="">Seleccione C.C...</option>
                                 {centrosCosto.map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>)}
                               </select>
                             </div>
                             <div style={{ width: '215px', padding: '6px' }}>
-                              <select className="sf-table-input" value={p.clasif} onChange={(e) => manejarCambioPartida(p.originalIndex, 'clasif', e.target.value)} disabled={isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || !p.cc || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow}>
+                              <select className="sf-table-input" value={p.clasif} onChange={(e) => manejarCambioPartida(p.originalIndex, 'clasif', e.target.value)} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !p.cc || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow}>
                                 <option value="">Clasificación...</option>
                                 {(() => {
                                   const ccObj = centrosCosto.find(c => c.nombre === p.cc);
@@ -3678,7 +3683,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                               </select>
                             </div>
                             <div style={{ width: '215px', padding: '6px' }}>
-                              <select className="sf-table-input" value={p.cat} onChange={(e) => manejarCambioPartida(p.originalIndex, 'cat', e.target.value)} disabled={isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || !p.clasif || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow}>
+                              <select className="sf-table-input" value={p.cat} onChange={(e) => manejarCambioPartida(p.originalIndex, 'cat', e.target.value)} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !p.clasif || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow}>
                                 <option value="">Categoría...</option>
                                 {(() => {
                                   const ccObj = centrosCosto.find(c => c.nombre === p.cc);
@@ -3689,19 +3694,19 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                                 })()}
                               </select>
                             </div>
-                            <div style={{ width: '80px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.cant} onChange={(e) => manejarCambioPartida(p.originalIndex, 'cant', e.target.value)} style={{ textAlign: 'center' }} disabled={isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow} /></div>
-                            <div style={{ width: '90px', padding: '6px' }}><select className="sf-table-input" value={p.uni} onChange={(e) => manejarCambioPartida(p.originalIndex, 'uni', e.target.value)} disabled={isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow}>{unidades.map(u => <option key={u}>{u}</option>)}</select></div>
-                            <div style={{ width: '460px', padding: '10px' }}><textarea className="sf-table-input" value={p.desc} onChange={(e) => manejarCambioPartida(p.originalIndex, 'desc', e.target.value)} style={{ resize: 'none' }} rows="1" disabled={isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow} /></div>
-                            <div style={{ width: '200px', padding: '6px' }}><input className="sf-table-input" value={p.ben} onChange={(e) => manejarCambioPartida(p.originalIndex, 'ben', e.target.value)} disabled={isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow} /></div>
-                            <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puBs === 0 ? '' : p.puBs} onChange={(e) => manejarCambioPartida(p.originalIndex, 'puBs', e.target.value)} style={{ textAlign: 'left' }} disabled={isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || p.puUsd > 0 || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow} /></div>
-                            <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puUsd === 0 ? '' : p.puUsd} onChange={(e) => manejarCambioPartida(p.originalIndex, 'puUsd', e.target.value)} style={{ textAlign: 'left' }} disabled={isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || p.puBs > 0 || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow} /></div>
+                            <div style={{ width: '80px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.cant} onChange={(e) => manejarCambioPartida(p.originalIndex, 'cant', e.target.value)} style={{ textAlign: 'center' }} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow} /></div>
+                            <div style={{ width: '90px', padding: '6px' }}><select className="sf-table-input" value={p.uni} onChange={(e) => manejarCambioPartida(p.originalIndex, 'uni', e.target.value)} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow}>{unidades.map(u => <option key={u}>{u}</option>)}</select></div>
+                            <div style={{ width: '460px', padding: '10px' }}><textarea className="sf-table-input" value={p.desc} onChange={(e) => manejarCambioPartida(p.originalIndex, 'desc', e.target.value)} style={{ resize: 'none' }} rows="1" disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow} /></div>
+                            <div style={{ width: '200px', padding: '6px' }}><input className="sf-table-input" value={p.ben} onChange={(e) => manejarCambioPartida(p.originalIndex, 'ben', e.target.value)} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow} /></div>
+                            <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puBs === 0 ? '' : p.puBs} onChange={(e) => manejarCambioPartida(p.originalIndex, 'puBs', e.target.value)} style={{ textAlign: 'left' }} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || p.puUsd > 0 || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow} /></div>
+                            <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puUsd === 0 ? '' : p.puUsd} onChange={(e) => manejarCambioPartida(p.originalIndex, 'puUsd', e.target.value)} style={{ textAlign: 'left' }} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || p.puBs > 0 || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow} /></div>
                             <div style={{ width: '120px', padding: '6px', textAlign: 'left', fontWeight: 'bold' }}>{((parseFloat(p.puBs) || parseFloat(p.puUsd) || 0) * (p.cant || 0)).toLocaleString('de-DE')}</div>
                             <div style={{ width: '130px', padding: '6px', fontSize: '9px', color: editingUser ? '#e11d48' : '#64748b', fontWeight: editingUser ? 'bold' : '600' }}>
                               {editingUser ? `✏️ Editando... (${editingUser.nombre})` : (p.emisor || '---')}
                             </div>
                             <div style={{ width: '110px', display: 'flex', gap: '5px', justifyContent: 'center' }}>
-                              <button onClick={() => duplicarPartida(p.originalIndex)} style={{ background: 'none', border: 'none', color: '#0ea5e9', cursor: (isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || p.codigo_ticket || p.requisicion_id || !!editingUser) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || p.codigo_ticket || p.requisicion_id || !!editingUser) ? 0.3 : 1 }} disabled={isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || !!p.codigo_ticket || !!p.requisicion_id || !!editingUser} title="Duplicar renglón"><Copy size={16} /></button>
-                              <button onClick={() => { setHasChanges(true); setForm({ ...form, partidas: form.partidas.filter((_, idx) => idx !== p.originalIndex) }); }} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: (isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || p.codigo_ticket || p.requisicion_id || !!editingUser) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || p.codigo_ticket || p.requisicion_id || !!editingUser) ? 0.3 : 1 }} disabled={isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || !!p.codigo_ticket || !!p.requisicion_id || !!editingUser} title="Eliminar renglón">🗑️</button>
+                              <button onClick={() => duplicarPartida(p.originalIndex)} style={{ background: 'none', border: 'none', color: '#0ea5e9', cursor: (isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || p.codigo_ticket || p.requisicion_id || !!editingUser) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || p.codigo_ticket || p.requisicion_id || !!editingUser) ? 0.3 : 1 }} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !!p.codigo_ticket || !!p.requisicion_id || !!editingUser} title="Duplicar renglón"><Copy size={16} /></button>
+                              <button onClick={() => { setHasChanges(true); setForm({ ...form, partidas: form.partidas.filter((_, idx) => idx !== p.originalIndex) }); }} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: (isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || p.codigo_ticket || p.requisicion_id || !!editingUser) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || p.codigo_ticket || p.requisicion_id || !!editingUser) ? 0.3 : 1 }} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !!p.codigo_ticket || !!p.requisicion_id || !!editingUser} title="Eliminar renglón">🗑️</button>
                               {p.id && (
                                 <button
                                   onClick={() => abrirModalAnulacion(p)}
@@ -3824,13 +3829,13 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                               )}
                             </div>
                             <div style={{ width: '180px', padding: '6px' }}>
-                              <select className="sf-table-input" value={imp.cc} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'cc', e.target.value)} style={{ fontWeight: 'bold' }} disabled={isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow}>
+                              <select className="sf-table-input" value={imp.cc} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'cc', e.target.value)} style={{ fontWeight: 'bold' }} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow}>
                                 <option value="">Seleccione C.C...</option>
                                 {centrosCosto.map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>)}
                               </select>
                             </div>
                             <div style={{ width: '215px', padding: '6px' }}>
-                              <select className="sf-table-input" value={imp.clasif} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'clasif', e.target.value)} disabled={isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || !imp.cc || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow}>
+                              <select className="sf-table-input" value={imp.clasif} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'clasif', e.target.value)} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !imp.cc || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow}>
                                 <option value="">Clasificación...</option>
                                 {(() => {
                                   const ccObj = centrosCosto.find(c => c.nombre === imp.cc);
@@ -3841,7 +3846,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                               </select>
                             </div>
                             <div style={{ width: '215px', padding: '6px' }}>
-                              <select className="sf-table-input" value={imp.cat} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'cat', e.target.value)} disabled={isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || !imp.clasif || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow}>
+                              <select className="sf-table-input" value={imp.cat} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'cat', e.target.value)} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !imp.clasif || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow}>
                                 <option value="">Categoría...</option>
                                 {(() => {
                                   const ccObj = centrosCosto.find(c => c.nombre === imp.cc);
@@ -3852,19 +3857,19 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                                 })()}
                               </select>
                             </div>
-                            <div style={{ width: '80px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.cant} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'cant', e.target.value)} style={{ textAlign: 'center' }} disabled={isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow} /></div>
-                            <div style={{ width: '90px', padding: '6px' }}><select className="sf-table-input" value={imp.uni} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'uni', e.target.value)} disabled={isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow}>{unidades.map(u => <option key={u}>{u}</option>)}</select></div>
-                            <div style={{ width: '460px', padding: '10px' }}><textarea className="sf-table-input" value={imp.desc} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'desc', e.target.value)} style={{ resize: 'none' }} rows="1" disabled={isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow} /></div>
-                            <div style={{ width: '200px', padding: '6px' }}><input className="sf-table-input" value={imp.ben} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'ben', e.target.value)} disabled={isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow} /></div>
-                            <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.puBs === 0 ? '' : imp.puBs} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'puBs', e.target.value)} style={{ textAlign: 'right' }} disabled={isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || imp.puUsd > 0 || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow} /></div>
-                            <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.puUsd === 0 ? '' : imp.puUsd} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'puUsd', e.target.value)} style={{ textAlign: 'right' }} disabled={isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || imp.puBs > 0 || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow} /></div>
+                            <div style={{ width: '80px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.cant} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'cant', e.target.value)} style={{ textAlign: 'center' }} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow} /></div>
+                            <div style={{ width: '90px', padding: '6px' }}><select className="sf-table-input" value={imp.uni} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'uni', e.target.value)} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow}>{unidades.map(u => <option key={u}>{u}</option>)}</select></div>
+                            <div style={{ width: '460px', padding: '10px' }}><textarea className="sf-table-input" value={imp.desc} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'desc', e.target.value)} style={{ resize: 'none' }} rows="1" disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow} /></div>
+                            <div style={{ width: '200px', padding: '6px' }}><input className="sf-table-input" value={imp.ben} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'ben', e.target.value)} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow} /></div>
+                            <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.puBs === 0 ? '' : imp.puBs} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'puBs', e.target.value)} style={{ textAlign: 'right' }} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || imp.puUsd > 0 || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow} /></div>
+                            <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.puUsd === 0 ? '' : imp.puUsd} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'puUsd', e.target.value)} style={{ textAlign: 'right' }} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || imp.puBs > 0 || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow} /></div>
                             <div style={{ width: '120px', padding: '6px', textAlign: 'right', fontWeight: 'bold' }}>{((parseFloat(imp.puBs) || parseFloat(imp.puUsd) || 0) * (imp.cant || 1)).toLocaleString('de-DE')}</div>
                             <div style={{ width: '130px', padding: '6px', fontSize: '9px', color: editingImpUser ? '#e11d48' : '#64748b', fontWeight: editingImpUser ? 'bold' : '600' }}>
                               {editingImpUser ? `✏️ Editando... (${editingImpUser.nombre})` : (imp.emisor || '---')}
                             </div>
                             <div style={{ width: '110px', display: 'flex', gap: '5px', justifyContent: 'center' }}>
-                              <button onClick={() => duplicarImprevisto(imp.originalIndex)} style={{ background: 'none', border: 'none', color: '#f59e0b', cursor: (isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || imp.codigo_ref || imp.status === 'Bloqueado' || !!editingImpUser) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || imp.codigo_ref || imp.status === 'Bloqueado' || !!editingImpUser) ? 0.3 : 1 }} disabled={isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || !!imp.codigo_ref || imp.status === 'Bloqueado' || !!editingImpUser} title="Duplicar imprevisto"><Copy size={16} /></button>
-                              <button onClick={() => { setHasChanges(true); setForm({ ...form, imprevistos: form.imprevistos.filter((_, idx) => idx !== imp.originalIndex) }); }} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: (isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || imp.codigo_ref || imp.status === 'Bloqueado' || !!editingImpUser) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || imp.codigo_ref || imp.status === 'Bloqueado' || !!editingImpUser) ? 0.3 : 1 }} disabled={isReadOnly || estadoActual === 'EN PROCESO' || isAnulado || !!imp.codigo_ref || imp.status === 'Bloqueado' || !!editingImpUser} title="Eliminar imprevisto">🗑️</button>
+                              <button onClick={() => duplicarImprevisto(imp.originalIndex)} style={{ background: 'none', border: 'none', color: '#f59e0b', cursor: (isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || imp.codigo_ref || imp.status === 'Bloqueado' || !!editingImpUser) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || imp.codigo_ref || imp.status === 'Bloqueado' || !!editingImpUser) ? 0.3 : 1 }} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !!imp.codigo_ref || imp.status === 'Bloqueado' || !!editingImpUser} title="Duplicar imprevisto"><Copy size={16} /></button>
+                              <button onClick={() => { setHasChanges(true); setForm({ ...form, imprevistos: form.imprevistos.filter((_, idx) => idx !== imp.originalIndex) }); }} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: (isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || imp.codigo_ref || imp.status === 'Bloqueado' || !!editingImpUser) ? 'not-allowed' : 'pointer', fontSize: '1rem', opacity: (isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || imp.codigo_ref || imp.status === 'Bloqueado' || !!editingImpUser) ? 0.3 : 1 }} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !!imp.codigo_ref || imp.status === 'Bloqueado' || !!editingImpUser} title="Eliminar imprevisto">🗑️</button>
                               {imp.id && (
                                 <button
                                   onClick={() => abrirModalAnulacion(imp)}
@@ -3995,7 +4000,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                 <button className="sf-btn sf-btn-close" onClick={intentarCerrarModal} disabled={isSaving} style={{ minWidth: '180px', padding: '12px 30px', opacity: isSaving ? 0.6 : 1 }}>
                   {isReadOnly ? 'CERRAR' : 'CANCELAR'}
                 </button>
-                {!isReadOnly && estadoActual === 'ACTIVA' && (
+                 {!isReadOnly && (estadoActual === 'ACTIVA' || esRrHhOAdm) && (
                   <button
                     className="sf-btn"
                     style={{ padding: '12px 30px', minWidth: '180px', background: '#fff', border: '1px solid #cbd5e1', color: '#475569', opacity: isSaving ? 0.5 : 1 }}
@@ -4005,7 +4010,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                     GUARDAR BORRADOR
                   </button>
                 )}
-                {!isReadOnly && estadoActual === 'ACTIVA' && (
+                {!isReadOnly && (estadoActual === 'ACTIVA' || esRrHhOAdm) && (
                   <button
                     className="sf-btn sf-btn-primary"
                     onClick={() => registrarOActualizar(false)}
