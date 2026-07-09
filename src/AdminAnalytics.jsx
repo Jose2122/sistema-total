@@ -84,14 +84,14 @@ export default function AdminAnalytics() {
     try {
       const { error } = await supabase
         .from('sistema_versiones')
-        .insert([{
+        .upsert([{
           version: nuevaVersion.version,
           descripcion: nuevaVersion.descripcion,
           notificar_usuarios: nuevaVersion.notificar
-        }]);
+        }], { onConflict: 'version' });
 
       if (error) throw error;
-      toast.success('Versión registrada correctamente');
+      toast.success(`Versión ${nuevaVersion.version} guardada correctamente ✓`);
       setNuevaVersion({ version: '', descripcion: '', notificar: false });
     } catch (err) {
       toast.error('Error al registrar versión: ' + err?.message);
