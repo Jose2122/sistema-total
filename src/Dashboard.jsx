@@ -21,6 +21,7 @@ import AnalyticsCompras from './AnalyticsCompras';
 import ControlPrecios from './ControlPrecios';
 import LiquidacionFacturas from './LiquidacionFacturas';
 import AsistenteAyuda from './components/AsistenteAyuda';
+import ModalNovedades from './components/ModalNovedades';
 import { Menu, X as CloseIcon, Search, Cloud, Sun, ChevronDown, Power, LayoutDashboard, BarChartBig, Gauge } from 'lucide-react';
 
 function Dashboard() {
@@ -30,6 +31,50 @@ function Dashboard() {
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
   const [usuario, setUsuario] = useState({ nombre: '', apellido: '', rol: '', departamento: '', permisos: {} });
   const [cargando, setCargando] = useState(true);
+  
+  const [versionNovedades, setVersionNovedades] = useState(null);
+  const [modalNovedadesOpen, setModalNovedadesOpen] = useState(false);
+
+  useEffect(() => {
+    const verificarNovedades = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('sistema_versiones')
+          .select('version, descripcion, notificar_usuarios')
+          .eq('notificar_usuarios', true)
+          .order('created_at', { ascending: false })
+          .limit(1);
+
+        if (error) {
+          if (error.code !== '42P01') {
+            console.error('Error al consultar versiones:', error);
+          }
+          return;
+        }
+
+        if (data && data.length > 0) {
+          const ultimaVersion = data[0];
+          const lastSeen = localStorage.getItem('sitc_last_seen_version');
+          
+          if (!lastSeen || lastSeen !== ultimaVersion.version) {
+            setVersionNovedades(ultimaVersion);
+            setModalNovedadesOpen(true);
+          }
+        }
+      } catch (err) {
+        console.error('Error en verificador de versiones:', err);
+      }
+    };
+
+    verificarNovedades();
+  }, []);
+
+  const handleCloseNovedades = () => {
+    if (versionNovedades) {
+      localStorage.setItem('sitc_last_seen_version', versionNovedades.version);
+    }
+    setModalNovedadesOpen(false);
+  };
   const [notificacionesLog, setNotificacionesLog] = useState([]);
   const [verNotificaciones, setVerNotificaciones] = useState(false);
   const [verPerfil, setVerPerfil] = useState(false);
@@ -1106,6 +1151,14 @@ function Dashboard() {
       
       {/* Widget de Asistencia Virtual e Interactiva */}
       <AsistenteAyuda />
+
+      {/* Modal de Novedades del Sistema */}
+      <ModalNovedades 
+        isOpen={modalNovedadesOpen}
+        version={versionNovedades?.version}
+        descripcion={versionNovedades?.descripcion}
+        onClose={handleCloseNovedades}
+      />
     </div>
   );
 }

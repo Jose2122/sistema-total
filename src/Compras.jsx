@@ -3846,7 +3846,9 @@ const Compras = () => {
                                       </td>
                                       <td style={{ padding: '10px 12px', textAlign: 'right', color: '#64748b', fontSize: '0.65rem', fontWeight: '600' }}>{h.usuario_nombre}</td>
                                       <td style={{ padding: '10px 12px', textAlign: 'center' }}>
-                                        {currentUser?.correo?.toLowerCase() === 'jcontreras.totalclean@gmail.com' && (
+                                        {(currentUser?.correo?.toLowerCase() === 'jcontreras.totalclean@gmail.com' || 
+                                          (h && (h.usuario_id === currentUser?.id || 
+                                            (h.usuario_nombre && `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim().toLowerCase() === h.usuario_nombre.trim().toLowerCase())))) && (
                                           <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
                                             <button
                                               onClick={() => eliminarEntradaHistorial(f.id, idx)}

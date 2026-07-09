@@ -371,7 +371,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
           fecha_limite_compra: db.fecha_limite_compra,
           is_pausada: db.is_pausada,
           motivo_postergacion: db.motivo_postergacion,
-          con_iva: db.con_iva !== false
+          con_iva: db.con_iva !== false,
+          asignado_nombre: db.asignado_nombre
         }));
         setHistorial(historialMapeado);
 
@@ -429,7 +430,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
               observaciones: payload.new.observaciones || '',
               observaciones_direccion: payload.new.observaciones_direccion || '',
               facturas_url: payload.new.facturas_url || [],
-              detalles: payload.new.items || []
+              detalles: payload.new.items || [],
+              asignado_nombre: payload.new.asignado_nombre
             };
           }
           return req;
@@ -2439,6 +2441,124 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     pdf.text(`TOTAL ${labelIva}`, boxX + 3, currentY + 15);
     pdf.text(`$ ${finalTotal.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 192, currentY + 15, { align: 'right' });
     
+    // --- SECCIÓN DE FIRMAS Y APROBACIONES (PIE DE PÁGINA) ---
+    currentY += 25; // Espacio después del cuadro de totales
+    if (currentY + 35 > 280) {
+      pdf.addPage();
+      currentY = 20;
+    }
+
+    pdf.setFont(fontPrimary, 'bold');
+    pdf.setFontSize(8.5);
+    pdf.setTextColor(71, 85, 105); // Slate-600
+    pdf.text("FIRMAS Y APROBACIONES", 15, currentY);
+
+    currentY += 4;
+    const cardWidth = 56;
+    const cardHeight = 25;
+    const gap = 6;
+    const startX = 15;
+
+    // Helper para formatear fechas de aprobación
+    const formatApprovalDate = (dStr) => {
+      if (!dStr) return '';
+      try {
+        const d = new Date(dStr);
+        const day = String(d.getDate()).padStart(2, '0');
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const year = d.getFullYear();
+        return `${day}/${month}/${year}`;
+      } catch (e) {
+        return dStr;
+      }
+    };
+
+    // 1. APROB. PROYECTO
+    const projApproved = reqActual.aprobado_gerente_proyecto || reqActual.f_aprobacion_proyecto || reqActual.firma_gerente_proyecto;
+    let projName = reqActual.n_aprobacion_proyecto || reqActual.firma_gerente_proyecto || '';
+    let projDate = formatApprovalDate(reqActual.f_aprobacion_proyecto);
+
+    // 2. APROB. ÁREA
+    const areaApproved = reqActual.aprobado_gerente_area || (reqActual.estado_aprobacion !== 'pendiente_proyecto' && reqActual.estado_aprobacion !== 'pendiente_area' && reqActual.estado_aprobacion !== 'enviada_area' && reqActual.estado_aprobacion !== 'rechazada');
+    let areaName = reqActual.n_aprobacion_area || '';
+    let areaDate = formatApprovalDate(reqActual.f_aprobacion_area);
+
+    // 3. APROB. GENERAL
+    const genApproved = reqActual.aprobado_gerente_general || reqActual.estado_aprobacion === 'aprobado_final';
+    let genName = reqActual.n_aprobacion_general || '';
+    let genDate = formatApprovalDate(reqActual.f_aprobacion_general);
+
+    const approvals = [
+      {
+        title: "NIVEL 1",
+        approved: !!projApproved,
+        name: projName,
+        date: projDate,
+        isNa: !reqActual.f_aprobacion_proyecto && !reqActual.n_aprobacion_proyecto && !reqActual.firma_gerente_proyecto
+      },
+      {
+        title: "NIVEL 2",
+        approved: !!areaApproved,
+        name: areaName,
+        date: areaDate,
+        isNa: false
+      },
+      {
+        title: "NIVEL 3",
+        approved: !!genApproved,
+        name: genName,
+        date: genDate,
+        isNa: false
+      }
+    ];
+
+    approvals.forEach((app, index) => {
+      const x = startX + index * (cardWidth + gap);
+      
+      // Dibujar borde y fondo de la tarjeta
+      pdf.setDrawColor(203, 213, 225); // Slate-300
+      pdf.setFillColor(248, 250, 252); // Slate-50
+      pdf.setLineWidth(0.3);
+      pdf.roundedRect(x, currentY, cardWidth, cardHeight, 2, 2, 'FD');
+
+      // Título de la tarjeta
+      pdf.setFont(fontPrimary, 'bold');
+      pdf.setFontSize(8);
+      pdf.setTextColor(71, 85, 105);
+      pdf.text(app.title, x + cardWidth / 2, currentY + 6, { align: 'center' });
+
+      if (app.isNa) {
+        pdf.setFont(fontPrimary, 'bold');
+        pdf.setFontSize(8.5);
+        pdf.setTextColor(148, 163, 184); // Slate-400
+        pdf.text("N/A", x + cardWidth / 2, currentY + 15, { align: 'center' });
+      } else if (app.approved) {
+        // "Aprobado"
+        pdf.setFont(fontPrimary, 'bold');
+        pdf.setFontSize(8);
+        pdf.setTextColor(22, 163, 74); // Green-600
+        pdf.text("Aprobado", x + cardWidth / 2, currentY + 12, { align: 'center' });
+        
+        // Nombre del firmante
+        pdf.setFont(fontPrimary, 'bold');
+        pdf.setFontSize(7.5);
+        pdf.setTextColor(15, 23, 42); // Slate-900
+        pdf.text(app.name || 'Confirmado', x + cardWidth / 2, currentY + 17, { align: 'center' });
+
+        // Fecha de firma
+        pdf.setFont(fontPrimary, 'normal');
+        pdf.setFontSize(7);
+        pdf.setTextColor(100, 116, 139); // Slate-500
+        pdf.text(app.date || '', x + cardWidth / 2, currentY + 21, { align: 'center' });
+      } else {
+        // "Pendiente"
+        pdf.setFont(fontPrimary, 'bold');
+        pdf.setFontSize(8);
+        pdf.setTextColor(217, 119, 6); // Amber-600
+        pdf.text("Pendiente", x + cardWidth / 2, currentY + 15, { align: 'center' });
+      }
+    });
+
     // Guardar el PDF
     pdf.save(`REQ_${correlativoStr}.pdf`);
   };
@@ -3142,6 +3262,23 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                           opacity: 0.8
                         }}>
                           ID REQ
+                        </div>
+                        <div className="flex justify-end mt-2 select-none">
+                          {(() => {
+                            const comprador = editandoId ? (historial.find(h => h.id === editandoId)?.asignado_nombre) : null;
+                            if (comprador) {
+                              return (
+                                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 shadow-sm uppercase tracking-wider">
+                                  <span>👤 {comprador}</span>
+                                </div>
+                              );
+                            }
+                            return (
+                              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 shadow-sm uppercase tracking-wider">
+                                <span>⚠️ Sin Comprador Asignado</span>
+                              </div>
+                            );
+                          })()}
                         </div>
                       </div>
                     </div>

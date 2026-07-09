@@ -670,7 +670,10 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         let calculatedTotalBs = parseFloat(h.total_bs || 0);
         let calculatedTotalUsd = parseFloat(h.total_usd || 0);
 
-        if (misPartidas.length > 0) {
+        const emailLower = (userContext?.correo || '').toLowerCase();
+        const esTostitomas = emailLower.includes('tostitomas') || (userContext?.nombre || '').toLowerCase().includes('tostitomas');
+
+        if (misPartidas.length > 0 && !esTostitomas) {
           // Siempre usar la suma dinámica de los items como fuente de verdad.
           // El valor de cabecera (total_bs/total_usd) puede estar desactualizado
           // o ser incorrecto por migraciones, por lo que confiamos en los renglones.
@@ -682,7 +685,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         let pendingBs = 0;
         let pendingUsd = 0;
 
-        if (misPartidas.length > 0) {
+        if (misPartidas.length > 0 && !esTostitomas) {
           totalPagado = misPartidas.reduce((acc, p) => acc + (p.status === 'ANULADO_POR_USUARIO' ? 0 : (p.pago_realizado ? (parseFloat(p.pu_bs) || parseFloat(p.pu_usd) || 0) * (p.cantidad || 1) : 0)), 0);
           pendingBs = misPartidas.reduce((acc, p) => acc + (p.status === 'ANULADO_POR_USUARIO' ? 0 : (!p.pago_realizado ? (parseFloat(p.pu_bs) || 0) * (p.cantidad || 1) : 0)), 0);
           pendingUsd = misPartidas.reduce((acc, p) => acc + (p.status === 'ANULADO_POR_USUARIO' ? 0 : (!p.pago_realizado ? (parseFloat(p.pu_usd) || 0) * (p.cantidad || 1) : 0)), 0);
@@ -1166,16 +1169,28 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
     const nuevas = [...form.partidas];
     let valorFinal = valor;
 
-    // BLOQUEO DE NEGATIVOS
+    // BLOQUEO DE NEGATIVOS / PERMITIR VACÍOS Y FORMATOS TEMPORALES
     if (['cant', 'puBs', 'puUsd'].includes(campo)) {
-      valorFinal = Math.max(0, parseFloat(valor) || 0);
+      let stringVal = (valor !== undefined && valor !== null) ? valor.toString().replace(/[^0-9.]/g, '') : '';
+      const parts = stringVal.split('.');
+      if (parts.length > 2) {
+        stringVal = parts[0] + '.' + parts.slice(1).join('');
+      }
+      // Limpiar ceros a la izquierda (ej. "05" -> "5"), pero permitir "0" y "0."
+      if (stringVal.startsWith('0') && stringVal.length > 1 && stringVal[1] !== '.') {
+        stringVal = stringVal.replace(/^0+/, '');
+        if (stringVal === '') stringVal = '0';
+      }
+      valorFinal = stringVal;
     }
 
     nuevas[index][campo] = valorFinal;
     if (campo === 'cc') { nuevas[index].clasif = ''; nuevas[index].cat = ''; }
     if (campo === 'clasif') { nuevas[index].cat = ''; }
-    if (campo === 'puBs' && valorFinal > 0) nuevas[index].puUsd = '';
-    if (campo === 'puUsd' && valorFinal > 0) nuevas[index].puBs = '';
+    
+    const parsedVal = parseFloat(valorFinal) || 0;
+    if (campo === 'puBs' && parsedVal > 0) nuevas[index].puUsd = '';
+    if (campo === 'puUsd' && parsedVal > 0) nuevas[index].puBs = '';
     setHasChanges(true);
     setForm({ ...form, partidas: nuevas });
   };
@@ -1196,18 +1211,53 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
     }
 
     let valorFinal = valor;
-    // BLOQUEO DE NEGATIVOS
+    // BLOQUEO DE NEGATIVOS / PERMITIR VACÍOS Y FORMATOS TEMPORALES
     if (['cant', 'puBs', 'puUsd'].includes(campo)) {
-      valorFinal = Math.max(0, parseFloat(valor) || 0);
+      let stringVal = (valor !== undefined && valor !== null) ? valor.toString().replace(/[^0-9.]/g, '') : '';
+      const parts = stringVal.split('.');
+      if (parts.length > 2) {
+        stringVal = parts[0] + '.' + parts.slice(1).join('');
+      }
+      // Limpiar ceros a la izquierda, ej. "05" -> "5", pero permitir "0" y "0."
+      if (stringVal.startsWith('0') && stringVal.length > 1 && stringVal[1] !== '.') {
+        stringVal = stringVal.replace(/^0+/, '');
+        if (stringVal === '') stringVal = '0';
+      }
+      valorFinal = stringVal;
     }
 
     nuevos[index][campo] = valorFinal;
     if (campo === 'cc') { nuevos[index].clasif = ''; nuevos[index].cat = ''; }
     if (campo === 'clasif') { nuevos[index].cat = ''; }
-    if (campo === 'puBs' && valorFinal > 0) nuevos[index].puUsd = '';
-    if (campo === 'puUsd' && valorFinal > 0) nuevos[index].puBs = '';
+    
+    const parsedVal = parseFloat(valorFinal) || 0;
+    if (campo === 'puBs' && parsedVal > 0) nuevos[index].puUsd = '';
+    if (campo === 'puUsd' && parsedVal > 0) nuevos[index].puBs = '';
     setHasChanges(true);
     setForm({ ...form, imprevistos: nuevos });
+  };
+
+  const normalizarNumeroOnBlur = (index, campo, valor, esImprevisto = false) => {
+    const list = esImprevisto ? [...form.imprevistos] : [...form.partidas];
+    if (!list[index]) return;
+    
+    let stringVal = (valor !== undefined && valor !== null) ? valor.toString().trim() : '';
+    let numVal = parseFloat(stringVal);
+    
+    if (isNaN(numVal) || numVal < 0) {
+      numVal = 0;
+    }
+    
+    if (stringVal === '' && (campo === 'puBs' || campo === 'puUsd')) {
+      list[index][campo] = '';
+    } else {
+      list[index][campo] = numVal;
+    }
+    
+    if (campo === 'puBs' && numVal > 0) list[index].puUsd = '';
+    if (campo === 'puUsd' && numVal > 0) list[index].puBs = '';
+    
+    setForm({ ...form, [esImprevisto ? 'imprevistos' : 'partidas']: list });
   };
 
   const getWeekNumber = (d) => {
@@ -3694,12 +3744,12 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                                 })()}
                               </select>
                             </div>
-                            <div style={{ width: '80px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.cant} onChange={(e) => manejarCambioPartida(p.originalIndex, 'cant', e.target.value)} style={{ textAlign: 'center' }} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow} /></div>
+                            <div style={{ width: '80px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.cant === undefined || p.cant === null ? '' : p.cant} onChange={(e) => manejarCambioPartida(p.originalIndex, 'cant', e.target.value)} style={{ textAlign: 'center' }} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={() => { handleBlurRow(); normalizarNumeroOnBlur(p.originalIndex, 'cant', p.cant, false); }} /></div>
                             <div style={{ width: '90px', padding: '6px' }}><select className="sf-table-input" value={p.uni} onChange={(e) => manejarCambioPartida(p.originalIndex, 'uni', e.target.value)} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow}>{unidades.map(u => <option key={u}>{u}</option>)}</select></div>
-                            <div style={{ width: '460px', padding: '10px' }}><textarea className="sf-table-input" value={p.desc} onChange={(e) => manejarCambioPartida(p.originalIndex, 'desc', e.target.value)} style={{ resize: 'none' }} rows="1" disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow} /></div>
+                            <div style={{ width: '460px', padding: '10px' }}><textarea className="sf-table-input" value={p.desc} onChange={(e) => { manejarCambioPartida(p.originalIndex, 'desc', e.target.value); e.target.style.height = 'auto'; e.target.style.height = `${e.target.scrollHeight}px`; }} style={{ resize: 'none', height: 'auto', overflowY: 'hidden' }} ref={(el) => { if (el) { el.style.height = 'auto'; el.style.height = `${el.scrollHeight}px`; } }} rows="1" disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow} /></div>
                             <div style={{ width: '200px', padding: '6px' }}><input className="sf-table-input" value={p.ben} onChange={(e) => manejarCambioPartida(p.originalIndex, 'ben', e.target.value)} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow} /></div>
-                            <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puBs === 0 ? '' : p.puBs} onChange={(e) => manejarCambioPartida(p.originalIndex, 'puBs', e.target.value)} style={{ textAlign: 'left' }} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || p.puUsd > 0 || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow} /></div>
-                            <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puUsd === 0 ? '' : p.puUsd} onChange={(e) => manejarCambioPartida(p.originalIndex, 'puUsd', e.target.value)} style={{ textAlign: 'left' }} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || p.puBs > 0 || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow} /></div>
+                            <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puBs === undefined || p.puBs === null || p.puBs === '' ? '' : p.puBs} onChange={(e) => manejarCambioPartida(p.originalIndex, 'puBs', e.target.value)} style={{ textAlign: 'left' }} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || p.puUsd > 0 || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={() => { handleBlurRow(); normalizarNumeroOnBlur(p.originalIndex, 'puBs', p.puBs, false); }} /></div>
+                            <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puUsd === undefined || p.puUsd === null || p.puUsd === '' ? '' : p.puUsd} onChange={(e) => manejarCambioPartida(p.originalIndex, 'puUsd', e.target.value)} style={{ textAlign: 'left' }} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || p.puBs > 0 || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={() => { handleBlurRow(); normalizarNumeroOnBlur(p.originalIndex, 'puUsd', p.puUsd, false); }} /></div>
                             <div style={{ width: '120px', padding: '6px', textAlign: 'left', fontWeight: 'bold' }}>{((parseFloat(p.puBs) || parseFloat(p.puUsd) || 0) * (p.cant || 0)).toLocaleString('de-DE')}</div>
                             <div style={{ width: '130px', padding: '6px', fontSize: '9px', color: editingUser ? '#e11d48' : '#64748b', fontWeight: editingUser ? 'bold' : '600' }}>
                               {editingUser ? `✏️ Editando... (${editingUser.nombre})` : (p.emisor || '---')}
@@ -3857,12 +3907,12 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                                 })()}
                               </select>
                             </div>
-                            <div style={{ width: '80px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.cant} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'cant', e.target.value)} style={{ textAlign: 'center' }} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow} /></div>
+                            <div style={{ width: '80px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.cant === undefined || imp.cant === null ? '' : imp.cant} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'cant', e.target.value)} style={{ textAlign: 'center' }} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={() => { handleBlurRow(); normalizarNumeroOnBlur(imp.originalIndex, 'cant', imp.cant, true); }} /></div>
                             <div style={{ width: '90px', padding: '6px' }}><select className="sf-table-input" value={imp.uni} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'uni', e.target.value)} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow}>{unidades.map(u => <option key={u}>{u}</option>)}</select></div>
-                            <div style={{ width: '460px', padding: '10px' }}><textarea className="sf-table-input" value={imp.desc} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'desc', e.target.value)} style={{ resize: 'none' }} rows="1" disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow} /></div>
+                            <div style={{ width: '460px', padding: '10px' }}><textarea className="sf-table-input" value={imp.desc} onChange={(e) => { manejarCambioImprevisto(imp.originalIndex, 'desc', e.target.value); e.target.style.height = 'auto'; e.target.style.height = `${e.target.scrollHeight}px`; }} style={{ resize: 'none', height: 'auto', overflowY: 'hidden' }} ref={(el) => { if (el) { el.style.height = 'auto'; el.style.height = `${el.scrollHeight}px`; } }} rows="1" disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow} /></div>
                             <div style={{ width: '200px', padding: '6px' }}><input className="sf-table-input" value={imp.ben} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'ben', e.target.value)} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow} /></div>
-                            <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.puBs === 0 ? '' : imp.puBs} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'puBs', e.target.value)} style={{ textAlign: 'right' }} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || imp.puUsd > 0 || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow} /></div>
-                            <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.puUsd === 0 ? '' : imp.puUsd} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'puUsd', e.target.value)} style={{ textAlign: 'right' }} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || imp.puBs > 0 || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow} /></div>
+                            <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.puBs === undefined || imp.puBs === null || imp.puBs === '' ? '' : imp.puBs} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'puBs', e.target.value)} style={{ textAlign: 'right' }} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || imp.puUsd > 0 || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={() => { handleBlurRow(); normalizarNumeroOnBlur(imp.originalIndex, 'puBs', imp.puBs, true); }} /></div>
+                            <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.puUsd === undefined || imp.puUsd === null || imp.puUsd === '' ? '' : imp.puUsd} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'puUsd', e.target.value)} style={{ textAlign: 'right' }} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || imp.puBs > 0 || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={() => { handleBlurRow(); normalizarNumeroOnBlur(imp.originalIndex, 'puUsd', imp.puUsd, true); }} /></div>
                             <div style={{ width: '120px', padding: '6px', textAlign: 'right', fontWeight: 'bold' }}>{((parseFloat(imp.puBs) || parseFloat(imp.puUsd) || 0) * (imp.cant || 1)).toLocaleString('de-DE')}</div>
                             <div style={{ width: '130px', padding: '6px', fontSize: '9px', color: editingImpUser ? '#e11d48' : '#64748b', fontWeight: editingImpUser ? 'bold' : '600' }}>
                               {editingImpUser ? `✏️ Editando... (${editingImpUser.nombre})` : (imp.emisor || '---')}

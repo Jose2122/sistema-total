@@ -21,8 +21,10 @@ import {
   Smartphone,
   Shield,
   Search,
-  AlertTriangle
+  AlertTriangle,
+  Sparkles
 } from 'lucide-react';
+import ModalNovedades from './components/ModalNovedades';
 import { 
   ResponsiveContainer, 
   AreaChart, 
@@ -38,6 +40,7 @@ import {
   Line
 } from 'recharts';
 import './AdminAnalytics.css';
+import toast from 'react-hot-toast';
 
 export default function AdminAnalytics() {
   const navigate = useNavigate();
@@ -67,6 +70,35 @@ export default function AdminAnalytics() {
   const [dbLatency, setDbLatency] = useState(0);
   const [testingLatency, setTestingLatency] = useState(false);
   const [largestFiles, setLargestFiles] = useState([]);
+  
+  // Versions and Changelog state
+  const [nuevaVersion, setNuevaVersion] = useState({ version: '', descripcion: '', notificar: false });
+  const [modalPreviewOpen, setModalPreviewOpen] = useState(false);
+  const [guardandoVersion, setGuardandoVersion] = useState(false);
+
+  const registrarVersion = async (e) => {
+    e.preventDefault();
+    if (!nuevaVersion.version) return toast.error('El número de versión es obligatorio');
+    if (!nuevaVersion.descripcion) return toast.error('La descripción de cambios es obligatoria');
+    setGuardandoVersion(true);
+    try {
+      const { error } = await supabase
+        .from('sistema_versiones')
+        .insert([{
+          version: nuevaVersion.version,
+          descripcion: nuevaVersion.descripcion,
+          notificar_usuarios: nuevaVersion.notificar
+        }]);
+
+      if (error) throw error;
+      toast.success('Versión registrada correctamente');
+      setNuevaVersion({ version: '', descripcion: '', notificar: false });
+    } catch (err) {
+      toast.error('Error al registrar versión: ' + err?.message);
+    } finally {
+      setGuardandoVersion(false);
+    }
+  };
 
   // Operational raw data
   const [requisiciones, setRequisiciones] = useState([]);
@@ -271,7 +303,7 @@ export default function AdminAnalytics() {
       // 11. Fetch tickets_directos for operational comparison
       const { data: tkts } = await supabase
         .from('tickets_directos')
-        .select('id, created_at, fecha_emision, departamento, total_usd');
+        .select('id, fecha_emision, departamento, total_usd');
       setTicketsDirectos(tkts || []);
 
     } catch (err) {
@@ -281,9 +313,47 @@ export default function AdminAnalytics() {
     }
   };
 
+  // Refresco silencioso: solo actualiza datos operativos sin mostrar pantalla de carga
+  const refrescarDatosSilencioso = async () => {
+    try {
+      const { data: reqs } = await supabase
+        .from('requisiciones')
+        .select('id, correlativo_req, created_at, fecha_aprobacion_final, gerencia, estado_aprobacion, total_bs, solicitante, items');
+      setRequisiciones(reqs || []);
+
+      const { data: logs } = await supabase
+        .from('requisicion_logs')
+        .select('id, requisicion_id, accion, comentario, fecha, usuario_nombre');
+      setRequisicionLogs(logs || []);
+    } catch (err) {
+      console.warn("Error en refresco silencioso:", err);
+    }
+  };
+
   useEffect(() => {
     if (authorized === true) {
       cargarDatos();
+
+      // Realtime subscription for requisiciones (silencioso, sin pantalla de carga)
+      const reqChannel = supabase
+        .channel('realtime_reqs_analytics')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'requisiciones' }, () => {
+          refrescarDatosSilencioso();
+        })
+        .subscribe();
+
+      // Realtime subscription for requisicion_logs (silencioso, sin pantalla de carga)
+      const logsChannel = supabase
+        .channel('realtime_logs_analytics')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'requisicion_logs' }, () => {
+          refrescarDatosSilencioso();
+        })
+        .subscribe();
+
+      return () => {
+        supabase.removeChannel(reqChannel);
+        supabase.removeChannel(logsChannel);
+      };
     }
   }, [authorized]);
 
@@ -390,7 +460,7 @@ export default function AdminAnalytics() {
     let list = ticketsDirectos;
     if (start && end) {
       list = list.filter(t => {
-        const date = t.fecha_emision ? new Date(t.fecha_emision + 'T12:00:00') : new Date(t.created_at);
+        const date = t.fecha_emision ? new Date(t.fecha_emision + 'T12:00:00') : new Date();
         return date >= start && date <= end;
       });
     }
@@ -470,9 +540,15 @@ export default function AdminAnalytics() {
     });
 
     filteredTicketsForTraceability.forEach(t => {
-      const dateStr = t.fecha_emision ? t.fecha_emision : new Date(t.created_at).toISOString().split('T')[0];
-      if (datesMap[dateStr]) {
-        datesMap[dateStr].tickets += 1;
+      if (t.fecha_emision) {
+        try {
+          const dateStr = new Date(t.fecha_emision + 'T12:00:00').toISOString().split('T')[0];
+          if (datesMap[dateStr]) {
+            datesMap[dateStr].tickets += 1;
+          }
+        } catch (e) {
+          console.error("Error formatting ticket date:", t.fecha_emision, e);
+        }
       }
     });
 
@@ -624,6 +700,38 @@ export default function AdminAnalytics() {
     return alerts.sort((a, b) => new Date(b.lastRejectionDate) - new Date(a.lastRejectionDate));
   }, [filteredRequisicionLogs, requisiciones]);
 
+  // Client-side computed hourly operational traffic
+  const calculatedHourlyTraffic = useMemo(() => {
+    const hours = Array.from({ length: 24 }, (_, i) => ({
+      hora: i,
+      requisiciones_count: 0,
+      tickets_count: 0
+    }));
+
+    requisiciones.forEach(r => {
+      if (r.created_at) {
+        const date = new Date(r.created_at);
+        const hour = date.getHours();
+        if (hour >= 0 && hour < 24) {
+          hours[hour].requisiciones_count += 1;
+        }
+      }
+    });
+
+    ticketsDirectos.forEach(t => {
+      const dateStr = t.created_at || t.fecha_emision;
+      if (dateStr) {
+        const date = new Date(dateStr);
+        const hour = date.getHours();
+        if (hour >= 0 && hour < 24) {
+          hours[hour].tickets_count += 1;
+        }
+      }
+    });
+
+    return hours;
+  }, [requisiciones, ticketsDirectos]);
+
   // SLA & general operational calculations using filtered arrays
   const statsGerenciales = useMemo(() => {
     if (filteredRequisiciones.length === 0) return { avgSlaHours: 0, rejectionRates: [], volumeStats: [], listDeptos: [] };
@@ -637,21 +745,37 @@ export default function AdminAnalytics() {
     });
     const avgSlaHours = approvedReqs.length > 0 ? (totalSlaMs / approvedReqs.length / (1000 * 60 * 60)).toFixed(1) : 0;
 
-    // 2. Rejection Rate by Department
-    const deptoTotals = {};
+    // 2. Rejection Rate by Department (logical: count rejections in period against active requisitions in period)
+    const activeRequisitionsMap = {};
+    
     filteredRequisiciones.forEach(r => {
-      const d = r.gerencia || 'Desconocida';
+      activeRequisitionsMap[r.id] = r.gerencia || 'Desconocida';
+    });
+    
+    filteredRequisicionLogs.forEach(l => {
+      const req = requisiciones.find(r => r.id === l.requisicion_id);
+      if (req) {
+        activeRequisitionsMap[req.id] = req.gerencia || 'Desconocida';
+      }
+    });
+
+    const deptoTotals = {};
+    const deptoRejections = {};
+    
+    Object.values(activeRequisitionsMap).forEach(d => {
       deptoTotals[d] = (deptoTotals[d] || 0) + 1;
     });
 
-    const deptoRejections = {};
-    filteredRequisicionLogs.forEach(l => {
-      if (l.accion === 'RECHAZADA') {
-        const req = requisiciones.find(r => r.id === l.requisicion_id);
-        if (req) {
-          const d = req.gerencia || 'Desconocida';
-          deptoRejections[d] = (deptoRejections[d] || 0) + 1;
-        }
+    const rejectedReqIdsInPeriod = new Set(
+      filteredRequisicionLogs
+        .filter(l => l.accion === 'RECHAZADA')
+        .map(l => l.requisicion_id)
+    );
+
+    rejectedReqIdsInPeriod.forEach(reqId => {
+      const d = activeRequisitionsMap[reqId];
+      if (d) {
+        deptoRejections[d] = (deptoRejections[d] || 0) + 1;
       }
     });
 
@@ -665,7 +789,7 @@ export default function AdminAnalytics() {
         rechazos: rejections,
         tasa_rechazo: rate
       };
-    }).sort((a, b) => b.tasa_rechazo - a.tasa_rechazo);
+    }).sort((a, b) => b.rechazos - a.rechazos || b.tasa_rechazo - a.tasa_rechazo);
 
     const listDeptos = Object.keys(deptoTotals).sort();
 
@@ -826,6 +950,13 @@ export default function AdminAnalytics() {
           <UserCheck size={18} />
           <span>Trazabilidad y Inicios de Sesión</span>
         </button>
+        <button 
+          className={`tab-btn ${activeTab === 'versions' ? 'active' : ''}`}
+          onClick={() => setActiveTab('versions')}
+        >
+          <Sparkles size={18} />
+          <span>Registro de Versiones</span>
+        </button>
       </div>
 
       {/* GLOBAL DATE RANGE PICKER (APPLIES TO ALL TABS) */}
@@ -886,6 +1017,30 @@ export default function AdminAnalytics() {
               }}
             />
           </div>
+          <button 
+            onClick={cargarDatos} 
+            disabled={loading}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              backgroundColor: '#38bdf8',
+              color: '#0f172a',
+              border: 'none',
+              padding: '6px 14px',
+              borderRadius: '8px',
+              fontSize: '0.8rem',
+              fontWeight: 'bold',
+              cursor: 'pointer',
+              marginLeft: '10px',
+              opacity: loading ? 0.7 : 1,
+              transition: 'all 0.2s'
+            }}
+            title="Recargar datos manualmente"
+          >
+            <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+            <span>Actualizar</span>
+          </button>
           
           <span style={{ fontSize: '0.8rem', color: '#64748b', fontStyle: 'italic' }}>
             * Todos los datos, gráficos e historiales del panel responden reactivamente a este rango de fechas.
@@ -962,12 +1117,12 @@ export default function AdminAnalytics() {
                 <div className="chart-card">
                   <div className="chart-card-title">
                     <Clock size={20} color="#38bdf8" />
-                    <span>Densidad de Tráfico (Pico de Concurrencia por Horas)</span>
+                    <span>Densidad Operativa: Requisiciones vs Tickets de Pago</span>
                   </div>
                   <div style={{ width: '100%', height: 260 }}>
                     <ResponsiveContainer>
                       <AreaChart
-                        data={hourlyTraffic}
+                        data={calculatedHourlyTraffic}
                         margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
                       >
                         <defs>
@@ -975,9 +1130,9 @@ export default function AdminAnalytics() {
                             <stop offset="5%" stopColor="#38bdf8" stopOpacity={0.4}/>
                             <stop offset="95%" stopColor="#38bdf8" stopOpacity={0}/>
                           </linearGradient>
-                          <linearGradient id="colorFondos" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#818cf8" stopOpacity={0.4}/>
-                            <stop offset="95%" stopColor="#818cf8" stopOpacity={0}/>
+                          <linearGradient id="colorTickets" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#10b981" stopOpacity={0.4}/>
+                            <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
                           </linearGradient>
                         </defs>
                         <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
@@ -985,11 +1140,11 @@ export default function AdminAnalytics() {
                         <YAxis stroke="#64748b" style={{ fontSize: '11px' }} />
                         <Tooltip 
                           contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '12px', color: 'white', fontFamily: 'Inter' }}
-                          labelFormatter={(h) => `Hora: ${h}:00 (UTC)`}
+                          labelFormatter={(h) => `Hora: ${h}:00 (Local)`}
                         />
                         <Legend style={{ fontSize: '12px' }} />
                         <Area type="monotone" name="Requisiciones" dataKey="requisiciones_count" stroke="#38bdf8" fillOpacity={1} fill="url(#colorReq)" strokeWidth={2} />
-                        <Area type="monotone" name="Solicitud Fondos" dataKey="solicitudes_count" stroke="#818cf8" fillOpacity={1} fill="url(#colorFondos)" strokeWidth={2} />
+                        <Area type="monotone" name="Tickets de Pago" dataKey="tickets_count" stroke="#10b981" fillOpacity={1} fill="url(#colorTickets)" strokeWidth={2} />
                       </AreaChart>
                     </ResponsiveContainer>
                   </div>
@@ -1211,6 +1366,120 @@ export default function AdminAnalytics() {
                   </div>
                 )}
               </div>
+            </div>
+          ) : activeTab === 'versions' ? (
+            /* REGISTRO DE VERSIONES */
+            <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '30px' }}>
+              {/* FORM CARD */}
+              <div className="chart-card" style={{ background: 'rgba(30, 41, 59, 0.2)', padding: '24px' }}>
+                <div className="chart-card-title">
+                  <Sparkles size={20} color="#10b981" />
+                  <span>Registro de Versiones (Changelog)</span>
+                </div>
+                
+                <form onSubmit={registrarVersion} style={{ marginTop: '20px', display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.8rem', color: '#94a3b8', marginBottom: '6px', textTransform: 'uppercase', fontWeight: 'bold' }}>Número de Versión</label>
+                    <input 
+                      type="text" 
+                      placeholder="Ej: 1.0.2" 
+                      value={nuevaVersion.version}
+                      onChange={(e) => setNuevaVersion({...nuevaVersion, version: e.target.value})}
+                      style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', backgroundColor: 'rgba(15, 23, 42, 0.6)', border: '1px solid rgba(255,255,255,0.08)', color: 'white', outline: 'none' }}
+                    />
+                  </div>
+                  
+                  <div>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: '600', color: '#cbd5e1' }}>
+                      <input 
+                        type="checkbox"
+                        checked={nuevaVersion.notificar}
+                        onChange={(e) => setNuevaVersion({...nuevaVersion, notificar: e.target.checked})}
+                        style={{ width: '18px', height: '18px', cursor: 'pointer', accentColor: '#38bdf8' }}
+                      />
+                      Notificar a los usuarios al iniciar sesión
+                    </label>
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.8rem', color: '#94a3b8', marginBottom: '6px', textTransform: 'uppercase', fontWeight: 'bold' }}>Descripción de Cambios</label>
+                    <textarea 
+                      placeholder="Escribe los cambios, uno por línea (ej: - Corregido error en historial de compras)" 
+                      value={nuevaVersion.descripcion}
+                      onChange={(e) => setNuevaVersion({...nuevaVersion, descripcion: e.target.value})}
+                      style={{ width: '100%', minHeight: '120px', padding: '10px 12px', borderRadius: '10px', backgroundColor: 'rgba(15, 23, 42, 0.6)', border: '1px solid rgba(255,255,255,0.08)', color: 'white', outline: 'none', resize: 'vertical', fontFamily: 'inherit' }}
+                    />
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '15px', marginTop: '5px' }}>
+                    <button 
+                      type="button" 
+                      onClick={() => {
+                        if (!nuevaVersion.version) return toast.error('Ingresa una versión para previsualizar');
+                        setModalPreviewOpen(true);
+                      }} 
+                      style={{ padding: '10px 20px', borderRadius: '10px', backgroundColor: 'rgba(255,255,255,0.05)', color: '#e2e8f0', border: '1px solid rgba(255,255,255,0.1)', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 'bold' }}
+                    >
+                      Previsualizar Popup
+                    </button>
+                    <button 
+                      type="submit" 
+                      disabled={guardandoVersion}
+                      style={{ flexGrow: 1, padding: '10px 20px', borderRadius: '10px', backgroundColor: '#38bdf8', color: '#0f172a', border: 'none', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 'bold' }}
+                    >
+                      {guardandoVersion ? 'GUARDANDO...' : 'REGISTRAR VERSIÓN EN SUPABASE'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+
+              {/* LIVE PREVIEW CARD */}
+              <div className="chart-card" style={{ background: 'rgba(30, 41, 59, 0.4)', padding: '24px', border: '1px dashed rgba(56, 189, 248, 0.3)', display: 'flex', flexDirection: 'column' }}>
+                <div className="chart-card-title" style={{ marginBottom: '20px' }}>
+                  <Sparkles size={20} className="text-yellow-300 animate-pulse" />
+                  <span>Vista Previa del Modal (Inicio de Sesión)</span>
+                </div>
+                
+                {/* Mockup del modal de inicio de sesión de usuario */}
+                <div style={{ flexGrow: 1, display: 'flex', flexDirection: 'column', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.08)', overflow: 'hidden', background: '#ffffff', color: '#0f172a' }}>
+                  {/* Header del Mockup */}
+                  <div style={{ padding: '15px 20px', background: 'linear-gradient(135deg, #0ea5e9 0%, #6366f1 100%)', color: 'white' }}>
+                    <span style={{ fontSize: '9px', fontWeight: 'bold', textTransform: 'uppercase', background: 'rgba(255,255,255,0.2)', padding: '2px 6px', borderRadius: '4px', letterSpacing: '0.05em' }}>¡Nueva Versión!</span>
+                    <h3 style={{ fontSize: '1.1rem', fontWeight: '900', margin: '4px 0 0 0' }}>Novedades v{nuevaVersion.version || '1.X.X'}</h3>
+                  </div>
+                  
+                  {/* Contenido del Mockup */}
+                  <div style={{ padding: '20px', flexGrow: 1, overflowY: 'auto', maxHeight: '180px' }}>
+                    <p style={{ fontSize: '10px', color: '#64748b', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: '8px', letterSpacing: '0.05em' }}>Cambios y mejoras:</p>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      {(nuevaVersion.descripcion || '- Escribe los cambios para verlos aquí.').split('\n').map((l, i) => {
+                        const t = l.trim().replace(/^-\s*/, '').replace(/^\*\s*/, '');
+                        if (!t) return null;
+                        return (
+                          <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', fontSize: '11px', fontWeight: '600', color: '#334155' }}>
+                            <span style={{ color: '#6366f1' }}>✓</span>
+                            <span>{t}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Footer del Mockup */}
+                  <div style={{ padding: '12px 20px', background: '#f8fafc', borderTop: '1px solid #f1f5f9', display: 'flex', justifyContent: 'end' }}>
+                    <button type="button" style={{ padding: '6px 16px', borderRadius: '8px', fontSize: '10px', fontWeight: 'bold', color: 'white', backgroundColor: '#6366f1', border: 'none', cursor: 'default' }}>
+                      ¡Entendido!
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <ModalNovedades 
+                isOpen={modalPreviewOpen} 
+                version={nuevaVersion.version} 
+                descripcion={nuevaVersion.descripcion || '- Sin cambios registrados.'} 
+                onClose={() => setModalPreviewOpen(false)} 
+              />
             </div>
           ) : activeTab === 'management' ? (
             /* SLA Y EFICIENCIA GERENCIAL */
@@ -1489,7 +1758,7 @@ export default function AdminAnalytics() {
                           <YAxis stroke="#64748b" style={{ fontSize: '11px' }} unit="%" />
                           <Tooltip 
                             contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '12px', color: 'white', fontFamily: 'Inter' }}
-                            formatter={(value) => [`${value}%`, 'Tasa de Rechazo']}
+                            formatter={(value, name, props) => [`${value}% (${props.payload.rechazos} rechazos de ${props.payload.creadas})`, 'Tasa de Rechazo']}
                           />
                           <Bar 
                             dataKey="tasa_rechazo" 

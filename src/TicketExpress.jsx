@@ -677,6 +677,59 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
 
     setLoading(true);
     try {
+      const rolCreatorUpper = (currentUser?.rol || '').toUpperCase();
+      const deptoCreatorUpper = (currentUser?.departamento || '').toUpperCase();
+      const esGerenteOCorporativo = rolCreatorUpper.includes('GERENTE') || 
+                                     rolCreatorUpper.includes('COORDINADOR') || 
+                                     rolCreatorUpper.includes('DIRECTOR') || 
+                                     rolCreatorUpper.includes('ADMIN') || 
+                                     deptoCreatorUpper.includes('ADMIN') ||
+                                     deptoCreatorUpper.includes('DIRECTOR') ||
+                                     currentUser?.esSuperAdmin === true ||
+                                     currentUser?.esAdminReal === true;
+
+      const cc = form.centro_costo || form.partidas?.[0]?.cc || null;
+      let targetAprobadorId = null;
+
+      if (!esGerenteOCorporativo) {
+        targetAprobadorId = currentUser?.gerente_directo_id || null;
+
+        if (!targetAprobadorId && cc) {
+          const { data: gerentesProyecto } = await supabase
+            .from('perfiles')
+            .select('id')
+            .contains('obras_asignadas', [cc])
+            .ilike('rol', '%proyecto%')
+            .limit(1);
+          if (gerentesProyecto && gerentesProyecto.length > 0) {
+            targetAprobadorId = gerentesProyecto[0].id;
+          }
+        }
+
+        if (!targetAprobadorId && currentUser?.departamento) {
+          const { data: gerentesDepto } = await supabase
+            .from('perfiles')
+            .select('id')
+            .eq('departamento', currentUser.departamento)
+            .in('rol', ['Gerente', 'Coordinador', 'Director'])
+            .limit(1);
+          if (gerentesDepto && gerentesDepto.length > 0) {
+            targetAprobadorId = gerentesDepto[0].id;
+          }
+        }
+
+        if (!targetAprobadorId) {
+          const { data: defaultAdmins } = await supabase
+            .from('perfiles')
+            .select('id')
+            .in('rol', ['Gerente General', 'Admin', 'Director'])
+            .limit(1);
+          if (defaultAdmins && defaultAdmins.length > 0) {
+            targetAprobadorId = defaultAdmins[0].id;
+          }
+        }
+      }
+
       const payload = {
         usuario_id: currentUser.id,
         gerente_nombre: form.solicitante || currentUser.nombre,
@@ -691,13 +744,16 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
           ...(idx === 0 ? { justificacion_detallada: form.justificacion_detallada } : {})
         })),
         factura_url: form.facturas_url || [],
-        status: form.status || 'EMITIDO',
+        status: esGerenteOCorporativo ? (form.status || 'EMITIDO') : 'Pendiente Aprobación',
         solicitud_ref: form.solicitud_ref || null,
         clasificacion_admin: form.clasificacion_admin || null,
         justificacion: form.justificacion || form.justificacion_detallada || null,
-        centro_costo: form.centro_costo || form.partidas?.[0]?.cc || null,
+        centro_costo: cc,
         con_iva: form.con_iva !== false,
-        prioridad: form.prioridad || 'Normal'
+        prioridad: form.prioridad || 'Normal',
+        aprobador_id: targetAprobadorId,
+        aprobado_por: esGerenteOCorporativo ? currentUser.id : null,
+        fecha_aprobacion: esGerenteOCorporativo ? new Date().toISOString() : null
       };
 
       console.log("[TicketExpress] Payload de inserción:", payload);
@@ -705,31 +761,41 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
       const { data: newTicket, error } = await supabase.from('tickets_directos').insert([payload]).select().single();
       if (error) throw error;
 
-      // NOTIFICAR A ADMINISTRACIÓN
+      // NOTIFICAR A APROBADOR O ADMINISTRACIÓN
       try {
-        const { data: perfiles } = await supabase
-          .from('perfiles')
-          .select('id, rol, departamento');
-        if (perfiles) {
-          const admins = perfiles.filter(p => {
-            const rol = (p.rol || '').toLowerCase();
-            const depto = (p.departamento || '').toLowerCase();
-            return rol.includes('administra') || rol.includes('contabil') || depto.includes('administra') || depto.includes('contabil');
-          });
-          for (const admin of admins) {
-            if (admin.id !== currentUser?.id) {
-              await supabase.from('notificaciones').insert([{
-                usuario_id: admin.id,
-                mensaje: `Nuevo Ticket de Pago ${newTicket.codigo_control} en cola creado por ${newTicket.gerente_nombre || 'un usuario'}.`,
-                tipo: 'Ticket Nuevo',
-                leido: false,
-                requisicion_id: null
-              }]);
+        if (targetAprobadorId && !esGerenteOCorporativo) {
+          await supabase.from('notificaciones').insert([{
+            usuario_id: targetAprobadorId,
+            mensaje: `El Ticket de Pago ${idControlAutomatico} creado por ${form.solicitante || currentUser.nombre} requiere su aprobación de Gerencia.`,
+            tipo: 'Aprobación Pendiente',
+            leido: false,
+            requisicion_id: null
+          }]);
+        } else {
+          const { data: perfiles } = await supabase
+            .from('perfiles')
+            .select('id, rol, departamento');
+          if (perfiles) {
+            const admins = perfiles.filter(p => {
+              const rol = (p.rol || '').toLowerCase();
+              const depto = (p.departamento || '').toLowerCase();
+              return rol.includes('administra') || rol.includes('contabil') || depto.includes('administra') || depto.includes('contabil');
+            });
+            for (const admin of admins) {
+              if (admin.id !== currentUser?.id) {
+                await supabase.from('notificaciones').insert([{
+                  usuario_id: admin.id,
+                  mensaje: `Nuevo Ticket de Pago ${newTicket.codigo_control} en cola creado por ${newTicket.gerente_nombre || 'un usuario'}.`,
+                  tipo: 'Ticket Nuevo',
+                  leido: false,
+                  requisicion_id: null
+                }]);
+              }
             }
           }
         }
       } catch (err) {
-        console.error("Error al notificar a administración:", err);
+        console.error("Error al notificar:", err);
       }
 
       // ACTUALIZAR PARTIDAS FONDOS SI EXISTEN

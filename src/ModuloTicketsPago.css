@@ -438,6 +438,12 @@
   border: 1px solid #fecaca;
 }
 
+.badge-status.pendiente-aprobacion {
+  background-color: #fffbeb;
+  color: #d97706;
+  border: 1px solid #fef3c7;
+}
+
 .clickable-cell:hover {
   text-decoration: underline;
   opacity: 0.8;

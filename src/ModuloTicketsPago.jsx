@@ -621,13 +621,20 @@ const ModuloTicketsPago = () => {
 
   const totals = useMemo(() => {
     const list = historialTickets || [];
-    const totalMonto = list.reduce((acc, t) => acc + (Number(t.total_usd) || 0), 0);
+    const totalMonto = list.filter(t => t.status !== 'Pendiente Aprobación').reduce((acc, t) => acc + (Number(t.total_usd) || 0), 0);
     const pagados = list.filter(t => t.status === 'Pagado').length;
-    const pendientes = list.filter(t => t.status !== 'Pagado' && t.status !== 'Rechazado').length;
+    const pendientes = list.filter(t => t.status !== 'Pagado' && t.status !== 'Rechazado' && t.status !== 'Pendiente Aprobación').length;
+    const porAprobar = list.filter(t => t.status === 'Pendiente Aprobación' && t.aprobador_id === currentUser?.id).length;
     const totalRegistros = list.length;
 
-    return { totalMonto, pagados, pendientes, totalRegistros };
-  }, [historialTickets]);
+    return { totalMonto, pagados, pendientes, porAprobar, totalRegistros };
+  }, [historialTickets, currentUser]);
+
+  const esGerente = useMemo(() => {
+    if (!currentUser) return false;
+    const rolUpper = (currentUser.rol || '').toUpperCase();
+    return rolUpper.includes('GERENTE') || rolUpper.includes('COORDINADOR') || rolUpper.includes('DIRECTOR') || rolUpper.includes('ADMIN') || currentUser?.esSuperAdmin || currentUser?.esAdminReal;
+  }, [currentUser]);
 
   const esPrivilegiado = useMemo(() => {
     if (!currentUser) return false;
@@ -1654,6 +1661,53 @@ const ModuloTicketsPago = () => {
     }
   };
 
+  const aprobarTicket = async () => {
+    setLoading(true);
+    try {
+      const { error } = await supabase.from('tickets_directos').update({
+        status: 'EMITIDO',
+        aprobado_por: currentUser.id,
+        fecha_aprobacion: new Date().toISOString()
+      }).eq('id', ticketSeleccionado.id);
+
+      if (error) throw error;
+      
+      // NOTIFICAR A ADMINISTRACIÓN Y CONTABILIDAD QUE EL TICKET FUE APROBADO
+      try {
+        const { data: perfiles } = await supabase
+          .from('perfiles')
+          .select('id, rol, departamento');
+        if (perfiles) {
+          const admins = perfiles.filter(p => {
+            const rol = (p.rol || '').toLowerCase();
+            const depto = (p.departamento || '').toLowerCase();
+            return rol.includes('administra') || rol.includes('contabil') || depto.includes('administra') || depto.includes('contabil');
+          });
+          for (const admin of admins) {
+            await supabase.from('notificaciones').insert([{
+              usuario_id: admin.id,
+              mensaje: `Ticket de Pago ${ticketSeleccionado.codigo_control} aprobado y listo para procesar.`,
+              tipo: 'Ticket Aprobado',
+              leido: false,
+              requisicion_id: null
+            }]);
+          }
+        }
+      } catch (err) {
+        console.error("Error al notificar aprobación:", err);
+      }
+
+      toast.success("Ticket aprobado exitosamente.");
+      setTicketSeleccionado(null);
+      setVistaActual('historial');
+      await fetchHistorial();
+    } catch (err) {
+      toast.error("Error al aprobar: " + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const rechazarTicket = async () => {
     const motivo = window.prompt("Indique el motivo del rechazo:");
     if (motivo === null) return;
@@ -2411,6 +2465,7 @@ const ModuloTicketsPago = () => {
             { label: 'Monto Total General', val: `$ ${totals.totalMonto.toLocaleString('de-DE', { minimumFractionDigits: 2 })}`, icon: <DollarSign size={20} />, col: '#0ea5e9', bg: '#e0f2fe', filtro: null },
             { label: 'Tickets Pagados', val: totals.pagados, icon: <CheckCircle2 size={20} />, col: '#10b981', bg: '#dcfce7', filtro: 'Pagado' },
             { label: 'Pendientes por Procesar', val: totals.pendientes, icon: <Clock size={20} />, col: '#8b5cf6', bg: '#f3e8ff', filtro: 'pendiente' },
+            ...(esGerente ? [{ label: 'Por Aprobar Gerencia', val: totals.porAprobar, icon: <Activity size={20} />, col: '#f59e0b', bg: '#fffbeb', filtro: 'Pendiente Aprobación' }] : []),
             { label: 'Total de Tickets', val: totals.totalRegistros, icon: <Ticket size={20} />, col: '#6366f1', bg: '#e0e7ff', filtro: 'Todos' },
           ].map((x, i) => {
             const isActive = x.filtro !== null && (
@@ -2744,7 +2799,7 @@ const ModuloTicketsPago = () => {
                         $ {(Number(ticket.total_usd) || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
                       </td>
                       <td style={{ textAlign: 'center', padding: '12px 15px' }}>
-                        <div className={`badge-status ${ticket.status?.toLowerCase() || 'emitido'}`}>
+                        <div className={`badge-status ${(ticket.status || 'emitido').toLowerCase().replace(/\s+/g, '-').replace(/ó/g, 'o')}`}>
                           {ticket.status === 'Pagado' && <span style={{ marginRight: '4px' }}>✓</span>}
                           {ticket.status || 'Emitido'}
                         </div>
@@ -2828,7 +2883,7 @@ const ModuloTicketsPago = () => {
               <div>
                 <h2 style={{ margin: 0, color: '#0f172a', fontSize: '1.5rem', fontWeight: '800' }}>Ticket de pago</h2>
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '10px' }}>
-                  <div className={`badge-status ${t.status?.toLowerCase() || 'emitido'}`} style={{ fontSize: '10px', height: '22px' }}>
+                  <div className={`badge-status ${(t.status || 'emitido').toLowerCase().replace(/\s+/g, '-').replace(/ó/g, 'o')}`} style={{ fontSize: '10px', height: '22px' }}>
                     {t.status?.toUpperCase() || 'EMITIDO'}
                   </div>
                   {t.solicitud_ref && (
@@ -3901,6 +3956,69 @@ const ModuloTicketsPago = () => {
             </div>
 
             <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
+              {/* Botones de Aprobación/Rechazo de Gerencia */}
+              {ticketSeleccionado?.status === 'Pendiente Aprobación' && ticketSeleccionado?.aprobador_id === currentUser?.id && (
+                <>
+                  <motion.button
+                    onClick={aprobarTicket}
+                    whileHover={{ scale: 1.04 }}
+                    whileTap={{ scale: 0.97 }}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '8px',
+                      padding: '12px 24px',
+                      background: 'linear-gradient(135deg, #10b981, #059669)',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '10px',
+                      cursor: 'pointer',
+                      fontSize: '13px',
+                      fontWeight: '700',
+                      boxShadow: '0 4px 12px rgba(16,185,129,0.25)',
+                      transition: 'all 0.2s',
+                      minWidth: '140px',
+                      height: '46px',
+                      boxSizing: 'border-box'
+                    }}
+                    disabled={loading}
+                  >
+                    <CheckCircle2 size={15} />
+                    Aprobar Ticket
+                  </motion.button>
+
+                  <motion.button
+                    onClick={rechazarTicket}
+                    whileHover={{ scale: 1.04 }}
+                    whileTap={{ scale: 0.97 }}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '8px',
+                      padding: '12px 24px',
+                      background: 'linear-gradient(135deg, #ef4444, #dc2626)',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '10px',
+                      cursor: 'pointer',
+                      fontSize: '13px',
+                      fontWeight: '700',
+                      boxShadow: '0 4px 12px rgba(239,68,68,0.25)',
+                      transition: 'all 0.2s',
+                      minWidth: '140px',
+                      height: '46px',
+                      boxSizing: 'border-box'
+                    }}
+                    disabled={loading}
+                  >
+                    <X size={15} />
+                    Rechazar Ticket
+                  </motion.button>
+                </>
+              )}
+
               <div style={{ color: '#94a3b8', fontSize: '0.7rem', textAlign: 'right', width: '180px' }}>
                 * El estatus cambiará según el saldo restante.
               </div>
