@@ -624,7 +624,18 @@ const ModuloTicketsPago = () => {
     const totalMonto = list.filter(t => t.status !== 'Pendiente Aprobación').reduce((acc, t) => acc + (Number(t.total_usd) || 0), 0);
     const pagados = list.filter(t => t.status === 'Pagado').length;
     const pendientes = list.filter(t => t.status !== 'Pagado' && t.status !== 'Rechazado' && t.status !== 'Pendiente Aprobación').length;
-    const porAprobar = list.filter(t => t.status === 'Pendiente Aprobación' && t.aprobador_id === currentUser?.id).length;
+    const rolUpper = (currentUser?.rol || '').toUpperCase();
+    const esGerentePara = rolUpper.includes('GERENTE') || rolUpper.includes('COORDINADOR') || rolUpper.includes('DIRECTOR') || rolUpper.includes('ADMIN') || currentUser?.esSuperAdmin || currentUser?.esAdminReal;
+    const porAprobar = list.filter(t => {
+      if (t.status !== 'Pendiente Aprobación') return false;
+      if (t.aprobador_id === currentUser?.id) return true;
+      if (!esGerentePara) return false;
+      if (!t.aprobador_id) return true;
+      if (currentUser?.esAdminReal || currentUser?.esSuperAdmin) return true;
+      if (currentUser?.departamento && t.departamento &&
+        t.departamento.toUpperCase() === currentUser.departamento.toUpperCase()) return true;
+      return false;
+    }).length;
     const totalRegistros = list.length;
 
     return { totalMonto, pagados, pendientes, porAprobar, totalRegistros };
@@ -1664,13 +1675,16 @@ const ModuloTicketsPago = () => {
   const aprobarTicket = async () => {
     setLoading(true);
     try {
-      const { error } = await supabase.from('tickets_directos').update({
+      const { data: updatedData, error } = await supabase.from('tickets_directos').update({
         status: 'EMITIDO',
         aprobado_por: currentUser.id,
         fecha_aprobacion: new Date().toISOString()
-      }).eq('id', ticketSeleccionado.id);
+      }).eq('id', ticketSeleccionado.id).select('id');
 
       if (error) throw error;
+      if (!updatedData || updatedData.length === 0) {
+        throw new Error('No se pudo actualizar el ticket. Es posible que no tengas permisos de base de datos (RLS) para aprobar tickets de otros usuarios.');
+      }
       
       // NOTIFICAR A ADMINISTRACIÓN Y CONTABILIDAD QUE EL TICKET FUE APROBADO
       try {
@@ -1714,12 +1728,15 @@ const ModuloTicketsPago = () => {
 
     setLoading(true);
     try {
-      const { error } = await supabase.from('tickets_directos').update({
+      const { data: updatedData, error } = await supabase.from('tickets_directos').update({
         status: 'Rechazado',
         observaciones: ticketSeleccionado.observaciones ? `${ticketSeleccionado.observaciones}\n\nRECHAZO: ${motivo}` : `RECHAZO: ${motivo}`
-      }).eq('id', ticketSeleccionado.id);
+      }).eq('id', ticketSeleccionado.id).select('id');
 
       if (error) throw error;
+      if (!updatedData || updatedData.length === 0) {
+        throw new Error('No se pudo rechazar el ticket. Es posible que no tengas permisos de base de datos (RLS) para modificar tickets de otros usuarios.');
+      }
       toast.success("Ticket rechazado.");
       setTicketSeleccionado(null);
       setVistaActual('historial');
@@ -3957,7 +3974,34 @@ const ModuloTicketsPago = () => {
 
             <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
               {/* Botones de Aprobación/Rechazo de Gerencia */}
-              {ticketSeleccionado?.status === 'Pendiente Aprobación' && ticketSeleccionado?.aprobador_id === currentUser?.id && (
+              {(() => {
+                const statusOk = (ticketSeleccionado?.status || '').toLowerCase().includes('pendiente aprobaci');
+                const rolOk = esGerente;
+                const aprobOk = ticketSeleccionado?.aprobador_id === currentUser?.id ||
+                  !ticketSeleccionado?.aprobador_id ||
+                  (currentUser?.departamento && ticketSeleccionado?.departamento &&
+                    ticketSeleccionado.departamento.toUpperCase() === currentUser.departamento.toUpperCase()) ||
+                  currentUser?.esAdminReal || currentUser?.esSuperAdmin;
+                console.log('[APROBAR BTN]', {
+                  status: ticketSeleccionado?.status,
+                  statusOk,
+                  esGerente: rolOk,
+                  aprobador_id: ticketSeleccionado?.aprobador_id,
+                  currentUserId: currentUser?.id,
+                  ticketDepto: ticketSeleccionado?.departamento,
+                  userDepto: currentUser?.departamento,
+                  userRol: currentUser?.rol,
+                  aprobOk
+                });
+                return null;
+              })()}
+              {(ticketSeleccionado?.status || '').toLowerCase().includes('pendiente aprobaci') && esGerente && (
+                ticketSeleccionado?.aprobador_id === currentUser?.id ||
+                !ticketSeleccionado?.aprobador_id ||
+                (currentUser?.departamento && ticketSeleccionado?.departamento &&
+                  ticketSeleccionado.departamento.toUpperCase() === currentUser.departamento.toUpperCase()) ||
+                currentUser?.esAdminReal || currentUser?.esSuperAdmin
+              ) && (
                 <>
                   <motion.button
                     onClick={aprobarTicket}
@@ -4370,6 +4414,7 @@ const ModuloTicketsPago = () => {
             fetchHistorial();
           }}
           datosPredefinidos={datosParaTicketExpress}
+          currentUser={currentUser}
           onSuccess={() => {
             setShowTicketExpress(false);
             setDatosParaTicketExpress(null);

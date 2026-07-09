@@ -119,13 +119,13 @@ const parsearFacturaUrls = (facturaUrlField) => {
   }).filter(item => item && typeof item.url === 'string' && item.url.trim().length > 10);
 };
 
-const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = null, onSuccess = null }) => {
+const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = null, onSuccess = null, currentUser: currentUserProp = null }) => {
   // --- ESTADOS DE CONTROL ---
   const [showModal, setShowModal] = useState(isOpen);
   const [loading, setLoading] = useState(false);
   const [historial, setHistorial] = useState([]);
   const [busqueda, setBusqueda] = useState('');
-  const [currentUser, setCurrentUser] = useState(null);
+  const [currentUser, setCurrentUser] = useState(currentUserProp);
   const [verTodos, setVerTodos] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [verJustificacion, setVerJustificacion] = useState(false);
@@ -192,6 +192,12 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
       deptoUpper.includes('ADMINISTRACIÓN') ||
       deptoUpper === 'RECURSOS HUMANOS' ||
       deptoUpper === 'CONTABILIDAD';
+  }, [currentUser]);
+
+  const esGerente = useMemo(() => {
+    if (!currentUser) return false;
+    const rolUpper = (currentUser.rol || '').toUpperCase();
+    return rolUpper.includes('GERENTE') || rolUpper.includes('COORDINADOR') || rolUpper.includes('DIRECTOR') || rolUpper.includes('ADMIN') || currentUser?.esSuperAdmin || currentUser?.esAdminReal;
   }, [currentUser]);
 
   // --- DATA MAESTRA ---
@@ -424,13 +430,18 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
         };
 
         setCurrentUser(userInfo);
-        setForm(prev => ({
-          ...prev,
-          gerente: userInfo.nombre,
-          solicitante: userInfo.nombre,
-          departamento: userInfo.departamento,
-          usuario_id: userInfo.id
-        }));
+        
+        // Solo inicializar los valores de creación de formulario si no estamos viendo detalles
+        setForm(prev => {
+          if (prev.id) return prev; // Si ya tiene ID, es un ticket existente, no sobreescribir datos
+          return {
+            ...prev,
+            gerente: userInfo.nombre,
+            solicitante: userInfo.nombre,
+            departamento: userInfo.departamento,
+            usuario_id: userInfo.id
+          };
+        });
       }
     } catch (err) {
       console.error('Error cargando usuario en TicketExpress:', err.message);
@@ -506,9 +517,13 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
   }, [currentUser, verTodos]);
 
   useEffect(() => {
-    cargarUsuario();
+    if (!currentUserProp) {
+      cargarUsuario();
+    } else {
+      setCurrentUser(currentUserProp);
+    }
     cargarDataMaestra();
-  }, [cargarUsuario, cargarDataMaestra]);
+  }, [currentUserProp, cargarUsuario, cargarDataMaestra]);
 
   useEffect(() => {
     if (currentUser) cargarHistorial();
@@ -1105,6 +1120,88 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
     }
   };
 
+  const aprobarTicket = async () => {
+    setLoading(true);
+    try {
+      const { data: updatedData, error } = await supabase.from('tickets_directos').update({
+        status: 'EMITIDO',
+        aprobado_por: currentUser.id,
+        fecha_aprobacion: new Date().toISOString()
+      }).eq('id', form.id).select('id');
+
+      if (error) throw error;
+      if (!updatedData || updatedData.length === 0) {
+        throw new Error('No se pudo actualizar el ticket. Es posible que no tengas permisos de base de datos (RLS) para aprobar tickets de otros usuarios.');
+      }
+      
+      // NOTIFICAR A ADMINISTRACIÓN Y CONTABILIDAD QUE EL TICKET FUE APROBADO
+      try {
+        const { data: perfiles } = await supabase
+          .from('perfiles')
+          .select('id, rol, departamento');
+        if (perfiles) {
+          const admins = perfiles.filter(p => {
+            const rol = (p.rol || '').toLowerCase();
+            const depto = (p.departamento || '').toLowerCase();
+            return rol.includes('administra') || rol.includes('contabil') || depto.includes('administra') || depto.includes('contabil');
+          });
+          for (const admin of admins) {
+            await supabase.from('notificaciones').insert([{
+              usuario_id: admin.id,
+              mensaje: `Ticket de Pago ${form.id_control} aprobado y listo para procesar.`,
+              tipo: 'Ticket Aprobado',
+              leido: false,
+              requisicion_id: null
+            }]);
+          }
+        }
+      } catch (err) {
+        console.error("Error al notificar aprobación:", err);
+      }
+
+      toast.success("Ticket aprobado exitosamente.");
+      if (typeof onSuccess === 'function') {
+        onSuccess();
+      } else {
+        setShowModal(false);
+        cargarHistorial();
+      }
+    } catch (err) {
+      toast.error("Error al aprobar: " + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const rechazarTicket = async () => {
+    const motivo = window.prompt("Indique el motivo del rechazo:");
+    if (motivo === null) return;
+
+    setLoading(true);
+    try {
+      const { data: updatedData, error } = await supabase.from('tickets_directos').update({
+        status: 'Rechazado',
+        observaciones: form.justificacion ? `${form.justificacion}\n\nRECHAZO: ${motivo}` : `RECHAZO: ${motivo}`
+      }).eq('id', form.id).select('id');
+
+      if (error) throw error;
+      if (!updatedData || updatedData.length === 0) {
+        throw new Error('No se pudo rechazar el ticket. Es posible que no tengas permisos de base de datos (RLS) para modificar tickets de otros usuarios.');
+      }
+      toast.success("Ticket rechazado.");
+      if (typeof onSuccess === 'function') {
+        onSuccess();
+      } else {
+        setShowModal(false);
+        cargarHistorial();
+      }
+    } catch (err) {
+      toast.error("Error al rechazar: " + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
 
   const handleVerDetalle = (t) => {
     setIsEditing(true); // Usamos isEditing para modo "Ver/Solo Lectura"
@@ -1124,7 +1221,8 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
       justificacion: t.justificacion || '',
       justificacion_detallada: t.items?.[0]?.justificacion_detallada || '',
       centro_costo: t.centro_costo || t.items?.[0]?.cc || '',
-      con_iva: t.con_iva !== false
+      con_iva: t.con_iva !== false,
+      aprobador_id: t.aprobador_id
     });
     setShowModal(true);
   };
@@ -1881,6 +1979,56 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
                   <span style={{ fontSize: '0.7rem', fontWeight: '800', color: (form.con_iva !== false) ? '#16a34a' : '#ef4444', backgroundColor: (form.con_iva !== false) ? '#f0fdf4' : '#fef2f2', padding: '3px 8px', borderRadius: '6px', marginRight: '6px' }}>
                     {(form.con_iva !== false) ? 'CON IVA (16%)' : 'SIN IVA'}
                   </span>
+                )}
+                {isEditing && (form.status || '').toLowerCase().includes('pendiente aprobaci') && esGerente && (
+                  form.aprobador_id === currentUser?.id ||
+                  !form.aprobador_id ||
+                  (currentUser?.departamento && form.departamento &&
+                    form.departamento.toUpperCase() === currentUser.departamento.toUpperCase()) ||
+                  currentUser?.esAdminReal || currentUser?.esSuperAdmin
+                ) && (
+                  <>
+                    <button
+                      onClick={aprobarTicket}
+                      disabled={loading}
+                      style={{
+                        padding: '10px 25px',
+                        borderRadius: '12px',
+                        border: 'none',
+                        background: 'linear-gradient(135deg, #10b981, #059669)',
+                        color: 'white',
+                        fontWeight: 'bold',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        cursor: 'pointer',
+                        fontSize: '0.85rem',
+                        boxShadow: '0 4px 12px rgba(16, 185, 129, 0.25)'
+                      }}
+                    >
+                      <CheckCircle2 size={16} /> APROBAR TICKET
+                    </button>
+                    <button
+                      onClick={rechazarTicket}
+                      disabled={loading}
+                      style={{
+                        padding: '10px 25px',
+                        borderRadius: '12px',
+                        border: 'none',
+                        background: 'linear-gradient(135deg, #ef4444, #dc2626)',
+                        color: 'white',
+                        fontWeight: 'bold',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        cursor: 'pointer',
+                        fontSize: '0.85rem',
+                        boxShadow: '0 4px 12px rgba(239, 68, 68, 0.25)'
+                      }}
+                    >
+                      <X size={16} /> RECHAZAR
+                    </button>
+                  </>
                 )}
                 {isEditing && (
                   <button
