@@ -470,6 +470,8 @@ const ModuloTicketsPago = () => {
   const [obsTemporal, setObsTemporal] = useState('');
   const [mostrarObservaciones, setMostrarObservaciones] = useState(false);
   const [mostrarSoportes, setMostrarSoportes] = useState(false);
+  const [agruparSoportes, setAgruparSoportes] = useState(true);
+  const [soportePreviewUrl, setSoportePreviewUrl] = useState(null);
   const [imagenesArchivos, setImagenesArchivos] = useState([]); // Soporte para múltiples archivos
   const [imagenesUrlsPreview, setImagenesUrlsPreview] = useState([]);
   const [imagenesNombres, setImagenesNombres] = useState([]); // Nombres de soportes para carga manual
@@ -621,9 +623,9 @@ const ModuloTicketsPago = () => {
 
   const totals = useMemo(() => {
     const list = historialTickets || [];
-    const totalMonto = list.filter(t => t.status !== 'Pendiente Aprobación').reduce((acc, t) => acc + (Number(t.total_usd) || 0), 0);
+    const totalMonto = list.filter(t => t.status !== 'Pendiente Aprobación' && t.status !== 'ANULADO' && t.status !== 'Rechazado').reduce((acc, t) => acc + (Number(t.total_usd) || 0), 0);
     const pagados = list.filter(t => t.status === 'Pagado').length;
-    const pendientes = list.filter(t => t.status !== 'Pagado' && t.status !== 'Rechazado' && t.status !== 'Pendiente Aprobación').length;
+    const pendientes = list.filter(t => t.status !== 'Pagado' && t.status !== 'Rechazado' && t.status !== 'ANULADO' && t.status !== 'Pendiente Aprobación').length;
     const rolUpper = (currentUser?.rol || '').toUpperCase();
     const esGerentePara = rolUpper.includes('GERENTE') || rolUpper.includes('COORDINADOR') || rolUpper.includes('DIRECTOR') || rolUpper.includes('ADMIN') || currentUser?.esSuperAdmin || currentUser?.esAdminReal;
     const porAprobar = list.filter(t => {
@@ -636,9 +638,10 @@ const ModuloTicketsPago = () => {
         t.departamento.toUpperCase() === currentUser.departamento.toUpperCase()) return true;
       return false;
     }).length;
+    const anuladosRechazados = list.filter(t => (t.status || '').toLowerCase() === 'anulado' || (t.status || '').toLowerCase() === 'rechazado').length;
     const totalRegistros = list.length;
 
-    return { totalMonto, pagados, pendientes, porAprobar, totalRegistros };
+    return { totalMonto, pagados, pendientes, porAprobar, totalRegistros, anuladosRechazados };
   }, [historialTickets, currentUser]);
 
   const esGerente = useMemo(() => {
@@ -975,7 +978,8 @@ const ModuloTicketsPago = () => {
         doc_tipo: item.doc_tipo_actual || 'FAC',
         doc_numero: docNumProcesar,
         efectivo: esEfectivo,
-        nro_referencia: nroReferenciaProcesar
+        nro_referencia: nroReferenciaProcesar,
+        soporte: uploadedFileObj
       };
 
       const nuevaCantComprada = (item.cantidad_comprada || 0) + cantProcesar;
@@ -1265,129 +1269,278 @@ const ModuloTicketsPago = () => {
       return;
     }
     const t = ticketSeleccionado;
-    const doc = new jsPDF('p', 'mm', 'a4');
+    const pdf = new jsPDF('p', 'mm', 'a4');
     const fontPrimary = 'helvetica';
     
     // --- CABECERA ---
-    doc.setFont(fontPrimary, 'bold');
-    doc.setFontSize(13);
-    doc.setTextColor(15, 23, 42); // Slate-900
-    doc.text("TOTAL CLEAN C.A.", 15, 20);
+    pdf.setFont(fontPrimary, 'bold');
+    pdf.setFontSize(13);
+    pdf.setTextColor(15, 23, 42); // Slate-900
+    pdf.text("TOTAL CLEAN C.A.", 15, 20);
     
-    doc.setFont(fontPrimary, 'normal');
-    doc.setFontSize(9);
-    doc.setTextColor(71, 85, 105); // Slate-600
-    doc.text("J-303658587-0", 15, 25);
+    pdf.setFont(fontPrimary, 'normal');
+    pdf.setFontSize(9);
+    pdf.setTextColor(71, 85, 105); // Slate-600
+    pdf.text("J-303658587-0", 15, 25);
     
-    // Derecha: Fecha y Ticket #
+    // Derecha: Fecha y Ticket ID
     const fechaEmision = t.fecha_emision 
       ? format(new Date(t.fecha_emision), 'dd/MM/yyyy hh:mm a') 
       : format(new Date(), 'dd/MM/yyyy hh:mm a');
     
-    doc.setFontSize(9);
-    doc.setTextColor(71, 85, 105);
-    doc.text(`Fecha Emisión: ${fechaEmision}`, 195, 20, { align: 'right' });
-    doc.text(`Ticket ID: ${t.codigo_control || t.id}`, 195, 25, { align: 'right' });
+    pdf.setFontSize(9);
+    pdf.setTextColor(71, 85, 105);
+    pdf.text(`Fecha Emisión: ${fechaEmision}`, 195, 20, { align: 'right' });
+    pdf.text(`Ticket ID: ${t.codigo_control || t.id}`, 195, 25, { align: 'right' });
     
     // --- TÍTULO CENTRAL ---
-    doc.setFont(fontPrimary, 'bold');
-    doc.setFontSize(12);
-    doc.setTextColor(15, 23, 42);
+    pdf.setFont(fontPrimary, 'bold');
+    pdf.setFontSize(12);
+    pdf.setTextColor(15, 23, 42);
     const titulo = `TICKET DE PAGO / RECIBO: ${t.codigo_control || 'N/A'}`;
-    const textWidth = doc.getTextWidth(titulo);
+    const textWidth = pdf.getTextWidth(titulo);
     const posX = (210 - textWidth) / 2;
-    doc.text(titulo, posX, 38);
+    pdf.text(titulo, posX, 38);
     
     // Línea subrayada del título
-    doc.setDrawColor(15, 23, 42);
-    doc.setLineWidth(0.4);
-    doc.line(posX, 40, posX + textWidth, 40);
+    pdf.setDrawColor(15, 23, 42);
+    pdf.setLineWidth(0.4);
+    pdf.line(posX, 40, posX + textWidth, 40);
     
     // --- CUADRO DE METADATA ---
     const startY = 46;
-    doc.setDrawColor(226, 232, 240); // Borde gris claro
-    doc.setFillColor(248, 250, 252); // Fondo gris muy claro
-    doc.setLineWidth(0.3);
-    doc.roundedRect(15, startY, 180, 28, 2, 2, 'FD');
+    pdf.setDrawColor(226, 232, 240); // Borde gris claro
+    pdf.setFillColor(248, 250, 252); // Fondo gris muy claro
+    pdf.setLineWidth(0.3);
+    pdf.roundedRect(15, startY, 180, 26, 2, 2, 'FD');
     
     // Texto dentro de la Metadata
-    doc.setFontSize(9.5);
-    doc.setTextColor(15, 23, 42);
+    pdf.setFontSize(9.5);
+    pdf.setTextColor(15, 23, 42);
     
     // Columna Izquierda
-    doc.setFont(fontPrimary, 'bold');
-    doc.text("Beneficiario: ", 20, startY + 8);
-    doc.setFont(fontPrimary, 'normal');
-    doc.setTextColor(51, 65, 85);
-    doc.text(formatName(t.gerente_nombre) || 'Varios', 42, startY + 8);
+    pdf.setFont(fontPrimary, 'bold');
+    pdf.text("Beneficiario: ", 20, startY + 8);
+    pdf.setFont(fontPrimary, 'normal');
+    pdf.setTextColor(51, 65, 85);
+    pdf.text(formatName(t.gerente_nombre) || 'Varios', 42, startY + 8);
     
-    doc.setFont(fontPrimary, 'bold');
-    doc.setTextColor(15, 23, 42);
-    doc.text("Concepto / Motivo: ", 20, startY + 16);
-    doc.setFont(fontPrimary, 'normal');
-    doc.setTextColor(51, 65, 85);
+    pdf.setFont(fontPrimary, 'bold');
+    pdf.setTextColor(15, 23, 42);
+    pdf.text("Concepto / Motivo: ", 20, startY + 16);
+    pdf.setFont(fontPrimary, 'normal');
+    pdf.setTextColor(51, 65, 85);
     
     const conceptoText = t.justificacion || (t.items && t.items[0]?.justificacion_detallada) || 'Sin asunto especificado';
-    const conceptoLines = doc.splitTextToSize(conceptoText, 140);
-    doc.text(conceptoLines, 50, startY + 16);
+    const conceptoLines = pdf.splitTextToSize(conceptoText, 140);
+    pdf.text(conceptoLines, 50, startY + 16);
     
     // Columna Derecha
-    doc.setFont(fontPrimary, 'bold');
-    doc.setTextColor(15, 23, 42);
-    doc.text("Estatus: ", 145, startY + 8);
-    doc.setFont(fontPrimary, 'normal');
-    doc.setTextColor(51, 65, 85);
-    doc.text((t.status || 'EMITIDO').toUpperCase(), 160, startY + 8);
+    const ccValor = t.centro_costo || (t.items && t.items[0]?.cc) || 'N/A';
+    pdf.setFont(fontPrimary, 'bold');
+    pdf.setTextColor(15, 23, 42);
+    pdf.text("C. Costo: ", 130, startY + 8);
+    pdf.setFont(fontPrimary, 'normal');
+    pdf.setTextColor(51, 65, 85);
+    pdf.text(ccValor, 146, startY + 8);
     
-    // --- TABLA DE ITEMS ---
-    const tableY = startY + 36;
+    pdf.setFont(fontPrimary, 'bold');
+    pdf.setTextColor(15, 23, 42);
+    pdf.text("Estado: ", 130, startY + 15);
     
-    const headers = [["DESCRIPCIÓN DEL ÍTEM", "CC", "CATEGORÍA", "CANTIDAD", "P.U. ($)", "TOTAL ($)"]];
-    const data = (renglones || []).map(r => [
-      r.desc || r.descripcion || '',
-      r.cc || 'N/A',
-      r.categoria || 'N/A',
-      r.cantidad_pedida || 0,
-      `$ ${(r.pu || r.puUsd || 0).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-      `$ ${(r.cantidad_pedida * (r.pu || r.puUsd || 0)).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-    ]);
+    const est = (t.status || 'EMITIDO').toUpperCase();
+    if (est === 'PAGADO' || est === 'COMPLETADO') {
+      pdf.setTextColor(22, 163, 74); // Verde
+    } else if (est === 'ANULADO' || est === 'RECHAZADO') {
+      pdf.setTextColor(220, 38, 38); // Rojo
+    } else {
+      pdf.setTextColor(217, 119, 6); // Naranja/Ambar
+    }
+    pdf.text(est, 144, startY + 15);
     
-    autoTable(doc, {
-      startY: tableY,
-      head: headers,
-      body: data,
-      theme: 'grid',
-      headStyles: { fillColor: [15, 23, 42], textColor: 255, fontStyle: 'bold' },
-      styles: { fontSize: 8.5 },
-      columnStyles: {
-        0: { cellWidth: 70 },
-        1: { cellWidth: 35 },
-        2: { cellWidth: 35 },
-        3: { cellWidth: 15, halign: 'center' },
-        4: { cellWidth: 20, halign: 'right' },
-        5: { cellWidth: 20, halign: 'right' }
+    // --- TABLA DE ITEMS DIBUJADA MANUALMENTE ---
+    const tableY = startY + 32;
+    
+    // Cabecera de la tabla
+    pdf.setFont(fontPrimary, 'bold');
+    pdf.setFontSize(9.5);
+    pdf.setTextColor(15, 23, 42);
+    
+    // Dibujar líneas superior e inferior de la cabecera
+    pdf.setDrawColor(15, 23, 42);
+    pdf.setLineWidth(0.5);
+    pdf.line(15, tableY, 195, tableY);
+    
+    pdf.text("C.COSTO", 16, tableY + 5);
+    pdf.text("CATEGORÍA", 46, tableY + 5);
+    pdf.text("DESCRIPCIÓN DEL ÍTEM", 86, tableY + 5);
+    pdf.text("CANTIDAD", 150, tableY + 5, { align: 'right' });
+    pdf.text("P.U. ($)", 172, tableY + 5, { align: 'right' });
+    pdf.text("TOTAL ($)", 194, tableY + 5, { align: 'right' });
+    
+    pdf.line(15, tableY + 8, 195, tableY + 8);
+    
+    // Renglones de la tabla
+    pdf.setFont(fontPrimary, 'normal');
+    pdf.setFontSize(8.5);
+    pdf.setTextColor(51, 65, 85);
+    
+    let currentY = tableY + 13;
+    
+    (renglones || []).forEach((item) => {
+      const ccText = item.cc || t.centro_costo || 'N/A';
+      const ccLines = pdf.splitTextToSize(ccText, 28);
+      
+      const catText = item.clasificacion || item.categoria || 'Sin categoría';
+      const catLines = pdf.splitTextToSize(catText, 38);
+      
+      const descText = item.desc || item.descripcion || '';
+      const descLines = pdf.splitTextToSize(descText, 56);
+      
+      const linesCount = Math.max(descLines.length, ccLines.length, catLines.length);
+      const rowHeight = linesCount * 4 + 4;
+      
+      // Renderizar columnas de texto multilínea
+      pdf.text(ccLines, 16, currentY);
+      pdf.text(catLines, 46, currentY);
+      pdf.text(descLines, 86, currentY);
+      
+      // Renderizar columnas numéricas
+      const cantOriginal = Number(item.cantidad_pedida) || 0;
+      const puOriginal = Number(item.pu || item.puUsd || 0);
+      const totalOriginal = cantOriginal * puOriginal;
+      
+      pdf.text(`${cantOriginal}`, 150, currentY, { align: 'right' });
+      pdf.text(`$ ${puOriginal.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 172, currentY, { align: 'right' });
+      pdf.text(`$ ${totalOriginal.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 194, currentY, { align: 'right' });
+      
+      currentY += rowHeight;
+      
+      // Dibujar línea divisora sutil
+      pdf.setDrawColor(241, 245, 249);
+      pdf.setLineWidth(0.2);
+      pdf.line(15, currentY - 1, 195, currentY - 1);
+    });
+    
+    // --- CUADRO DE TOTALES ---
+    const totalPresupuesto = (renglones || []).reduce((acc, r) => acc + ((Number(r.cantidad_pedida) || 0) * (r.pu || r.puUsd || 0)), 0);
+    const totalEjecutado = (renglones || []).reduce((acc, r) => acc + (r.historial_compras || []).reduce((sum, h) => sum + (Number(h.cant) * Number(h.pu)), 0), 0);
+    const saldoPendiente = (renglones || []).reduce((acc, r) => acc + ((Number(r.cantidad_pendiente) || 0) * (r.pu || r.puUsd || 0)), 0);
+    
+    currentY += 4;
+    const boxWidth = 75;
+    const boxHeight = 18;
+    const boxX = 195 - boxWidth;
+    
+    pdf.setDrawColor(15, 23, 42);
+    pdf.setLineWidth(0.4);
+    pdf.rect(boxX, currentY, boxWidth, boxHeight);
+    
+    pdf.setFont(fontPrimary, 'normal');
+    pdf.setFontSize(8.5);
+    pdf.setTextColor(15, 23, 42);
+    
+    pdf.text("Total Presupuestado:", boxX + 3, currentY + 5);
+    pdf.text(`$ ${totalPresupuesto.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 192, currentY + 5, { align: 'right' });
+    
+    pdf.text("Total Ejecutado / Pagado:", boxX + 3, currentY + 10);
+    pdf.text(`$ ${totalEjecutado.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 192, currentY + 10, { align: 'right' });
+    
+    pdf.setDrawColor(226, 232, 240);
+    pdf.setLineWidth(0.2);
+    pdf.line(boxX, currentY + 12, 195, currentY + 12);
+    
+    pdf.setFont(fontPrimary, 'bold');
+    pdf.text("Saldo Pendiente:", boxX + 3, currentY + 15);
+    pdf.text(`$ ${saldoPendiente.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 192, currentY + 15, { align: 'right' });
+    
+    // --- FIRMAS Y APROBACIONES ---
+    currentY += 24;
+    if (currentY + 35 > 280) {
+      pdf.addPage();
+      currentY = 20;
+    }
+    
+    pdf.setFont(fontPrimary, 'bold');
+    pdf.setFontSize(8.5);
+    pdf.setTextColor(71, 85, 105);
+    pdf.text("FIRMAS Y APROBACIONES", 15, currentY);
+    
+    currentY += 4;
+    const cardWidth = 56;
+    const cardHeight = 25;
+    const gap = 6;
+    const startX = 15;
+    
+    const approvals = [
+      {
+        title: "SOLICITANTE / EMISOR",
+        approved: true,
+        name: formatName(t.gerente_nombre) || 'Solicitante',
+        date: t.fecha_emision ? format(new Date(t.fecha_emision), 'dd/MM/yyyy') : ''
+      },
+      {
+        title: "APROBADO POR",
+        approved: t.status !== 'Pendiente Aprobación' && t.status !== 'Rechazado' && t.status !== 'ANULADO',
+        name: t.aprobado_por_nombre || t.aprobado_por || 'Gerencia',
+        date: t.fecha_aprobacion ? format(new Date(t.fecha_aprobacion), 'dd/MM/yyyy') : ''
+      },
+      {
+        title: "PROCESADO / PAGADO",
+        approved: t.status === 'Pagado' || t.status === 'COMPLETADO',
+        name: (() => {
+          const procesadores = Array.from(new Set(
+            (t.items || []).flatMap(r => (r.historial_compras || []).map(h => h.usuario_nombre)).filter(Boolean)
+          ));
+          return procesadores.length > 0 ? procesadores.join(' / ') : 'Administración';
+        })(),
+        date: (() => {
+          const allTx = (t.items || []).flatMap(r => r.historial_compras || []);
+          const dates = allTx.map(h => h.fecha).filter(Boolean);
+          if (dates.length === 0) return '';
+          const maxDate = new Date(Math.max(...dates.map(d => new Date(d).getTime())));
+          return format(maxDate, 'dd/MM/yyyy');
+        })()
+      }
+    ];
+    
+    approvals.forEach((app, index) => {
+      const x = startX + index * (cardWidth + gap);
+      
+      pdf.setDrawColor(203, 213, 225);
+      pdf.setFillColor(248, 250, 252);
+      pdf.setLineWidth(0.3);
+      pdf.roundedRect(x, currentY, cardWidth, cardHeight, 2, 2, 'FD');
+      
+      pdf.setFont(fontPrimary, 'bold');
+      pdf.setFontSize(8);
+      pdf.setTextColor(71, 85, 105);
+      pdf.text(app.title, x + cardWidth / 2, currentY + 6, { align: 'center' });
+      
+      if (app.approved) {
+        pdf.setFont(fontPrimary, 'bold');
+        pdf.setFontSize(8);
+        pdf.setTextColor(22, 163, 74); // Verde
+        pdf.text("Aprobado", x + cardWidth / 2, currentY + 12, { align: 'center' });
+        
+        pdf.setFont(fontPrimary, 'bold');
+        pdf.setFontSize(7.5);
+        pdf.setTextColor(15, 23, 42);
+        pdf.text(app.name || 'Confirmado', x + cardWidth / 2, currentY + 17, { align: 'center' });
+        
+        pdf.setFont(fontPrimary, 'normal');
+        pdf.setFontSize(7);
+        pdf.setTextColor(100, 116, 139);
+        pdf.text(app.date || '', x + cardWidth / 2, currentY + 21, { align: 'center' });
+      } else {
+        pdf.setFont(fontPrimary, 'bold');
+        pdf.setFontSize(8);
+        pdf.setTextColor(217, 119, 6); // Amber
+        pdf.text("Pendiente", x + cardWidth / 2, currentY + 15, { align: 'center' });
       }
     });
     
-    let currentY = doc.lastAutoTable.finalY + 15;
-    
-    // --- SECCIÓN DE TOTALES ---
-    const totalPresupuesto = (renglones || []).reduce((acc, r) => acc + (r.cantidad_pedida * (r.pu || r.puUsd || 0)), 0);
-    const totalEjecutado = (renglones || []).reduce((acc, r) => acc + (r.historial_compras || []).reduce((sum, h) => sum + (h.cant * h.pu), 0), 0);
-    const saldoPendiente = (renglones || []).reduce((acc, r) => acc + (r.cantidad_pendiente * (r.pu || r.puUsd || 0)), 0);
-    
-    doc.setFont(fontPrimary, 'bold');
-    doc.setFontSize(9.5);
-    doc.setTextColor(15, 23, 42);
-    
-    doc.text(`Total Presupuestado: $ ${totalPresupuesto.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 195, currentY, { align: 'right' });
-    currentY += 5;
-    doc.text(`Total Ejecutado: $ ${totalEjecutado.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 195, currentY, { align: 'right' });
-    currentY += 5;
-    doc.text(`Saldo Pendiente: $ ${saldoPendiente.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 195, currentY, { align: 'right' });
-    
-    // Guardar el PDF
-    doc.save(`Ticket_Pago_${t.codigo_control || t.id}.pdf`);
+    pdf.save(`Ticket_Pago_${t.codigo_control || t.id}.pdf`);
   };
 
   const actualizarPago = async () => {
@@ -1885,7 +2038,15 @@ const ModuloTicketsPago = () => {
       const bMatch = (t.codigo_control || '').toLowerCase().includes(qs) ||
         (t.gerente_nombre || '').toLowerCase().includes(qs) ||
         (t.departamento || '').toLowerCase().includes(qs);
-      const sMatch = filtroStatus !== 'Todos' ? (t.status || 'Emitido').toLowerCase() === filtroStatus.toLowerCase() : true;
+      const sMatch = filtroStatus !== 'Todos'
+        ? (filtroStatus === 'anulados_rechazados'
+            ? ((t.status || '').toLowerCase() === 'anulado' || (t.status || '').toLowerCase() === 'rechazado')
+            : (filtroStatus.toLowerCase() === 'emitido'
+                ? ((t.status || '').toLowerCase() === 'emitido' || (t.status || '').toLowerCase() === 'parcial')
+                : (t.status || 'Emitido').toLowerCase() === filtroStatus.toLowerCase()
+              )
+          )
+        : true;
       const gMatch = filtroGerencia !== 'Todos' ? t.departamento === filtroGerencia : true;
 
       // Filtro Categoria: busca en items[]
@@ -1913,6 +2074,38 @@ const ModuloTicketsPago = () => {
       return bMatch && sMatch && gMatch && cMatch && ccMatch && fMatch;
     });
   }, [historialTickets, busqueda, filtroStatus, filtroGerencia, filtroCategoria, filtroCC, filtroFechaDesde, filtroFechaHasta]);
+
+  const groupedFiles = useMemo(() => {
+    if (!ticketSeleccionado) return { generales: [], filas: [] };
+    
+    const allFiles = parsearFacturaUrls(ticketSeleccionado.factura_url);
+    const result = { generales: [], filas: [] };
+    const processedUrls = new Set();
+    
+    // Escanear los items y buscar soportes en su historial
+    (ticketSeleccionado.items || []).forEach((r, idx) => {
+      const filaSoportes = [];
+      (r.historial_compras || []).forEach(h => {
+        if (h.soporte && h.soporte.url) {
+          const match = allFiles.find(f => f.url === h.soporte.url);
+          if (match) {
+            filaSoportes.push(match);
+            processedUrls.add(match.url);
+          }
+        }
+      });
+      if (filaSoportes.length > 0) {
+        result.filas.push({
+          label: `Fila ${idx + 1} - ${r.desc || r.descripcion}`,
+          files: filaSoportes
+        });
+      }
+    });
+    
+    // El resto son soportes generales
+    result.generales = allFiles.filter(f => !processedUrls.has(f.url));
+    return result;
+  }, [ticketSeleccionado]);
 
   // ==========================================
   // EXPORTACIONES A EXCEL
@@ -2483,6 +2676,7 @@ const ModuloTicketsPago = () => {
             { label: 'Tickets Pagados', val: totals.pagados, icon: <CheckCircle2 size={20} />, col: '#10b981', bg: '#dcfce7', filtro: 'Pagado' },
             { label: 'Pendientes por Procesar', val: totals.pendientes, icon: <Clock size={20} />, col: '#8b5cf6', bg: '#f3e8ff', filtro: 'pendiente' },
             ...(esGerente ? [{ label: 'Por Aprobar Gerencia', val: totals.porAprobar, icon: <Activity size={20} />, col: '#f59e0b', bg: '#fffbeb', filtro: 'Pendiente Aprobación' }] : []),
+            { label: 'Anulados / Rechazados', val: totals.anuladosRechazados, icon: <Ban size={20} />, col: '#ef4444', bg: '#fef2f2', filtro: 'anulados_rechazados' },
             { label: 'Total de Tickets', val: totals.totalRegistros, icon: <Ticket size={20} />, col: '#6366f1', bg: '#e0e7ff', filtro: 'Todos' },
           ].map((x, i) => {
             const isActive = x.filtro !== null && (
@@ -2886,7 +3080,8 @@ const ModuloTicketsPago = () => {
           onClick={(e) => e.stopPropagation()}
         >
           {/* --- CABECERA FIJA --- */}
-          <div style={{ padding: '25px 35px 15px 35px', flexShrink: 0, borderBottom: '1px solid #f1f5f9', backgroundColor: 'white', position: 'relative' }}>
+          <div style={{ padding: '20px 35px 15px 35px', flexShrink: 0, borderBottom: '1px solid #e2e8f0', backgroundColor: 'white', position: 'relative' }}>
+            {/* Botón de cerrar arriba a la derecha */}
             <button
               onClick={() => { setVistaActual('historial'); setTicketSeleccionado(null); }}
               style={{ position: 'absolute', top: '20px', right: '20px', border: 'none', background: '#f1f5f9', borderRadius: '50%', width: '36px', height: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#64748b', transition: 'all 0.2s', zIndex: 100 }}
@@ -2896,20 +3091,28 @@ const ModuloTicketsPago = () => {
               <X size={20} />
             </button>
 
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            {/* Fila 1: TÍTULO Y BADGES (LEFT), NRO TICKET (RIGHT) */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '15px' }}>
               <div>
-                <h2 style={{ margin: 0, color: '#0f172a', fontSize: '1.5rem', fontWeight: '800' }}>Ticket de pago</h2>
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '10px' }}>
+                <h2 style={{
+                  margin: 0,
+                  fontSize: '1.7rem',
+                  fontWeight: '900',
+                  color: '#0f172a',
+                  letterSpacing: '-0.5px',
+                  lineHeight: 1
+                }}>
+                  Ticket de pago
+                </h2>
+                {/* Badges pequeños debajo del título */}
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '8px' }}>
                   <div className={`badge-status ${(t.status || 'emitido').toLowerCase().replace(/\s+/g, '-').replace(/ó/g, 'o')}`} style={{ fontSize: '10px', height: '22px' }}>
                     {t.status?.toUpperCase() || 'EMITIDO'}
                   </div>
                   {t.solicitud_ref && (
-                    <div style={{
-                      fontSize: '10px',
-                      height: '22px',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      padding: '0 10px',
+                    <span style={{
+                      fontSize: '9px',
+                      padding: '3px 8px',
                       borderRadius: '6px',
                       backgroundColor: '#eff6ff',
                       color: '#1d4ed8',
@@ -2917,12 +3120,12 @@ const ModuloTicketsPago = () => {
                       fontWeight: '800'
                     }}>
                       {t.solicitud_ref}
-                    </div>
+                    </span>
                   )}
                 </div>
               </div>
 
-              {/* DERECHA: ID TICKET */}
+              {/* DERECHA: ID TICKET (CÓDIGO DE CONTROL) */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '25px', marginRight: '50px' }}>
                 <div style={{ textAlign: 'right' }}>
                   <div style={{
@@ -2932,7 +3135,7 @@ const ModuloTicketsPago = () => {
                     lineHeight: '1',
                     letterSpacing: '0.05em'
                   }}>
-                    {t.codigo_control}
+                    {t.codigo_control || `TX-${String(t.id).padStart(4, '0')}`}
                   </div>
                   <div style={{
                     fontSize: '0.6rem',
@@ -2948,31 +3151,75 @@ const ModuloTicketsPago = () => {
               </div>
             </div>
 
-            <div className="te-header-line" style={{ height: '1px', background: '#f1f5f9', margin: '20px 0 15px 0' }}></div>
+            <hr style={{ border: 'none', height: '1px', backgroundColor: '#f1f5f9', margin: '15px 0 12px 0' }} />
 
-            {/* --- METADATA --- */}
-            <div className="metadata-box" style={{ padding: '15px 20px', backgroundColor: '#f8fafc', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '25px' }}>
+            {/* Fila 2: SOLICITANTE, CENTRO DE COSTO, POSEE OBSERVACIONES, FECHAS */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '30px', flexWrap: 'wrap' }}>
+              {/* Solicitante con avatar */}
+              {(() => {
+                const nombre = t.gerente_nombre || 'Varios';
+                const iniciales = nombre.split(' ').filter(Boolean).slice(0, 2).map(n => n[0]).join('').toUpperCase();
+                return (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <div style={{
+                      width: '36px',
+                      height: '36px',
+                      borderRadius: '50%',
+                      backgroundColor: '#f1f5f9',
+                      color: '#475569',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontWeight: 'bold',
+                      fontSize: '0.85rem',
+                      border: '1px solid #cbd5e1',
+                      flexShrink: 0
+                    }}>
+                      {iniciales}
+                    </div>
+                    <div>
+                      <span style={{ display: 'block', fontSize: '9px', fontWeight: '800', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>SOLICITANTE</span>
+                      <span style={{ fontSize: '0.88rem', fontWeight: '700', color: '#334155' }}>{formatName(nombre)}</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Centro de Costo */}
+              <div>
+                <span style={{ display: 'block', fontSize: '9px', fontWeight: '800', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>CENTRO DE COSTO</span>
+                <span style={{ fontSize: '0.88rem', fontWeight: '700', color: '#0ea5e9' }}>{t.centro_costo || t.items?.[0]?.cc || 'No especificado'}</span>
+              </div>
+
+              {/* Posee Observaciones Badge */}
+              {t.observaciones && (
+                <div style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '4px 10px',
+                  borderRadius: '6px',
+                  backgroundColor: '#fffbeb',
+                  color: '#d97706',
+                  border: '1px solid #fef3c7',
+                  fontSize: '0.72rem',
+                  fontWeight: '800'
+                }}>
+                  <MessageSquare size={12} /> POSEE OBSERVACIONES
+                </div>
+              )}
+
+              {/* Fechas alineadas a la derecha */}
+              <div style={{ marginLeft: 'auto', display: 'flex', gap: '25px' }}>
                 <div>
-                  <label className="stat-label">FECHA EMISIÓN</label>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '5px', color: '#1e293b', fontWeight: '600' }}>
-                    <Calendar size={18} color="#94a3b8" />
+                  <span style={{ display: 'block', fontSize: '9px', fontWeight: '800', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>FECHA EMISIÓN</span>
+                  <span style={{ fontSize: '0.85rem', fontWeight: '600', color: '#475569' }}>
                     {t.fecha_emision ? new Date(t.fecha_emision).toLocaleDateString() : 'N/A'}
-                  </div>
+                  </span>
                 </div>
-
                 <div>
-                  <label className="stat-label">BENEFICIARIO</label>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '5px', color: '#1e293b', fontWeight: '600' }}>
-                    <User size={18} color="#94a3b8" />
-                    {formatName(t.gerente_nombre) || 'Varios'}
-                  </div>
-                </div>
-
-                <div>
-                  <label className="stat-label">FECHA PAGO</label>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '5px', color: '#1e293b', fontWeight: '600' }}>
-                    <Calendar size={18} color="#94a3b8" />
+                  <span style={{ display: 'block', fontSize: '9px', fontWeight: '800', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>FECHA PAGO</span>
+                  <span style={{ fontSize: '0.85rem', fontWeight: '600', color: '#475569' }}>
                     {(() => {
                       const allTx = (t.items || []).flatMap(r => r.historial_compras || []);
                       const dates = allTx.map(h => h.fecha_pago || h.fecha).filter(Boolean);
@@ -2980,41 +3227,114 @@ const ModuloTicketsPago = () => {
                       const maxDate = new Date(Math.max(...dates.map(d => new Date(d).getTime())));
                       return maxDate.toLocaleDateString();
                     })()}
-                  </div>
+                  </span>
                 </div>
               </div>
-              <div style={{ height: '1px', backgroundColor: '#e2e8f0', margin: '15px 0' }}></div>
+            </div>
+
+            <hr style={{ border: 'none', height: '1px', backgroundColor: '#f1f5f9', margin: '12px 0 12px 0' }} />
+
+            {/* Fila 3: GRID DE JUSTIFICACIÓN Y OBSERVACIONES */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginTop: '5px' }}>
+              {/* Justificación Operativa */}
               <div style={{
-                backgroundColor: 'rgba(14, 165, 233, 0.03)',
-                borderLeft: '4px solid #0ea5e9',
+                backgroundColor: '#f8fafc',
+                border: '1px solid #cbd5e1',
+                borderLeft: '4px solid #64748b',
                 padding: '12px 18px',
                 borderRadius: '8px',
+                minHeight: '52px',
                 display: 'flex',
-                alignItems: 'center',
-                gap: '12px',
-                boxShadow: '0 1px 3px rgba(0,0,0,0.02)'
+                flexDirection: 'column',
+                justifyContent: 'center'
               }}>
-                <div style={{
-                  backgroundColor: 'rgba(14, 165, 233, 0.1)',
-                  color: '#0ea5e9',
-                  borderRadius: '6px',
-                  width: '32px',
-                  height: '32px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  flexShrink: 0
-                }}>
-                  <Ticket size={18} />
+                <span style={{ display: 'block', fontSize: '9px', fontWeight: '800', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '4px' }}>
+                  JUSTIFICACIÓN OPERATIVA
+                </span>
+                <div style={{ color: '#1e293b', fontWeight: '700', fontSize: '0.85rem', lineHeight: '1.4' }}>
+                  {t.items?.[0]?.justificacion_detallada || t.justificacion || 'Sin asunto especificado'}
                 </div>
-                <div style={{ flex: 1 }}>
-                  <label className="stat-label" style={{ display: 'block', marginBottom: '2px', fontSize: '9px', color: '#0369a1', fontWeight: '800', letterSpacing: '0.5px' }}>
-                    ASUNTO / MOTIVO DEL PAGO
-                  </label>
-                  <div style={{ color: '#1e293b', fontWeight: '700', fontSize: '0.95rem', lineHeight: '1.4' }}>
-                    {t.items?.[0]?.justificacion_detallada || t.justificacion || 'Sin asunto especificado'}
+              </div>
+
+              {/* Observaciones */}
+              <div style={{
+                backgroundColor: '#fffdf5',
+                border: '1px solid #fef3c7',
+                borderLeft: '4px solid #d97706',
+                padding: '12px 18px',
+                borderRadius: '8px',
+                minHeight: '52px',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'center',
+                position: 'relative'
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                  <span style={{ fontSize: '9px', fontWeight: '800', color: '#d97706', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    OBSERVACIONES
+                  </span>
+                  {esPrivilegiado && (
+                    <button
+                      onClick={() => {
+                        setEditandoObs(!editandoObs);
+                        setObsTemporal(t.observaciones || '');
+                      }}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#d97706', padding: 0 }}
+                      title="Editar observaciones"
+                    >
+                      ✏️
+                    </button>
+                  )}
+                </div>
+                {editandoObs ? (
+                  <div style={{ display: 'flex', gap: '8px', marginTop: '3px' }}>
+                    <input
+                      type="text"
+                      value={obsTemporal}
+                      onChange={(e) => setObsTemporal(e.target.value)}
+                      className="premium-edit-input"
+                      style={{ flex: 1, fontSize: '0.8rem', padding: '4px 8px', backgroundColor: 'white', border: '1px solid #cbd5e1', borderRadius: '6px' }}
+                      placeholder="Escribe una observación..."
+                    />
+                    <button
+                      onClick={async () => {
+                        try {
+                          setLoading(true);
+                          const { data, error } = await supabase
+                            .from('tickets_directos')
+                            .update({ observaciones: obsTemporal })
+                            .eq('id', t.id)
+                            .select('id');
+                          if (error) throw error;
+                          if (!data || data.length === 0) {
+                            throw new Error("No se pudo actualizar el ticket. Es posible que no tengas permisos RLS.");
+                          }
+                          toast.success("Observaciones actualizadas.");
+                          setTicketSeleccionado(prev => ({ ...prev, observaciones: obsTemporal }));
+                          setEditandoObs(false);
+                          await fetchHistorial();
+                        } catch (err) {
+                          toast.error("Error: " + err.message);
+                        } finally {
+                          setLoading(false);
+                        }
+                      }}
+                      style={{ padding: '4px 10px', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '6px', fontSize: '0.75rem', fontWeight: 'bold', cursor: 'pointer' }}
+                    >
+                      Guardar
+                    </button>
+                    <button
+                      onClick={() => setEditandoObs(false)}
+                      style={{ padding: '4px 10px', backgroundColor: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '6px', fontSize: '0.75rem', cursor: 'pointer' }}
+                    >
+                      Cancelar
+                    </button>
                   </div>
-                </div>
+                ) : (
+                  <div style={{ color: '#b45309', fontWeight: '600', fontSize: '0.85rem', lineHeight: '1.4', fontStyle: t.observaciones ? 'normal' : 'italic' }}>
+                    {t.observaciones || 'Sin observaciones registradas'}
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -3270,7 +3590,7 @@ const ModuloTicketsPago = () => {
                                   style={{ padding: '8px 15px', borderRadius: '10px', fontSize: '0.75rem', fontWeight: 'bold', width: '100%' }}
                                   disabled={loading}
                                 >
-                                  <DollarSign size={14} /> MARCAR PAGADO
+                                  <DollarSign size={14} /> REGISTRAR PAGO / ABONO
                                 </button>
                               ) : (
                                 <div style={{ color: '#ca8a04', fontWeight: 'bold', fontSize: '0.8rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
@@ -3301,6 +3621,7 @@ const ModuloTicketsPago = () => {
                                       <th style={{ padding: '10px 8px' }}>DOC</th>
                                       <th style={{ padding: '10px 8px' }}>BANCO / REF. BANCARIA</th>
                                       <th style={{ padding: '10px 8px' }}>MONEDA</th>
+                                      <th style={{ padding: '10px 8px', textAlign: 'center' }}>SOPORTE</th>
                                       <th style={{ padding: '10px 8px', textAlign: 'right' }}>TOTAL</th>
                                       <th style={{ padding: '10px 8px', textAlign: 'center' }}>ACCIONES</th>
                                     </tr>
@@ -3419,6 +3740,24 @@ const ModuloTicketsPago = () => {
                                                 <option value="$ / BS">$ / BS</option>
                                               </select>
                                             </td>
+                                            {/* SOPORTE */}
+                                            <td style={{ padding: '8px', textAlign: 'center' }}>
+                                              {txEditandoData.soporte ? (
+                                                <a
+                                                  href={txEditandoData.soporte.url}
+                                                  onClick={(e) => {
+                                                    e.preventDefault();
+                                                    setSoportePreviewUrl(txEditandoData.soporte.url);
+                                                  }}
+                                                  style={{ color: '#0ea5e9', cursor: 'pointer' }}
+                                                  title={txEditandoData.soporte.name}
+                                                >
+                                                  <ImageIcon size={16} />
+                                                </a>
+                                              ) : (
+                                                <span style={{ color: '#cbd5e1', fontStyle: 'italic' }}>Sin archivo</span>
+                                              )}
+                                            </td>
                                             {/* 7. TOTAL */}
                                             <td style={{ padding: '8px', textAlign: 'right', fontWeight: 'bold', fontSize: '0.82rem', color: '#0f172a' }}>
                                               $ {(txEditandoData.cant * txEditandoData.pu).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
@@ -3487,6 +3826,24 @@ const ModuloTicketsPago = () => {
                                               {h.metodo_pago || '$ / $'}
                                             </span>
                                           </td>
+                                          {/* SOPORTE */}
+                                          <td style={{ padding: '10px 8px', textAlign: 'center' }}>
+                                            {h.soporte ? (
+                                              <a
+                                                href={h.soporte.url}
+                                                onClick={(e) => {
+                                                  e.preventDefault();
+                                                  setSoportePreviewUrl(h.soporte.url);
+                                                }}
+                                                style={{ color: '#0ea5e9', display: 'inline-flex', alignItems: 'center', gap: '4px', textDecoration: 'none', fontWeight: 'bold', cursor: 'pointer' }}
+                                                title={h.soporte.name}
+                                              >
+                                                <FileText size={15} /> Ver
+                                              </a>
+                                            ) : (
+                                              <span style={{ color: '#cbd5e1', fontStyle: 'italic' }}>—</span>
+                                            )}
+                                          </td>
                                           {/* 7. TOTAL */}
                                           <td style={{ textAlign: 'right', padding: '10px 8px', fontWeight: '800', color: '#0f172a' }}>$ {(h.cant * h.pu).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
                                           {/* 8. ACCIONES */}
@@ -3533,8 +3890,8 @@ const ModuloTicketsPago = () => {
               </div>
             </div>
 
-            {/* GRID SIDE-BY-SIDE: SOPORTES (LEFT) Y OBSERVACIONES (RIGHT) */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(500px, 1fr))', gap: '20px', alignItems: 'start', marginBottom: '35px' }}>
+            {/* SOPORTES DE ANCHO COMPLETO */}
+            <div style={{ display: 'block', marginBottom: '35px' }}>
 
               {/* SOPORTES Y COMPROBANTES (LEFT) */}
               <div style={{ backgroundColor: '#f8fafc', padding: '20px', borderRadius: '16px', border: '1px solid #e2e8f0', minHeight: '200px' }}>
@@ -3543,6 +3900,25 @@ const ModuloTicketsPago = () => {
                     📁 Soportes y Comprobantes
                   </h3>
                   <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    {mostrarSoportes && (
+                      <button
+                        type="button"
+                        onClick={() => setAgruparSoportes(!agruparSoportes)}
+                        style={{
+                          padding: '6px 12px',
+                          borderRadius: '8px',
+                          border: '1px solid #cbd5e1',
+                          background: agruparSoportes ? '#e0f2fe' : 'white',
+                          color: agruparSoportes ? '#0369a1' : '#475569',
+                          fontSize: '0.75rem',
+                          fontWeight: '700',
+                          cursor: 'pointer',
+                          transition: 'all 0.2s'
+                        }}
+                      >
+                        {agruparSoportes ? 'Ver Todos (Plano)' : 'Agrupar por Fila'}
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => setMostrarSoportes(!mostrarSoportes)}
@@ -3577,8 +3953,8 @@ const ModuloTicketsPago = () => {
                       exit={{ height: 0, opacity: 0 }}
                       style={{ overflow: 'hidden' }}
                     >
-                      <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap', marginTop: '15px' }}>
-                        {parsearFacturaUrls(t.factura_url).map((item, idx) => {
+                      {(() => {
+                        const renderCardSoporte = (item, idx) => {
                           const lowerUrl = item.url.split('?')[0].toLowerCase();
                           const isImg = /\.(jpg|jpeg|png|webp|avif|gif)$/i.test(lowerUrl);
                           const isPdf = lowerUrl.endsWith('.pdf');
@@ -3616,8 +3992,10 @@ const ModuloTicketsPago = () => {
                             >
                               <a
                                 href={item.url}
-                                target="_blank"
-                                rel="noreferrer"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  setSoportePreviewUrl(item.url);
+                                }}
                                 style={{
                                   display: 'flex',
                                   alignItems: 'center',
@@ -3628,7 +4006,8 @@ const ModuloTicketsPago = () => {
                                   overflow: 'hidden',
                                   backgroundColor: 'white',
                                   border: '1px solid #cbd5e1',
-                                  position: 'relative'
+                                  position: 'relative',
+                                  cursor: 'pointer'
                                 }}
                               >
                                 {isImg ? (
@@ -3692,266 +4071,163 @@ const ModuloTicketsPago = () => {
                               )}
                             </div>
                           );
-                        })}
-                        {imagenesUrlsPreview.map((url, idx) => {
-                          const file = imagenesArchivos[idx];
-                          const fileName = file?.name?.toLowerCase() || '';
-                          const isPdf = file?.type === 'application/pdf' || fileName.endsWith('.pdf');
-                          const isExcel = /\.(xls|xlsx|csv)$/i.test(fileName);
-                          const isWord = /\.(doc|docx)$/i.test(fileName);
-                          const isPowerPoint = /\.(ppt|pptx)$/i.test(fileName);
-                          const isImg = file?.type && file.type.startsWith('image/');
+                        };
 
-                          let fileInfo = { iconColor: '#64748b', bgColor: '#f8fafc', label: 'DOC' };
-                          if (isPdf) {
-                            fileInfo = { iconColor: '#ef4444', bgColor: '#fef2f2', label: 'PDF' };
-                          } else if (isExcel) {
-                            fileInfo = { iconColor: '#10b981', bgColor: '#ecfdf5', label: 'EXCEL' };
-                          } else if (isWord) {
-                            fileInfo = { iconColor: '#2563eb', bgColor: '#eff6ff', label: 'WORD' };
-                          } else if (isPowerPoint) {
-                            fileInfo = { iconColor: '#f97316', bgColor: '#fff7ed', label: 'PPT' };
-                          }
-
+                        if (agruparSoportes && (groupedFiles.filas.length > 0 || groupedFiles.generales.length > 0)) {
                           return (
-                            <div
-                              key={`preview-${idx}`}
-                              style={{
-                                position: 'relative',
-                                display: 'flex',
-                                flexDirection: 'column',
-                                alignItems: 'center',
-                                width: '100px',
-                                background: 'rgba(255, 255, 255, 0.8)',
-                                border: '1px dashed #cbd5e1',
-                                borderRadius: '12px',
-                                padding: '8px',
-                                boxShadow: '0 2px 6px rgba(0,0,0,0.02)'
-                              }}
-                            >
-                              <div
-                                style={{
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  width: '84px',
-                                  height: '84px',
-                                  borderRadius: '8px',
-                                  overflow: 'hidden',
-                                  backgroundColor: 'white',
-                                  border: '1px solid #cbd5e1',
-                                  position: 'relative'
-                                }}
-                              >
-                                {isImg ? (
-                                  <img src={url} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                                ) : (
-                                  <div style={{
-                                    display: 'flex', flexDirection: 'column',
-                                    alignItems: 'center', justifyContent: 'center',
-                                    gap: '4px', width: '100%', height: '100%',
-                                    backgroundColor: fileInfo.bgColor, color: fileInfo.iconColor
-                                  }}>
-                                    <FileText size={32} />
-                                    <span style={{ fontSize: '9px', fontWeight: 'bold', textTransform: 'uppercase' }}>{fileInfo.label}</span>
+                            <div style={{ width: '100%', marginTop: '15px', display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                              {groupedFiles.generales.length > 0 && (
+                                <div style={{ background: 'rgba(0,0,0,0.02)', padding: '12px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
+                                  <div style={{ fontSize: '11px', fontWeight: '800', color: '#64748b', textTransform: 'uppercase', marginBottom: '8px' }}>📁 Soportes Generales</div>
+                                  <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap' }}>
+                                    {groupedFiles.generales.map((item, idx) => renderCardSoporte(item, `gen-${idx}`))}
                                   </div>
-                                )}
-                              </div>
-
-                              <input
-                                type="text"
-                                placeholder="Nombre..."
-                                value={imagenesNombres[idx] || ''}
-                                onChange={(e) => {
-                                  const val = e.target.value;
-                                  setImagenesNombres(prev => prev.map((n, i) => i === idx ? val : n));
-                                }}
-                                style={{
-                                  width: '100%',
-                                  marginTop: '6px',
-                                  padding: '3px 6px',
-                                  fontSize: '9px',
-                                  fontWeight: '600',
-                                  borderRadius: '6px',
-                                  border: '1px solid #cbd5e1',
-                                  boxSizing: 'border-box',
-                                  textAlign: 'center',
-                                  outline: 'none',
-                                  backgroundColor: 'white',
-                                  color: '#334155'
-                                }}
-                              />
-
-                              <button
-                                onClick={() => quitarArchivoTemporal(idx)}
-                                style={{
-                                  position: 'absolute',
-                                  top: '-6px',
-                                  right: '-6px',
-                                  backgroundColor: '#64748b',
-                                  color: 'white',
-                                  border: 'none',
-                                  borderRadius: '50%',
-                                  width: '22px',
-                                  height: '22px',
-                                  cursor: 'pointer',
-                                  fontSize: '11px',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  boxShadow: '0 2px 4px rgba(100, 116, 139, 0.3)',
-                                  zIndex: 10
-                                }}
-                                title="Quitar"
-                              >
-                                ×
-                              </button>
+                                </div>
+                              )}
+                              {groupedFiles.filas.map((group, gIdx) => (
+                                <div key={gIdx} style={{ background: 'rgba(14, 165, 233, 0.03)', padding: '12px', borderRadius: '10px', border: '1px dashed #bae6fd' }}>
+                                  <div style={{ fontSize: '11px', fontWeight: '800', color: '#0284c7', textTransform: 'uppercase', marginBottom: '8px' }}>📂 {group.label}</div>
+                                  <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap' }}>
+                                    {group.files.map((item, idx) => renderCardSoporte(item, `fila-${gIdx}-${idx}`))}
+                                  </div>
+                                </div>
+                              ))}
                             </div>
                           );
-                        })}
-                      </div>
+                        }
+
+                        return (
+                          <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap', marginTop: '15px' }}>
+                            {parsearFacturaUrls(t.factura_url).map((item, idx) => renderCardSoporte(item, idx))}
+                            {imagenesUrlsPreview.length > 0 && (
+                              <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap', marginTop: '15px', padding: '12px', background: 'rgba(0,0,0,0.01)', border: '1px dashed #cbd5e1', borderRadius: '10px', width: '100%', boxSizing: 'border-box' }}>
+                                <div style={{ width: '100%', fontSize: '11px', fontWeight: '800', color: '#64748b', textTransform: 'uppercase', marginBottom: '8px' }}>📂 Archivos Nuevos a Adjuntar</div>
+                                {imagenesUrlsPreview.map((url, idx) => {
+                                  const file = imagenesArchivos[idx];
+                                  const fileName = file?.name?.toLowerCase() || '';
+                                  const isPdf = file?.type === 'application/pdf' || fileName.endsWith('.pdf');
+                                  const isExcel = /\.(xls|xlsx|csv)$/i.test(fileName);
+                                  const isWord = /\.(doc|docx)$/i.test(fileName);
+                                  const isPowerPoint = /\.(ppt|pptx)$/i.test(fileName);
+                                  const isImg = file?.type && file.type.startsWith('image/');
+
+                                  let fileInfo = { iconColor: '#64748b', bgColor: '#f8fafc', label: 'DOC' };
+                                  if (isPdf) {
+                                    fileInfo = { iconColor: '#ef4444', bgColor: '#fef2f2', label: 'PDF' };
+                                  } else if (isExcel) {
+                                    fileInfo = { iconColor: '#10b981', bgColor: '#ecfdf5', label: 'EXCEL' };
+                                  } else if (isWord) {
+                                    fileInfo = { iconColor: '#2563eb', bgColor: '#eff6ff', label: 'WORD' };
+                                  } else if (isPowerPoint) {
+                                    fileInfo = { iconColor: '#f97316', bgColor: '#fff7ed', label: 'PPT' };
+                                  }
+
+                                  return (
+                                    <div
+                                      key={`preview-${idx}`}
+                                      style={{
+                                        position: 'relative',
+                                        display: 'flex',
+                                        flexDirection: 'column',
+                                        alignItems: 'center',
+                                        width: '100px',
+                                        background: 'rgba(255, 255, 255, 0.8)',
+                                        border: '1px dashed #cbd5e1',
+                                        borderRadius: '12px',
+                                        padding: '8px',
+                                        boxShadow: '0 2px 6px rgba(0,0,0,0.02)'
+                                      }}
+                                    >
+                                      <div
+                                        style={{
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          justifyContent: 'center',
+                                          width: '84px',
+                                          height: '84px',
+                                          borderRadius: '8px',
+                                          overflow: 'hidden',
+                                          backgroundColor: 'white',
+                                          border: '1px solid #e2e8f0',
+                                          position: 'relative'
+                                        }}
+                                      >
+                                        {isImg ? (
+                                          <img src={url} alt={`preview-${idx}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                        ) : (
+                                          <div style={{
+                                            display: 'flex', flexDirection: 'column',
+                                            alignItems: 'center', justifyContent: 'center',
+                                            gap: '4px', width: '100%', height: '100%',
+                                            backgroundColor: fileInfo.bgColor, color: fileInfo.iconColor
+                                          }}>
+                                            <FileText size={32} />
+                                            <span style={{ fontSize: '9px', fontWeight: 'bold', textTransform: 'uppercase' }}>{fileInfo.label}</span>
+                                          </div>
+                                        )}
+                                      </div>
+
+                                      <input
+                                        type="text"
+                                        placeholder="Etiqueta..."
+                                        value={imagenesNombres[idx] || ''}
+                                        onChange={(e) => {
+                                          const nuevosNombres = [...imagenesNombres];
+                                          nuevosNombres[idx] = e.target.value;
+                                          setImagenesNombres(nuevosNombres);
+                                        }}
+                                        style={{
+                                          width: '100%',
+                                          fontSize: '9px',
+                                          fontWeight: '600',
+                                          padding: '4px 6px',
+                                          marginTop: '6px',
+                                          borderRadius: '6px',
+                                          border: '1px solid #cbd5e1',
+                                          boxSizing: 'border-box',
+                                          textAlign: 'center',
+                                          outline: 'none',
+                                          backgroundColor: 'white',
+                                          color: '#334155'
+                                        }}
+                                      />
+
+                                      <button
+                                        onClick={() => quitarArchivoTemporal(idx)}
+                                        style={{
+                                          position: 'absolute',
+                                          top: '-6px',
+                                          right: '-6px',
+                                          backgroundColor: '#64748b',
+                                          color: 'white',
+                                          border: 'none',
+                                          borderRadius: '50%',
+                                          width: '22px',
+                                          height: '22px',
+                                          cursor: 'pointer',
+                                          fontSize: '11px',
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          justifyContent: 'center',
+                                          boxShadow: '0 2px 4px rgba(100, 116, 139, 0.3)',
+                                          zIndex: 10
+                                        }}
+                                        title="Quitar"
+                                      >
+                                        ×
+                                      </button>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </motion.div>
                   )}
                 </AnimatePresence>
               </div>
-
-              {/* PANEL DE OBSERVACIONES DINÁMICAS (RIGHT) */}
-              <div style={{ backgroundColor: '#f8fafc', padding: '20px', borderRadius: '16px', border: '1px solid #e2e8f0', minHeight: '200px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <h3 style={{ margin: 0, fontSize: '0.9rem', color: '#475569', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: '800' }}>
-                    <MessageSquare size={16} color="#64748b" /> Notas de Auditoría / Observaciones 💬
-                  </h3>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMostrarObservaciones(!mostrarObservaciones);
-                      setObsTemporal(ticketSeleccionado?.observaciones || '');
-                    }}
-                    style={{
-                      padding: '6px 12px',
-                      borderRadius: '8px',
-                      border: '1px solid #e2e8f0',
-                      background: mostrarObservaciones ? '#64748b' : 'white',
-                      color: mostrarObservaciones ? 'white' : '#475569',
-                      fontSize: '0.75rem',
-                      fontWeight: '700',
-                      cursor: 'pointer',
-                      transition: 'all 0.2s'
-                    }}
-                  >
-                    {mostrarObservaciones ? 'Ocultar Notas' : 'Ver/Editar Notas'}
-                  </button>
-                </div>
-
-                <AnimatePresence>
-                  {mostrarObservaciones && (
-                    <motion.div
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: 'auto', opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }}
-                      style={{ overflow: 'hidden' }}
-                    >
-                      <div style={{ marginTop: '15px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                        {editandoObs ? (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                            <textarea
-                              style={{
-                                minHeight: '85px',
-                                padding: '12px',
-                                borderRadius: '8px',
-                                border: '1px solid #e2e8f0',
-                                fontSize: '0.85rem',
-                                width: '100%',
-                                boxSizing: 'border-box',
-                                fontFamily: 'inherit',
-                                outline: 'none',
-                                color: '#334155'
-                              }}
-                              value={obsTemporal}
-                              onChange={(e) => setObsTemporal(e.target.value)}
-                              placeholder="Agregue notas aclaratorias o justificaciones técnicas..."
-                            />
-                            <div style={{ display: 'flex', gap: '8px' }}>
-                              <button
-                                type="button"
-                                onClick={guardarObservacionesTicket}
-                                style={{
-                                  padding: '6px 12px',
-                                  fontSize: '0.75rem',
-                                  backgroundColor: '#10b981',
-                                  color: 'white',
-                                  border: 'none',
-                                  borderRadius: '6px',
-                                  cursor: 'pointer',
-                                  fontWeight: 'bold'
-                                }}
-                              >
-                                ✓ GUARDAR
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setEditandoObs(false)}
-                                style={{
-                                  padding: '6px 12px',
-                                  fontSize: '0.75rem',
-                                  backgroundColor: '#e2e8f0',
-                                  color: '#475569',
-                                  border: 'none',
-                                  borderRadius: '6px',
-                                  cursor: 'pointer',
-                                  fontWeight: 'bold'
-                                }}
-                              >
-                                CANCELAR
-                              </button>
-                            </div>
-                          </div>
-                        ) : (
-                          <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
-                            <div style={{
-                              flexGrow: 1,
-                              padding: '12px 15px',
-                              background: '#f1f5f9',
-                              border: '1px solid #e2e8f0',
-                              borderRadius: '12px',
-                              fontSize: '0.82rem',
-                              color: '#334155',
-                              whiteSpace: 'pre-line',
-                              fontWeight: '600',
-                              lineHeight: '1.4',
-                              boxSizing: 'border-box'
-                            }}>
-                              {ticketSeleccionado?.observaciones || 'Sin observaciones registradas.'}
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setObsTemporal(ticketSeleccionado?.observaciones || '');
-                                setEditandoObs(true);
-                              }}
-                              style={{
-                                border: '1px solid #e2e8f0',
-                                background: 'white',
-                                borderRadius: '8px',
-                                padding: '8px',
-                                cursor: 'pointer',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                color: '#475569'
-                              }}
-                              title="Editar Observaciones"
-                            >
-                              ✏️
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
-
             </div>
           </div>
 
@@ -4422,6 +4698,94 @@ const ModuloTicketsPago = () => {
           }}
         />
       )}
+      <AnimatePresence>
+        {soportePreviewUrl && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setSoportePreviewUrl(null)}
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: 'rgba(15, 23, 42, 0.75)',
+              backdropFilter: 'blur(4px)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 9999,
+              padding: '20px'
+            }}
+          >
+            <motion.div
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 20 }}
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                backgroundColor: 'white',
+                borderRadius: '16px',
+                padding: '25px',
+                maxWidth: '900px',
+                width: '100%',
+                maxHeight: '90vh',
+                display: 'flex',
+                flexDirection: 'column',
+                boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)',
+                position: 'relative'
+              }}
+            >
+              <button
+                onClick={() => setSoportePreviewUrl(null)}
+                style={{
+                  position: 'absolute',
+                  top: '15px',
+                  right: '15px',
+                  background: '#f1f5f9',
+                  border: 'none',
+                  borderRadius: '50%',
+                  width: '32px',
+                  height: '32px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer',
+                  color: '#64748b'
+                }}
+              >
+                <X size={18} />
+              </button>
+              <h3 style={{ margin: '0 0 15px 0', fontSize: '1.05rem', color: '#0f172a', fontWeight: '800' }}>
+                Vista Previa del Soporte / Comprobante
+              </h3>
+              <div style={{ flex: 1, overflow: 'auto', display: 'flex', justifyContent: 'center', alignItems: 'center', backgroundColor: '#f8fafc', borderRadius: '12px', padding: '10px', minHeight: '300px' }}>
+                {(() => {
+                  const lower = soportePreviewUrl.split('?')[0].toLowerCase();
+                  const isImg = /\.(jpg|jpeg|png|webp|avif|gif)$/i.test(lower);
+                  const isPdf = lower.endsWith('.pdf');
+                  if (isImg) {
+                    return <img src={soportePreviewUrl} alt="Soporte" style={{ maxWidth: '100%', maxHeight: '70vh', objectFit: 'contain', borderRadius: '8px' }} />;
+                  } else if (isPdf) {
+                    return <iframe src={soportePreviewUrl} title="Soporte PDF" style={{ width: '100%', height: '70vh', border: 'none', borderRadius: '8px' }} />;
+                  }
+                  return (
+                    <div style={{ textAlign: 'center', padding: '40px' }}>
+                      <FileText size={48} color="#94a3b8" />
+                      <p style={{ margin: '15px 0 10px 0', color: '#334155', fontWeight: '700' }}>Previsualización no disponible para este formato.</p>
+                      <a href={soportePreviewUrl} target="_blank" rel="noopener noreferrer" className="btn-tc btn-tc-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', padding: '8px 16px', borderRadius: '8px', textDecoration: 'none' }}>
+                        Descargar archivo original
+                      </a>
+                    </div>
+                  );
+                })()}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </>
   );
 };

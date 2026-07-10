@@ -17,12 +17,19 @@ import {
   DollarSign,
   ExternalLink,
   ChevronDown,
+  ChevronUp,
   Calendar,
   Smartphone,
   Shield,
   Search,
   AlertTriangle,
-  Sparkles
+  Sparkles,
+  CheckCircle2,
+  Bell,
+  BellOff,
+  Eye,
+  History,
+  Trash2
 } from 'lucide-react';
 import ModalNovedades from './components/ModalNovedades';
 import { 
@@ -75,6 +82,44 @@ export default function AdminAnalytics() {
   const [nuevaVersion, setNuevaVersion] = useState({ version: '', descripcion: '', notificar: false });
   const [modalPreviewOpen, setModalPreviewOpen] = useState(false);
   const [guardandoVersion, setGuardandoVersion] = useState(false);
+  const [historialVersiones, setHistorialVersiones] = useState([]);
+  const [cargandoHistorial, setCargandoHistorial] = useState(false);
+  const [expandedVersionId, setExpandedVersionId] = useState(null);
+
+  const cargarHistorialVersiones = async () => {
+    setCargandoHistorial(true);
+    try {
+      const { data, error } = await supabase
+        .from('sistema_versiones')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (error) {
+        if (error.code !== '42P01') console.error('Error cargando historial:', error);
+        return;
+      }
+      setHistorialVersiones(data || []);
+    } catch (err) {
+      console.error('Error en historial de versiones:', err);
+    } finally {
+      setCargandoHistorial(false);
+    }
+  };
+
+  useEffect(() => {
+    cargarHistorialVersiones();
+  }, []);
+
+  const eliminarVersion = async (id, ver) => {
+    if (!window.confirm(`¿Eliminar la versión ${ver}? Esta acción no se puede deshacer.`)) return;
+    try {
+      const { error } = await supabase.from('sistema_versiones').delete().eq('id', id);
+      if (error) throw error;
+      toast.success(`Versión ${ver} eliminada`);
+      cargarHistorialVersiones();
+    } catch (err) {
+      toast.error('Error al eliminar: ' + err?.message);
+    }
+  };
 
   const registrarVersion = async (e) => {
     e.preventDefault();
@@ -93,6 +138,7 @@ export default function AdminAnalytics() {
       if (error) throw error;
       toast.success(`Versión ${nuevaVersion.version} guardada correctamente ✓`);
       setNuevaVersion({ version: '', descripcion: '', notificar: false });
+      cargarHistorialVersiones();
     } catch (err) {
       toast.error('Error al registrar versión: ' + err?.message);
     } finally {
@@ -1369,109 +1415,281 @@ export default function AdminAnalytics() {
             </div>
           ) : activeTab === 'versions' ? (
             /* REGISTRO DE VERSIONES */
-            <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '30px' }}>
-              {/* FORM CARD */}
-              <div className="chart-card" style={{ background: 'rgba(30, 41, 59, 0.2)', padding: '24px' }}>
-                <div className="chart-card-title">
-                  <Sparkles size={20} color="#10b981" />
-                  <span>Registro de Versiones (Changelog)</span>
-                </div>
-                
-                <form onSubmit={registrarVersion} style={{ marginTop: '20px', display: 'flex', flexDirection: 'column', gap: '15px' }}>
-                  <div>
-                    <label style={{ display: 'block', fontSize: '0.8rem', color: '#94a3b8', marginBottom: '6px', textTransform: 'uppercase', fontWeight: 'bold' }}>Número de Versión</label>
-                    <input 
-                      type="text" 
-                      placeholder="Ej: 1.0.2" 
-                      value={nuevaVersion.version}
-                      onChange={(e) => setNuevaVersion({...nuevaVersion, version: e.target.value})}
-                      style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', backgroundColor: 'rgba(15, 23, 42, 0.6)', border: '1px solid rgba(255,255,255,0.08)', color: 'white', outline: 'none' }}
-                    />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '30px' }}>
+              {/* ROW 1: Form + Preview */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '30px' }}>
+                {/* FORM CARD */}
+                <div className="chart-card" style={{ background: 'rgba(30, 41, 59, 0.2)', padding: '24px' }}>
+                  <div className="chart-card-title">
+                    <Sparkles size={20} color="#10b981" />
+                    <span>Registro de Versiones (Changelog)</span>
                   </div>
                   
-                  <div>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: '600', color: '#cbd5e1' }}>
+                  <form onSubmit={registrarVersion} style={{ marginTop: '20px', display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.8rem', color: '#94a3b8', marginBottom: '6px', textTransform: 'uppercase', fontWeight: 'bold' }}>Número de Versión</label>
                       <input 
-                        type="checkbox"
-                        checked={nuevaVersion.notificar}
-                        onChange={(e) => setNuevaVersion({...nuevaVersion, notificar: e.target.checked})}
-                        style={{ width: '18px', height: '18px', cursor: 'pointer', accentColor: '#38bdf8' }}
+                        type="text" 
+                        placeholder="Ej: 1.0.2" 
+                        value={nuevaVersion.version}
+                        onChange={(e) => setNuevaVersion({...nuevaVersion, version: e.target.value})}
+                        style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', backgroundColor: 'rgba(15, 23, 42, 0.6)', border: '1px solid rgba(255,255,255,0.08)', color: 'white', outline: 'none' }}
                       />
-                      Notificar a los usuarios al iniciar sesión
-                    </label>
-                  </div>
+                    </div>
+                    
+                    <div>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: '600', color: '#cbd5e1' }}>
+                        <input 
+                          type="checkbox"
+                          checked={nuevaVersion.notificar}
+                          onChange={(e) => setNuevaVersion({...nuevaVersion, notificar: e.target.checked})}
+                          style={{ width: '18px', height: '18px', cursor: 'pointer', accentColor: '#38bdf8' }}
+                        />
+                        Notificar a los usuarios al iniciar sesión
+                      </label>
+                    </div>
 
-                  <div>
-                    <label style={{ display: 'block', fontSize: '0.8rem', color: '#94a3b8', marginBottom: '6px', textTransform: 'uppercase', fontWeight: 'bold' }}>Descripción de Cambios</label>
-                    <textarea 
-                      placeholder="Escribe los cambios, uno por línea (ej: - Corregido error en historial de compras)" 
-                      value={nuevaVersion.descripcion}
-                      onChange={(e) => setNuevaVersion({...nuevaVersion, descripcion: e.target.value})}
-                      style={{ width: '100%', minHeight: '120px', padding: '10px 12px', borderRadius: '10px', backgroundColor: 'rgba(15, 23, 42, 0.6)', border: '1px solid rgba(255,255,255,0.08)', color: 'white', outline: 'none', resize: 'vertical', fontFamily: 'inherit' }}
-                    />
-                  </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.8rem', color: '#94a3b8', marginBottom: '6px', textTransform: 'uppercase', fontWeight: 'bold' }}>Descripción de Cambios</label>
+                      <textarea 
+                        placeholder="Escribe los cambios, uno por línea (ej: - Corregido error en historial de compras)" 
+                        value={nuevaVersion.descripcion}
+                        onChange={(e) => setNuevaVersion({...nuevaVersion, descripcion: e.target.value})}
+                        style={{ width: '100%', minHeight: '120px', padding: '10px 12px', borderRadius: '10px', backgroundColor: 'rgba(15, 23, 42, 0.6)', border: '1px solid rgba(255,255,255,0.08)', color: 'white', outline: 'none', resize: 'vertical', fontFamily: 'inherit' }}
+                      />
+                    </div>
 
-                  <div style={{ display: 'flex', gap: '15px', marginTop: '5px' }}>
-                    <button 
-                      type="button" 
-                      onClick={() => {
-                        if (!nuevaVersion.version) return toast.error('Ingresa una versión para previsualizar');
-                        setModalPreviewOpen(true);
-                      }} 
-                      style={{ padding: '10px 20px', borderRadius: '10px', backgroundColor: 'rgba(255,255,255,0.05)', color: '#e2e8f0', border: '1px solid rgba(255,255,255,0.1)', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 'bold' }}
-                    >
-                      Previsualizar Popup
-                    </button>
-                    <button 
-                      type="submit" 
-                      disabled={guardandoVersion}
-                      style={{ flexGrow: 1, padding: '10px 20px', borderRadius: '10px', backgroundColor: '#38bdf8', color: '#0f172a', border: 'none', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 'bold' }}
-                    >
-                      {guardandoVersion ? 'GUARDANDO...' : 'REGISTRAR VERSIÓN EN SUPABASE'}
-                    </button>
-                  </div>
-                </form>
-              </div>
-
-              {/* LIVE PREVIEW CARD */}
-              <div className="chart-card" style={{ background: 'rgba(30, 41, 59, 0.4)', padding: '24px', border: '1px dashed rgba(56, 189, 248, 0.3)', display: 'flex', flexDirection: 'column' }}>
-                <div className="chart-card-title" style={{ marginBottom: '20px' }}>
-                  <Sparkles size={20} className="text-yellow-300 animate-pulse" />
-                  <span>Vista Previa del Modal (Inicio de Sesión)</span>
+                    <div style={{ display: 'flex', gap: '15px', marginTop: '5px' }}>
+                      <button 
+                        type="button" 
+                        onClick={() => {
+                          if (!nuevaVersion.version) return toast.error('Ingresa una versión para previsualizar');
+                          setModalPreviewOpen(true);
+                        }} 
+                        style={{ padding: '10px 20px', borderRadius: '10px', backgroundColor: 'rgba(255,255,255,0.05)', color: '#e2e8f0', border: '1px solid rgba(255,255,255,0.1)', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 'bold' }}
+                      >
+                        Previsualizar Popup
+                      </button>
+                      <button 
+                        type="submit" 
+                        disabled={guardandoVersion}
+                        style={{ flexGrow: 1, padding: '10px 20px', borderRadius: '10px', backgroundColor: '#38bdf8', color: '#0f172a', border: 'none', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 'bold' }}
+                      >
+                        {guardandoVersion ? 'GUARDANDO...' : 'REGISTRAR VERSIÓN EN SUPABASE'}
+                      </button>
+                    </div>
+                  </form>
                 </div>
-                
-                {/* Mockup del modal de inicio de sesión de usuario */}
-                <div style={{ flexGrow: 1, display: 'flex', flexDirection: 'column', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.08)', overflow: 'hidden', background: '#ffffff', color: '#0f172a' }}>
-                  {/* Header del Mockup */}
-                  <div style={{ padding: '15px 20px', background: 'linear-gradient(135deg, #0ea5e9 0%, #6366f1 100%)', color: 'white' }}>
-                    <span style={{ fontSize: '9px', fontWeight: 'bold', textTransform: 'uppercase', background: 'rgba(255,255,255,0.2)', padding: '2px 6px', borderRadius: '4px', letterSpacing: '0.05em' }}>¡Nueva Versión!</span>
-                    <h3 style={{ fontSize: '1.1rem', fontWeight: '900', margin: '4px 0 0 0' }}>Novedades v{nuevaVersion.version || '1.X.X'}</h3>
+
+                {/* LIVE PREVIEW CARD */}
+                <div className="chart-card" style={{ background: 'rgba(30, 41, 59, 0.4)', padding: '24px', border: '1px dashed rgba(56, 189, 248, 0.3)', display: 'flex', flexDirection: 'column' }}>
+                  <div className="chart-card-title" style={{ marginBottom: '20px' }}>
+                    <Sparkles size={20} color="#facc15" />
+                    <span>Vista Previa del Modal (Inicio de Sesión)</span>
                   </div>
                   
-                  {/* Contenido del Mockup */}
-                  <div style={{ padding: '20px', flexGrow: 1, overflowY: 'auto', maxHeight: '180px' }}>
-                    <p style={{ fontSize: '10px', color: '#64748b', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: '8px', letterSpacing: '0.05em' }}>Cambios y mejoras:</p>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                      {(nuevaVersion.descripcion || '- Escribe los cambios para verlos aquí.').split('\n').map((l, i) => {
-                        const t = l.trim().replace(/^-\s*/, '').replace(/^\*\s*/, '');
-                        if (!t) return null;
-                        return (
-                          <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', fontSize: '11px', fontWeight: '600', color: '#334155' }}>
-                            <span style={{ color: '#6366f1' }}>✓</span>
-                            <span>{t}</span>
-                          </div>
-                        );
-                      })}
+                  {/* Mockup del modal de inicio de sesión de usuario */}
+                  <div style={{ flexGrow: 1, display: 'flex', flexDirection: 'column', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.08)', overflow: 'hidden', background: '#ffffff', color: '#0f172a' }}>
+                    {/* Header del Mockup */}
+                    <div style={{ padding: '15px 20px', background: 'linear-gradient(135deg, #0ea5e9 0%, #6366f1 100%)', color: 'white' }}>
+                      <span style={{ fontSize: '9px', fontWeight: 'bold', textTransform: 'uppercase', background: 'rgba(255,255,255,0.2)', padding: '2px 6px', borderRadius: '4px', letterSpacing: '0.05em' }}>¡Nueva Versión!</span>
+                      <h3 style={{ fontSize: '1.1rem', fontWeight: '900', margin: '4px 0 0 0' }}>Novedades v{nuevaVersion.version || '1.X.X'}</h3>
+                    </div>
+                    
+                    {/* Contenido del Mockup */}
+                    <div style={{ padding: '20px', flexGrow: 1, overflowY: 'auto', maxHeight: '180px' }}>
+                      <p style={{ fontSize: '10px', color: '#64748b', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: '8px', letterSpacing: '0.05em' }}>Cambios y mejoras:</p>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        {(nuevaVersion.descripcion || '- Escribe los cambios para verlos aquí.').split('\n').map((l, i) => {
+                          const t = l.trim().replace(/^-\s*/, '').replace(/^\*\s*/, '');
+                          if (!t) return null;
+                          return (
+                            <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', fontSize: '11px', fontWeight: '600', color: '#334155' }}>
+                              <span style={{ color: '#6366f1' }}>✓</span>
+                              <span>{t}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Footer del Mockup */}
+                    <div style={{ padding: '12px 20px', background: '#f8fafc', borderTop: '1px solid #f1f5f9', display: 'flex', justifyContent: 'end' }}>
+                      <button type="button" style={{ padding: '6px 16px', borderRadius: '8px', fontSize: '10px', fontWeight: 'bold', color: 'white', backgroundColor: '#6366f1', border: 'none', cursor: 'default' }}>
+                        ¡Entendido!
+                      </button>
                     </div>
                   </div>
-
-                  {/* Footer del Mockup */}
-                  <div style={{ padding: '12px 20px', background: '#f8fafc', borderTop: '1px solid #f1f5f9', display: 'flex', justifyContent: 'end' }}>
-                    <button type="button" style={{ padding: '6px 16px', borderRadius: '8px', fontSize: '10px', fontWeight: 'bold', color: 'white', backgroundColor: '#6366f1', border: 'none', cursor: 'default' }}>
-                      ¡Entendido!
-                    </button>
-                  </div>
                 </div>
+              </div>
+
+              {/* ROW 2: HISTORIAL DE VERSIONES */}
+              <div className="chart-card" style={{ background: 'rgba(30, 41, 59, 0.2)', padding: '24px' }}>
+                <div className="chart-card-title" style={{ marginBottom: '18px' }}>
+                  <History size={20} color="#a78bfa" />
+                  <span>Historial de Versiones Publicadas</span>
+                  <span style={{ marginLeft: 'auto', fontSize: '0.75rem', color: '#64748b', fontWeight: 600 }}>
+                    {historialVersiones.length} {historialVersiones.length === 1 ? 'versión' : 'versiones'}
+                  </span>
+                </div>
+
+                {cargandoHistorial ? (
+                  <div style={{ textAlign: 'center', padding: '30px 0', color: '#64748b', fontSize: '0.85rem' }}>
+                    <RefreshCw size={20} style={{ animation: 'spin 1s linear infinite', marginBottom: '8px' }} />
+                    <p>Cargando historial...</p>
+                  </div>
+                ) : historialVersiones.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '40px 0', color: '#475569' }}>
+                    <History size={32} style={{ marginBottom: '10px', opacity: 0.4 }} />
+                    <p style={{ fontSize: '0.85rem', fontWeight: 600 }}>No hay versiones registradas aún</p>
+                    <p style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '4px' }}>Registra la primera versión con el formulario de arriba.</p>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
+                    {/* Header de la tabla */}
+                    <div style={{
+                      display: 'grid',
+                      gridTemplateColumns: '100px 160px 1fr 120px 80px',
+                      gap: '12px',
+                      padding: '10px 16px',
+                      backgroundColor: 'rgba(15, 23, 42, 0.4)',
+                      borderRadius: '10px 10px 0 0',
+                      borderBottom: '1px solid rgba(255,255,255,0.06)',
+                    }}>
+                      {['Versión', 'Fecha', 'Descripción', 'Notificación', ''].map((h, i) => (
+                        <span key={i} style={{ fontSize: '0.7rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</span>
+                      ))}
+                    </div>
+
+                    {/* Filas */}
+                    {historialVersiones.map((v, idx) => {
+                      const isExpanded = expandedVersionId === (v.id || idx);
+                      const fecha = v.created_at ? new Date(v.created_at) : null;
+                      const fechaStr = fecha ? fecha.toLocaleDateString('es-VE', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+                      const horaStr = fecha ? fecha.toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit' }) : '';
+                      const lineas = v.descripcion ? v.descripcion.split('\n').map(l => l.trim()).filter(Boolean) : [];
+                      const resumen = lineas.length > 0 ? lineas[0].replace(/^-\s*/, '').replace(/^\*\s*/, '') : 'Sin descripción';
+
+                      return (
+                        <div key={v.id || idx}>
+                          <div
+                            onClick={() => setExpandedVersionId(isExpanded ? null : (v.id || idx))}
+                            style={{
+                              display: 'grid',
+                              gridTemplateColumns: '100px 160px 1fr 120px 80px',
+                              gap: '12px',
+                              padding: '12px 16px',
+                              backgroundColor: idx % 2 === 0 ? 'rgba(15, 23, 42, 0.15)' : 'transparent',
+                              borderBottom: '1px solid rgba(255,255,255,0.03)',
+                              cursor: 'pointer',
+                              transition: 'background-color 0.15s ease',
+                            }}
+                            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(99, 102, 241, 0.08)'}
+                            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = idx % 2 === 0 ? 'rgba(15, 23, 42, 0.15)' : 'transparent'}
+                          >
+                            {/* Versión */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <span style={{
+                                padding: '3px 10px',
+                                borderRadius: '8px',
+                                fontSize: '0.8rem',
+                                fontWeight: 800,
+                                background: idx === 0 ? 'linear-gradient(135deg, #6366f1, #8b5cf6)' : 'rgba(100, 116, 139, 0.2)',
+                                color: idx === 0 ? '#fff' : '#94a3b8',
+                              }}>v{v.version}</span>
+                              {idx === 0 && <span style={{ fontSize: '8px', fontWeight: 700, color: '#10b981', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Última</span>}
+                            </div>
+
+                            {/* Fecha */}
+                            <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                              <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#cbd5e1' }}>{fechaStr}</span>
+                              <span style={{ fontSize: '0.7rem', color: '#64748b' }}>{horaStr}</span>
+                            </div>
+
+                            {/* Descripción resumida */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden' }}>
+                              <span style={{
+                                fontSize: '0.8rem',
+                                color: '#94a3b8',
+                                fontWeight: 500,
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                              }}>{resumen}{lineas.length > 1 ? ` (+${lineas.length - 1} más)` : ''}</span>
+                              {isExpanded ? <ChevronUp size={14} color="#64748b" /> : <ChevronDown size={14} color="#64748b" />}
+                            </div>
+
+                            {/* Notificación */}
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                              {v.notificar_usuarios ? (
+                                <span style={{
+                                  display: 'inline-flex', alignItems: 'center', gap: '5px',
+                                  padding: '3px 10px', borderRadius: '20px',
+                                  fontSize: '0.7rem', fontWeight: 700,
+                                  backgroundColor: 'rgba(16, 185, 129, 0.12)', color: '#10b981',
+                                }}>
+                                  <Bell size={11} /> Activa
+                                </span>
+                              ) : (
+                                <span style={{
+                                  display: 'inline-flex', alignItems: 'center', gap: '5px',
+                                  padding: '3px 10px', borderRadius: '20px',
+                                  fontSize: '0.7rem', fontWeight: 700,
+                                  backgroundColor: 'rgba(100, 116, 139, 0.12)', color: '#64748b',
+                                }}>
+                                  <BellOff size={11} /> No
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Acciones */}
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '6px' }}>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setExpandedVersionId(isExpanded ? null : (v.id || idx)); }}
+                                title="Ver detalles"
+                                style={{ padding: '5px', borderRadius: '6px', backgroundColor: 'rgba(99, 102, 241, 0.1)', color: '#818cf8', border: 'none', cursor: 'pointer', lineHeight: 0, transition: 'all 0.15s' }}
+                              >
+                                <Eye size={14} />
+                              </button>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); eliminarVersion(v.id, v.version); }}
+                                title="Eliminar versión"
+                                style={{ padding: '5px', borderRadius: '6px', backgroundColor: 'rgba(239, 68, 68, 0.1)', color: '#f87171', border: 'none', cursor: 'pointer', lineHeight: 0, transition: 'all 0.15s' }}
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Detalle expandido */}
+                          {isExpanded && (
+                            <div style={{
+                              padding: '16px 20px 16px 32px',
+                              backgroundColor: 'rgba(99, 102, 241, 0.04)',
+                              borderBottom: '1px solid rgba(99, 102, 241, 0.1)',
+                              borderLeft: '3px solid #6366f1',
+                            }}>
+                              <p style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '10px' }}>Cambios detallados:</p>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                {lineas.length === 0 ? (
+                                  <span style={{ fontSize: '0.8rem', color: '#64748b', fontStyle: 'italic' }}>Sin descripción disponible.</span>
+                                ) : lineas.map((l, li) => {
+                                  const textoLimpio = l.replace(/^-\s*/, '').replace(/^\*\s*/, '');
+                                  return (
+                                    <div key={li} style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
+                                      <CheckCircle2 size={13} style={{ color: '#6366f1', marginTop: '2px', flexShrink: 0 }} />
+                                      <span style={{ fontSize: '0.8rem', color: '#cbd5e1', fontWeight: 500, lineHeight: 1.5 }}>{textoLimpio}</span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               <ModalNovedades 

@@ -10,45 +10,204 @@ export default function ModalNovedades({ isOpen, version, descripcion, onClose }
     : [];
 
   return (
-    <div className="fixed inset-0 z-[99999] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
-      <div 
-        className="w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden transform transition-all scale-100 duration-300 flex flex-col"
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 99999,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '16px',
+        backgroundColor: 'rgba(15, 23, 42, 0.65)',
+        backdropFilter: 'blur(6px)',
+        WebkitBackdropFilter: 'blur(6px)',
+        animation: 'modalNovedadesFadeIn 0.3s ease-out',
+      }}
+    >
+      <style>{`
+        @keyframes modalNovedadesFadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+        @keyframes modalNovedadesScaleIn {
+          from { opacity: 0; transform: scale(0.92) translateY(12px); }
+          to { opacity: 1; transform: scale(1) translateY(0); }
+        }
+        .modal-novedades-card::-webkit-scrollbar { width: 5px; }
+        .modal-novedades-card::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        .modal-novedades-item {
+          transition: background-color 0.15s ease, transform 0.15s ease;
+        }
+        .modal-novedades-item:hover {
+          background-color: rgba(99, 102, 241, 0.06) !important;
+          transform: translateX(2px);
+        }
+        .modal-novedades-btn {
+          transition: all 0.15s ease;
+        }
+        .modal-novedades-btn:hover {
+          background-color: #4f46e5 !important;
+          transform: scale(1.03);
+          box-shadow: 0 6px 20px rgba(99, 102, 241, 0.35) !important;
+        }
+        .modal-novedades-btn:active {
+          transform: scale(0.97);
+        }
+        .modal-novedades-close {
+          transition: background-color 0.2s ease;
+        }
+        .modal-novedades-close:hover {
+          background-color: rgba(255, 255, 255, 0.25) !important;
+        }
+      `}</style>
+
+      <div
         onClick={(e) => e.stopPropagation()}
+        style={{
+          width: '100%',
+          maxWidth: '440px',
+          backgroundColor: '#ffffff',
+          borderRadius: '18px',
+          boxShadow: '0 25px 60px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255,255,255,0.05)',
+          overflow: 'hidden',
+          display: 'flex',
+          flexDirection: 'column',
+          animation: 'modalNovedadesScaleIn 0.35s ease-out',
+        }}
       >
         {/* Header con gradiente premium */}
-        <div className="p-6 bg-gradient-to-r from-sky-500 via-indigo-500 to-indigo-600 text-white relative">
-          <button 
-            onClick={onClose} 
-            className="absolute top-4 right-4 p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition-all duration-200"
+        <div
+          style={{
+            padding: '24px',
+            background: 'linear-gradient(135deg, #0ea5e9 0%, #6366f1 50%, #8b5cf6 100%)',
+            color: '#ffffff',
+            position: 'relative',
+          }}
+        >
+          <button
+            onClick={onClose}
+            className="modal-novedades-close"
+            style={{
+              position: 'absolute',
+              top: '14px',
+              right: '14px',
+              padding: '6px',
+              borderRadius: '50%',
+              backgroundColor: 'rgba(255, 255, 255, 0.12)',
+              color: '#ffffff',
+              border: 'none',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              lineHeight: 0,
+            }}
             title="Cerrar"
           >
-            <X size={18} />
+            <X size={16} />
           </button>
-          
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-white/15 rounded-xl">
-              <Sparkles size={24} className="text-yellow-300" />
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+            <div
+              style={{
+                padding: '10px',
+                backgroundColor: 'rgba(255, 255, 255, 0.15)',
+                borderRadius: '14px',
+                lineHeight: 0,
+              }}
+            >
+              <Sparkles size={24} style={{ color: '#fde047' }} />
             </div>
             <div>
-              <span className="text-[10px] uppercase font-bold tracking-widest bg-white/20 px-2 py-0.5 rounded-md">¡Nueva Versión!</span>
-              <h2 className="text-xl font-black mt-1 leading-none">Novedades v{version}</h2>
+              <span
+                style={{
+                  fontSize: '9px',
+                  textTransform: 'uppercase',
+                  fontWeight: 800,
+                  letterSpacing: '0.08em',
+                  backgroundColor: 'rgba(255, 255, 255, 0.2)',
+                  padding: '3px 8px',
+                  borderRadius: '6px',
+                  display: 'inline-block',
+                }}
+              >
+                ¡Nueva Versión!
+              </span>
+              <h2
+                style={{
+                  fontSize: '1.3rem',
+                  fontWeight: 900,
+                  marginTop: '5px',
+                  lineHeight: 1.1,
+                  margin: '5px 0 0 0',
+                }}
+              >
+                Novedades v{version}
+              </h2>
             </div>
           </div>
         </div>
 
         {/* Contenido / Cambios */}
-        <div className="p-6 max-h-[320px] overflow-y-auto">
-          <p className="text-[11px] text-slate-500 font-bold mb-3 uppercase tracking-wider">Cambios y mejoras:</p>
+        <div
+          className="modal-novedades-card"
+          style={{
+            padding: '20px 22px',
+            maxHeight: '320px',
+            overflowY: 'auto',
+          }}
+        >
+          <p
+            style={{
+              fontSize: '10px',
+              color: '#64748b',
+              fontWeight: 800,
+              marginBottom: '14px',
+              textTransform: 'uppercase',
+              letterSpacing: '0.06em',
+            }}
+          >
+            Cambios y mejoras:
+          </p>
           {lineas.length === 0 ? (
-            <p className="text-xs text-slate-600 italic">No hay detalles específicos de cambios para esta versión.</p>
+            <p style={{ fontSize: '12px', color: '#64748b', fontStyle: 'italic' }}>
+              No hay detalles específicos de cambios para esta versión.
+            </p>
           ) : (
-            <div className="space-y-2.5">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {lineas.map((linea, index) => {
                 const textoLimpio = linea.replace(/^-\s*/, '').replace(/^\*\s*/, '');
                 return (
-                  <div key={index} className="flex items-start gap-2.5 p-3 bg-slate-50 rounded-xl border border-slate-100 hover:bg-indigo-50/20 transition-all duration-150">
-                    <CheckCircle2 size={15} className="text-indigo-500 mt-0.5 shrink-0" />
-                    <p className="text-xs text-slate-700 font-semibold leading-relaxed">{textoLimpio}</p>
+                  <div
+                    key={index}
+                    className="modal-novedades-item"
+                    style={{
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      gap: '10px',
+                      padding: '10px 12px',
+                      backgroundColor: '#f8fafc',
+                      borderRadius: '12px',
+                      border: '1px solid #f1f5f9',
+                    }}
+                  >
+                    <CheckCircle2
+                      size={15}
+                      style={{ color: '#6366f1', marginTop: '2px', flexShrink: 0 }}
+                    />
+                    <p
+                      style={{
+                        fontSize: '12px',
+                        color: '#334155',
+                        fontWeight: 600,
+                        lineHeight: 1.5,
+                        margin: 0,
+                      }}
+                    >
+                      {textoLimpio}
+                    </p>
                   </div>
                 );
               })}
@@ -57,10 +216,29 @@ export default function ModalNovedades({ isOpen, version, descripcion, onClose }
         </div>
 
         {/* Footer */}
-        <div className="p-4 bg-slate-50 border-t border-slate-100 flex justify-end">
-          <button 
+        <div
+          style={{
+            padding: '14px 22px',
+            backgroundColor: '#f8fafc',
+            borderTop: '1px solid #f1f5f9',
+            display: 'flex',
+            justifyContent: 'flex-end',
+          }}
+        >
+          <button
             onClick={onClose}
-            className="px-5 py-2 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 hover:scale-[1.02] shadow-md shadow-indigo-200 active:scale-95 transition-all duration-150"
+            className="modal-novedades-btn"
+            style={{
+              padding: '9px 22px',
+              borderRadius: '12px',
+              fontSize: '12px',
+              fontWeight: 700,
+              color: '#ffffff',
+              backgroundColor: '#6366f1',
+              border: 'none',
+              cursor: 'pointer',
+              boxShadow: '0 4px 14px rgba(99, 102, 241, 0.25)',
+            }}
           >
             ¡Entendido!
           </button>

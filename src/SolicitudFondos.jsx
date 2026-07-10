@@ -86,6 +86,54 @@ const getEstadoSolicitud = (solicitud) => {
   return 'ACTIVA';
 };
 
+const TextInputLocal = ({ value, onChange, onBlur, ...props }) => {
+  const [localVal, setLocalVal] = useState(value || '');
+
+  useEffect(() => {
+    setLocalVal(value || '');
+  }, [value]);
+
+  return (
+    <input
+      {...props}
+      value={localVal}
+      onChange={(e) => setLocalVal(e.target.value)}
+      onBlur={(e) => {
+        if (localVal !== value) {
+          onChange(localVal);
+        }
+        if (onBlur) onBlur(e);
+      }}
+    />
+  );
+};
+
+const TextareaLocal = ({ value, onChange, onBlur, ...props }) => {
+  const [localVal, setLocalVal] = useState(value || '');
+
+  useEffect(() => {
+    setLocalVal(value || '');
+  }, [value]);
+
+  return (
+    <textarea
+      {...props}
+      value={localVal}
+      onChange={(e) => {
+        setLocalVal(e.target.value);
+        e.target.style.height = 'auto';
+        e.target.style.height = `${e.target.scrollHeight}px`;
+      }}
+      onBlur={(e) => {
+        if (localVal !== value) {
+          onChange(localVal);
+        }
+        if (onBlur) onBlur(e);
+      }}
+    />
+  );
+};
+
 const StockSmartTotalClean = ({ currentUserProp }) => {
   const [showModal, setShowModal] = useState(false);
   const [historial, setHistorial] = useState([]);
@@ -605,7 +653,11 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       .order('nombre');
     if (dataGerentes) setGerentesDisponibles(dataGerentes);
 
-    let query = supabase.from('solicitudes_fondos').select('*');
+    const fechaLimite = new Date();
+    fechaLimite.setDate(fechaLimite.getDate() - 120);
+    const fechaLimiteStr = fechaLimite.toISOString();
+
+    let query = supabase.from('solicitudes_fondos').select('*').gte('created_at', fechaLimiteStr);
 
     const rolUpper = (userContext.rol || '').toUpperCase();
     const deptoUpper = (userContext.departamento || '').toUpperCase();
@@ -2532,6 +2584,34 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
     });
   }, [form.imprevistos, filtroPartidaEmisor, filtroPartidaCategoria, filtroPartidaClasificacion, filtroPartidaEstadoId]);
 
+  const clasificacionesPorCC = useMemo(() => {
+    const map = {};
+    centrosCosto.forEach(cc => {
+      map[cc.nombre] = todasClasificaciones.filter(cl => cl.padreId === cc.id);
+    });
+    return map;
+  }, [centrosCosto, todasClasificaciones]);
+
+  const clObjMap = useMemo(() => {
+    const map = {};
+    todasClasificaciones.forEach(cl => {
+      const cc = centrosCosto.find(c => c.id === cl.padreId);
+      if (cc) {
+        map[`${cc.nombre}_${cl.nombre}`] = cl;
+      }
+    });
+    return map;
+  }, [centrosCosto, todasClasificaciones]);
+
+  const categoriasPorClasif = useMemo(() => {
+    const map = {};
+    todasClasificaciones.forEach(cl => {
+      map[cl.id] = todasCategorias.filter(ct => ct.padreId === cl.id);
+    });
+    return map;
+  }, [todasClasificaciones, todasCategorias]);
+
+
   const listaEmisoresUnicos = useMemo(() => {
     const todos = [
       ...form.partidas.map(p => p.emisor || '---'),
@@ -3725,10 +3805,8 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                               <select className="sf-table-input" value={p.clasif} onChange={(e) => manejarCambioPartida(p.originalIndex, 'clasif', e.target.value)} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !p.cc || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow}>
                                 <option value="">Clasificación...</option>
                                 {(() => {
-                                  const ccObj = centrosCosto.find(c => c.nombre === p.cc);
-                                  return todasClasificaciones
-                                    .filter(cl => cl.padreId === ccObj?.id)
-                                    .map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>);
+                                  const clasifs = clasificacionesPorCC[p.cc] || [];
+                                  return clasifs.map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>);
                                 })()}
                               </select>
                             </div>
@@ -3736,18 +3814,16 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                               <select className="sf-table-input" value={p.cat} onChange={(e) => manejarCambioPartida(p.originalIndex, 'cat', e.target.value)} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !p.clasif || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow}>
                                 <option value="">Categoría...</option>
                                 {(() => {
-                                  const ccObj = centrosCosto.find(c => c.nombre === p.cc);
-                                  const clObj = todasClasificaciones.find(cl => cl.nombre === p.clasif && cl.padreId === ccObj?.id);
-                                  return todasCategorias
-                                    .filter(ct => ct.padreId === clObj?.id)
-                                    .map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>);
+                                  const clObj = clObjMap[`${p.cc}_${p.clasif}`];
+                                  const cats = clObj ? (categoriasPorClasif[clObj.id] || []) : [];
+                                  return cats.map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>);
                                 })()}
                               </select>
                             </div>
                             <div style={{ width: '80px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.cant === undefined || p.cant === null ? '' : p.cant} onChange={(e) => manejarCambioPartida(p.originalIndex, 'cant', e.target.value)} style={{ textAlign: 'center' }} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={() => { handleBlurRow(); normalizarNumeroOnBlur(p.originalIndex, 'cant', p.cant, false); }} /></div>
                             <div style={{ width: '90px', padding: '6px' }}><select className="sf-table-input" value={p.uni} onChange={(e) => manejarCambioPartida(p.originalIndex, 'uni', e.target.value)} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow}>{unidades.map(u => <option key={u}>{u}</option>)}</select></div>
-                            <div style={{ width: '460px', padding: '10px' }}><textarea className="sf-table-input" value={p.desc} onChange={(e) => { manejarCambioPartida(p.originalIndex, 'desc', e.target.value); e.target.style.height = 'auto'; e.target.style.height = `${e.target.scrollHeight}px`; }} style={{ resize: 'none', height: 'auto', overflowY: 'hidden' }} ref={(el) => { if (el) { el.style.height = 'auto'; el.style.height = `${el.scrollHeight}px`; } }} rows="1" disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow} /></div>
-                            <div style={{ width: '200px', padding: '6px' }}><input className="sf-table-input" value={p.ben} onChange={(e) => manejarCambioPartida(p.originalIndex, 'ben', e.target.value)} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow} /></div>
+                            <div style={{ width: '460px', padding: '10px' }}><TextareaLocal className="sf-table-input" value={p.desc} onChange={(val) => manejarCambioPartida(p.originalIndex, 'desc', val)} style={{ resize: 'none', height: 'auto', overflowY: 'hidden' }} rows="1" disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow} /></div>
+                            <div style={{ width: '200px', padding: '6px' }}><TextInputLocal className="sf-table-input" value={p.ben} onChange={(val) => manejarCambioPartida(p.originalIndex, 'ben', val)} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={handleBlurRow} /></div>
                             <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puBs === undefined || p.puBs === null || p.puBs === '' ? '' : p.puBs} onChange={(e) => manejarCambioPartida(p.originalIndex, 'puBs', e.target.value)} style={{ textAlign: 'left' }} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || p.puUsd > 0 || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={() => { handleBlurRow(); normalizarNumeroOnBlur(p.originalIndex, 'puBs', p.puBs, false); }} /></div>
                             <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={p.puUsd === undefined || p.puUsd === null || p.puUsd === '' ? '' : p.puUsd} onChange={(e) => manejarCambioPartida(p.originalIndex, 'puUsd', e.target.value)} style={{ textAlign: 'left' }} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || p.puBs > 0 || !!p.codigo_ref || !!editingUser} onFocus={() => handleFocusRow(p.id)} onBlur={() => { handleBlurRow(); normalizarNumeroOnBlur(p.originalIndex, 'puUsd', p.puUsd, false); }} /></div>
                             <div style={{ width: '120px', padding: '6px', textAlign: 'left', fontWeight: 'bold' }}>{((parseFloat(p.puBs) || parseFloat(p.puUsd) || 0) * (p.cant || 0)).toLocaleString('de-DE')}</div>
@@ -3888,10 +3964,8 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                               <select className="sf-table-input" value={imp.clasif} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'clasif', e.target.value)} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !imp.cc || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow}>
                                 <option value="">Clasificación...</option>
                                 {(() => {
-                                  const ccObj = centrosCosto.find(c => c.nombre === imp.cc);
-                                  return todasClasificaciones
-                                    .filter(cl => cl.padreId === ccObj?.id)
-                                    .map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>);
+                                  const clasifs = clasificacionesPorCC[imp.cc] || [];
+                                  return clasifs.map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>);
                                 })()}
                               </select>
                             </div>
@@ -3899,18 +3973,16 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                               <select className="sf-table-input" value={imp.cat} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'cat', e.target.value)} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !imp.clasif || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow}>
                                 <option value="">Categoría...</option>
                                 {(() => {
-                                  const ccObj = centrosCosto.find(c => c.nombre === imp.cc);
-                                  const clObj = todasClasificaciones.find(cl => cl.nombre === imp.clasif && cl.padreId === ccObj?.id);
-                                  return todasCategorias
-                                    .filter(ct => ct.padreId === clObj?.id)
-                                    .map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>);
+                                  const clObj = clObjMap[`${imp.cc}_${imp.clasif}`];
+                                  const cats = clObj ? (categoriasPorClasif[clObj.id] || []) : [];
+                                  return cats.map(op => <option key={op.id} value={op.nombre}>{op.nombre}</option>);
                                 })()}
                               </select>
                             </div>
                             <div style={{ width: '80px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.cant === undefined || imp.cant === null ? '' : imp.cant} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'cant', e.target.value)} style={{ textAlign: 'center' }} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={() => { handleBlurRow(); normalizarNumeroOnBlur(imp.originalIndex, 'cant', imp.cant, true); }} /></div>
                             <div style={{ width: '90px', padding: '6px' }}><select className="sf-table-input" value={imp.uni} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'uni', e.target.value)} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow}>{unidades.map(u => <option key={u}>{u}</option>)}</select></div>
-                            <div style={{ width: '460px', padding: '10px' }}><textarea className="sf-table-input" value={imp.desc} onChange={(e) => { manejarCambioImprevisto(imp.originalIndex, 'desc', e.target.value); e.target.style.height = 'auto'; e.target.style.height = `${e.target.scrollHeight}px`; }} style={{ resize: 'none', height: 'auto', overflowY: 'hidden' }} ref={(el) => { if (el) { el.style.height = 'auto'; el.style.height = `${el.scrollHeight}px`; } }} rows="1" disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow} /></div>
-                            <div style={{ width: '200px', padding: '6px' }}><input className="sf-table-input" value={imp.ben} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'ben', e.target.value)} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow} /></div>
+                            <div style={{ width: '460px', padding: '10px' }}><TextareaLocal className="sf-table-input" value={imp.desc} onChange={(val) => manejarCambioImprevisto(imp.originalIndex, 'desc', val)} style={{ resize: 'none', height: 'auto', overflowY: 'hidden' }} rows="1" disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow} /></div>
+                            <div style={{ width: '200px', padding: '6px' }}><TextInputLocal className="sf-table-input" value={imp.ben} onChange={(val) => manejarCambioImprevisto(imp.originalIndex, 'ben', val)} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={handleBlurRow} /></div>
                             <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.puBs === undefined || imp.puBs === null || imp.puBs === '' ? '' : imp.puBs} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'puBs', e.target.value)} style={{ textAlign: 'right' }} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || imp.puUsd > 0 || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={() => { handleBlurRow(); normalizarNumeroOnBlur(imp.originalIndex, 'puBs', imp.puBs, true); }} /></div>
                             <div style={{ width: '120px', padding: '6px' }}><input className="sf-table-input" type="number" value={imp.puUsd === undefined || imp.puUsd === null || imp.puUsd === '' ? '' : imp.puUsd} onChange={(e) => manejarCambioImprevisto(imp.originalIndex, 'puUsd', e.target.value)} style={{ textAlign: 'right' }} disabled={isReadOnly || (estadoActual === 'EN PROCESO' && !esRrHhOAdm) || isAnulado || imp.puBs > 0 || !!imp.codigo_ref || !!editingImpUser} onFocus={() => handleFocusRow(imp.id)} onBlur={() => { handleBlurRow(); normalizarNumeroOnBlur(imp.originalIndex, 'puUsd', imp.puUsd, true); }} /></div>
                             <div style={{ width: '120px', padding: '6px', textAlign: 'right', fontWeight: 'bold' }}>{((parseFloat(imp.puBs) || parseFloat(imp.puUsd) || 0) * (imp.cant || 1)).toLocaleString('de-DE')}</div>
