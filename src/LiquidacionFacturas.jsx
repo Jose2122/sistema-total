@@ -37,14 +37,30 @@ const parsearItems = (itemsField) => {
 // Helper to parse safe JSON array for facturas/abonos
 const parsearFacturaUrls = (facturaUrlField) => {
   if (!facturaUrlField) return [];
-  if (Array.isArray(facturaUrlField)) return facturaUrlField;
-  try {
-    let parsed = typeof facturaUrlField === 'string' ? JSON.parse(facturaUrlField) : facturaUrlField;
-    if (typeof parsed === 'string') parsed = JSON.parse(parsed);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
+  
+  let list = [];
+  if (Array.isArray(facturaUrlField)) {
+    list = facturaUrlField;
+  } else {
+    try {
+      let parsed = typeof facturaUrlField === 'string' ? JSON.parse(facturaUrlField) : facturaUrlField;
+      if (typeof parsed === 'string') parsed = JSON.parse(parsed);
+      list = Array.isArray(parsed) ? parsed : [];
+    } catch {
+      list = [];
+    }
   }
+
+  return list.map(val => {
+    if (typeof val === 'string') {
+      try {
+        return JSON.parse(val);
+      } catch {
+        return val;
+      }
+    }
+    return val;
+  }).filter(Boolean);
 };
 
 const LiquidacionFacturas = ({ currentUser }) => {
@@ -69,6 +85,25 @@ const LiquidacionFacturas = ({ currentUser }) => {
     moneda: '$ / $',
     files: []
   });
+
+  const esAdmin = useMemo(() => {
+    if (!currentUser) return false;
+    const emailLower = (currentUser.correo || '').toLowerCase().trim();
+    const rolUpper = (currentUser.rol || '').toUpperCase().trim();
+    return (
+      emailLower === 'jcontreras.totalclean@gmail.com' ||
+      emailLower === 'cvega.totalclean@gmail.com' ||
+      emailLower === 'cvega@totalclean.com' ||
+      rolUpper === 'ADMIN' ||
+      rolUpper === 'ADMINISTRADOR' ||
+      rolUpper === 'DESARROLLADOR' ||
+      rolUpper === 'GERENTE GENERAL' ||
+      rolUpper === 'CONTABIL' ||
+      rolUpper === 'ADMINISTRA' ||
+      currentUser.esAdminReal === true ||
+      currentUser.esSuperAdmin === true
+    );
+  }, [currentUser]);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -235,7 +270,13 @@ const LiquidacionFacturas = ({ currentUser }) => {
         saldo_pendiente: saldoPendiente,
         estatus
       };
-    }).sort((a, b) => new Date(b.fecha_compra) - new Date(a.fecha_compra));
+    }).sort((a, b) => {
+      const aEsPagado = a.estatus === 'PAGADO';
+      const bEsPagado = b.estatus === 'PAGADO';
+      if (aEsPagado && !bEsPagado) return 1;
+      if (!aEsPagado && bEsPagado) return -1;
+      return new Date(b.fecha_compra) - new Date(a.fecha_compra);
+    });
   }, [requisiciones, abonosGlobales]);
 
   // Filtered invoices for display
@@ -455,7 +496,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
 
   // Allow administrators to delete an abono
   const handleEliminarAbono = async (abonoId) => {
-    if (!currentUser?.esAdminReal && !currentUser?.esSuperAdmin) {
+    if (!esAdmin) {
       toast.error('No tiene privilegios para eliminar registros de abonos.');
       return;
     }
@@ -866,7 +907,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
                             </a>
                           ) : null}
 
-                          {(currentUser?.esAdminReal || currentUser?.esSuperAdmin) && (
+                          {esAdmin && (
                             <button
                               onClick={() => handleEliminarAbono(ab.abono_id)}
                               style={{

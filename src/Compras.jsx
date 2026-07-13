@@ -451,11 +451,13 @@ const Compras = () => {
   const ejecutarAsignacion = async (reqId, analistaId, analistaNombre) => {
     setLoadingAsignacion(true);
     try {
+      const timestampAsignacion = analistaId ? new Date().toISOString() : null;
       const { error } = await supabase
         .from('requisiciones')
         .update({
           asignado_a: analistaId || null,
-          asignado_nombre: analistaNombre || null
+          asignado_nombre: analistaNombre || null,
+          f_inicio_compras: timestampAsignacion
         })
         .eq('id', reqId);
 
@@ -477,7 +479,7 @@ const Compras = () => {
       setHistorial(prev =>
         prev.map(r =>
           r.id === reqId
-            ? { ...r, asignado_a: analistaId, asignado_nombre: analistaNombre }
+            ? { ...r, asignado_a: analistaId, asignado_nombre: analistaNombre, f_inicio_compras: timestampAsignacion }
             : r
         )
       );
@@ -3288,6 +3290,17 @@ const Compras = () => {
                     <div style={{ fontSize: '1.1rem', fontWeight: '900', color: requisicionActiva?.status_compra === 'Completado' ? '#15803d' : '#854d0e' }}>
                       {requisicionActiva?.status_compra || 'EN ESPERA'}
                     </div>
+                    {requisicionActiva?.f_inicio_compras && (
+                      <div style={{ fontSize: '0.7rem', color: '#64748b', marginTop: '6px', fontWeight: 'bold' }}>
+                        Asignado el: {(() => {
+                          try {
+                            return format(new Date(requisicionActiva.f_inicio_compras), 'dd/MM/yyyy HH:mm');
+                          } catch {
+                            return requisicionActiva.f_inicio_compras;
+                          }
+                        })()}
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>

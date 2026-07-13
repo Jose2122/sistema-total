@@ -1485,8 +1485,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
         aprobacion_nombre: 'Aprobación Final',
         status_compra: 'En espera',
         f_aprobacion_general: new Date().toISOString(),
-        n_aprobacion_general: `${currentUser.nombre} ${currentUser.apellido}`.trim(),
-        f_inicio_compras: new Date().toISOString()
+        n_aprobacion_general: `${currentUser.nombre} ${currentUser.apellido}`.trim()
       };
 
       const { data, error } = await supabase.from('requisiciones').update(updates).eq('id', editandoId).select();
@@ -3313,7 +3312,13 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                                   ...(tieneProyecto ? [{ label: 'GERENTE PROYECTO', name: reqActual.n_aprobacion_proyecto, date: reqActual.f_aprobacion_proyecto, icon: <Settings size={20} />, completed: true }] : []),
                                   { label: 'GERENTE ÁREA', name: reqActual.n_aprobacion_area, date: reqActual.f_aprobacion_area, icon: <Building2 size={20} />, completed: reqActual.aprobado_gerente_area || (reqActual.estado_aprobacion !== 'pendiente_proyecto' && reqActual.estado_aprobacion !== 'pendiente_area' && reqActual.estado_aprobacion !== 'enviada_area' && reqActual.estado_aprobacion !== 'rechazada') },
                                   { label: 'GERENTE GENERAL', name: reqActual.n_aprobacion_general, date: reqActual.f_aprobacion_general, icon: <Diamond size={20} />, completed: reqActual.aprobado_gerente_general || reqActual.estado_aprobacion === 'aprobado_final' },
-                                  { label: 'INICIO COMPRAS', date: reqActual.f_inicio_compras, icon: <Clock size={20} />, completed: !!reqActual.f_inicio_compras },
+                                  { 
+                                    label: reqActual.f_inicio_compras ? 'INICIO COMPRAS / Compra asignada' : 'INICIO COMPRAS', 
+                                    name: reqActual.f_inicio_compras ? (reqActual.asignado_nombre || 'Asignado') : null,
+                                    date: reqActual.f_inicio_compras, 
+                                    icon: <Clock size={20} />, 
+                                    completed: !!reqActual.f_inicio_compras 
+                                  },
                                   { label: 'COMPRA CULMINADA', date: reqActual.f_culminacion_compras, icon: <ShoppingCart size={20} />, completed: reqActual.status?.toUpperCase() === 'COMPLETADO' }
                                 ];
 
