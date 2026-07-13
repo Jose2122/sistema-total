@@ -713,8 +713,29 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       // Obtenemos un resumen de pagos por solicitud para los stats
       const { data: pagosData } = await supabase
         .from('partidas_fondos')
-        .select('solicitud_id, pu_bs, pu_usd, cantidad, pago_realizado, status, requisicion_id, requisiciones(id, items)')
+        .select('solicitud_id, pu_bs, pu_usd, cantidad, pago_realizado, status, requisicion_id, ticket_id, codigo_ticket, descripcion, requisiciones(id, items)')
         .in('solicitud_id', dataHist.map(h => h.id));
+
+      // Obtener Tickets directos involucrados en estas solicitudes
+      const ticketIds = (pagosData || []).map(p => p.ticket_id).filter(Boolean);
+      const ticketCodigos = (pagosData || []).map(p => p.codigo_ticket).filter(c => c && c.startsWith('TP-'));
+      let ticketsInvolucrados = [];
+      if (ticketIds.length > 0 || ticketCodigos.length > 0) {
+        try {
+          let query = supabase.from('tickets_directos').select('*');
+          if (ticketIds.length > 0 && ticketCodigos.length > 0) {
+            query = query.or(`id.in.(${ticketIds.join(',')}),codigo_control.in.(${ticketCodigos.map(c => `"${c}"`).join(',')})`);
+          } else if (ticketIds.length > 0) {
+            query = query.in('id', ticketIds);
+          } else {
+            query = query.in('codigo_control', ticketCodigos);
+          }
+          const { data: tData } = await query;
+          if (tData) ticketsInvolucrados = tData;
+        } catch (e) {
+          console.error("Error fetching tickets in fetchHistorial:", e);
+        }
+      }
 
       setHistorial(dataHist.map(h => {
         const misPartidas = (pagosData || []).filter(p => p.solicitud_id === h.id);
@@ -738,9 +759,92 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         let pendingUsd = 0;
 
         if (misPartidas.length > 0 && !esTostitomas) {
-          totalPagado = misPartidas.reduce((acc, p) => acc + (p.status === 'ANULADO_POR_USUARIO' ? 0 : (p.pago_realizado ? (parseFloat(p.pu_bs) || parseFloat(p.pu_usd) || 0) * (p.cantidad || 1) : 0)), 0);
-          pendingBs = misPartidas.reduce((acc, p) => acc + (p.status === 'ANULADO_POR_USUARIO' ? 0 : (!p.pago_realizado ? (parseFloat(p.pu_bs) || 0) * (p.cantidad || 1) : 0)), 0);
-          pendingUsd = misPartidas.reduce((acc, p) => acc + (p.status === 'ANULADO_POR_USUARIO' ? 0 : (!p.pago_realizado ? (parseFloat(p.pu_usd) || 0) * (p.cantidad || 1) : 0)), 0);
+          let totalMontoReal = 0;
+          let totalPendingBs = 0;
+          let totalPendingUsd = 0;
+
+          misPartidas.forEach(p => {
+            if (p.status === 'ANULADO_POR_USUARIO') return;
+
+            let mReal = 0;
+            let mPendingBs = (parseFloat(p.pu_bs) || 0) * (p.cantidad || 1);
+            let mPendingUsd = (parseFloat(p.pu_usd) || 0) * (p.cantidad || 1);
+
+            if (p.requisicion_id && p.requisiciones && p.requisiciones.items) {
+              const itemReq = p.requisiciones.items.find(item =>
+                item.descripcion === p.descripcion &&
+                (item.cantidad_pedida === p.cantidad || item.cant === p.cantidad)
+              );
+              if (itemReq) {
+                mReal = (itemReq.historial_compras || []).reduce((sum, tx) => {
+                  if (tx.tipo === 'JUSTIFICACION') return sum;
+                  return sum + ((parseFloat(tx.cant) || 0) * (parseFloat(tx.pu) || 0));
+                }, 0);
+                const cantPendiente = parseFloat(itemReq.cantidad_pendiente ?? itemReq.cant) || 0;
+                const puEst = parseFloat(itemReq.pu_estimado ?? itemReq.pu) || 0;
+                
+                if (p.pu_bs > 0) {
+                  mPendingBs = cantPendiente * puEst;
+                  mPendingUsd = 0;
+                } else {
+                  mPendingBs = 0;
+                  mPendingUsd = cantPendiente * puEst;
+                }
+              }
+            } else if (p.ticket_id || p.codigo_ticket?.startsWith('TP-')) {
+              const ticketAsociado = ticketsInvolucrados.find(t =>
+                t.id === p.ticket_id ||
+                (p.codigo_ticket && t.codigo_control === p.codigo_ticket)
+              );
+              if (ticketAsociado) {
+                if (ticketAsociado.items && ticketAsociado.items.length > 0) {
+                  const itemTicket = ticketAsociado.items.find(it =>
+                    (it.desc || it.descripcion || '').trim().toUpperCase() === (p.descripcion || '').trim().toUpperCase() &&
+                    (Number(it.cantidad_pedida || it.cant) === Number(p.cantidad))
+                  );
+                  if (itemTicket) {
+                    mReal = (itemTicket.historial_compras || []).reduce((sum, tx) => {
+                      return sum + ((parseFloat(tx.cant) || 0) * (parseFloat(tx.pu) || 0));
+                    }, 0);
+                    const cantPendiente = parseFloat(itemTicket.cantidad_pendiente ?? itemTicket.cant) || 0;
+                    const puEst = parseFloat(itemTicket.pu_estimado ?? itemTicket.pu) || 0;
+                    
+                    if (p.pu_bs > 0) {
+                      mPendingBs = cantPendiente * puEst;
+                      mPendingUsd = 0;
+                    } else {
+                      mPendingBs = 0;
+                      mPendingUsd = cantPendiente * puEst;
+                    }
+                  } else {
+                    if (ticketAsociado.status === 'Pagado') {
+                      mReal = (parseFloat(p.pu_bs) || parseFloat(p.pu_usd) || 0) * (p.cantidad || 1);
+                      mPendingBs = 0;
+                      mPendingUsd = 0;
+                    }
+                  }
+                } else if (ticketAsociado.status === 'Pagado') {
+                  mReal = (parseFloat(p.pu_bs) || parseFloat(p.pu_usd) || 0) * (p.cantidad || 1);
+                  mPendingBs = 0;
+                  mPendingUsd = 0;
+                }
+              }
+            } else {
+              if (p.pago_realizado) {
+                mReal = (parseFloat(p.pu_bs) || parseFloat(p.pu_usd) || 0) * (p.cantidad || 1);
+                mPendingBs = 0;
+                mPendingUsd = 0;
+              }
+            }
+
+            totalMontoReal += mReal;
+            totalPendingBs += mPendingBs;
+            totalPendingUsd += mPendingUsd;
+          });
+
+          totalPagado = totalMontoReal;
+          pendingBs = totalPendingBs;
+          pendingUsd = totalPendingUsd;
         } else {
           totalPagado = h.pago_realizado ? (calculatedTotalBs + calculatedTotalUsd) : 0;
           pendingBs = h.pago_realizado ? 0 : calculatedTotalBs;
@@ -1100,6 +1204,27 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         .select('*, requisiciones(id, correlativo_req, items, status_compra)')
         .eq('solicitud_id', targetId);
 
+      // 1.1 Obtener Tickets Directos Involucrados para calcular ejecución
+      const ticketIds = partidasRaw.map(p => p.ticket_id).filter(Boolean);
+      const ticketCodigos = partidasRaw.map(p => p.codigo_ticket).filter(c => c && c.startsWith('TP-'));
+      let ticketsInvolucrados = [];
+      if (ticketIds.length > 0 || ticketCodigos.length > 0) {
+        try {
+          let query = supabase.from('tickets_directos').select('*');
+          if (ticketIds.length > 0 && ticketCodigos.length > 0) {
+            query = query.or(`id.in.(${ticketIds.join(',')}),codigo_control.in.(${ticketCodigos.map(c => `"${c}"`).join(',')})`);
+          } else if (ticketIds.length > 0) {
+            query = query.in('id', ticketIds);
+          } else {
+            query = query.in('codigo_control', ticketCodigos);
+          }
+          const { data: tData } = await query;
+          if (tData) ticketsInvolucrados = tData;
+        } catch (e) {
+          console.error("Error fetching tickets directos:", e);
+        }
+      }
+
       // 2. Mapear Partidas con Lógica de Ejecución (P.U. REAL)
       const procesarEjecucion = (p) => {
         if (p.status === 'ANULADO_POR_USUARIO') {
@@ -1128,6 +1253,37 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
             const puEst = parseFloat(itemReq.pu_estimado ?? itemReq.pu) || 0;
             montoPendiente = cantPendiente * puEst;
           }
+        } else {
+          // Intentar buscar en tickets directos si es de tipo ticket de pago
+          const ticketAsociado = ticketsInvolucrados.find(t =>
+            t.id === p.ticket_id ||
+            (p.codigo_ticket && t.codigo_control === p.codigo_ticket)
+          );
+          if (ticketAsociado) {
+            if (ticketAsociado.items && ticketAsociado.items.length > 0) {
+              const itemTicket = ticketAsociado.items.find(it =>
+                (it.desc || it.descripcion || '').trim().toUpperCase() === (p.descripcion || '').trim().toUpperCase() &&
+                (Number(it.cantidad_pedida || it.cant) === Number(p.cantidad))
+              );
+              if (itemTicket) {
+                montoReal = (itemTicket.historial_compras || []).reduce((sum, h) => {
+                  return sum + ((parseFloat(h.cant) || 0) * (parseFloat(h.pu) || 0));
+                }, 0);
+                const cantPendiente = parseFloat(itemTicket.cantidad_pendiente ?? itemTicket.cant) || 0;
+                const puEst = parseFloat(itemTicket.pu_estimado ?? itemTicket.pu) || 0;
+                montoPendiente = cantPendiente * puEst;
+              } else {
+                // Fallback si no hace match por descripción exacta: si el ticket está pagado, asumimos completo
+                if (ticketAsociado.status === 'Pagado') {
+                  montoReal = (p.pu_bs || p.pu_usd || 0) * (p.cantidad || 1);
+                  montoPendiente = 0;
+                }
+              }
+            } else if (ticketAsociado.status === 'Pagado') {
+              montoReal = (p.pu_bs || p.pu_usd || 0) * (p.cantidad || 1);
+              montoPendiente = 0;
+            }
+          }
         }
 
         return { montoReal, montoPendiente };
@@ -1135,6 +1291,26 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
 
       const estActual = getEstadoSolicitud(solicitud);
       setIsReadOnly(estActual === 'COMPLETADA' && !esRrHhOAdm);
+
+      const getIsCompletado = (p) => {
+        if (p.requisicion_id && p.requisiciones) {
+          return esRequisicionCompletada(p.requisiciones);
+        }
+        if (p.ticket_id || p.codigo_ticket?.startsWith('TP-')) {
+          const tk = ticketsInvolucrados.find(t => t.id === p.ticket_id || t.codigo_control === p.codigo_ticket);
+          if (tk) {
+            if (tk.status === 'Pagado') return true;
+            if (tk.items && tk.items.length > 0) {
+              const it = tk.items.find(item =>
+                (item.desc || item.descripcion || '').trim().toUpperCase() === (p.descripcion || '').trim().toUpperCase() &&
+                (Number(item.cantidad_pedida || item.cant) === Number(p.cantidad))
+              );
+              if (it && Number(it.cantidad_pendiente) === 0) return true;
+            }
+          }
+        }
+        return false;
+      };
 
       setForm({
         ...solicitud,
@@ -1147,7 +1323,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         bloque_operativo: solicitud.bloque_operativo || null,
         partidas: partidasRaw.filter(p => !p.clasificacion.includes('[*]') && p.clasificacion !== 'Gastos Imprevistos' && p.clasificacion !== 'Ticket de Pago' && p.clasificacion !== 'Solicitud de ticket').map(p => {
           const { montoReal, montoPendiente } = procesarEjecucion(p);
-          const isReqCompletada = p.requisiciones ? esRequisicionCompletada(p.requisiciones) : false;
+          const isReqCompletada = getIsCompletado(p);
           return {
             id: p.id,
             cc: p.centro_costo,
@@ -1176,7 +1352,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         imprevistos: partidasRaw.filter(p => p.clasificacion.includes('[*]') || p.clasificacion === 'Gastos Imprevistos' || p.clasificacion === 'Ticket de Pago' || p.clasificacion === 'Solicitud de ticket').length > 0
           ? partidasRaw.filter(p => p.clasificacion.includes('[*]') || p.clasificacion === 'Gastos Imprevistos' || p.clasificacion === 'Ticket de Pago' || p.clasificacion === 'Solicitud de ticket').map(p => {
             const { montoReal, montoPendiente } = procesarEjecucion(p);
-            const isReqCompletada = p.requisiciones ? esRequisicionCompletada(p.requisiciones) : false;
+            const isReqCompletada = getIsCompletado(p);
             return {
               id: p.id,
               cc: p.centro_costo,
@@ -1477,19 +1653,11 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
   // --- CÁLCULO DE TOTALES PARA PANEL DE INDICADORES ---
   const totalesVisibles = useMemo(() => {
     return historialFiltrado.reduce((acc, h) => {
-      const isPagado = h.total_pagado >= h.total && h.total > 0;
-      if (isPagado) {
-        acc.pagadoCount++;
-        acc.pagadoMonto += h.total;
-      } else {
-        acc.pendienteCount++;
-        acc.pendienteMonto += h.total;
-      }
-      acc.bs += parseFloat(h.total_bs || 0);
-      acc.usd += parseFloat(h.total_usd || 0);
-      acc.general += h.total;
+      acc.solicitado += (parseFloat(h.total_bs) || 0) + (parseFloat(h.total_usd) || 0);
+      acc.pagado += parseFloat(h.total_pagado || 0);
+      acc.pendiente += (parseFloat(h.pending_bs) || 0) + (parseFloat(h.pending_usd) || 0);
       return acc;
-    }, { bs: 0, usd: 0, general: 0, pagadoCount: 0, pagadoMonto: 0, pendienteCount: 0, pendienteMonto: 0 });
+    }, { solicitado: 0, pagado: 0, pendiente: 0 });
   }, [historialFiltrado]);
 
   // --- FUNCIÓN DE EXPORTACIÓN A EXCEL PREMIUM ---
@@ -1600,12 +1768,12 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         }
       });
 
-      const rowPrevUsd = acumuladoAnteriorUsd + (isPastWeek ? parseFloat(h.total_usd || 0) : 0);
-      const rowPrevBs = acumuladoAnteriorBs + (isPastWeek ? parseFloat(h.total_bs || 0) : 0);
+      const rowPrevUsd = acumuladoAnteriorUsd + (isPastWeek ? parseFloat(h.pending_usd || 0) : 0);
+      const rowPrevBs = acumuladoAnteriorBs + (isPastWeek ? parseFloat(h.pending_bs || 0) : 0);
       const rowPrevTotal = rowPrevUsd + rowPrevBs;
 
-      const rowActualUsd = isPastWeek ? 0 : parseFloat(h.total_usd || 0);
-      const rowActualBs = isPastWeek ? 0 : parseFloat(h.total_bs || 0);
+      const rowActualUsd = isPastWeek ? 0 : parseFloat(h.pending_usd || 0);
+      const rowActualBs = isPastWeek ? 0 : parseFloat(h.pending_bs || 0);
       const rowActualTotal = rowActualUsd + rowActualBs;
 
       const rowGrandTotal = rowPrevTotal + rowActualTotal;
@@ -1714,6 +1882,225 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
     const buffer = await wb.xlsx.writeBuffer();
     const { saveAs } = await import('file-saver');
     saveAs(new Blob([buffer]), `Solicitud_Fondos_Reporte_${new Date().toISOString().split('T')[0]}.xlsx`);
+  };
+
+  const generarReporteSaldosPendientes = async () => {
+    try {
+      setLoading(true);
+      const solicitudesIds = historialFiltrado.map(h => h.id_db);
+      if (solicitudesIds.length === 0) return toast.error("No hay solicitudes para reportar.");
+
+      // 1. Obtener Partidas
+      const { data: todasPartidas, error } = await supabase
+        .from('partidas_fondos')
+        .select('*, requisiciones(id, items, correlativo_req, status_compra)')
+        .in('solicitud_id', solicitudesIds)
+        .order('n_renglon', { ascending: true });
+
+      if (error) throw error;
+
+      // 2. Obtener Tickets directos involucrados para calcular ejecución
+      const ticketIds = (todasPartidas || []).map(p => p.ticket_id).filter(Boolean);
+      const ticketCodigos = (todasPartidas || []).map(p => p.codigo_ticket).filter(c => c && c.startsWith('TP-'));
+      let ticketsInvolucrados = [];
+      if (ticketIds.length > 0 || ticketCodigos.length > 0) {
+        try {
+          let query = supabase.from('tickets_directos').select('*');
+          if (ticketIds.length > 0 && ticketCodigos.length > 0) {
+            query = query.or(`id.in.(${ticketIds.join(',')}),codigo_control.in.(${ticketCodigos.map(c => `"${c}"`).join(',')})`);
+          } else if (ticketIds.length > 0) {
+            query = query.in('id', ticketIds);
+          } else {
+            query = query.in('codigo_control', ticketCodigos);
+          }
+          const { data: tData } = await query;
+          if (tData) ticketsInvolucrados = tData;
+        } catch (e) {
+          console.error("Error fetching tickets in report:", e);
+        }
+      }
+
+      // Helper para decidir si un renglón está pagado
+      const isRenglonPagado = (p) => {
+        if (p.status === 'ANULADO_POR_USUARIO') return true;
+        if (p.pago_realizado) return true;
+        
+        if (p.requisicion_id && p.requisiciones) {
+          return esRequisicionCompletada(p.requisiciones);
+        }
+        if (p.ticket_id || p.codigo_ticket?.startsWith('TP-')) {
+          const tk = ticketsInvolucrados.find(t => t.id === p.ticket_id || t.codigo_control === p.codigo_ticket);
+          if (tk) {
+            if (tk.status === 'Pagado') return true;
+            if (tk.items && tk.items.length > 0) {
+              const it = tk.items.find(item =>
+                (item.desc || item.descripcion || '').trim().toUpperCase() === (p.descripcion || '').trim().toUpperCase() &&
+                (Number(item.cantidad_pedida || item.cant) === Number(p.cantidad))
+              );
+              if (it && Number(it.cantidad_pendiente) === 0) return true;
+            }
+          }
+        }
+        return false;
+      };
+
+      const printWindow = window.open('', '_blank');
+      const emitDate = new Date();
+      const formatDate = emitDate.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' });
+      const formatTime = emitDate.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', hour12: true });
+
+      let html = `
+           <html>
+             <head>
+               <title>Reporte de Saldos Pendientes</title>
+               <style>
+                 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+                 body { font-family: 'Inter', sans-serif; padding: 20px; color: #000; background: white; font-size: 11px; }
+                 .page-break { page-break-after: always; margin-bottom: 50px; border-bottom: 2px dashed #eee; padding-bottom: 50px; }
+                 .header-table { width: 100%; margin-bottom: 10px; }
+                 .company-name { font-weight: bold; font-size: 13px; }
+                 .report-meta { text-align: right; font-size: 10px; }
+                 .report-title-container { text-align: center; margin: 15px 0; }
+                 .report-title { font-size: 14px; font-weight: bold; text-decoration: underline; color: #b91c1c; }
+                 .info-section { margin-bottom: 15px; display: flex; justify-content: space-between; border: 1px solid #eee; padding: 10px; border-radius: 5px; }
+                 table.data-table { width: 100%; border-collapse: collapse; margin-top: 5px; }
+                 table.data-table th { background-color: #fef2f2 !important; -webkit-print-color-adjust: exact; padding: 6px 4px; border-top: 1px solid #000; border-bottom: 1px solid #000; text-align: left; color: #991b1b; }
+                 table.data-table td { padding: 5px 4px; border-bottom: 1px solid #eee; }
+                 .text-right { text-align: right !important; }
+                 .text-center { text-align: center !important; }
+                 .totals-section { width: 100%; margin-top: 15px; display: flex; justify-content: flex-end; }
+                 .totals-box { width: 250px; border: 1px solid #000; padding: 8px; }
+                 .totals-row { display: flex; justify-content: space-between; margin-bottom: 3px; }
+                 .totals-row.bold { font-weight: bold; border-top: 1px solid #000; padding-top: 3px; }
+                 @media print { .page-break { border-bottom: none; padding-bottom: 0; } }
+               </style>
+             </head>
+             <body>
+         `;
+
+      let paginasAgregadas = 0;
+      historialFiltrado.forEach((sol, index) => {
+        // Excluimos renglones ya pagados
+        const partidasPendientes = todasPartidas.filter(p => p.solicitud_id === sol.id_db && !isRenglonPagado(p));
+
+        if (partidasPendientes.length === 0) return;
+
+        paginasAgregadas++;
+        
+        const totalSolUsd = partidasPendientes.reduce((acc, p) => acc + (parseFloat(p.pu_usd) || 0) * (p.cantidad || 1), 0);
+        const totalSolBs = partidasPendientes.reduce((acc, p) => acc + (parseFloat(p.pu_bs) || 0) * (p.cantidad || 1), 0);
+
+        html += `
+             <div class="page-break-container">
+               <table class="header-table">
+                 <tr>
+                   <td>
+                     <div class="company-name">TOTAL CLEAN C.A.</div>
+                     <div style="font-size: 9px;">J-3036586587-0</div>
+                   </td>
+                   <td class="report-meta">
+                     <div>Fecha : ${formatDate} ${formatTime}</div>
+                     <div>Solicitud ID: ${sol.codigo_control}</div>
+                   </td>
+                 </tr>
+               </table>
+
+               <div class="report-title-container">
+                   <div class="report-title">REPORTE DE SALDOS PENDIENTES: ${sol.codigo_control}</div>
+               </div>
+
+               <div class="info-section">
+                    <div>
+                      <b>Gerencia:</b> ${sol.gerencia_nombre}<br>
+                      <b>Responsable:</b> ${sol.responsable_nombre}<br>
+                      ${(() => {
+                        const respUpper = (sol.responsable_nombre || '').toUpperCase();
+                        const esHilda = respUpper.includes('HILDA') && respUpper.includes('COLINA');
+                        const esJohannel = respUpper.includes('JOHANNEL');
+                        return esHilda ? '<b>Contrato:</b> Mtto Mayor<br>' : esJohannel ? '<b>Contrato:</b> Excelencia Y Vacumm<br>' : '';
+                      })()}
+                      <b>Período Semanal:</b> ${extractPeriodoFromId(sol.codigo_control)}
+                    </div>
+                    <div class="text-right">
+                      <b>Fecha Operativa:</b> ${new Date(sol.fecha_operativa + 'T12:00:00').toLocaleDateString('es-ES')}<br>
+                      <b>Sede:</b> ${sol.sede || 'N/A'}
+                    </div>
+               </div>
+
+               <table class="data-table">
+                 <thead>
+                   <tr>
+                     <th style="width: 10%">C.COSTO</th>
+                     <th style="width: 12%">CLASIF.</th>
+                     <th style="width: 12%">CATEGORIA</th>
+                     <th style="width: 26%">DESCRIPCIÓN</th>
+                     <th style="width: 8%" class="text-center">CANT.</th>
+                     <th style="width: 11%" class="text-right">P.U. USD ($)</th>
+                     <th style="width: 11%" class="text-right">P.U. Bs ($)</th>
+                     <th style="width: 10%" class="text-right">PENDIENTE ($)</th>
+                   </tr>
+                 </thead>
+                 <tbody>
+                   ${partidasPendientes.map(p => {
+                     const unitBs = p.pu_bs || 0;
+                     const unitUsd = p.pu_usd || 0;
+                     const totalRenglon = (unitBs + unitUsd) * (p.cantidad || 1);
+                     return `
+                         <tr>
+                           <td style="font-size: 8px;">${p.centro_costo || ''}</td>
+                           <td style="font-size: 8px;">${p.clasificacion || ''}</td>
+                           <td style="font-size: 8px;">${p.categoria || ''}</td>
+                           <td style="font-size: 8.5px; line-height: 1.1;">
+                             <b>${p.descripcion || ''}</b><br>
+                             <span style="color: #555; font-size: 7.5px;">Benef: ${p.beneficiario || ''}</span>
+                           </td>
+                           <td class="text-center" style="font-size: 9px;">${p.cantidad || 1}</td>
+                           <td class="text-right" style="font-size: 9.5px; font-weight: 600;">
+                             ${unitUsd > 0 ? unitUsd.toLocaleString('de-DE', { minimumFractionDigits: 2 }) : '-'}
+                           </td>
+                           <td class="text-right" style="font-size: 9.5px; font-weight: 600;">
+                             ${unitBs > 0 ? unitBs.toLocaleString('de-DE', { minimumFractionDigits: 2 }) : '-'}
+                           </td>
+                           <td class="text-right" style="font-size: 9.5px; font-weight: 600; color: #b91c1c;">
+                             ${totalRenglon.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                           </td>
+                         </tr>
+                       `;
+                   }).join('')}
+                 </tbody>
+               </table>
+
+               <div class="totals-section">
+                 <div class="totals-box">
+                   <div class="totals-row"><span>Saldos Pendientes USD ($)</span> <span>$ ${totalSolUsd.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span></div>
+                   <div class="totals-row"><span>Saldos Pendientes Bs ($)</span> <span>$ ${totalSolBs.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span></div>
+                   <div class="totals-row bold" style="color: #b91c1c;"><span>TOTAL PENDIENTE ($)</span> <span>$ ${(totalSolBs + totalSolUsd).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span></div>
+                 </div>
+               </div>
+             </div>
+             <div class="page-break" style="margin: 30px 0;"></div>
+          `;
+      });
+
+      if (paginasAgregadas === 0) {
+        printWindow.close();
+        toast.info("No hay saldos pendientes para los filtros actuales.");
+        return;
+      }
+
+      html += `
+             <script>setTimeout(() => { window.print(); }, 1000);</script>
+           </body>
+         </html>
+         `;
+
+      printWindow.document.write(html);
+      printWindow.document.close();
+    } catch (err) {
+      toast.error("Error: " + err.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   // --- FUNCIÓN DE IMPRESIÓN LIMPIA ---
@@ -2662,14 +3049,17 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         gap: '20px',
         marginBottom: '32px'
       }}>
-        {/* KPI Card */}
+        {/* KPI Cards */}
         <div style={{
           display: 'grid',
-          gridTemplateColumns: 'minmax(220px, 350px)',
-          gap: '20px'
+          gridTemplateColumns: 'repeat(3, minmax(200px, 1fr))',
+          gap: '15px',
+          flex: 1
         }}>
           {[
-            { label: 'Gasto Total Acumulado', val: `$ ${totalesVisibles.general.toLocaleString('de-DE', { minimumFractionDigits: 2 })}`, icon: <DollarSign size={20} />, col: '#0ea5e9', bg: '#e0f2fe' },
+            { label: 'Total Solicitado', val: `$ ${totalesVisibles.solicitado.toLocaleString('de-DE', { minimumFractionDigits: 2 })}`, icon: <DollarSign size={20} />, col: '#0284c7', bg: '#e0f2fe' },
+            { label: 'Total Pagado (Gasto Acumulado)', val: `$ ${totalesVisibles.pagado.toLocaleString('de-DE', { minimumFractionDigits: 2 })}`, icon: <DollarSign size={20} />, col: '#16a34a', bg: '#dcfce7' },
+            { label: 'Saldo Pendiente', val: `$ ${totalesVisibles.pendiente.toLocaleString('de-DE', { minimumFractionDigits: 2 })}`, icon: <DollarSign size={20} />, col: '#ea580c', bg: '#ffedd5' }
           ].map((x, i) => (
             <div
               key={i}
@@ -2884,6 +3274,14 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
             style={{ padding: '12px 20px', backgroundColor: '#0f172a', color: 'white', border: 'none', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: '0 4px 6px rgba(15, 23, 42, 0.2)' }}
           >
             <Printer size={18} /> Reporte Detallado
+          </motion.button>
+          <motion.button
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            onClick={generarReporteSaldosPendientes}
+            style={{ padding: '12px 20px', backgroundColor: '#991b1b', color: 'white', border: 'none', borderRadius: '12px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: '0 4px 6px rgba(153, 27, 27, 0.2)' }}
+          >
+            <Printer size={18} /> Reporte de Saldos Pendientes
           </motion.button>
           <motion.button
             whileHover={{ scale: 1.05 }}
@@ -3767,7 +4165,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                               {i + 1}
                               {p.codigo_ref?.startsWith('TP-') && <span title={`Ticket: ${p.codigo_ref}`}>🎟️</span>}
                               {p.codigo_ref?.startsWith('RR-') && <span title={`Requisición: ${p.codigo_ref}`}>📝</span>}
-                              {p.pago_realizado && <span title="Pago Completado">✅</span>}
+                              {p.pago_realizado || (p.codigo_ref?.startsWith('TP-') && p.isReqCompletada) ? <span title="Pago Completado">✅</span> : null}
                             </div>
                             <div style={{ width: '130px', padding: '6px', fontSize: '10px', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                               {p.codigo_ref ? (
@@ -3787,7 +4185,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                                   }}
                                   onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = p.isReqCompletada ? '#059669' : '#0284c7'; e.currentTarget.style.transform = 'scale(1.05)'; }}
                                   onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = p.isReqCompletada ? '#10b981' : '#0ea5e9'; e.currentTarget.style.transform = 'scale(1)'; }}
-                                  title={p.isReqCompletada ? `Requisición COMPLETAMENTE COMPRADA: ${p.codigo_ref}` : `Haga clic para ver el detalle de ${p.codigo_ref}`}
+                                  title={p.isReqCompletada ? (p.codigo_ref?.startsWith('TP-') ? `Ticket de Pago COMPLETADO: ${p.codigo_ref}` : `Requisición COMPLETAMENTE COMPRADA: ${p.codigo_ref}`) : `Haga clic para ver el detalle de ${p.codigo_ref}`}
                                 >
                                   {p.codigo_ref} {p.isReqCompletada ? '✅' : ''}
                                 </div>
@@ -3926,7 +4324,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                             <div style={{ width: '45px', textAlign: 'center', fontWeight: 'bold', color: '#d97706', display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'center' }}>
                               {i + 1}
                               {imp.codigo_ref?.startsWith('TP-') && <span title={`Ticket: ${imp.codigo_ref}`}>🎟️</span>}
-                              {imp.pago_realizado && <span title="Pago Completado">✅</span>}
+                              {imp.pago_realizado || (imp.codigo_ref?.startsWith('TP-') && imp.isReqCompletada) ? <span title="Pago Completado">✅</span> : null}
                             </div>
                             <div style={{ width: '130px', padding: '6px', fontSize: '10px', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                               {imp.codigo_ref ? (
@@ -3946,7 +4344,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                                   }}
                                   onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = imp.isReqCompletada ? '#059669' : '#d97706'; e.currentTarget.style.transform = 'scale(1.05)'; }}
                                   onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = imp.isReqCompletada ? '#10b981' : '#f59e0b'; e.currentTarget.style.transform = 'scale(1)'; }}
-                                  title={imp.isReqCompletada ? `Requisición COMPLETAMENTE COMPRADA: ${imp.codigo_ref}` : `Haga clic para ver el detalle de ${imp.codigo_ref}`}
+                                  title={imp.isReqCompletada ? (imp.codigo_ref?.startsWith('TP-') ? `Ticket de Pago COMPLETADO: ${imp.codigo_ref}` : `Requisición COMPLETAMENTE COMPRADA: ${imp.codigo_ref}`) : `Haga clic para ver el detalle de ${imp.codigo_ref}`}
                                 >
                                   {imp.codigo_ref} {imp.isReqCompletada ? '✅' : ''}
                                 </div>

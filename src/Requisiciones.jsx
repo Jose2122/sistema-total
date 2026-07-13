@@ -679,7 +679,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
               beneficiario: p.ben || '',
               pu: Number(p.puUsd || p.puBs || 0),
               total: (Number(p.cant) || 1) * Number(p.puUsd || p.puBs || 0),
-              status: 'En Espera'
+              status: 'En Espera',
+              estado_item: 'pendiente'
             }));
             setRenglones(nuevosRenglones);
           }
@@ -749,7 +750,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       cant: 1,
       pu: 0,
       total: 0,
-      status: 'En Espera'
+      status: 'En Espera',
+      estado_item: 'pendiente'
     };
     const index = renglones.findIndex(r => r.id === id);
     const nuevosRenglones = [...renglones];
@@ -860,7 +862,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     setEditandoId(null);
     setFechaRequerida(new Date().toISOString().split('T')[0]);
     setPrioridad('');
-    setRenglones([{ id: Date.now(), clasificacion: '', categoria: '', cant: 1, uni: 'UNID', descripcion: '', beneficiario: '', pu: 0, total: 0, status: 'En Espera' }]);
+    setRenglones([{ id: Date.now(), clasificacion: '', categoria: '', cant: 1, uni: 'UNID', descripcion: '', beneficiario: '', pu: 0, total: 0, status: 'En Espera', estado_item: 'pendiente' }]);
     setModoEdicion(false);
     setHasChanges(false);
     setMostrarSoportes(false);

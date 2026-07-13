@@ -427,9 +427,10 @@
 }
 
 .badge-status.pagado {
-  background-color: #16a34a;
-  color: white;
-  box-shadow: 0 4px 10px rgba(22, 163, 74, 0.2);
+  background-color: #ecfdf5;
+  color: #065f46;
+  border: 1px solid #a7f3d0;
+  box-shadow: none;
 }
 
 .badge-status.rechazado {

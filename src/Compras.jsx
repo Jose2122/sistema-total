@@ -1906,7 +1906,12 @@ const Compras = () => {
         doc_numero: overrideValues?.docNumero || item.doc_numero_actual || '',
         doc_numero_actual: '', // LIMPIAR DESPUÉS DE GUARDAR
         proveedor_seleccionado_id: '', // LIMPIAR DESPUÉS DE GUARDAR
-        hasChanges: false
+        hasChanges: false,
+        estado_item: 'comprado',
+        proveedor: nuevaTransaccion.proveedor_nombre,
+        factura_num: nuevaTransaccion.doc_numero,
+        monto_real: (Number(cantProcesar) || 0) * (Number(item.compra_actual_pu) || Number(item.pu) || 0),
+        fecha_compra: nuevaTransaccion.fecha
       };
 
       // Actualizar en el estado local todos los renglones

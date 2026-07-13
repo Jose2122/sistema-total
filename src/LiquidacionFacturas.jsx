@@ -67,8 +67,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
     referencia: '',
     banco_id: '',
     moneda: '$ / $',
-    file: null,
-    fileLabel: ''
+    files: []
   });
 
   const fetchData = useCallback(async () => {
@@ -141,51 +140,75 @@ const LiquidacionFacturas = ({ currentUser }) => {
       const items = parsearItems(req.items);
       
       items.forEach(item => {
-        const compras = (item.historial_compras || []).filter(
+        // Un ítem está "comprado" si estado_item === 'comprado' o si tiene historial de compras y no está 'pagado'
+        const comprasValidas = (item.historial_compras || []).filter(
           h => h && h.tipo !== 'JUSTIFICACION' && h.tipo !== 'ANULACION' && h.tipo !== 'DIRECTRIZ'
         );
+        const tieneComprasHistorial = comprasValidas.length > 0;
+        const esComprado = item.estado_item === 'comprado' || (item.estado_item !== 'pagado' && tieneComprasHistorial);
 
-        compras.forEach(compra => {
-          const docNum = (compra.doc_numero || '').trim();
-          const provNombre = (compra.proveedor_nombre || 'Desconocido').trim();
-          
-          if (!docNum) return; // Must have an invoice number to be grouped
+        if (!esComprado) return;
 
-          const key = `${docNum.toUpperCase()}_${provNombre.toUpperCase()}`;
+        // Intentar obtener datos de la raíz, o del historial si es histórico
+        let docNum = (item.factura_num || '').trim();
+        let provNombre = (item.proveedor || '').trim();
+        let provId = item.proveedor_seleccionado_id || null;
+        let montoReal = Number(item.monto_real) || 0;
+        let fechaCompra = item.fecha_compra || null;
 
-          if (!grupos[key]) {
-            grupos[key] = {
-              key,
-              doc_numero: docNum,
-              proveedor_nombre: provNombre,
-              proveedor_id: compra.proveedor_id || null,
-              total_factura: 0,
-              fecha_compra: compra.fecha || req.fecha_emision,
-              items: [],
-              requisiciones_asociadas: new Set(),
-              abonos: []
-            };
+        if (!docNum || !provNombre) {
+          // Es un registro antiguo, extraemos del historial de compras
+          const ultimaCompra = comprasValidas[comprasValidas.length - 1];
+          if (ultimaCompra) {
+            docNum = (ultimaCompra.doc_numero || '').trim();
+            provNombre = (ultimaCompra.proveedor_nombre || 'Desconocido').trim();
+            provId = ultimaCompra.proveedor_id || null;
+            montoReal = (Number(ultimaCompra.cant) || 0) * (Number(ultimaCompra.pu) || 0);
+            fechaCompra = ultimaCompra.fecha;
           }
+        }
 
-          grupos[key].total_factura += (Number(compra.cant) || 0) * (Number(compra.pu) || 0);
-          grupos[key].requisiciones_asociadas.add(req.id);
+        if (!docNum) return; // Debe tener número de factura para ser agrupado
+
+        const key = `${docNum.toUpperCase()}_${provNombre.toUpperCase()}`;
+
+        if (!grupos[key]) {
+          grupos[key] = {
+            key,
+            doc_numero: docNum,
+            proveedor_nombre: provNombre,
+            proveedor_id: provId,
+            total_factura: 0,
+            fecha_compra: fechaCompra || req.fecha_emision,
+            items: [],
+            requisiciones_asociadas: new Set(),
+            abonos: []
+          };
+        }
+
+        grupos[key].total_factura += montoReal;
+        grupos[key].requisiciones_asociadas.add(req.id);
+        
+        // Evitar duplicar el mismo ítem en el array
+        const itemExistente = grupos[key].items.find(it => it.id === item.id && it.requisicion_id === req.id);
+        if (!itemExistente) {
           grupos[key].items.push({
             id: item.id,
             descripcion: item.descripcion || 'Sin descripción',
-            cant: compra.cant,
-            pu: compra.pu,
-            total: (Number(compra.cant) || 0) * (Number(compra.pu) || 0),
+            cant: item.cantidad_comprada || item.cant,
+            pu: item.pu,
+            total: montoReal,
             gerencia: req.gerencia || 'No especificado',
             correlativo_req: req.correlativo_req || 'N/A',
             requisicion_id: req.id,
-            fecha: compra.fecha
+            fecha: fechaCompra
           });
+        }
 
-          // Update latest date if needed
-          if (new Date(compra.fecha) > new Date(grupos[key].fecha_compra)) {
-            grupos[key].fecha_compra = compra.fecha;
-          }
-        });
+        // Update latest date if needed
+        if (fechaCompra && new Date(fechaCompra) > new Date(grupos[key].fecha_compra)) {
+          grupos[key].fecha_compra = fechaCompra;
+        }
       });
     });
 
@@ -261,8 +284,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
       referencia: '',
       banco_id: '',
       moneda: '$ / $',
-      file: null,
-      fileLabel: ''
+      files: []
     });
     setShowAbonoModal(true);
   };
@@ -281,36 +303,41 @@ const LiquidacionFacturas = ({ currentUser }) => {
       toast.error('Debe seleccionar un banco de origen.');
       return;
     }
-    if (!abonoForm.file) {
-      toast.error('Debe adjuntar el soporte de transferencia obligatoriamente.');
-      return;
-    }
-    if (!abonoForm.fileLabel.trim()) {
-      toast.error('Debe ingresar un nombre o etiqueta para el soporte de pago.');
+    if (!abonoForm.files || abonoForm.files.length === 0) {
+      toast.error('Debe adjuntar al menos un soporte de transferencia.');
       return;
     }
 
     setSubiendoAbono(true);
     try {
-      // 1. Upload transfer proof to storage
-      const file = abonoForm.file;
-      const fileExt = file.name.split('.').pop();
-      const storageFileName = `abono_${abonoForm.factura_num.replace(/\s+/g, '_')}_${Date.now()}.${fileExt}`;
-      
-      const { error: uploadError } = await supabase.storage
-        .from('facturas')
-        .upload(storageFileName, file);
+      // 1. Upload all transfer proofs to storage concurrently
+      const uploadPromises = abonoForm.files.map(async (fileObj) => {
+        const file = fileObj.file;
+        const fileExt = file.name.split('.').pop();
+        const storageFileName = `abono_${abonoForm.factura_num.replace(/\s+/g, '_')}_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.${fileExt}`;
+        
+        const { error: uploadError } = await supabase.storage
+          .from('facturas')
+          .upload(storageFileName, file);
 
-      if (uploadError) throw uploadError;
+        if (uploadError) throw uploadError;
 
-      const { data: { publicUrl } } = supabase.storage.from('facturas').getPublicUrl(storageFileName);
+        const { data: { publicUrl } } = supabase.storage.from('facturas').getPublicUrl(storageFileName);
+        return {
+          name: fileObj.label || file.name.split('.')[0],
+          url: publicUrl
+        };
+      });
+
+      const uploadedFiles = await Promise.all(uploadPromises);
 
       // 2. Build abono object
       const abonoId = `ab_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       const nuevoAbono = {
         abono_id: abonoId,
-        url: publicUrl,
-        name: abonoForm.fileLabel.trim(),
+        url: uploadedFiles[0]?.url || null, // fallback for compatibility
+        urls: uploadedFiles, // array of all uploaded files
+        name: uploadedFiles.map(f => f.name).join(', '),
         tipo: 'abono',
         monto: montoNum,
         fecha: new Date().toISOString(),
@@ -335,19 +362,61 @@ const LiquidacionFacturas = ({ currentUser }) => {
 
       // 4. Update each requisition concurrently
       const promises = reqIds.map(async (reqId) => {
-        // Fetch current facturas_url to avoid overriding concurrent changes
+        // Fetch current facturas_url and items to avoid overriding concurrent changes
         const { data } = await supabase
           .from('requisiciones')
-          .select('facturas_url')
+          .select('facturas_url, items')
           .eq('id', reqId)
           .single();
 
         const currentUrls = parsearFacturaUrls(data?.facturas_url || []);
         const updatedUrls = [...currentUrls, nuevoAbono];
 
+        // Parsear items y marcar a 'pagado' si la factura queda totalmente liquidada
+        const currentItems = parsearItems(data?.items || []);
+        let huboCambios = false;
+
+        const updatedItems = currentItems.map(item => {
+          if (item.estado_item === 'pagado') return item;
+
+          let itemFactura = (item.factura_num || '').trim().toUpperCase();
+          let itemProveedor = (item.proveedor || '').trim().toUpperCase();
+
+          if (!itemFactura || !itemProveedor) {
+            const comprasValidas = (item.historial_compras || []).filter(
+              h => h && h.tipo !== 'JUSTIFICACION' && h.tipo !== 'ANULACION' && h.tipo !== 'DIRECTRIZ'
+            );
+            const ultimaCompra = comprasValidas[comprasValidas.length - 1];
+            if (ultimaCompra) {
+              itemFactura = (ultimaCompra.doc_numero || '').trim().toUpperCase();
+              itemProveedor = (ultimaCompra.proveedor_nombre || '').trim().toUpperCase();
+            }
+          }
+
+          if (
+            itemFactura === abonoForm.factura_num.trim().toUpperCase() &&
+            itemProveedor === abonoForm.proveedor_nombre.trim().toUpperCase()
+          ) {
+            const totalFactura = targetInvoice.total_factura;
+            const totalAbonadoPrevio = targetInvoice.total_abonado;
+            const nuevoTotalAbonado = totalAbonadoPrevio + montoNum;
+
+            if (nuevoTotalAbonado >= totalFactura - 0.01) {
+              huboCambios = true;
+              return { ...item, estado_item: 'pagado' };
+            }
+          }
+          return item;
+        });
+
+        const updatePayload = { facturas_url: updatedUrls };
+        if (huboCambios) {
+          updatePayload.items = updatedItems;
+        }
+
         const { error: updateError } = await supabase
           .from('requisiciones')
-          .update({ facturas_url: updatedUrls })
+          .update(updatePayload)
           .eq('id', reqId);
 
         if (updateError) throw updateError;
@@ -404,12 +473,43 @@ const LiquidacionFacturas = ({ currentUser }) => {
       });
 
       const promises = reqsWithAbono.map(async (req) => {
-        const docs = parsearFacturaUrls(req.facturas_url);
+        const { data } = await supabase
+          .from('requisiciones')
+          .select('facturas_url, items')
+          .eq('id', req.id)
+          .single();
+
+        const docs = parsearFacturaUrls(data?.facturas_url || []);
         const filteredDocs = docs.filter(d => d.abono_id !== abonoId);
+
+        const abonoAEliminar = docs.find(d => d.abono_id === abonoId);
+        const docNum = abonoAEliminar?.factura_num;
+        const provNombre = abonoAEliminar?.proveedor_nombre;
+
+        const currentItems = parsearItems(data?.items || []);
+        let huboCambios = false;
+
+        const updatedItems = currentItems.map(item => {
+          if (
+            item.estado_item === 'pagado' &&
+            docNum && provNombre &&
+            (item.factura_num || '').trim().toUpperCase() === docNum.trim().toUpperCase() &&
+            (item.proveedor || '').trim().toUpperCase() === provNombre.trim().toUpperCase()
+          ) {
+            huboCambios = true;
+            return { ...item, estado_item: 'comprado' };
+          }
+          return item;
+        });
+
+        const updatePayload = { facturas_url: filteredDocs };
+        if (huboCambios) {
+          updatePayload.items = updatedItems;
+        }
 
         const { error } = await supabase
           .from('requisiciones')
-          .update({ facturas_url: filteredDocs })
+          .update(updatePayload)
           .eq('id', req.id);
 
         if (error) throw error;
@@ -610,7 +710,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
         <div className="liquidacion-modal-overlay">
           <div className="liquidacion-modal-card">
             <div className="liquidacion-modal-header">
-              <h3>Factura: {invoiceSeleccionada.doc_numero}</h3>
+              <h3>Factura: {invoiceSeleccionada.doc_numero} — {invoiceSeleccionada.proveedor_nombre}</h3>
               <button className="liquidacion-modal-close" onClick={() => setInvoiceSeleccionada(null)}>
                 <X size={18} />
               </button>
@@ -714,7 +814,35 @@ const LiquidacionFacturas = ({ currentUser }) => {
                             <span>{ab.fecha ? new Date(ab.fecha).toLocaleDateString() : 'N/A'}</span>
                           </div>
                           
-                          {ab.url && (
+                          {ab.urls && ab.urls.length > 0 ? (
+                            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                              {ab.urls.map((u, uIdx) => (
+                                <a
+                                  key={uIdx}
+                                  href={u.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '4px',
+                                    textDecoration: 'none',
+                                    color: '#2563eb',
+                                    backgroundColor: '#eff6ff',
+                                    padding: '4px 8px',
+                                    borderRadius: '6px',
+                                    fontSize: '10px',
+                                    fontWeight: '700',
+                                    border: '1px solid #bfdbfe'
+                                  }}
+                                  title={u.name}
+                                >
+                                  <FileText size={11} />
+                                  {u.name.length > 15 ? `${u.name.slice(0, 12)}...` : u.name}
+                                </a>
+                              ))}
+                            </div>
+                          ) : ab.url ? (
                             <a
                               href={ab.url}
                               target="_blank"
@@ -736,7 +864,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
                               <FileText size={12} />
                               Comprobante
                             </a>
-                          )}
+                          ) : null}
 
                           {(currentUser?.esAdminReal || currentUser?.esSuperAdmin) && (
                             <button
@@ -845,49 +973,95 @@ const LiquidacionFacturas = ({ currentUser }) => {
                     >
                       <option value="$ / $">$ / $ (Dólares)</option>
                       <option value="$ / BS">$ / BS (Bolívares)</option>
-                    </select>
+                      </select>
+                    </div>
                   </div>
-                </div>
 
-                <div className="liquidacion-form-group">
-                  <label className="liquidacion-form-label">Nombre del Documento Soporte *</label>
-                  <input
-                    type="text"
-                    className="liquidacion-form-input"
-                    placeholder="Ej: Transferencia Mercantil..."
-                    value={abonoForm.fileLabel}
-                    onChange={(e) => setAbonoForm({ ...abonoForm, fileLabel: e.target.value })}
-                  />
-                </div>
-
-                <div className="liquidacion-form-group">
-                  <label className="liquidacion-form-label">Soporte de Transferencia (Imagen/PDF) *</label>
-                  <label className={`liquidacion-file-dropzone ${abonoForm.file ? 'has-file' : ''}`}>
-                    <Upload size={16} />
-                    <span>
-                      {abonoForm.file ? abonoForm.file.name : 'Subir Imagen o PDF del Pago'}
-                    </span>
+                  <div className="liquidacion-form-group">
+                    <label className="liquidacion-form-label">Soportes de Transferencia (Puedes seleccionar varios) *</label>
+                  <label className="liquidacion-file-dropzone" style={{ cursor: 'pointer', border: '2px dashed #cbd5e1', padding: '15px', borderRadius: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px', backgroundColor: '#f8fafc' }}>
+                    <Upload size={20} color="#64748b" />
+                    <span style={{ fontSize: '12px', fontWeight: '700', color: '#475569' }}>Subir uno o más comprobantes</span>
+                    <span style={{ fontSize: '10px', color: '#94a3b8' }}>Soporta Imagen o PDF de hasta 5MB c/u</span>
                     <input
                       type="file"
+                      multiple
                       accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation"
                       style={{ display: 'none' }}
                       onChange={(e) => {
-                        if (e.target.files && e.target.files[0]) {
-                          const fileObj = e.target.files[0];
-                          if (fileObj.size > 5 * 1024 * 1024) {
-                            toast.error('El archivo supera el límite de 5MB.');
-                            return;
+                        if (e.target.files && e.target.files.length > 0) {
+                          const filesArray = Array.from(e.target.files);
+                          const validFiles = [];
+                          for (const fileObj of filesArray) {
+                            if (fileObj.size > 5 * 1024 * 1024) {
+                              toast.error(`El archivo "${fileObj.name}" supera los 5MB.`);
+                            } else {
+                              validFiles.push({
+                                file: fileObj,
+                                label: fileObj.name.split('.')[0]
+                              });
+                            }
                           }
-                          setAbonoForm({
-                            ...abonoForm,
-                            file: fileObj,
-                            fileLabel: abonoForm.fileLabel || fileObj.name.split('.')[0]
-                          });
+                          setAbonoForm(prev => ({
+                            ...prev,
+                            files: [...prev.files, ...validFiles]
+                          }));
                         }
                       }}
                     />
                   </label>
                 </div>
+
+                {abonoForm.files.length > 0 && (
+                  <div className="liquidacion-form-group">
+                    <label className="liquidacion-form-label" style={{ fontSize: '11px', textTransform: 'uppercase', color: '#64748b' }}>Archivos Seleccionados ({abonoForm.files.length})</label>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '180px', overflowY: 'auto', padding: '4px', border: '1px solid #e2e8f0', borderRadius: '10px', backgroundColor: '#ffffff' }}>
+                      {abonoForm.files.map((fObj, idx) => (
+                        <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '6px 10px', backgroundColor: '#f8fafc', borderRadius: '8px', border: '1px solid #f1f5f9' }}>
+                          <span style={{ fontSize: '12px', color: '#1e293b', flex: '1', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={fObj.file.name}>
+                            📎 {fObj.file.name}
+                          </span>
+                          <input
+                            type="text"
+                            placeholder="Etiqueta / Nombre..."
+                            value={fObj.label}
+                            onChange={(e) => {
+                              const updated = [...abonoForm.files];
+                              updated[idx].label = e.target.value;
+                              setAbonoForm(prev => ({ ...prev, files: updated }));
+                            }}
+                            style={{
+                              fontSize: '11px',
+                              padding: '4px 8px',
+                              border: '1px solid #cbd5e1',
+                              borderRadius: '6px',
+                              width: '180px',
+                              fontWeight: '600'
+                            }}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const filtered = abonoForm.files.filter((_, i) => i !== idx);
+                              setAbonoForm(prev => ({ ...prev, files: filtered }));
+                            }}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: '#ef4444',
+                              cursor: 'pointer',
+                              fontWeight: 'bold',
+                              fontSize: '12px',
+                              padding: '4px'
+                            }}
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 

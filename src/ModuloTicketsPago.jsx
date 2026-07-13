@@ -160,8 +160,7 @@ const FormularioPagoToast = ({
   const [usarSoporteExistente, setUsarSoporteExistente] = useState(false);
   const [docNum, setDocNum] = useState(item.doc_numero_actual || '');
   const [bancoId, setBancoId] = useState('');
-  const [file, setFile] = useState(null);
-  const [fileName, setFileName] = useState('');
+  const [files, setFiles] = useState([]);
   const [categoriaProveedor, setCategoriaProveedor] = useState('Todos');
   const [proveedorId, setProveedorId] = useState('');
   const [nroReferencia, setNroReferencia] = useState('');
@@ -218,12 +217,8 @@ const FormularioPagoToast = ({
       toast.error('El número de documento es obligatorio.');
       return;
     }
-    if (!sinFactura && !usarSoporteExistente && !file) {
-      toast.error('Debe adjuntar el documento de la factura para poder marcar como pagado.');
-      return;
-    }
-    if (file && (!fileName || !fileName.trim())) {
-      toast.error('Debe ingresar un nombre o etiqueta para el soporte de pago.');
+    if (!sinFactura && !usarSoporteExistente && files.length === 0) {
+      toast.error('Debe adjuntar al menos un documento soporte para poder registrar el abono.');
       return;
     }
     const finalCant = modificarMonto ? Number(cantidadModificada) : defaultCant;
@@ -243,8 +238,7 @@ const FormularioPagoToast = ({
       pu: finalPu,
       docNum: docNum.trim(),
       bancoPagoId: bancoId || null,
-      file: (sinFactura || usarSoporteExistente) ? null : (file || null),
-      fileName: (sinFactura || usarSoporteExistente) ? 'N/A' : (file ? fileName.trim() : 'N/A'),
+      files: (sinFactura || usarSoporteExistente) ? [] : files,
       proveedorId: proveedorId || null,
       efectivo: false,
       nroReferencia: nroReferencia.trim(),
@@ -335,32 +329,103 @@ const FormularioPagoToast = ({
             <input type="text" className="toast-pago-input" value={docNum} onChange={(e) => setDocNum(e.target.value)} disabled={sinFactura} placeholder={sinFactura ? 'N/A' : 'Factura...'} />
           </div>
         </div>
-        <div className="toast-pago-grid-2">
-          <div>
-            <label className="toast-pago-label">Soporte {!sinFactura && !usarSoporteExistente && <span className="toast-pago-label-req">*</span>}</label>
-            <label className={`toast-pago-upload-zone ${(sinFactura || usarSoporteExistente) ? 'disabled' : ''} ${file ? 'has-file' : ''}`} style={(sinFactura || usarSoporteExistente) ? { cursor: 'not-allowed', backgroundColor: '#e2e8f0', borderColor: '#cbd5e1' } : {}}>
-              <Upload size={14} />
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {file ? `${file.name.slice(0, 18)}${file.name.length > 18 ? '...' : ''}` : 'Subir Imagen/PDF'}
-              </span>
-              <input type="file" accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv" disabled={sinFactura || usarSoporteExistente} onChange={(e) => {
-                if (e.target.files && e.target.files[0]) {
-                  const selectedFile = e.target.files[0];
-                  if (selectedFile.size > 5 * 1024 * 1024) {
-                    toast.error("El archivo supera el límite de 5MB.");
-                    e.target.value = '';
-                    return;
+        <div style={{ marginTop: '10px' }}>
+          <label className="toast-pago-label">
+            Soportes del Pago {!sinFactura && !usarSoporteExistente && <span className="toast-pago-label-req">*</span>}
+          </label>
+          <label
+            className={`toast-pago-upload-zone ${(sinFactura || usarSoporteExistente) ? 'disabled' : ''}`}
+            style={{
+              cursor: (sinFactura || usarSoporteExistente) ? 'not-allowed' : 'pointer',
+              backgroundColor: (sinFactura || usarSoporteExistente) ? '#e2e8f0' : '#f8fafc',
+              border: '2px dashed #cbd5e1',
+              padding: '12px',
+              borderRadius: '10px',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '4px',
+              height: 'auto',
+              minHeight: '60px'
+            }}
+          >
+            <Upload size={16} color="#64748b" />
+            <span style={{ fontSize: '11px', fontWeight: 'bold', color: '#475569' }}>
+              {(sinFactura || usarSoporteExistente) ? 'No aplica subir archivos' : 'Seleccionar uno o más archivos'}
+            </span>
+            <input
+              type="file"
+              multiple
+              accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv"
+              disabled={sinFactura || usarSoporteExistente}
+              onChange={(e) => {
+                if (e.target.files && e.target.files.length > 0) {
+                  const filesArray = Array.from(e.target.files);
+                  const validFiles = [];
+                  for (const fileObj of filesArray) {
+                    if (fileObj.size > 5 * 1024 * 1024) {
+                      toast.error(`El archivo "${fileObj.name}" supera los 5MB.`);
+                    } else {
+                      validFiles.push({
+                        file: fileObj,
+                        label: fileObj.name.split('.')[0]
+                      });
+                    }
                   }
-                  setFile(selectedFile);
-                  if (!fileName || fileName === 'N/A') setFileName(selectedFile.name.split('.')[0]);
+                  setFiles(prev => [...prev, ...validFiles]);
                 }
-              }} style={{ display: 'none' }} />
-            </label>
-          </div>
-          <div>
-            <label className="toast-pago-label">Nombre Documento {!sinFactura && !usarSoporteExistente && file && <span className="toast-pago-label-req">*</span>}</label>
-            <input type="text" className="toast-pago-input" value={fileName} onChange={(e) => setFileName(e.target.value)} disabled={sinFactura || usarSoporteExistente} placeholder={(sinFactura || usarSoporteExistente) ? 'N/A' : 'Ej: Factura Mayo...'} />
-          </div>
+              }}
+              style={{ display: 'none' }}
+            />
+          </label>
+
+          {files.length > 0 && !sinFactura && !usarSoporteExistente && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '8px', maxHeight: '120px', overflowY: 'auto', padding: '4px', border: '1px solid #e2e8f0', borderRadius: '8px', backgroundColor: '#ffffff' }}>
+              {files.map((fObj, idx) => (
+                <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 8px', backgroundColor: '#f8fafc', borderRadius: '6px' }}>
+                  <span style={{ fontSize: '11px', color: '#1e293b', flex: '1', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    📎 {fObj.file.name}
+                  </span>
+                  <input
+                    type="text"
+                    placeholder="Nombre del documento..."
+                    value={fObj.label}
+                    onChange={(e) => {
+                      const updated = [...files];
+                      updated[idx].label = e.target.value;
+                      setFiles(updated);
+                    }}
+                    style={{
+                      fontSize: '10px',
+                      padding: '2px 6px',
+                      border: '1px solid #cbd5e1',
+                      borderRadius: '4px',
+                      width: '140px'
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const filtered = files.filter((_, i) => i !== idx);
+                      setFiles(filtered);
+                    }}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: '#ef4444',
+                      cursor: 'pointer',
+                      fontSize: '11px',
+                      fontWeight: 'bold',
+                      padding: '2px'
+                    }}
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
@@ -935,28 +1000,32 @@ const ModuloTicketsPago = () => {
         return;
       }
 
-      // SUBIR FACTURA A STORAGE BUCKET tickets-evidencia
-      let uploadedFileObj = null;
-      if (overrideValues?.file) {
-        const file = overrideValues.file;
-        const customName = overrideValues.fileName || file.name.split('.')[0] || 'Factura';
-        const fileName = `recibos/${Date.now()}_${sanitizeFileName(file.name)}`;
+      // SUBIR FACTURAS A STORAGE BUCKET tickets-evidencia CONCURRENTEMENTE
+      let uploadedFiles = [];
+      if (overrideValues?.files && overrideValues.files.length > 0) {
+        const uploadPromises = overrideValues.files.map(async (fileObj) => {
+          const file = fileObj.file;
+          const customName = fileObj.label || file.name.split('.')[0] || 'Factura';
+          const fileName = `recibos/${Date.now()}_${sanitizeFileName(file.name)}`;
 
-        const { error: uploadError } = await supabase.storage
-          .from('tickets-evidencia')
-          .upload(fileName, file);
+          const { error: uploadError } = await supabase.storage
+            .from('tickets-evidencia')
+            .upload(fileName, file);
 
-        if (uploadError) {
-          console.error("Error al subir archivo:", uploadError);
-          toast.error(`Error al subir la factura: ${uploadError.message}`);
-          throw uploadError;
-        }
+          if (uploadError) {
+            console.error("Error al subir archivo:", uploadError);
+            toast.error(`Error al subir la factura ${file.name}: ${uploadError.message}`);
+            throw uploadError;
+          }
 
-        const { data: publicUrlData } = supabase.storage.from('tickets-evidencia').getPublicUrl(fileName);
-        uploadedFileObj = {
-          url: publicUrlData.publicUrl,
-          name: customName
-        };
+          const { data: publicUrlData } = supabase.storage.from('tickets-evidencia').getPublicUrl(fileName);
+          return {
+            url: publicUrlData.publicUrl,
+            name: customName
+          };
+        });
+
+        uploadedFiles = await Promise.all(uploadPromises);
       }
 
       const proveedorSelec = proveedores.find(p => String(p.id) === String(selectedProveedorId));
@@ -979,7 +1048,8 @@ const ModuloTicketsPago = () => {
         doc_numero: docNumProcesar,
         efectivo: esEfectivo,
         nro_referencia: nroReferenciaProcesar,
-        soporte: uploadedFileObj
+        soporte: uploadedFiles[0] || null, // fallback compatibilidad
+        soportes: uploadedFiles // array completo
       };
 
       const nuevaCantComprada = (item.cantidad_comprada || 0) + cantProcesar;
@@ -1008,10 +1078,10 @@ const ModuloTicketsPago = () => {
         return acc + ejecutadoItem + estimadoPendiente;
       }, 0);
 
-      // Obtener facturas existentes y añadir la nueva
+      // Obtener facturas existentes y añadir las nuevas
       let currentUrls = parsearFacturaUrls(ticketSeleccionado.factura_url);
-      if (uploadedFileObj) {
-        currentUrls.push(uploadedFileObj);
+      if (uploadedFiles && uploadedFiles.length > 0) {
+        currentUrls = [...currentUrls, ...uploadedFiles];
       }
       const serializedUrls = currentUrls.map(item => JSON.stringify(item));
 
@@ -2086,7 +2156,17 @@ const ModuloTicketsPago = () => {
     (ticketSeleccionado.items || []).forEach((r, idx) => {
       const filaSoportes = [];
       (r.historial_compras || []).forEach(h => {
-        if (h.soporte && h.soporte.url) {
+        if (h.soportes && h.soportes.length > 0) {
+          h.soportes.forEach(sop => {
+            if (sop && sop.url) {
+              const match = allFiles.find(f => f.url === sop.url);
+              if (match) {
+                filaSoportes.push(match);
+                processedUrls.add(match.url);
+              }
+            }
+          });
+        } else if (h.soporte && h.soporte.url) {
           const match = allFiles.find(f => f.url === h.soporte.url);
           if (match) {
             filaSoportes.push(match);
@@ -2106,6 +2186,110 @@ const ModuloTicketsPago = () => {
     result.generales = allFiles.filter(f => !processedUrls.has(f.url));
     return result;
   }, [ticketSeleccionado]);
+
+  const exportPendingToPDF = () => {
+    const pendientes = filtradosTickets.filter(t => {
+      const statusUpper = (t.status || '').toUpperCase().trim();
+      return statusUpper !== 'PAGADO' && statusUpper !== 'RECHAZADO' && statusUpper !== 'ANULADO' && statusUpper !== 'COMPLETADO';
+    });
+
+    if (pendientes.length === 0) {
+      toast.error("No hay tickets pendientes por pagar en la selección actual.");
+      return;
+    }
+
+    try {
+      const pdf = new jsPDF('l', 'mm', 'a4'); // Apaisado (Landscape)
+      const fontPrimary = 'helvetica';
+
+      // --- CABECERA ---
+      pdf.setFont(fontPrimary, 'bold');
+      pdf.setFontSize(14);
+      pdf.setTextColor(15, 23, 42); // Slate-900
+      pdf.text("TOTAL CLEAN C.A.", 15, 15);
+
+      pdf.setFont(fontPrimary, 'normal');
+      pdf.setFontSize(9);
+      pdf.setTextColor(71, 85, 105); // Slate-600
+      pdf.text("J-303658587-0", 15, 20);
+      pdf.text(`Fecha Reporte: ${format(new Date(), 'dd/MM/yyyy hh:mm a')}`, 282, 15, { align: 'right' });
+      pdf.text(`Total Pendientes: ${pendientes.length}`, 282, 20, { align: 'right' });
+
+      // --- TÍTULO ---
+      pdf.setFont(fontPrimary, 'bold');
+      pdf.setFontSize(12);
+      pdf.setTextColor(15, 23, 42);
+      pdf.text("REPORTE GLOBAL DE TICKETS DE PAGO PENDIENTES", 15, 30);
+
+      // --- TABLA ---
+      const tableHeaders = [
+        ['ID', 'FECHA EMISIÓN', 'BENEFICIARIO', 'DEPARTAMENTO', 'CONCEPTO / JUSTIFICACIÓN', 'CENTRO COSTO', 'STATUS', 'TOTAL ($)']
+      ];
+
+      const tableData = pendientes.map(t => {
+        const justif = t.justificacion || (t.items || []).map(it => it.desc || it.descripcion).filter(Boolean).join(', ') || 'Sin justificación';
+        const cc = t.centro_costo || (t.items || []).map(it => it.cc || it.centro_costo).filter(Boolean).join(', ') || '---';
+        
+        let fecha = 'N/A';
+        try {
+          if (t.fecha_emision) {
+            const d = parseSafeDate(t.fecha_emision);
+            if (d) fecha = format(d, 'dd/MM/yyyy');
+          }
+        } catch (e) {
+          console.error(e);
+        }
+
+        const total = Number(t.total_usd) || 0;
+        
+        return [
+          t.codigo_control || `TX-${String(t.id).padStart(4, '0')}`,
+          fecha,
+          formatName(t.gerente_nombre) || 'Varios',
+          t.departamento || 'No especificado',
+          justif.length > 50 ? `${justif.substring(0, 48)}...` : justif,
+          cc,
+          t.status || 'Emitido',
+          `$ ${total.toLocaleString('de-DE', { minimumFractionDigits: 2 })}`
+        ];
+      });
+
+      autoTable(pdf, {
+        startY: 35,
+        head: tableHeaders,
+        body: tableData,
+        theme: 'striped',
+        headStyles: {
+          fillColor: [30, 41, 59], // Slate-800
+          textColor: [255, 255, 255],
+          fontStyle: 'bold',
+          fontSize: 9,
+          halign: 'center'
+        },
+        bodyStyles: {
+          fontSize: 8.5,
+          valign: 'middle'
+        },
+        columnStyles: {
+          0: { cellWidth: 25, halign: 'center' },
+          1: { cellWidth: 25, halign: 'center' },
+          2: { cellWidth: 35 },
+          3: { cellWidth: 35 },
+          4: { cellWidth: 85 },
+          5: { cellWidth: 25, halign: 'center' },
+          6: { cellWidth: 25, halign: 'center' },
+          7: { cellWidth: 25, halign: 'right' }
+        },
+        margin: { left: 15, right: 15 }
+      });
+
+      pdf.save(`Reporte_Tickets_Pendientes_${new Date().toISOString().split('T')[0]}.pdf`);
+      toast.success("Reporte PDF de Pendientes generado.");
+    } catch (err) {
+      console.error(err);
+      toast.error("Error al generar el PDF de Pendientes.");
+    }
+  };
 
   // ==========================================
   // EXPORTACIONES A EXCEL
@@ -2587,6 +2771,31 @@ const ModuloTicketsPago = () => {
           </div>
 
           <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+            <motion.button
+              onClick={exportPendingToPDF}
+              whileHover={{ scale: 1.04, boxShadow: '0 6px 20px rgba(220, 38, 38, 0.25)' }}
+              whileTap={{ scale: 0.96 }}
+              transition={{ type: 'spring', stiffness: 400, damping: 15 }}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '10px 18px',
+                background: 'linear-gradient(135deg, #ef4444, #dc2626)',
+                color: 'white',
+                border: 'none',
+                borderRadius: '10px',
+                cursor: 'pointer',
+                fontSize: '12px',
+                fontWeight: '700',
+                fontFamily: 'Inter, sans-serif',
+                boxShadow: '0 4px 12px rgba(220, 38, 38, 0.15)'
+              }}
+            >
+              <FileText size={15} />
+              PDF Pendientes
+            </motion.button>
+
             <motion.button
               onClick={exportPendingToExcel}
               whileHover={{ scale: 1.04, boxShadow: '0 6px 20px rgba(245, 158, 11, 0.25)' }}
@@ -3604,7 +3813,7 @@ const ModuloTicketsPago = () => {
                         {/* --- HISTORIAL EXPANDIBLES --- */}
                         {(expandirHistorial[r.id] || (modoEdicion && (esPrivilegiado || ticketSeleccionado?.usuario_id === currentUser?.id))) && (
                           <tr key={`expand-${r.id}`} style={{ backgroundColor: '#f8fafc' }}>
-                            <td colSpan="10" style={{ padding: 0 }}>
+                            <td colSpan="11" style={{ padding: 0 }}>
                               <motion.div
                                 initial={{ opacity: 0, height: 0 }}
                                 animate={{ opacity: 1, height: 'auto' }}
@@ -3622,6 +3831,7 @@ const ModuloTicketsPago = () => {
                                       <th style={{ padding: '10px 8px' }}>BANCO / REF. BANCARIA</th>
                                       <th style={{ padding: '10px 8px' }}>MONEDA</th>
                                       <th style={{ padding: '10px 8px', textAlign: 'center' }}>SOPORTE</th>
+                                      <th style={{ padding: '10px 8px', textAlign: 'left' }}>PAGADO POR</th>
                                       <th style={{ padding: '10px 8px', textAlign: 'right' }}>TOTAL</th>
                                       <th style={{ padding: '10px 8px', textAlign: 'center' }}>ACCIONES</th>
                                     </tr>
@@ -3758,6 +3968,8 @@ const ModuloTicketsPago = () => {
                                                 <span style={{ color: '#cbd5e1', fontStyle: 'italic' }}>Sin archivo</span>
                                               )}
                                             </td>
+                                            {/* PAGADO POR (EDITANDO VACIO) */}
+                                            <td style={{ padding: '8px' }}></td>
                                             {/* 7. TOTAL */}
                                             <td style={{ padding: '8px', textAlign: 'right', fontWeight: 'bold', fontSize: '0.82rem', color: '#0f172a' }}>
                                               $ {(txEditandoData.cant * txEditandoData.pu).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
@@ -3828,7 +4040,24 @@ const ModuloTicketsPago = () => {
                                           </td>
                                           {/* SOPORTE */}
                                           <td style={{ padding: '10px 8px', textAlign: 'center' }}>
-                                            {h.soporte ? (
+                                            {h.soportes && h.soportes.length > 0 ? (
+                                              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'center' }}>
+                                                {h.soportes.map((sop, sopIdx) => (
+                                                  <a
+                                                    key={sopIdx}
+                                                    href={sop.url}
+                                                    onClick={(e) => {
+                                                      e.preventDefault();
+                                                      setSoportePreviewUrl(sop.url);
+                                                    }}
+                                                    style={{ color: '#0ea5e9', display: 'inline-flex', alignItems: 'center', gap: '2px', textDecoration: 'none', fontWeight: 'bold', cursor: 'pointer', fontSize: '11px' }}
+                                                    title={sop.name}
+                                                  >
+                                                    <FileText size={13} /> {sop.name.length > 10 ? `${sop.name.slice(0, 8)}...` : sop.name}
+                                                  </a>
+                                                ))}
+                                              </div>
+                                            ) : h.soporte ? (
                                               <a
                                                 href={h.soporte.url}
                                                 onClick={(e) => {
@@ -3843,6 +4072,10 @@ const ModuloTicketsPago = () => {
                                             ) : (
                                               <span style={{ color: '#cbd5e1', fontStyle: 'italic' }}>—</span>
                                             )}
+                                          </td>
+                                          {/* PAGADO POR */}
+                                          <td style={{ padding: '10px 8px', color: '#64748b', fontSize: '0.75rem', fontWeight: '500' }}>
+                                            {h.usuario_nombre || 'No registrado'}
                                           </td>
                                           {/* 7. TOTAL */}
                                           <td style={{ textAlign: 'right', padding: '10px 8px', fontWeight: '800', color: '#0f172a' }}>$ {(h.cant * h.pu).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
