@@ -2930,7 +2930,7 @@ const Compras = () => {
 
                       const msCreationDiff = hoy.getTime() - new Date(req.fecha_emision).getTime();
                       const hoursSinceCreation = msCreationDiff / (1000 * 60 * 60);
-                      const isUnattendedNormal = req.prioridad !== 'Emergencia' && hoursSinceCreation >= 48 && (req.status_compra === 'En espera' || !req.status_compra) && !isJustificada;
+                      const isUnattendedNormal = req.prioridad !== 'Emergencia' && hoursSinceCreation >= 72 && (req.status_compra === 'En espera' || !req.status_compra) && !isJustificada;
                       const isUnattendedEmergencia = req.prioridad === 'Emergencia' && hoursSinceCreation >= 24 && (req.status_compra === 'En espera' || !req.status_compra) && !isJustificada;
 
                       return (
@@ -2959,8 +2959,8 @@ const Compras = () => {
                               alignItems: 'center',
                               gap: '3px',
                               cursor: 'help'
-                            }} title="Esta requisición de prioridad Normal lleva más de 48 horas sin compras ni justificaciones registradas. Requiere acción inmediata.">
-                              {"⚠️ SIN ATENDER (>48h)"}
+                            }} title="Esta requisición de prioridad Normal lleva más de 72 horas sin compras ni justificaciones registradas. Requiere acción inmediata.">
+                              {"⚠️ SIN ATENDER (>72h)"}
                             </span>
                           )}
                           {isUnattendedEmergencia && (

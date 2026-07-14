@@ -70,6 +70,9 @@ const LiquidacionFacturas = ({ currentUser }) => {
   const [subiendoAbono, setSubiendoAbono] = useState(false);
   const [filtroBusqueda, setFiltroBusqueda] = useState('');
   const [filtroEstatus, setFiltroEstatus] = useState('Todos');
+  const [proveedores, setProveedores] = useState([]);
+  const [filtroTipoProveedor, setFiltroTipoProveedor] = useState('Todos');
+  const [filtroProveedor, setFiltroProveedor] = useState('Todos');
 
   // Modal detailed view
   const [invoiceSeleccionada, setInvoiceSeleccionada] = useState(null);
@@ -124,6 +127,14 @@ const LiquidacionFacturas = ({ currentUser }) => {
         .order('nombre');
       if (bancoError) throw bancoError;
       setBancos(bancoData || []);
+
+      // 3. Fetch proveedores to map types/categories
+      const { data: provData, error: provError } = await supabase
+        .from('proveedores')
+        .select('id, razon_social, categoria, rif');
+      if (!provError) {
+        setProveedores(provData || []);
+      }
     } catch (err) {
       console.error('Error al cargar datos:', err.message);
       toast.error('Error al cargar información: ' + err.message);
@@ -279,6 +290,43 @@ const LiquidacionFacturas = ({ currentUser }) => {
     });
   }, [requisiciones, abonosGlobales]);
 
+  // Helper to obtain categories for a provider in a given grouped invoice
+  const getProveedorCategorias = useCallback((fac) => {
+    let prov = null;
+    if (fac.proveedor_id) {
+      prov = proveedores.find(p => p.id === fac.proveedor_id);
+    }
+    if (!prov && fac.proveedor_nombre) {
+      const nameNorm = fac.proveedor_nombre.trim().toUpperCase();
+      prov = proveedores.find(p => (p.razon_social || '').trim().toUpperCase() === nameNorm);
+    }
+    if (prov && prov.categoria) {
+      return prov.categoria.split(', ').filter(Boolean).map(c => c.trim().toUpperCase());
+    }
+    return ['OTROS'];
+  }, [proveedores]);
+
+  // List of unique categories for providers that actually have invoices
+  const categoriasDeFacturas = useMemo(() => {
+    const cats = new Set();
+    facturasAgrupadas.forEach(fac => {
+      const pCats = getProveedorCategorias(fac);
+      pCats.forEach(c => cats.add(c));
+    });
+    return Array.from(cats).sort();
+  }, [facturasAgrupadas, getProveedorCategorias]);
+
+  // List of unique providers that actually have invoices
+  const proveedoresDeFacturas = useMemo(() => {
+    const provs = new Set();
+    facturasAgrupadas.forEach(fac => {
+      if (fac.proveedor_nombre) {
+        provs.add(fac.proveedor_nombre.trim());
+      }
+    });
+    return Array.from(provs).sort((a, b) => a.localeCompare(b));
+  }, [facturasAgrupadas]);
+
   // Filtered invoices for display
   const facturasFiltradas = useMemo(() => {
     return facturasAgrupadas.filter(fac => {
@@ -290,9 +338,21 @@ const LiquidacionFacturas = ({ currentUser }) => {
         filtroEstatus === 'Todos' ||
         fac.estatus === filtroEstatus;
 
-      return matchesSearch && matchesStatus;
+      // Filter by provider category (type)
+      let matchesTipo = true;
+      if (filtroTipoProveedor !== 'Todos') {
+        const cats = getProveedorCategorias(fac);
+        matchesTipo = cats.includes(filtroTipoProveedor.toUpperCase());
+      }
+
+      // Filter by specific provider
+      const matchesProv =
+        filtroProveedor === 'Todos' ||
+        (fac.proveedor_nombre || '').trim().toUpperCase() === filtroProveedor.trim().toUpperCase();
+
+      return matchesSearch && matchesStatus && matchesTipo && matchesProv;
     });
-  }, [facturasAgrupadas, filtroBusqueda, filtroEstatus]);
+  }, [facturasAgrupadas, filtroBusqueda, filtroEstatus, filtroTipoProveedor, filtroProveedor, getProveedorCategorias]);
 
   // KPI calculations
   const kpis = useMemo(() => {
@@ -653,16 +713,43 @@ const LiquidacionFacturas = ({ currentUser }) => {
           />
         </div>
 
-        <select
-          className="liquidacion-select-filter"
-          value={filtroEstatus}
-          onChange={(e) => setFiltroEstatus(e.target.value)}
-        >
-          <option value="Todos">Todos los Estados</option>
-          <option value="EMITIDO">Emitido (Pendiente)</option>
-          <option value="PAGADO PARCIAL">Pagado Parcial</option>
-          <option value="PAGADO">Pagado</option>
-        </select>
+        <div className="liquidacion-filters-group">
+          {/* Filtro Tipo de Proveedor */}
+          <select
+            className="liquidacion-select-filter"
+            value={filtroTipoProveedor}
+            onChange={(e) => setFiltroTipoProveedor(e.target.value)}
+          >
+            <option value="Todos">Todos los Rubros/Tipos</option>
+            {categoriasDeFacturas.map(cat => (
+              <option key={cat} value={cat}>{cat}</option>
+            ))}
+          </select>
+
+          {/* Filtro Proveedor */}
+          <select
+            className="liquidacion-select-filter"
+            value={filtroProveedor}
+            onChange={(e) => setFiltroProveedor(e.target.value)}
+          >
+            <option value="Todos">Todos los Proveedores</option>
+            {proveedoresDeFacturas.map(prov => (
+              <option key={prov} value={prov}>{prov}</option>
+            ))}
+          </select>
+
+          {/* Filtro Estatus */}
+          <select
+            className="liquidacion-select-filter"
+            value={filtroEstatus}
+            onChange={(e) => setFiltroEstatus(e.target.value)}
+          >
+            <option value="Todos">Todos los Estados</option>
+            <option value="EMITIDO">Emitido (Pendiente)</option>
+            <option value="PAGADO PARCIAL">Pagado Parcial</option>
+            <option value="PAGADO">Pagado</option>
+          </select>
+        </div>
       </div>
 
       {/* MAIN DATA TABLE */}

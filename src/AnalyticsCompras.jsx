@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from './supabaseClient';
+// eslint-disable-next-line no-unused-vars
 import { motion, AnimatePresence } from 'framer-motion';
 import toast from 'react-hot-toast';
 import {
@@ -11,7 +12,7 @@ import {
     TrendingUp, TrendingDown, DollarSign, Timer, BarChart3,
     CheckCircle2, XCircle, Gauge, Calendar, User, Users,
     Search, Award, MessageSquare, Plus, Activity, RefreshCw,
-    Play, Pause, Trash2, ArrowRight, Layers, HelpCircle, Check
+    Play, Pause, Trash2, ArrowRight, Layers, HelpCircle, Check, FileText
 } from 'lucide-react';
 
 const COLORS_SLA = {
@@ -25,7 +26,7 @@ const AnalyticsCompras = ({ usuario }) => {
     const [data, setData] = useState([]);
     const [analistas, setAnalistas] = useState([]);
     const [logs, setLogs] = useState([]);
-    const [activeTab, setActiveTab] = useState('intelligence'); // 'intelligence' | 'traceability'
+    const [activeTab, setActiveTab] = useState('intelligence'); // 'intelligence' | 'traceability' | 'justifications'
     
     // Filtros de Trazabilidad
     const [filtroAnalista, setFiltroAnalista] = useState('all');
@@ -240,20 +241,44 @@ const AnalyticsCompras = ({ usuario }) => {
         const ahorroTotal = totalEst - totalReal;
         const ahorroPorc = totalEst > 0 ? (ahorroTotal / totalEst) * 100 : 0;
 
-        // 4. ANÁLISIS DE POSTERGACIÓN (PAUSAS)
-        const pausasMap = {};
+        // 4. ANÁLISIS DE POSTERGACIÓN / DELAY JUSTIFICATIONS POR RENGLONES
+        const delayJustifMap = {
+            'Disponibilidad Presupuestaria': 0,
+            'Ítem no Localizado': 0,
+            'Definición Técnica Insuficiente': 0,
+            'En Espera de Aprobación Precios': 0,
+            'Otros': 0
+        };
+        let totalDelayJustificationsCount = 0;
         let countPausadas = 0;
+
         dataIntelFiltrada.forEach(r => {
             if (r.is_pausada || r.motivo_postergacion) {
                 countPausadas++;
-                const match = r.motivo_postergacion?.match(/^\[(.*?)\]/);
-                const cat = match ? match[1] : 'Otras / Sin Categoría';
-                pausasMap[cat] = (pausasMap[cat] || 0) + 1;
+            }
+            if (Array.isArray(r.items)) {
+                r.items.forEach(it => {
+                    if (Array.isArray(it.historial_compras)) {
+                        it.historial_compras.forEach(h => {
+                            if (h.tipo === 'JUSTIFICACION') {
+                                const m = h.motivo || 'Otros';
+                                if (delayJustifMap[m] !== undefined) {
+                                    delayJustifMap[m]++;
+                                } else {
+                                    delayJustifMap['Otros']++;
+                                }
+                                totalDelayJustificationsCount++;
+                            }
+                        });
+                    }
+                });
             }
         });
 
-        const pauseReasonsData = Object.entries(pausasMap).map(([name, value]) => ({ name, value }))
-            .sort((a, b) => b.value - a.value);
+        const delayJustifChartData = Object.entries(delayJustifMap).map(([name, value]) => ({
+            name,
+            value
+        })).sort((a, b) => b.value - a.value);
 
         const tasaPostergacion = (countPausadas / (dataIntelFiltrada.length || 1)) * 100;
 
@@ -276,6 +301,19 @@ const AnalyticsCompras = ({ usuario }) => {
             { stage: 'Procura/Compra', dias: Number(avgCompra.toFixed(2)), color: '#0ea5e9' }
         ];
 
+        // 6. GASTO POR PROYECTO (CENTRO DE COSTO)
+        const ccMap = {};
+        dataIntelFiltrada.forEach(r => {
+            if (r.status_compra?.toUpperCase() === 'COMPLETADO' || (Number(r.total_ejecutado) || 0) > 0) {
+                const cc = r.centro_costo || 'Sin Proyecto';
+                ccMap[cc] = (ccMap[cc] || 0) + (Number(r.total_ejecutado) || Number(r.total_bs) || 0);
+            }
+        });
+        const spendByProject = Object.entries(ccMap).map(([name, value]) => ({
+            name,
+            monto: Number(value.toFixed(0))
+        })).sort((a, b) => b.monto - a.monto).slice(0, 5);
+
         return {
             complianceData,
             avgTotal: avgTotal.toFixed(1),
@@ -285,12 +323,145 @@ const AnalyticsCompras = ({ usuario }) => {
             ahorroPorc: ahorroPorc.toFixed(1),
             leadTimePriority,
             funnelData,
-            pauseReasonsData,
             tasaPostergacion: tasaPostergacion.toFixed(1),
             countTotal: dataIntelFiltrada.length,
-            countVencidos: complMap['VENCIDO']
+            countVencidos: complMap['VENCIDO'],
+            spendByProject,
+            delayJustifChartData,
+            totalDelayJustificationsCount
         };
     }, [dataIntelFiltrada]);
+
+    // 3.5 LÓGICA DE ESTADÍSTICAS PARA JUSTIFICACIONES (NUEVO TAB 3)
+    const justificacionStats = useMemo(() => {
+        // Requisiciones activas/pendientes en cola de compra
+        const enFila = data.filter(r => 
+            r.estado_aprobacion === 'aprobado_final' && 
+            r.status_compra?.toUpperCase() !== 'COMPLETADO'
+        );
+
+        // Justificación Operativa (Root level)
+        const sinJustificacionOperativa = enFila.filter(r => !r.justificacion || r.justificacion.trim() === '');
+        const conJustificacionOperativa = enFila.filter(r => r.justificacion && r.justificacion.trim() !== '');
+
+        // Justificación de Retraso (Item level, historial_compras)
+        const delayJustifMap = {
+            'Disponibilidad Presupuestaria': 0,
+            'Ítem no Localizado': 0,
+            'Definición Técnica Insuficiente': 0,
+            'En Espera de Aprobación Precios': 0,
+            'Otros': 0
+        };
+        const allDelayJustifications = [];
+
+        const overdueSinJustificacionRetrasoList = [];
+        let totalOverdue = 0;
+
+        const hoy = new Date();
+
+        enFila.forEach(r => {
+            // Check if it has any item with a registered delay justification
+            let hasDelayJustification = false;
+            if (Array.isArray(r.items)) {
+                r.items.forEach(it => {
+                    if (Array.isArray(it.historial_compras)) {
+                        it.historial_compras.forEach(h => {
+                            if (h.tipo === 'JUSTIFICACION') {
+                                hasDelayJustification = true;
+                                const m = h.motivo || 'Otros';
+                                if (delayJustifMap[m] !== undefined) {
+                                    delayJustifMap[m]++;
+                                } else {
+                                    delayJustifMap['Otros']++;
+                                }
+                                allDelayJustifications.push({
+                                    requisicion_id: r.id,
+                                    correlativo: r.correlativo_req || r.id,
+                                    solicitante: r.solicitante,
+                                    renglon: it.descripcion,
+                                    motivo: m,
+                                    comentario: h.comentario || '-',
+                                    fecha: h.fecha,
+                                    usuario_nombre: h.usuario_nombre || 'Analista'
+                                });
+                            }
+                        });
+                    }
+                });
+            }
+
+            // Calculate hours in queue (since creation)
+            const msCreationDiff = hoy.getTime() - new Date(r.fecha_emision || r.created_at).getTime();
+            const hoursSinceCreation = Math.max(0, msCreationDiff / (1000 * 60 * 60));
+            const limitHours = r.prioridad === 'Emergencia' ? 24 : 72;
+            const isOverdue = hoursSinceCreation >= limitHours;
+
+            if (isOverdue && (r.status_compra === 'En espera' || !r.status_compra || r.status_compra === 'Parcial')) {
+                totalOverdue++;
+                if (!hasDelayJustification) {
+                    overdueSinJustificacionRetrasoList.push({
+                        ...r,
+                        horasTranscurridas: Math.round(hoursSinceCreation)
+                    });
+                }
+            }
+        });
+
+        const delayJustifChartData = Object.entries(delayJustifMap).map(([name, value]) => ({
+            name,
+            value
+        })).sort((a, b) => b.value - a.value);
+
+        const analistasJustifStats = analistas.map(a => {
+            const assigned = enFila.filter(r => r.asignado_a === a.id);
+            let overdueCount = 0;
+            let overdueJustifiedCount = 0;
+            
+            assigned.forEach(r => {
+                const msCreationDiff = hoy.getTime() - new Date(r.fecha_emision || r.created_at).getTime();
+                const hoursSinceCreation = Math.max(0, msCreationDiff / (1000 * 60 * 60));
+                const limitHours = r.prioridad === 'Emergencia' ? 24 : 72;
+                const isOverdue = hoursSinceCreation >= limitHours;
+                if (isOverdue && (r.status_compra === 'En espera' || !r.status_compra || r.status_compra === 'Parcial')) {
+                    overdueCount++;
+                    const hasDelayJust = r.items?.some(it => it.historial_compras?.some(h => h.tipo === 'JUSTIFICACION'));
+                    if (hasDelayJust) {
+                        overdueJustifiedCount++;
+                    }
+                }
+            });
+
+            const complianceRate = overdueCount > 0 ? Math.round((overdueJustifiedCount / overdueCount) * 100) : 100;
+
+            return {
+                ...a,
+                totalAssigned: assigned.length,
+                overdueCount,
+                overdueJustifiedCount,
+                overdueUnjustifiedCount: overdueCount - overdueJustifiedCount,
+                complianceRate
+            };
+        });
+
+        const totalEnFila = enFila.length;
+        const totalSinOp = sinJustificacionOperativa.length;
+        const totalConOp = conJustificacionOperativa.length;
+        const coberturaOpPorc = totalEnFila > 0 ? Math.round((totalConOp / totalEnFila) * 100) : 100;
+
+        return {
+            totalEnFila,
+            totalSinOp,
+            totalConOp,
+            coberturaOpPorc,
+            sinJustificacionOperativa,
+            conJustificacionOperativa,
+            totalOverdue,
+            overdueSinJustificacionRetrasoList,
+            delayJustifChartData,
+            allDelayJustifications,
+            analistasJustifStats
+        };
+    }, [data, analistas]);
 
     // 4. MIGRAR Y ENRIQUECER LOGS CON DETALLES DE REQUISICIÓN
     const enrichedLogs = useMemo(() => {
@@ -534,6 +705,13 @@ const AnalyticsCompras = ({ usuario }) => {
                         <Activity size={16} />
                         <span>Control de Gestión & Trazabilidad</span>
                     </button>
+                    <button 
+                        style={{...styles.tabButton, ...(activeTab === 'justifications' ? styles.tabButtonActive : {})}}
+                        onClick={() => setActiveTab('justifications')}
+                    >
+                        <FileText size={16} />
+                        <span>Justificaciones de Compra</span>
+                    </button>
                 </div>
             </div>
 
@@ -704,32 +882,9 @@ const AnalyticsCompras = ({ usuario }) => {
                                     />
                                 </div>
 
-                                {/* GRAFICOS GLOBALES */}
+                                {/* GRAFICOS GLOBALES RENOVADOS */}
                                 <div style={styles.mainGrid}>
-                                    {/* Lead time por Prioridad */}
-                                    <div style={styles.widgetCard}>
-                                        <h3 style={styles.widgetTitle}>Lead Time de Procura por Prioridad (Días Hábiles)</h3>
-                                        <p style={styles.widgetSubtitle}>Promedio de tiempo empleado por tipo de urgencia de compra</p>
-                                        <div style={{ height: '220px', marginTop: '15px' }}>
-                                            <ResponsiveContainer width="100%" height="100%">
-                                                <AreaChart data={stats.leadTimePriority}>
-                                                    <defs>
-                                                        <linearGradient id="colorDias" x1="0" y1="0" x2="0" y2="1">
-                                                            <stop offset="5%" stopColor="#6366f1" strokeOpacity={0.3}/>
-                                                            <stop offset="95%" stopColor="#6366f1" strokeOpacity={0}/>
-                                                        </linearGradient>
-                                                    </defs>
-                                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                                                    <XAxis dataKey="name" stroke="#94a3b8" fontSize={10} tickLine={false} axisLine={false} />
-                                                    <YAxis stroke="#94a3b8" fontSize={10} tickLine={false} axisLine={false} tickFormatter={(v) => `${v}d`} />
-                                                    <Tooltip contentStyle={styles.tooltipStyle} />
-                                                    <Area type="monotone" dataKey="dias" name="Días Hábiles" stroke="#6366f1" strokeWidth={2} fillOpacity={1} fill="url(#colorDias)" />
-                                                </AreaChart>
-                                            </ResponsiveContainer>
-                                        </div>
-                                    </div>
-
-                                    {/* SLA pie chart */}
+                                    {/* Cumplimiento de Tiempos SLA */}
                                     <div style={styles.widgetCard}>
                                         <h3 style={styles.widgetTitle}>Cumplimiento de Tiempos SLA</h3>
                                         <p style={styles.widgetSubtitle}>Proporción de requisiciones a tiempo, vencidas y pendientes</p>
@@ -766,54 +921,468 @@ const AnalyticsCompras = ({ usuario }) => {
                                         </div>
                                     </div>
 
-                                    {/* Funnel de proceso */}
+                                    {/* Eficiencia y Cumplimiento por Comprador (Análisis de Gestión para el Gerente) */}
                                     <div style={styles.widgetCard}>
-                                        <h3 style={styles.widgetTitle}>Embudo del Ciclo Operativo</h3>
-                                        <p style={styles.widgetSubtitle}>Distribución del tiempo promedio en días por fase</p>
+                                        <h3 style={styles.widgetTitle}>Eficiencia y Cumplimiento por Comprador</h3>
+                                        <p style={styles.widgetSubtitle}>Resumen operativo del equipo de compras</p>
+                                        <div style={{ marginTop: '15px', maxHeight: '220px', overflowY: 'auto' }}>
+                                            <table style={styles.table}>
+                                                <thead>
+                                                    <tr style={styles.tr}>
+                                                        <th style={styles.th}>Comprador</th>
+                                                        <th style={styles.th}>Activas</th>
+                                                        <th style={styles.th}>Listas</th>
+                                                        <th style={styles.th}>Ciclo Prom.</th>
+                                                        <th style={styles.th}>SLA (%)</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {analistasStats.map((a, idx) => (
+                                                        <tr key={idx} style={styles.tableRow}>
+                                                            <td style={{ ...styles.td, fontWeight: 'bold' }}>{a.nombre} {a.apellido}</td>
+                                                            <td style={styles.td}>{a.activeCount}</td>
+                                                            <td style={styles.td}>{a.completedCount}</td>
+                                                            <td style={styles.td}>{a.leadTimePromedio === '-' ? '-' : `${a.leadTimePromedio}d`}</td>
+                                                            <td style={styles.td}>
+                                                                <span style={{
+                                                                    color: a.slaTasa >= 80 ? '#10b981' : (a.slaTasa >= 50 ? '#f59e0b' : '#ef4444'),
+                                                                    fontWeight: 'bold'
+                                                                }}>
+                                                                    {a.slaTasa}%
+                                                                </span>
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+
+                                    {/* Análisis de Gasto por Proyecto (Top 5) */}
+                                    <div style={styles.widgetCard}>
+                                        <h3 style={styles.widgetTitle}>Análisis de Gasto por Proyecto (Top 5)</h3>
+                                        <p style={styles.widgetSubtitle}>Centros de costo con mayor ejecución en compras</p>
                                         <div style={{ height: '220px', marginTop: '15px' }}>
                                             <ResponsiveContainer width="100%" height="100%">
-                                                <BarChart data={stats.funnelData}>
-                                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                                                    <XAxis dataKey="stage" stroke="#94a3b8" fontSize={10} tickLine={false} axisLine={false} />
-                                                    <YAxis stroke="#94a3b8" fontSize={10} tickLine={false} axisLine={false} tickFormatter={(v) => `${v}d`} />
-                                                    <Tooltip contentStyle={styles.tooltipStyle} />
-                                                    <Bar dataKey="dias" name="Días Promedio" radius={[8, 8, 0, 0]} maxBarSize={50}>
-                                                        {stats.funnelData.map((entry, index) => (
-                                                            <Cell key={`cell-${index}`} fill={entry.color} />
-                                                        ))}
-                                                    </Bar>
+                                                <BarChart data={stats.spendByProject} layout="vertical">
+                                                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
+                                                    <XAxis type="number" stroke="#94a3b8" fontSize={10} tickLine={false} axisLine={false} tickFormatter={(v) => `$${v}`} />
+                                                    <YAxis dataKey="name" type="category" stroke="#94a3b8" fontSize={9} tickLine={false} axisLine={false} width={80} />
+                                                    <Tooltip contentStyle={styles.tooltipStyle} formatter={(v) => [`$${v.toLocaleString()}`, 'Gasto Real']} />
+                                                    <Bar dataKey="monto" name="Gasto Real" fill="#0ea5e9" radius={[0, 8, 8, 0]} maxBarSize={20} />
                                                 </BarChart>
                                             </ResponsiveContainer>
                                         </div>
                                     </div>
 
-                                    {/* Motivos de Pausa */}
+                                    {/* Causas Frecuentes de Postergación */}
                                     <div style={styles.widgetCard}>
                                         <h3 style={styles.widgetTitle}>Causas Frecuentes de Postergación</h3>
-                                        <p style={styles.widgetSubtitle}>Categorías de retrasos explicadas por el equipo de procura</p>
-                                        <div style={{ marginTop: '15px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                                            {stats.pauseReasonsData.length === 0 ? (
+                                        <p style={styles.widgetSubtitle}>Frecuencia de motivos de retrasos registrados en renglones</p>
+                                        <div style={{ marginTop: '15px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                                            {stats.totalDelayJustificationsCount === 0 ? (
                                                 <div style={{ textAlign: 'center', padding: '30px', color: '#94a3b8', fontSize: '0.85rem' }}>
-                                                    No se registran requisiciones pausadas o postergadas.
+                                                    No se registran justificaciones de retraso en los renglones.
                                                 </div>
                                             ) : (
-                                                stats.pauseReasonsData.slice(0, 4).map((r, i) => (
-                                                    <div key={i}>
-                                                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', marginBottom: '4px' }}>
-                                                            <span style={{ fontWeight: 'bold', color: '#334155' }}>{r.name}</span>
-                                                            <span style={{ color: '#64748b', fontWeight: 'bold' }}>{r.value} compras</span>
+                                                stats.delayJustifChartData.map((d, i) => {
+                                                    const total = stats.totalDelayJustificationsCount;
+                                                    const porc = total > 0 ? Math.round((d.value / total) * 100) : 0;
+                                                    return (
+                                                        <div key={i}>
+                                                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', marginBottom: '4px' }}>
+                                                                <span style={{ fontWeight: 'bold', color: '#334155' }}>{d.name}</span>
+                                                                <span style={{ color: '#64748b', fontWeight: 'bold' }}>{d.value} ({porc}%)</span>
+                                                            </div>
+                                                            <div style={styles.progressBarBg}>
+                                                                <div style={{ ...styles.progressBarFill, width: `${porc}%`, backgroundColor: '#0ea5e9' }} />
+                                                            </div>
                                                         </div>
-                                                        <div style={styles.progressBarBg}>
-                                                            <div style={{ ...styles.progressBarFill, width: `${(r.value / (stats.countTotal || 1)) * 100}%`, backgroundColor: '#f59e0b' }} />
-                                                        </div>
-                                                    </div>
-                                                ))
+                                                    );
+                                                })
                                             )}
                                         </div>
                                     </div>
                                 </div>
                             </>
                         )}
+                    </motion.div>
+                )}
+
+                {activeTab === 'justifications' && (
+                    <motion.div 
+                        key="justifications"
+                        initial={{ opacity: 0, y: 15 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -15 }}
+                        transition={{ duration: 0.2 }}
+                    >
+                        {/* KPIs DE JUSTIFICACIONES */}
+                        <div style={styles.kpiGrid}>
+                            <CompactStatCard 
+                                label="Total en Cola de Compra" 
+                                value={justificacionStats.totalEnFila} 
+                                desc="Requisiciones aprobadas"
+                                trend="Pendientes por comprar" 
+                                color="#6366f1"
+                                icon={<Layers size={20} color="#6366f1" />}
+                            />
+                            <CompactStatCard 
+                                label="Cobertura Operativa" 
+                                value={justificacionStats.totalConOp} 
+                                desc={`${justificacionStats.coberturaOpPorc}% de cobertura`}
+                                trend="Establecido en emisión" 
+                                color="#10b981"
+                                icon={<ShieldCheck size={20} color="#10b981" />}
+                            />
+                            <CompactStatCard 
+                                label="Vencidas en SLA (>72h)" 
+                                value={justificacionStats.totalOverdue} 
+                                desc="Superan meta de compra"
+                                trend="Casos estancados" 
+                                color="#f59e0b"
+                                icon={<Clock size={20} color="#f59e0b" />}
+                            />
+                            <CompactStatCard 
+                                label="Críticas Sin Justificación" 
+                                value={justificacionStats.overdueSinJustificacionRetrasoList.length} 
+                                desc="Sin motivo de retraso"
+                                trend="Requieren acción" 
+                                color="#ef4444"
+                                icon={<AlertTriangle size={20} color="#ef4444" />}
+                            />
+                        </div>
+
+                        {/* SECCIÓN DETALLADA */}
+                        <div style={styles.mainGrid}>
+                            {/* Requisiciones Vencidas sin Justificación de Retraso */}
+                            <div style={{ ...styles.widgetCard, gridColumn: 'span 2' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                                    <div>
+                                        <h3 style={{ ...styles.widgetTitle, color: '#ef4444' }}>Fila Crítica: Requisiciones Vencidas en SLA Sin Justificación de Retraso</h3>
+                                        <p style={styles.widgetSubtitle}>{"Requisiciones de prioridad Normal (>72 horas) o Emergencia (>24 horas) en cola de compras sin un comentario de justificación de retraso."}</p>
+                                    </div>
+                                    <span style={{
+                                        fontSize: '0.72rem',
+                                        backgroundColor: '#fef2f2',
+                                        color: '#ef4444',
+                                        padding: '4px 12px',
+                                        borderRadius: '8px',
+                                        fontWeight: '800',
+                                        border: '1px solid #fee2e2'
+                                    }}>
+                                        Críticas: {justificacionStats.overdueSinJustificacionRetrasoList.length}
+                                    </span>
+                                </div>
+
+                                <div style={{ marginTop: '15px', overflowX: 'auto' }}>
+                                    {justificacionStats.overdueSinJustificacionRetrasoList.length === 0 ? (
+                                        <div style={{ textAlign: 'center', padding: '40px', color: '#64748b', fontSize: '0.8rem' }}>
+                                            🎉 ¡Excelente! Ninguna requisición en cola supera el SLA sin tener una justificación registrada.
+                                        </div>
+                                    ) : (
+                                        <table style={styles.table}>
+                                            <thead>
+                                                <tr style={styles.tr}>
+                                                    <th style={{ ...styles.th, width: '12%' }}>Correlativo</th>
+                                                    <th style={{ ...styles.th, width: '20%' }}>Solicitante</th>
+                                                    <th style={{ ...styles.th, width: '18%' }}>Proyecto / CC</th>
+                                                    <th style={{ ...styles.th, width: '12%' }}>Prioridad</th>
+                                                    <th style={{ ...styles.th, width: '15%' }}>Fecha Emisión</th>
+                                                    <th style={{ ...styles.th, width: '13%', color: '#ef4444' }}>Tiempo en Cola</th>
+                                                    <th style={{ ...styles.th, width: '10%', textAlign: 'right' }}>Acción</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {justificacionStats.overdueSinJustificacionRetrasoList.map((r, idx) => {
+                                                    const dias = Math.floor(r.horasTranscurridas / 24);
+                                                    const horasRestantes = r.horasTranscurridas % 24;
+                                                    const labelRetraso = dias > 0 ? `${dias}d ${horasRestantes}h` : `${horasRestantes}h`;
+                                                    return (
+                                                        <tr key={idx} style={styles.tableRow}>
+                                                            <td style={{ ...styles.td, fontWeight: '800', color: '#0ea5e9' }}>{r.correlativo_req || r.id}</td>
+                                                            <td style={styles.td}>
+                                                                <div style={{ fontWeight: 'bold' }}>{r.solicitante || 'Desconocido'}</div>
+                                                                <div style={{ fontSize: '0.65rem', color: '#64748b' }}>{r.gerencia || r.departamento || 'N/A'}</div>
+                                                            </td>
+                                                            <td style={styles.td}>
+                                                                <span style={{ fontSize: '0.7rem', fontWeight: '700', color: '#475569' }}>
+                                                                    {r.centro_costo || 'Sin Proyecto'}
+                                                                </span>
+                                                            </td>
+                                                            <td style={styles.td}>
+                                                                <span style={{
+                                                                    padding: '3px 8px',
+                                                                    borderRadius: '6px',
+                                                                    fontWeight: '800',
+                                                                    fontSize: '0.65rem',
+                                                                    backgroundColor: r.prioridad === 'Emergencia' ? '#fef2f2' : '#f0fdf4',
+                                                                    color: r.prioridad === 'Emergencia' ? '#ef4444' : '#16a34a'
+                                                                }}>
+                                                                    {r.prioridad || 'Normal'}
+                                                                </span>
+                                                            </td>
+                                                            <td style={styles.td}>
+                                                                {r.fecha_emision ? new Date(r.fecha_emision).toLocaleDateString('es-VE') : 'N/A'}
+                                                            </td>
+                                                            <td style={{ ...styles.td, fontWeight: 'bold', color: '#ef4444' }}>
+                                                                ⚠️ {labelRetraso}
+                                                            </td>
+                                                            <td style={{ ...styles.td, textAlign: 'right' }}>
+                                                                <button 
+                                                                    style={{
+                                                                        backgroundColor: '#ef444410',
+                                                                        border: '1px solid #fca5a5',
+                                                                        padding: '4px 8px',
+                                                                        borderRadius: '6px',
+                                                                        fontSize: '0.65rem',
+                                                                        fontWeight: 'bold',
+                                                                        cursor: 'pointer',
+                                                                        color: '#ef4444'
+                                                                    }}
+                                                                    onClick={() => {
+                                                                        toast.error(`Requisición ${r.correlativo_req || r.id} requiere justificación de retraso en Compras.`);
+                                                                    }}
+                                                                >
+                                                                    Notificar
+                                                                </button>
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                })}
+                                            </tbody>
+                                        </table>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Estadísticas de Justificaciones por Tipo (Frecuencia) */}
+                            <div style={styles.widgetCard}>
+                                <h3 style={styles.widgetTitle}>Distribución de Justificaciones por Tipo</h3>
+                                <p style={styles.widgetSubtitle}>Frecuencia de motivos de retrasos registrados en renglones</p>
+                                <div style={{ marginTop: '15px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                                    {justificacionStats.allDelayJustifications.length === 0 ? (
+                                        <div style={{ textAlign: 'center', padding: '30px', color: '#94a3b8', fontSize: '0.75rem' }}>
+                                            No se registran justificaciones de retraso para graficar.
+                                        </div>
+                                    ) : (
+                                        justificacionStats.delayJustifChartData.map((d, idx) => {
+                                            const total = justificacionStats.allDelayJustifications.length;
+                                            const porc = total > 0 ? Math.round((d.value / total) * 100) : 0;
+                                            return (
+                                                <div key={idx}>
+                                                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', marginBottom: '4px' }}>
+                                                        <span style={{ fontWeight: 'bold', color: '#334155' }}>{d.name}</span>
+                                                        <span style={{ color: '#64748b', fontWeight: 'bold' }}>{d.value} ({porc}%)</span>
+                                                    </div>
+                                                    <div style={styles.progressBarBg}>
+                                                        <div style={{ ...styles.progressBarFill, width: `${porc}%`, backgroundColor: '#0ea5e9' }} />
+                                                    </div>
+                                                </div>
+                                            );
+                                        })
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Cumplimiento de Justificaciones por Comprador (Personal) */}
+                            <div style={styles.widgetCard}>
+                                <h3 style={styles.widgetTitle}>Cumplimiento de SLA por Personal</h3>
+                                <p style={styles.widgetSubtitle}>Control de quién justifica sus requisiciones vencidas</p>
+                                <div style={{ marginTop: '15px', maxHeight: '200px', overflowY: 'auto' }}>
+                                    <table style={styles.table}>
+                                        <thead>
+                                            <tr style={styles.tr}>
+                                                <th style={styles.th}>Comprador</th>
+                                                <th style={styles.th}>Vencidas</th>
+                                                <th style={styles.th}>Justif.</th>
+                                                <th style={styles.th}>Pend.</th>
+                                                <th style={styles.th}>Cumpl. (%)</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {justificacionStats.analistasJustifStats.map((a, idx) => (
+                                                <tr key={idx} style={styles.tableRow}>
+                                                    <td style={{ ...styles.td, fontWeight: 'bold' }}>{a.nombre} {a.apellido}</td>
+                                                    <td style={styles.td}>{a.overdueCount}</td>
+                                                    <td style={styles.td}>{a.overdueJustifiedCount}</td>
+                                                    <td style={{ ...styles.td, color: a.overdueUnjustifiedCount > 0 ? '#ef4444' : '#475569', fontWeight: a.overdueUnjustifiedCount > 0 ? 'bold' : 'normal' }}>
+                                                        {a.overdueUnjustifiedCount}
+                                                    </td>
+                                                    <td style={styles.td}>
+                                                        <span style={{
+                                                            color: a.complianceRate >= 80 ? '#10b981' : (a.complianceRate >= 50 ? '#f59e0b' : '#ef4444'),
+                                                            fontWeight: 'bold'
+                                                        }}>
+                                                            {a.complianceRate}%
+                                                        </span>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+
+                            {/* Historial Detallado de Justificaciones de Retraso */}
+                            <div style={{ ...styles.widgetCard, gridColumn: 'span 2' }}>
+                                <h3 style={styles.widgetTitle}>Detalles Históricos de Justificaciones de Retraso</h3>
+                                <p style={styles.widgetSubtitle}>Listado cronológico de observaciones de demora asentadas por los compradores.</p>
+                                <div style={{ marginTop: '15px', overflowY: 'auto', maxHeight: '280px' }}>
+                                    {justificacionStats.allDelayJustifications.length === 0 ? (
+                                        <div style={{ textAlign: 'center', padding: '30px', color: '#94a3b8', fontSize: '0.75rem' }}>
+                                            No se registran comentarios históricos de retraso.
+                                        </div>
+                                    ) : (
+                                        <table style={styles.table}>
+                                            <thead>
+                                                <tr style={styles.tr}>
+                                                    <th style={{ ...styles.th, width: '10%' }}>Req</th>
+                                                    <th style={{ ...styles.th, width: '22%' }}>Renglón/Ítem</th>
+                                                    <th style={{ ...styles.th, width: '20%' }}>Comprador / Fecha</th>
+                                                    <th style={{ ...styles.th, width: '18%' }}>Tipo/Motivo</th>
+                                                    <th style={{ ...styles.th, width: '30%' }}>Comentario Detallado</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {justificacionStats.allDelayJustifications.map((h, idx) => (
+                                                    <tr key={idx} style={styles.tableRow}>
+                                                        <td style={{ ...styles.td, fontWeight: '800', color: '#0ea5e9' }}>{h.correlativo}</td>
+                                                        <td style={{ ...styles.td, fontWeight: '500', color: '#475569' }}>{h.renglon}</td>
+                                                        <td style={styles.td}>
+                                                            <div style={{ fontWeight: 'bold' }}>{h.usuario_nombre}</div>
+                                                            <div style={{ fontSize: '0.65rem', color: '#64748b' }}>
+                                                                {h.fecha ? new Date(h.fecha).toLocaleDateString('es-VE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-'}
+                                                            </div>
+                                                        </td>
+                                                        <td style={styles.td}>
+                                                            <span style={{
+                                                                padding: '2px 6px',
+                                                                borderRadius: '4px',
+                                                                fontSize: '0.65rem',
+                                                                fontWeight: 'bold',
+                                                                backgroundColor: '#f0f9ff',
+                                                                color: '#0369a1',
+                                                                border: '1px solid #e0f2fe'
+                                                            }}>
+                                                                {h.motivo}
+                                                            </span>
+                                                        </td>
+                                                        <td style={{ ...styles.td, fontStyle: 'italic', color: '#334155', fontSize: '0.72rem' }}>
+                                                            "{h.comentario}"
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Requisiciones Sin Justificación Operativa (Emisión) */}
+                            <div style={{ ...styles.widgetCard, gridColumn: 'span 2' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                                    <div>
+                                        <h3 style={styles.widgetTitle}>Auditoría: Requisiciones Sin Justificación Operativa (Root)</h3>
+                                        <p style={styles.widgetSubtitle}>Estas requisiciones fueron creadas sin explicar su justificación técnica u operativa al inicio.</p>
+                                    </div>
+                                    <span style={{
+                                        fontSize: '0.72rem',
+                                        backgroundColor: '#fffbeb',
+                                        color: '#d97706',
+                                        padding: '4px 12px',
+                                        borderRadius: '8px',
+                                        fontWeight: '800',
+                                        border: '1px solid #fef3c7'
+                                    }}>
+                                        Sin Justif. Operativa: {justificacionStats.totalSinOp}
+                                    </span>
+                                </div>
+
+                                <div style={{ marginTop: '15px', overflowX: 'auto', maxHeight: '250px' }}>
+                                    {justificacionStats.sinJustificacionOperativa.length === 0 ? (
+                                        <div style={{ textAlign: 'center', padding: '30px', color: '#64748b', fontSize: '0.75rem' }}>
+                                            🎉 Todas las requisiciones en cola cuentan con justificación operativa de origen.
+                                        </div>
+                                    ) : (
+                                        <table style={styles.table}>
+                                            <thead>
+                                                <tr style={styles.tr}>
+                                                    <th style={styles.th}>Correlativo</th>
+                                                    <th style={styles.th}>Solicitante</th>
+                                                    <th style={styles.th}>Departamento</th>
+                                                    <th style={styles.th}>Proyecto / CC</th>
+                                                    <th style={styles.th}>Prioridad</th>
+                                                    <th style={styles.th}>Fecha Emisión</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {justificacionStats.sinJustificacionOperativa.map((r, idx) => (
+                                                    <tr key={idx} style={styles.tableRow}>
+                                                        <td style={{ ...styles.td, fontWeight: '800', color: '#0ea5e9' }}>{r.correlativo_req || r.id}</td>
+                                                        <td style={styles.td}>{r.solicitante || 'Desconocido'}</td>
+                                                        <td style={styles.td}>{r.gerencia || r.departamento || 'N/A'}</td>
+                                                        <td style={styles.td}>{r.centro_costo || 'Sin Proyecto'}</td>
+                                                        <td style={styles.td}>{r.prioridad || 'Normal'}</td>
+                                                        <td style={styles.td}>
+                                                            {r.fecha_emision ? new Date(r.fecha_emision).toLocaleDateString('es-VE') : 'N/A'}
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Panel de control de justificaciones operativas registradas */}
+                            <div style={{ ...styles.widgetCard, gridColumn: 'span 2' }}>
+                                <h3 style={styles.widgetTitle}>Auditoría de Justificaciones Operativas Registradas (Origen)</h3>
+                                <p style={styles.widgetSubtitle}>Revisión de la justificación técnica declarada por los solicitantes al emitir la requisición.</p>
+                                <div style={{ marginTop: '15px', overflowX: 'auto', maxHeight: '250px' }}>
+                                    {justificacionStats.conJustificacionOperativa.length === 0 ? (
+                                        <div style={{ textAlign: 'center', padding: '30px', color: '#94a3b8', fontSize: '0.75rem' }}>
+                                            No hay requisiciones con justificación operativa registradas en la cola.
+                                        </div>
+                                    ) : (
+                                        <table style={styles.table}>
+                                            <thead>
+                                                <tr style={styles.tr}>
+                                                    <th style={{ ...styles.th, width: '15%' }}>Req</th>
+                                                    <th style={{ ...styles.th, width: '25%' }}>Solicitante</th>
+                                                    <th style={{ ...styles.th, width: '60%' }}>Justificación de Origen</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {justificacionStats.conJustificacionOperativa.slice(0, 10).map((r, idx) => (
+                                                    <tr key={idx} style={styles.tableRow}>
+                                                        <td style={{ ...styles.td, fontWeight: '800', color: '#0ea5e9' }}>{r.correlativo_req || r.id}</td>
+                                                        <td style={styles.td}>
+                                                            <div style={{ fontWeight: 'bold' }}>{r.solicitante}</div>
+                                                            <div style={{ fontSize: '0.65rem', color: '#64748b' }}>{r.gerencia}</div>
+                                                        </td>
+                                                        <td style={styles.td}>
+                                                            <div style={{ 
+                                                                fontSize: '0.72rem', 
+                                                                color: '#334155', 
+                                                                lineHeight: '1.4',
+                                                                backgroundColor: '#f8fafc',
+                                                                padding: '8px 12px',
+                                                                borderRadius: '8px',
+                                                                border: '1px solid #f1f5f9',
+                                                                fontStyle: 'italic'
+                                                            }}>
+                                                                "{r.justificacion}"
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
                     </motion.div>
                 )}
 
