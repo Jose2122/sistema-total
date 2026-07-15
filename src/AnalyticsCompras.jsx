@@ -27,6 +27,7 @@ const AnalyticsCompras = ({ usuario }) => {
     const [analistas, setAnalistas] = useState([]);
     const [logs, setLogs] = useState([]);
     const [activeTab, setActiveTab] = useState('intelligence'); // 'intelligence' | 'traceability' | 'justifications'
+    const [isCriticoCollapsed, setIsCriticoCollapsed] = useState(false);
     
     // Filtros de Trazabilidad
     const [filtroAnalista, setFiltroAnalista] = useState('all');
@@ -563,7 +564,7 @@ const AnalyticsCompras = ({ usuario }) => {
     const getCapacidadInfo = (count) => {
         if (count <= 5) {
             return {
-                color: '#10b981', // Verde
+                color: '#3b82f6', // Azul sutil
                 label: 'Carga Ligera',
                 porcentaje: Math.min(100, (count / 15) * 100),
                 desc: '¡Excelente ritmo! Tienes capacidad libre para atender compras prioritarias de inmediato.'
@@ -1057,9 +1058,23 @@ const AnalyticsCompras = ({ usuario }) => {
                         <div style={styles.mainGrid}>
                             {/* Requisiciones Vencidas sin Justificación de Retraso */}
                             <div style={{ ...styles.widgetCard, gridColumn: 'span 2' }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                                <div 
+                                    style={{ 
+                                        display: 'flex', 
+                                        justifyContent: 'space-between', 
+                                        alignItems: 'center', 
+                                        cursor: 'pointer',
+                                        userSelect: 'none'
+                                    }}
+                                    onClick={() => setIsCriticoCollapsed(!isCriticoCollapsed)}
+                                >
                                     <div>
-                                        <h3 style={{ ...styles.widgetTitle, color: '#ef4444' }}>Fila Crítica: Requisiciones Vencidas en SLA Sin Justificación de Retraso</h3>
+                                        <h3 style={{ ...styles.widgetTitle, color: '#ef4444', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                            <span>Fila Crítica: Requisiciones Vencidas en SLA Sin Justificación de Retraso</span>
+                                            <span style={{ fontSize: '0.8rem', color: '#64748b' }}>
+                                                {isCriticoCollapsed ? '▼' : '▲'}
+                                            </span>
+                                        </h3>
                                         <p style={styles.widgetSubtitle}>{"Requisiciones de prioridad Normal (>72 horas) o Emergencia (>24 horas) en cola de compras sin un comentario de justificación de retraso."}</p>
                                     </div>
                                     <span style={{
@@ -1075,85 +1090,87 @@ const AnalyticsCompras = ({ usuario }) => {
                                     </span>
                                 </div>
 
-                                <div style={{ marginTop: '15px', overflowX: 'auto' }}>
-                                    {justificacionStats.overdueSinJustificacionRetrasoList.length === 0 ? (
-                                        <div style={{ textAlign: 'center', padding: '40px', color: '#64748b', fontSize: '0.8rem' }}>
-                                            🎉 ¡Excelente! Ninguna requisición en cola supera el SLA sin tener una justificación registrada.
-                                        </div>
-                                    ) : (
-                                        <table style={styles.table}>
-                                            <thead>
-                                                <tr style={styles.tr}>
-                                                    <th style={{ ...styles.th, width: '12%' }}>Correlativo</th>
-                                                    <th style={{ ...styles.th, width: '20%' }}>Solicitante</th>
-                                                    <th style={{ ...styles.th, width: '18%' }}>Proyecto / CC</th>
-                                                    <th style={{ ...styles.th, width: '12%' }}>Prioridad</th>
-                                                    <th style={{ ...styles.th, width: '15%' }}>Fecha Emisión</th>
-                                                    <th style={{ ...styles.th, width: '13%', color: '#ef4444' }}>Tiempo en Cola</th>
-                                                    <th style={{ ...styles.th, width: '10%', textAlign: 'right' }}>Acción</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {justificacionStats.overdueSinJustificacionRetrasoList.map((r, idx) => {
-                                                    const dias = Math.floor(r.horasTranscurridas / 24);
-                                                    const horasRestantes = r.horasTranscurridas % 24;
-                                                    const labelRetraso = dias > 0 ? `${dias}d ${horasRestantes}h` : `${horasRestantes}h`;
-                                                    return (
-                                                        <tr key={idx} style={styles.tableRow}>
-                                                            <td style={{ ...styles.td, fontWeight: '800', color: '#0ea5e9' }}>{r.correlativo_req || r.id}</td>
-                                                            <td style={styles.td}>
-                                                                <div style={{ fontWeight: 'bold' }}>{r.solicitante || 'Desconocido'}</div>
-                                                                <div style={{ fontSize: '0.65rem', color: '#64748b' }}>{r.gerencia || r.departamento || 'N/A'}</div>
-                                                            </td>
-                                                            <td style={styles.td}>
-                                                                <span style={{ fontSize: '0.7rem', fontWeight: '700', color: '#475569' }}>
-                                                                    {r.centro_costo || 'Sin Proyecto'}
-                                                                </span>
-                                                            </td>
-                                                            <td style={styles.td}>
-                                                                <span style={{
-                                                                    padding: '3px 8px',
-                                                                    borderRadius: '6px',
-                                                                    fontWeight: '800',
-                                                                    fontSize: '0.65rem',
-                                                                    backgroundColor: r.prioridad === 'Emergencia' ? '#fef2f2' : '#f0fdf4',
-                                                                    color: r.prioridad === 'Emergencia' ? '#ef4444' : '#16a34a'
-                                                                }}>
-                                                                    {r.prioridad || 'Normal'}
-                                                                </span>
-                                                            </td>
-                                                            <td style={styles.td}>
-                                                                {r.fecha_emision ? new Date(r.fecha_emision).toLocaleDateString('es-VE') : 'N/A'}
-                                                            </td>
-                                                            <td style={{ ...styles.td, fontWeight: 'bold', color: '#ef4444' }}>
-                                                                ⚠️ {labelRetraso}
-                                                            </td>
-                                                            <td style={{ ...styles.td, textAlign: 'right' }}>
-                                                                <button 
-                                                                    style={{
-                                                                        backgroundColor: '#ef444410',
-                                                                        border: '1px solid #fca5a5',
-                                                                        padding: '4px 8px',
+                                {!isCriticoCollapsed && (
+                                    <div style={{ marginTop: '15px', overflowX: 'auto' }}>
+                                        {justificacionStats.overdueSinJustificacionRetrasoList.length === 0 ? (
+                                            <div style={{ textAlign: 'center', padding: '40px', color: '#64748b', fontSize: '0.8rem' }}>
+                                                🎉 ¡Excelente! Ninguna requisición en cola supera el SLA sin tener una justificación registrada.
+                                            </div>
+                                        ) : (
+                                            <table style={styles.table}>
+                                                <thead>
+                                                    <tr style={styles.tr}>
+                                                        <th style={{ ...styles.th, width: '12%' }}>Correlativo</th>
+                                                        <th style={{ ...styles.th, width: '20%' }}>Solicitante</th>
+                                                        <th style={{ ...styles.th, width: '18%' }}>Proyecto / CC</th>
+                                                        <th style={{ ...styles.th, width: '12%' }}>Prioridad</th>
+                                                        <th style={{ ...styles.th, width: '15%' }}>Fecha Emisión</th>
+                                                        <th style={{ ...styles.th, width: '13%', color: '#ef4444' }}>Tiempo en Cola</th>
+                                                        <th style={{ ...styles.th, width: '10%', textAlign: 'right' }}>Acción</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {justificacionStats.overdueSinJustificacionRetrasoList.map((r, idx) => {
+                                                        const dias = Math.floor(r.horasTranscurridas / 24);
+                                                        const horasRestantes = r.horasTranscurridas % 24;
+                                                        const labelRetraso = dias > 0 ? `${dias}d ${horasRestantes}h` : `${horasRestantes}h`;
+                                                        return (
+                                                            <tr key={idx} style={styles.tableRow}>
+                                                                <td style={{ ...styles.td, fontWeight: '800', color: '#0ea5e9' }}>{r.correlativo_req || r.id}</td>
+                                                                <td style={styles.td}>
+                                                                    <div style={{ fontWeight: 'bold' }}>{r.solicitante || 'Desconocido'}</div>
+                                                                    <div style={{ fontSize: '0.65rem', color: '#64748b' }}>{r.gerencia || r.departamento || 'N/A'}</div>
+                                                                </td>
+                                                                <td style={styles.td}>
+                                                                    <span style={{ fontSize: '0.7rem', fontWeight: '700', color: '#475569' }}>
+                                                                        {r.centro_costo || 'Sin Proyecto'}
+                                                                    </span>
+                                                                </td>
+                                                                <td style={styles.td}>
+                                                                    <span style={{
+                                                                        padding: '3px 8px',
                                                                         borderRadius: '6px',
+                                                                        fontWeight: '800',
                                                                         fontSize: '0.65rem',
-                                                                        fontWeight: 'bold',
-                                                                        cursor: 'pointer',
-                                                                        color: '#ef4444'
-                                                                    }}
-                                                                    onClick={() => {
-                                                                        toast.error(`Requisición ${r.correlativo_req || r.id} requiere justificación de retraso en Compras.`);
-                                                                    }}
-                                                                >
-                                                                    Notificar
-                                                                </button>
-                                                            </td>
-                                                        </tr>
-                                                    );
-                                                })}
-                                            </tbody>
-                                        </table>
-                                    )}
-                                </div>
+                                                                        backgroundColor: r.prioridad === 'Emergencia' ? '#fef2f2' : '#f0fdf4',
+                                                                        color: r.prioridad === 'Emergencia' ? '#ef4444' : '#16a34a'
+                                                                    }}>
+                                                                        {r.prioridad || 'Normal'}
+                                                                    </span>
+                                                                </td>
+                                                                <td style={styles.td}>
+                                                                    {r.fecha_emision ? new Date(r.fecha_emision).toLocaleDateString('es-VE') : 'N/A'}
+                                                                </td>
+                                                                <td style={{ ...styles.td, fontWeight: 'bold', color: '#ef4444' }}>
+                                                                    ⚠️ {labelRetraso}
+                                                                </td>
+                                                                <td style={{ ...styles.td, textAlign: 'right' }}>
+                                                                    <button 
+                                                                        style={{
+                                                                            backgroundColor: '#ef444410',
+                                                                            border: '1px solid #fca5a5',
+                                                                            padding: '4px 8px',
+                                                                            borderRadius: '6px',
+                                                                            fontSize: '0.65rem',
+                                                                            fontWeight: 'bold',
+                                                                            cursor: 'pointer',
+                                                                            color: '#ef4444'
+                                                                        }}
+                                                                        onClick={() => {
+                                                                            toast.error(`Requisición ${r.correlativo_req || r.id} requiere justificación de retraso en Compras.`);
+                                                                        }}
+                                                                    >
+                                                                        Notificar
+                                                                    </button>
+                                                                </td>
+                                                            </tr>
+                                                        );
+                                                    })}
+                                                </tbody>
+                                            </table>
+                                        )}
+                                    </div>
+                                )}
                             </div>
 
                             {/* Estadísticas de Justificaciones por Tipo (Frecuencia) */}
@@ -1279,109 +1296,6 @@ const AnalyticsCompras = ({ usuario }) => {
                                 </div>
                             </div>
 
-                            {/* Requisiciones Sin Justificación Operativa (Emisión) */}
-                            <div style={{ ...styles.widgetCard, gridColumn: 'span 2' }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                                    <div>
-                                        <h3 style={styles.widgetTitle}>Auditoría: Requisiciones Sin Justificación Operativa (Root)</h3>
-                                        <p style={styles.widgetSubtitle}>Estas requisiciones fueron creadas sin explicar su justificación técnica u operativa al inicio.</p>
-                                    </div>
-                                    <span style={{
-                                        fontSize: '0.72rem',
-                                        backgroundColor: '#fffbeb',
-                                        color: '#d97706',
-                                        padding: '4px 12px',
-                                        borderRadius: '8px',
-                                        fontWeight: '800',
-                                        border: '1px solid #fef3c7'
-                                    }}>
-                                        Sin Justif. Operativa: {justificacionStats.totalSinOp}
-                                    </span>
-                                </div>
-
-                                <div style={{ marginTop: '15px', overflowX: 'auto', maxHeight: '250px' }}>
-                                    {justificacionStats.sinJustificacionOperativa.length === 0 ? (
-                                        <div style={{ textAlign: 'center', padding: '30px', color: '#64748b', fontSize: '0.75rem' }}>
-                                            🎉 Todas las requisiciones en cola cuentan con justificación operativa de origen.
-                                        </div>
-                                    ) : (
-                                        <table style={styles.table}>
-                                            <thead>
-                                                <tr style={styles.tr}>
-                                                    <th style={styles.th}>Correlativo</th>
-                                                    <th style={styles.th}>Solicitante</th>
-                                                    <th style={styles.th}>Departamento</th>
-                                                    <th style={styles.th}>Proyecto / CC</th>
-                                                    <th style={styles.th}>Prioridad</th>
-                                                    <th style={styles.th}>Fecha Emisión</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {justificacionStats.sinJustificacionOperativa.map((r, idx) => (
-                                                    <tr key={idx} style={styles.tableRow}>
-                                                        <td style={{ ...styles.td, fontWeight: '800', color: '#0ea5e9' }}>{r.correlativo_req || r.id}</td>
-                                                        <td style={styles.td}>{r.solicitante || 'Desconocido'}</td>
-                                                        <td style={styles.td}>{r.gerencia || r.departamento || 'N/A'}</td>
-                                                        <td style={styles.td}>{r.centro_costo || 'Sin Proyecto'}</td>
-                                                        <td style={styles.td}>{r.prioridad || 'Normal'}</td>
-                                                        <td style={styles.td}>
-                                                            {r.fecha_emision ? new Date(r.fecha_emision).toLocaleDateString('es-VE') : 'N/A'}
-                                                        </td>
-                                                    </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
-                                    )}
-                                </div>
-                            </div>
-
-                            {/* Panel de control de justificaciones operativas registradas */}
-                            <div style={{ ...styles.widgetCard, gridColumn: 'span 2' }}>
-                                <h3 style={styles.widgetTitle}>Auditoría de Justificaciones Operativas Registradas (Origen)</h3>
-                                <p style={styles.widgetSubtitle}>Revisión de la justificación técnica declarada por los solicitantes al emitir la requisición.</p>
-                                <div style={{ marginTop: '15px', overflowX: 'auto', maxHeight: '250px' }}>
-                                    {justificacionStats.conJustificacionOperativa.length === 0 ? (
-                                        <div style={{ textAlign: 'center', padding: '30px', color: '#94a3b8', fontSize: '0.75rem' }}>
-                                            No hay requisiciones con justificación operativa registradas en la cola.
-                                        </div>
-                                    ) : (
-                                        <table style={styles.table}>
-                                            <thead>
-                                                <tr style={styles.tr}>
-                                                    <th style={{ ...styles.th, width: '15%' }}>Req</th>
-                                                    <th style={{ ...styles.th, width: '25%' }}>Solicitante</th>
-                                                    <th style={{ ...styles.th, width: '60%' }}>Justificación de Origen</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {justificacionStats.conJustificacionOperativa.slice(0, 10).map((r, idx) => (
-                                                    <tr key={idx} style={styles.tableRow}>
-                                                        <td style={{ ...styles.td, fontWeight: '800', color: '#0ea5e9' }}>{r.correlativo_req || r.id}</td>
-                                                        <td style={styles.td}>
-                                                            <div style={{ fontWeight: 'bold' }}>{r.solicitante}</div>
-                                                            <div style={{ fontSize: '0.65rem', color: '#64748b' }}>{r.gerencia}</div>
-                                                        </td>
-                                                        <td style={styles.td}>
-                                                            <div style={{ 
-                                                                fontSize: '0.72rem', 
-                                                                color: '#334155', 
-                                                                lineHeight: '1.4',
-                                                                backgroundColor: '#f8fafc',
-                                                                padding: '8px 12px',
-                                                                borderRadius: '8px',
-                                                                border: '1px solid #f1f5f9',
-                                                                fontStyle: 'italic'
-                                                            }}>
-                                                                "{r.justificacion}"
-                                                            </div>
-                                                        </td>
-                                                    </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
-                                    )}
-                                </div>
-                            </div>
                         </div>
                     </motion.div>
                 )}
@@ -1450,10 +1364,6 @@ const AnalyticsCompras = ({ usuario }) => {
                                                             <span style={{...styles.analystMiniStatVal, color: a.slaTasa > 75 ? '#10b981' : '#f59e0b'}}>{a.slaTasa}%</span>
                                                         </div>
                                                         <div style={styles.analystMiniStat}>
-                                                            <span style={styles.analystMiniStatLabel}>Ahorro Total</span>
-                                                            <span style={{...styles.analystMiniStatVal, color: '#0ea5e9'}}>Bs. {a.ahorro.toLocaleString('es-VE')}</span>
-                                                        </div>
-                                                        <div style={styles.analystMiniStat}>
                                                             <span style={styles.analystMiniStatLabel}>Lead Time</span>
                                                             <span style={styles.analystMiniStatVal}>{a.leadTimePromedio === '-' ? '-' : `${a.leadTimePromedio}d`}</span>
                                                         </div>
@@ -1474,7 +1384,7 @@ const AnalyticsCompras = ({ usuario }) => {
                                     <div style={styles.widgetCard}>
                                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
                                             <div>
-                                                <h3 style={styles.widgetTitle}>Live Traceability Feed (Timeline)</h3>
+                                                <h3 style={styles.widgetTitle}>Historial de Trazabilidad en Vivo (Línea de Tiempo)</h3>
                                                 <p style={styles.widgetSubtitle}>Últimas gestiones y actualizaciones de procura en tiempo real</p>
                                             </div>
                                             {/* Filtro de tiempo */}
@@ -1499,7 +1409,7 @@ const AnalyticsCompras = ({ usuario }) => {
                                                 logsFiltrados.map((l, i) => (
                                                     <div key={i} style={styles.timelineItem}>
                                                         <div style={styles.timelineIndicator}>
-                                                            <div style={{...styles.timelineDot, backgroundColor: l.accion === 'ASIGNACION' ? '#38bdf8' : l.accion === 'OBSERVACION' ? '#ec4899' : l.accion === 'FINALIZADO' ? '#10b981' : '#f59e0b'}} />
+                                                            <div style={{...styles.timelineDot, backgroundColor: l.accion === 'ASIGNACION' ? '#38bdf8' : l.accion === 'OBSERVACION' ? '#ec4899' : l.accion === 'FINALIZADO' ? '#10b981' : '#38bdf8'}} />
                                                             {i < logsFiltrados.length - 1 && <div style={styles.timelineLine} />}
                                                         </div>
                                                         <div style={styles.timelineCard}>
@@ -1512,7 +1422,7 @@ const AnalyticsCompras = ({ usuario }) => {
                                                                 </span>
                                                             </div>
                                                             <div style={styles.timelineBody}>
-                                                                <span style={{...styles.timelineActionBadge, backgroundColor: l.accion === 'ASIGNACION' ? '#f0f9ff' : l.accion === 'OBSERVACION' ? '#fdf2f8' : l.accion === 'FINALIZADO' ? '#ecfdf5' : '#fffbeb', color: l.accion === 'ASIGNACION' ? '#0369a1' : l.accion === 'OBSERVACION' ? '#be185d' : l.accion === 'FINALIZADO' ? '#047857' : '#b45309'}}>
+                                                                <span style={{...styles.timelineActionBadge, backgroundColor: l.accion === 'ASIGNACION' ? '#f0f9ff' : l.accion === 'OBSERVACION' ? '#fdf2f8' : l.accion === 'FINALIZADO' ? '#ecfdf5' : '#e0f2fe', color: l.accion === 'ASIGNACION' ? '#0369a1' : l.accion === 'OBSERVACION' ? '#be185d' : l.accion === 'FINALIZADO' ? '#047857' : '#0369a1'}}>
                                                                     {l.accion}
                                                                 </span>
                                                                 <span style={styles.timelineText}>{l.comentario}</span>
@@ -2124,7 +2034,7 @@ const styles = {
     },
     analystStatsRow: {
         display: 'grid',
-        gridTemplateColumns: 'repeat(3, 1fr)',
+        gridTemplateColumns: 'repeat(2, 1fr)',
         gap: '10px',
         marginTop: '15px',
         borderTop: '1px solid #f1f5f9',

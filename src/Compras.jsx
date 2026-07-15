@@ -508,6 +508,26 @@ const Compras = () => {
     }
   };
 
+  const toggleGestionHoy = async (req) => {
+    const nuevoValor = !req.en_gestion_hoy;
+    // Actualización optimista local
+    setHistorial(prev => prev.map(r => r.id === req.id ? { ...r, en_gestion_hoy: nuevoValor } : r));
+    try {
+      const { error } = await supabase
+        .from('requisiciones')
+        .update({ en_gestion_hoy: nuevoValor })
+        .eq('id', req.id);
+      
+      if (error) throw error;
+      toast.success(nuevoValor ? "Agregado a gestión de hoy" : "Removido de gestión de hoy");
+    } catch (err) {
+      console.error("Error al actualizar gestión de hoy:", err.message);
+      // Revertir en caso de error
+      setHistorial(prev => prev.map(r => r.id === req.id ? { ...r, en_gestion_hoy: req.en_gestion_hoy } : r));
+      toast.error("Error al actualizar: " + err.message);
+    }
+  };
+
   useEffect(() => { obtenerSesionUsuario(); }, [obtenerSesionUsuario]);
   useEffect(() => {
     cargarRequisicionesAprobadas();
@@ -547,7 +567,13 @@ const Compras = () => {
         req.solicitante.toLowerCase().includes(busqueda.toLowerCase()) ||
         req.correlativo.toLowerCase().includes(busqueda.toLowerCase());
       const matchGerencia = filtroGerencia === 'Todos' || req.gerencia === filtroGerencia;
-      const matchStatus = filtroStatusCompra === 'Todos' || (req.status_compra || 'En espera') === filtroStatusCompra;
+      
+      const matchStatus =
+        filtroStatusCompra === 'Todos' ||
+        (filtroStatusCompra === 'EnCursoHoy'
+          ? (req.en_gestion_hoy && req.asignado_a === currentUser?.id)
+          : (req.status_compra || 'En espera') === filtroStatusCompra);
+
       const matchCC = filtroCentroCosto === 'Todos' || req.centro_costo === filtroCentroCosto;
       const matchCat = filtroCategoria === 'Todos' || (req.items || []).some(it => it.categoria === filtroCategoria);
 
@@ -2658,6 +2684,7 @@ const Compras = () => {
         {[
           { label: 'REQUISICIONES EN ESPERA', val: `${historial.filter(r => (r.status_compra || 'En espera') === 'En espera').length} No leídas`, col: '#030712', filter: 'En espera' },
           { label: 'COMPRAS EN PROCESO', val: `${historial.filter(r => r.status_compra === 'Parcial').length} Parciales`, col: '#030712', filter: 'Parcial' },
+          { label: 'EN CURSO (HOY) 📌', val: `${historial.filter(r => r.en_gestion_hoy && r.asignado_a === currentUser?.id).length} Marcadas`, col: '#3b82f6', filter: 'EnCursoHoy' },
           { label: 'COMPRAS FINALIZADAS', val: `${historial.filter(r => r.status_compra === 'Completado').length} Completas`, col: '#030712', filter: 'Completado' },
         ].map((x, i) => (
           <div
@@ -2785,6 +2812,7 @@ const Compras = () => {
         <table className="tc-table" style={{ borderCollapse: 'collapse', width: '100%' }}>
           <thead>
             <tr>
+              <th style={{ width: '45px', textAlign: 'center', padding: '12px 5px' }}>📌</th>
               <th style={{ width: '220px', padding: '12px 15px' }}>ID REQ</th>
               <th style={{ padding: '12px 15px' }}>CATEGORÍA</th>
               <th style={{ padding: '12px 15px' }}>SOLICITANTE / GERENCIA</th>
@@ -2798,9 +2826,36 @@ const Compras = () => {
           </thead>
           <tbody>
             {(loading && historial.length === 0) ? (
-              <tr><td colSpan="10" style={{ textAlign: 'center', padding: '30px' }}><Loader2 className="animate-spin" /> Cargando...</td></tr>
+              <tr><td colSpan="11" style={{ textAlign: 'center', padding: '30px' }}><Loader2 className="animate-spin" /> Cargando...</td></tr>
             ) : historialFiltrado.map(req => (
               <tr key={req.id} className="hover:bg-slate-50 transition-colors" style={{ borderBottom: '1px solid #f1f5f9' }}>
+                <td style={{ width: '45px', textAlign: 'center', padding: '8px 5px' }}>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleGestionHoy(req);
+                    }}
+                    disabled={req.asignado_a !== currentUser?.id}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      cursor: req.asignado_a === currentUser?.id ? 'pointer' : 'not-allowed',
+                      fontSize: '16px',
+                      opacity: req.en_gestion_hoy ? 1 : 0.25,
+                      transition: 'all 0.2s ease',
+                      transform: req.en_gestion_hoy ? 'scale(1.2)' : 'scale(1)',
+                    }}
+                    title={
+                      req.asignado_a !== currentUser?.id
+                        ? "Solo el analista asignado puede fijar esta requisición"
+                        : req.en_gestion_hoy
+                        ? "Remover de la gestión de hoy"
+                        : "Agregar a la gestión de hoy"
+                    }
+                  >
+                    📌
+                  </button>
+                </td>
                 <td
                   style={{ padding: '8px 15px' }}
                   onClick={() => abrirProcesamiento(req)}
