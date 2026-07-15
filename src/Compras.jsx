@@ -3538,6 +3538,20 @@ const Compras = () => {
                         <td style={{ verticalAlign: 'middle' }}>
                           <div style={{ fontWeight: 'bold', color: '#1e293b', fontSize: '0.9rem', textDecoration: f.anulado ? 'line-through' : 'none' }}>{f.descripcion}</div>
                           <div style={{ fontSize: '10px', color: '#64748b', fontWeight: '600' }}>{f.categoria}</div>
+                          {f.beneficiario && (
+                            <div style={{ 
+                              fontSize: '10px', 
+                              color: '#0369a1', 
+                              backgroundColor: '#e0f2fe', 
+                              padding: '2px 6px', 
+                              borderRadius: '4px', 
+                              display: 'inline-block',
+                              marginTop: '4px',
+                              fontWeight: 'bold' 
+                            }}>
+                              👤 Benef: {f.beneficiario}
+                            </div>
+                          )}
                         </td>
                         <td style={{ textAlign: 'center', fontWeight: '650', color: '#64748b' }}>{f.cantidad_pedida} {f.uni || f.unidad || ''}</td>
                         <td style={{ textAlign: 'center', color: '#16a34a', fontWeight: '800' }}>{f.cantidad_comprada} {f.uni || f.unidad || ''}</td>
