@@ -271,7 +271,13 @@ const Almacen = () => {
             compras.forEach((h) => {
               const statusAlmacen = h.estatus_almacen || (h.enviado_almacen ? 'Ubicado' : 'Pendiente_Compras');
               // Only load items that are ready for or already classified in the warehouse
-              if (statusAlmacen === 'Por_Clasificar_Almacen' || statusAlmacen === 'Ubicado') {
+              if (
+                statusAlmacen === 'Por_Clasificar_Almacen' || 
+                statusAlmacen === 'pendiente_asignar' || 
+                statusAlmacen === 'Ubicado' || 
+                statusAlmacen === 'asignado' || 
+                statusAlmacen === 'entregado'
+              ) {
                 // Buscar índice real en el historial de compras original
                 const realHIdx = it.historial_compras.findIndex(itemH => itemH === h);
                 list.push({
@@ -295,18 +301,29 @@ const Almacen = () => {
                   precio_unitario: parseFloat(h.pu) || 0,
                   total: (parseFloat(h.cant) || 0) * (parseFloat(h.pu) || 0),
                   
-                  recibido: statusAlmacen === 'Ubicado',
+                  recibido: statusAlmacen === 'Ubicado' || statusAlmacen === 'asignado',
                   estatus_almacen: statusAlmacen,
+                  is_pendiente: statusAlmacen === 'Por_Clasificar_Almacen' || statusAlmacen === 'pendiente_asignar',
+                  is_asignado: statusAlmacen === 'Ubicado' || statusAlmacen === 'asignado',
+                  is_entregado: statusAlmacen === 'entregado',
                   ubicacion_almacen: h.ubicacion_almacen || h.almacen_destino || '',
                   fecha_entrada_almacen: h.fecha_entrada_almacen || '',
-                  usuario_almacen_nombre: h.usuario_almacen_nombre || ''
+                  usuario_almacen_nombre: h.usuario_almacen_nombre || '',
+                  fecha_salida_almacen: h.fecha_salida_almacen || '',
+                  usuario_salida_nombre: h.usuario_salida_nombre || ''
                 });
               }
             });
           } else if (it.doc_numero || it.numero_factura) {
             // Formato legado: el ítem mismo es una compra única
             const statusAlmacen = it.estatus_almacen || (it.enviado_almacen ? 'Ubicado' : 'Pendiente_Compras');
-            if (statusAlmacen === 'Por_Clasificar_Almacen' || statusAlmacen === 'Ubicado') {
+            if (
+              statusAlmacen === 'Por_Clasificar_Almacen' || 
+              statusAlmacen === 'pendiente_asignar' || 
+              statusAlmacen === 'Ubicado' || 
+              statusAlmacen === 'asignado' || 
+              statusAlmacen === 'entregado'
+            ) {
               list.push({
                 id: `${r.id}-${itIdx}-legacy`,
                 transaction_id: `${r.id}-${itIdx}-legacy`,
@@ -328,11 +345,16 @@ const Almacen = () => {
                 precio_unitario: parseFloat(it.pu) || 0,
                 total: (parseFloat(it.cantidad_comprada || it.cant) || 0) * (parseFloat(it.pu) || 0),
                 
-                recibido: statusAlmacen === 'Ubicado',
+                recibido: statusAlmacen === 'Ubicado' || statusAlmacen === 'asignado',
                 estatus_almacen: statusAlmacen,
+                is_pendiente: statusAlmacen === 'Por_Clasificar_Almacen' || statusAlmacen === 'pendiente_asignar',
+                is_asignado: statusAlmacen === 'Ubicado' || statusAlmacen === 'asignado',
+                is_entregado: statusAlmacen === 'entregado',
                 ubicacion_almacen: it.ubicacion_almacen || it.almacen_destino || '',
                 fecha_entrada_almacen: it.fecha_entrada_almacen || '',
-                usuario_almacen_nombre: it.usuario_almacen_nombre || ''
+                usuario_almacen_nombre: it.usuario_almacen_nombre || '',
+                fecha_salida_almacen: it.fecha_salida_almacen || '',
+                usuario_salida_nombre: it.usuario_salida_nombre || ''
               });
             }
           }
@@ -375,9 +397,12 @@ const Almacen = () => {
     };
   }, [cargarDatos]);
 
-  // Filtrado de las compras
+  // Filtrado de las compras activas (no entregadas)
   const filteredCompras = useMemo(() => {
     return comprasRaw.filter(c => {
+      // Ocultar entregados de la vista de trabajo activo
+      if (c.is_entregado) return false;
+
       // Filtro por pestaña (todos, recibidos, pendientes)
       if (vistaTab === 'recibidos' && !c.recibido) return false;
       if (vistaTab === 'pendientes' && c.recibido) return false;
@@ -406,6 +431,31 @@ const Almacen = () => {
     });
   }, [comprasRaw, busqueda, filtroAlmacen, filtroDestino, fechaDesde, fechaHasta, vistaTab]);
 
+  // Filtrado de las compras entregadas
+  const entregadosCompras = useMemo(() => {
+    return comprasRaw.filter(c => {
+      if (!c.is_entregado) return false;
+
+      const matchBusqueda = 
+        c.descripcion.toLowerCase().includes(busqueda.toLowerCase()) ||
+        c.proveedor.toLowerCase().includes(busqueda.toLowerCase()) ||
+        c.numero_factura.toLowerCase().includes(busqueda.toLowerCase()) ||
+        c.solicitante.toLowerCase().includes(busqueda.toLowerCase()) ||
+        c.centro_costo.toLowerCase().includes(busqueda.toLowerCase());
+
+      const matchDestino = 
+        filtroDestino === 'Todos' ||
+        (c.ubicacion_almacen && cleanAccents(c.ubicacion_almacen).includes(cleanAccents(filtroDestino)));
+
+      let matchFecha = true;
+      const fSalida = c.fecha_salida_almacen ? c.fecha_salida_almacen.split('T')[0] : '';
+      if (fechaDesde && fSalida < fechaDesde) matchFecha = false;
+      if (fechaHasta && fSalida > fechaHasta) matchFecha = false;
+
+      return matchBusqueda && matchDestino && matchFecha;
+    });
+  }, [comprasRaw, busqueda, filtroDestino, fechaDesde, fechaHasta]);
+
   // Totales
   const totalGeneralFiltrado = useMemo(() => {
     return filteredCompras.reduce((sum, c) => sum + (c.total || 0), 0);
@@ -413,13 +463,14 @@ const Almacen = () => {
 
   const stats = useMemo(() => {
     const total = comprasRaw.length;
-    const recibidos = comprasRaw.filter(c => c.recibido).length;
-    const pendientes = total - recibidos;
+    const recibidos = comprasRaw.filter(c => c.is_asignado).length;
+    const pendientes = comprasRaw.filter(c => c.is_pendiente).length;
+    const entregados = comprasRaw.filter(c => c.is_entregado).length;
     const boscan = comprasRaw.filter(c => c.ubicacion_almacen && cleanAccents(c.ubicacion_almacen).includes('boscan')).length;
     const maracaibo = comprasRaw.filter(c => c.ubicacion_almacen && cleanAccents(c.ubicacion_almacen).includes('maracaibo')).length;
     const bajoGrande = comprasRaw.filter(c => c.ubicacion_almacen && cleanAccents(c.ubicacion_almacen).includes('grande')).length;
 
-    return { total, recibidos, pendientes, boscan, maracaibo, bajoGrande };
+    return { total, recibidos, pendientes, entregados, boscan, maracaibo, bajoGrande };
   }, [comprasRaw]);
 
   // Group only the received items sorted by received date desc for history list
@@ -447,109 +498,196 @@ const Almacen = () => {
     }
 
     setLoading(true);
-    try {
-      const { data: req, error: fetchErr } = await supabase
-        .from('requisiciones')
-        .select('items')
-        .eq('id', compra.req_id)
-        .single();
-      
-      if (fetchErr) throw fetchErr;
-      
-      const items = [...(req.items || [])];
-      const item = items[compra.item_idx];
-      if (!item) throw new Error("Material no encontrado.");
+    const recibirPromesa = new Promise(async (resolve, reject) => {
+      try {
+        const { data: req, error: fetchErr } = await supabase
+          .from('requisiciones')
+          .select('items')
+          .eq('id', compra.req_id)
+          .single();
+        
+        if (fetchErr) throw fetchErr;
+        
+        const items = [...(req.items || [])];
+        const item = items[compra.item_idx];
+        if (!item) throw new Error("Material no encontrado.");
 
-      const nowIso = new Date().toISOString();
-      const userNombre = currentUser ? `${currentUser.nombre} ${currentUser.apellido}` : 'Desconocido';
-      const userId = currentUser ? currentUser.id : null;
+        const nowIso = new Date().toISOString();
+        const userNombre = currentUser ? `${currentUser.nombre} ${currentUser.apellido}` : 'Desconocido';
+        const userId = currentUser ? currentUser.id : null;
 
-      if (compra.is_legacy) {
-        item.estatus_almacen = 'Ubicado';
-        item.ubicacion_almacen = destinoSel;
-        item.enviado_almacen = true;
-        item.almacen_destino = destinoSel;
-        item.fecha_entrada_almacen = nowIso;
-        item.usuario_almacen_nombre = userNombre;
-        item.usuario_almacen_id = userId;
-      } else {
-        const hist = [...(item.historial_compras || [])];
-        if (hist[compra.history_idx]) {
-          hist[compra.history_idx] = {
-            ...hist[compra.history_idx],
-            estatus_almacen: 'Ubicado',
-            ubicacion_almacen: destinoSel,
-            enviado_almacen: true,
-            almacen_destino: destinoSel,
-            fecha_entrada_almacen: nowIso,
-            usuario_almacen_nombre: userNombre,
-            usuario_almacen_id: userId
-          };
-          item.historial_compras = hist;
-          // Si todos los ítems válidos fueron procesados a almacén
-          const valid = hist.filter(h => h.tipo !== 'JUSTIFICACION' && h.tipo !== 'ANULACION');
-          const allLocated = valid.every(c => c.estatus_almacen === 'Ubicado' || c.enviado_almacen === true);
-          item.estatus_almacen = allLocated ? 'Ubicado' : 'Por_Clasificar_Almacen';
+        if (compra.is_legacy) {
+          item.estatus_almacen = 'asignado';
           item.ubicacion_almacen = destinoSel;
-          item.enviado_almacen = allLocated;
+          item.enviado_almacen = true;
           item.almacen_destino = destinoSel;
           item.fecha_entrada_almacen = nowIso;
           item.usuario_almacen_nombre = userNombre;
           item.usuario_almacen_id = userId;
         } else {
-          throw new Error("Transacción no encontrada.");
-        }
-      }
-
-      items[compra.item_idx] = item;
-
-      const { error: updateErr } = await supabase
-        .from('requisiciones')
-        .update({ items })
-        .eq('id', compra.req_id);
-      
-      if (updateErr) throw updateErr;
-
-      toast.success("Ingreso registrado exitosamente.");
-
-      // Notificaciones entre almacenes
-      try {
-        const { data: perfilesAlmacen } = await supabase
-          .from('perfiles')
-          .select('id')
-          .or("departamento.ilike.%almacen%,rol.ilike.%almacen%");
-        
-        const { data: userData } = await supabase.auth.getUser();
-        const currentUserId = userData?.user?.id;
-        
-        if (perfilesAlmacen && perfilesAlmacen.length > 0) {
-          const notifs = perfilesAlmacen
-            .filter(p => p.id !== currentUserId)
-            .map(p => ({
-              usuario_id: p.id,
-              mensaje: `El material de Requisición ${compra.correlativo} (${compra.descripcion.substring(0, 30)}...) fue recibido en: ${destinoSel}`,
-              tipo: 'Almacén',
-              leido: false,
-              requisicion_id: compra.req_id
-            }));
-          
-          if (notifs.length > 0) {
-            await supabase.from('notificaciones').insert(notifs);
+          const hist = [...(item.historial_compras || [])];
+          if (hist[compra.history_idx]) {
+            hist[compra.history_idx] = {
+              ...hist[compra.history_idx],
+              estatus_almacen: 'asignado',
+              ubicacion_almacen: destinoSel,
+              enviado_almacen: true,
+              almacen_destino: destinoSel,
+              fecha_entrada_almacen: nowIso,
+              usuario_almacen_nombre: userNombre,
+              usuario_almacen_id: userId
+            };
+            item.historial_compras = hist;
+            // Si todos los ítems válidos fueron procesados a almacén
+            const valid = hist.filter(h => h.tipo !== 'JUSTIFICACION' && h.tipo !== 'ANULACION');
+            const allLocated = valid.every(c => c.estatus_almacen === 'Ubicado' || c.estatus_almacen === 'asignado' || c.enviado_almacen === true);
+            item.estatus_almacen = allLocated ? 'asignado' : 'pendiente_asignar';
+            item.ubicacion_almacen = destinoSel;
+            item.enviado_almacen = allLocated;
+            item.almacen_destino = destinoSel;
+            item.fecha_entrada_almacen = nowIso;
+            item.usuario_almacen_nombre = userNombre;
+            item.usuario_almacen_id = userId;
+          } else {
+            throw new Error("Transacción no encontrada.");
           }
         }
-      } catch (notifErr) {
-        console.error("Error al notificar al personal de almacén:", notifErr);
-      }
 
+        items[compra.item_idx] = item;
+
+        const { error: updateErr } = await supabase
+          .from('requisiciones')
+          .update({ items })
+          .eq('id', compra.req_id);
+        
+        if (updateErr) throw updateErr;
+
+        // Notificaciones entre almacenes
+        try {
+          const { data: perfilesAlmacen } = await supabase
+            .from('perfiles')
+            .select('id')
+            .or("departamento.ilike.%almacen%,rol.ilike.%almacen%");
+          
+          const { data: userData } = await supabase.auth.getUser();
+          const currentUserId = userData?.user?.id;
+          
+          if (perfilesAlmacen && perfilesAlmacen.length > 0) {
+            const notifs = perfilesAlmacen
+              .filter(p => p.id !== currentUserId)
+              .map(p => ({
+                usuario_id: p.id,
+                mensaje: `El material de Requisición ${compra.correlativo} (${compra.descripcion.substring(0, 30)}...) fue recibido en: ${destinoSel}`,
+                tipo: 'Almacén',
+                leido: false,
+                requisicion_id: compra.req_id
+              }));
+            
+            if (notifs.length > 0) {
+              await supabase.from('notificaciones').insert(notifs);
+            }
+          }
+        } catch (notifErr) {
+          console.error("Error al notificar al personal de almacén:", notifErr);
+        }
+
+        resolve();
+      } catch (err) {
+        reject(err);
+      }
+    });
+
+    toast.promise(recibirPromesa, {
+      loading: 'Clasificando ubicación del material...',
+      success: '¡Excelente! Material clasificado correctamente en almacén.',
+      error: (err) => `Error al clasificar: ${err.message}`
+    });
+
+    try {
+      await recibirPromesa;
       setSelectedAlmacenes(prev => {
         const copy = { ...prev };
         delete copy[compra.id];
         return copy;
       });
       cargarDatos();
-    } catch (err) {
-      console.error(err);
-      toast.error("Error al recibir: " + err.message);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleEntregar = async (compra) => {
+    setLoading(true);
+    const entregarPromesa = new Promise(async (resolve, reject) => {
+      try {
+        const { data: req, error: fetchErr } = await supabase
+          .from('requisiciones')
+          .select('items')
+          .eq('id', compra.req_id)
+          .single();
+        
+        if (fetchErr) throw fetchErr;
+        
+        const items = [...(req.items || [])];
+        const item = items[compra.item_idx];
+        if (!item) throw new Error("Material no encontrado.");
+
+        const nowIso = new Date().toISOString();
+        const userNombre = currentUser ? `${currentUser.nombre} ${currentUser.apellido}` : 'Desconocido';
+        const userId = currentUser ? currentUser.id : null;
+
+        if (compra.is_legacy) {
+          item.estatus_almacen = 'entregado';
+          item.fecha_salida_almacen = nowIso;
+          item.usuario_salida_nombre = userNombre;
+          item.usuario_salida_id = userId;
+        } else {
+          const hist = [...(item.historial_compras || [])];
+          if (hist[compra.history_idx]) {
+            hist[compra.history_idx] = {
+              ...hist[compra.history_idx],
+              estatus_almacen: 'entregado',
+              fecha_salida_almacen: nowIso,
+              usuario_salida_nombre: userNombre,
+              usuario_salida_id: userId
+            };
+            item.historial_compras = hist;
+            const valid = hist.filter(h => h.tipo !== 'JUSTIFICACION' && h.tipo !== 'ANULACION');
+            const allEntregados = valid.every(c => c.estatus_almacen === 'entregado');
+            item.estatus_almacen = allEntregados ? 'entregado' : item.estatus_almacen;
+          } else {
+            throw new Error("Transacción no encontrada.");
+          }
+        }
+
+        items[compra.item_idx] = item;
+
+        const { error: updateErr } = await supabase
+          .from('requisiciones')
+          .update({ items })
+          .eq('id', compra.req_id);
+        
+        if (updateErr) throw updateErr;
+
+        resolve();
+      } catch (err) {
+        reject(err);
+      }
+    });
+
+    toast.promise(entregarPromesa, {
+      loading: 'Registrando la entrega final del material...',
+      success: '¡Excelente! Material entregado exitosamente al usuario final.',
+      error: (err) => `Error al registrar entrega: ${err.message}`
+    });
+
+    try {
+      await entregarPromesa;
+      cargarDatos();
+    } catch (e) {
+      console.error(e);
     } finally {
       setLoading(false);
     }
@@ -557,42 +695,22 @@ const Almacen = () => {
 
   const handleDeshacer = async (compra) => {
     setLoading(true);
-    try {
-      const { data: req, error: fetchErr } = await supabase
-        .from('requisiciones')
-        .select('items')
-        .eq('id', compra.req_id)
-        .single();
-      
-      if (fetchErr) throw fetchErr;
-      
-      const items = [...(req.items || [])];
-      const item = items[compra.item_idx];
-      if (!item) throw new Error("Material no encontrado.");
+    const deshacerPromesa = new Promise(async (resolve, reject) => {
+      try {
+        const { data: req, error: fetchErr } = await supabase
+          .from('requisiciones')
+          .select('items')
+          .eq('id', compra.req_id)
+          .single();
+        
+        if (fetchErr) throw fetchErr;
+        
+        const items = [...(req.items || [])];
+        const item = items[compra.item_idx];
+        if (!item) throw new Error("Material no encontrado.");
 
-      if (compra.is_legacy) {
-        item.estatus_almacen = 'Por_Clasificar_Almacen';
-        item.ubicacion_almacen = null;
-        item.enviado_almacen = false;
-        item.almacen_destino = null;
-        item.fecha_entrada_almacen = null;
-        item.usuario_almacen_nombre = null;
-        item.usuario_almacen_id = null;
-      } else {
-        const hist = [...(item.historial_compras || [])];
-        if (hist[compra.history_idx]) {
-          hist[compra.history_idx] = {
-            ...hist[compra.history_idx],
-            estatus_almacen: 'Por_Clasificar_Almacen',
-            ubicacion_almacen: null,
-            enviado_almacen: false,
-            almacen_destino: null,
-            fecha_entrada_almacen: null,
-            usuario_almacen_nombre: null,
-            usuario_almacen_id: null
-          };
-          item.historial_compras = hist;
-          item.estatus_almacen = 'Por_Clasificar_Almacen';
+        if (compra.is_legacy) {
+          item.estatus_almacen = 'pendiente_asignar';
           item.ubicacion_almacen = null;
           item.enviado_almacen = false;
           item.almacen_destino = null;
@@ -600,24 +718,126 @@ const Almacen = () => {
           item.usuario_almacen_nombre = null;
           item.usuario_almacen_id = null;
         } else {
-          throw new Error("Transacción no encontrada.");
+          const hist = [...(item.historial_compras || [])];
+          if (hist[compra.history_idx]) {
+            hist[compra.history_idx] = {
+              ...hist[compra.history_idx],
+              estatus_almacen: 'pendiente_asignar',
+              ubicacion_almacen: null,
+              enviado_almacen: false,
+              almacen_destino: null,
+              fecha_entrada_almacen: null,
+              usuario_almacen_nombre: null,
+              usuario_almacen_id: null
+            };
+            item.historial_compras = hist;
+            item.estatus_almacen = 'pendiente_asignar';
+            item.ubicacion_almacen = null;
+            item.enviado_almacen = false;
+            item.almacen_destino = null;
+            item.fecha_entrada_almacen = null;
+            item.usuario_almacen_nombre = null;
+            item.usuario_almacen_id = null;
+          } else {
+            throw new Error("Transacción no encontrada.");
+          }
         }
+
+        items[compra.item_idx] = item;
+
+        const { error: updateErr } = await supabase
+          .from('requisiciones')
+          .update({ items })
+          .eq('id', compra.req_id);
+        
+        if (updateErr) throw updateErr;
+
+        resolve();
+      } catch (err) {
+        reject(err);
       }
+    });
 
-      items[compra.item_idx] = item;
+    toast.promise(deshacerPromesa, {
+      loading: 'Revirtiendo el registro de recepción...',
+      success: '¡Excelente! Recepción revertida exitosamente.',
+      error: (err) => `Error al revertir recepción: ${err.message}`
+    });
 
-      const { error: updateErr } = await supabase
-        .from('requisiciones')
-        .update({ items })
-        .eq('id', compra.req_id);
-      
-      if (updateErr) throw updateErr;
-
-      toast.success("Recepción revertida exitosamente.");
+    try {
+      await deshacerPromesa;
       cargarDatos();
-    } catch (err) {
-      console.error(err);
-      toast.error("Error al deshacer: " + err.message);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeshacerEntrega = async (compra) => {
+    setLoading(true);
+    const deshacerEntregaPromesa = new Promise(async (resolve, reject) => {
+      try {
+        const { data: req, error: fetchErr } = await supabase
+          .from('requisiciones')
+          .select('items')
+          .eq('id', compra.req_id)
+          .single();
+        
+        if (fetchErr) throw fetchErr;
+        
+        const items = [...(req.items || [])];
+        const item = items[compra.item_idx];
+        if (!item) throw new Error("Material no encontrado.");
+
+        if (compra.is_legacy) {
+          item.estatus_almacen = 'asignado';
+          item.fecha_salida_almacen = null;
+          item.usuario_salida_nombre = null;
+          item.usuario_salida_id = null;
+        } else {
+          const hist = [...(item.historial_compras || [])];
+          if (hist[compra.history_idx]) {
+            hist[compra.history_idx] = {
+              ...hist[compra.history_idx],
+              estatus_almacen: 'asignado',
+              fecha_salida_almacen: null,
+              usuario_salida_nombre: null,
+              usuario_salida_id: null
+            };
+            item.historial_compras = hist;
+            item.estatus_almacen = 'asignado';
+          } else {
+            throw new Error("Transacción no encontrada.");
+          }
+        }
+
+        items[compra.item_idx] = item;
+
+        const { error: updateErr } = await supabase
+          .from('requisiciones')
+          .update({ items })
+          .eq('id', compra.req_id);
+        
+        if (updateErr) throw updateErr;
+
+        resolve();
+      } catch (err) {
+        reject(err);
+      }
+    });
+
+    toast.promise(deshacerEntregaPromesa, {
+      loading: 'Revirtiendo la entrega del material...',
+      success: '¡Excelente! Entrega revertida exitosamente. El material vuelve a estar Asignado.',
+      error: (err) => `Error al revertir entrega: ${err.message}`
+    });
+
+    try {
+      await deshacerEntregaPromesa;
+      cargarDatos();
+    } catch (e) {
+      console.error(e);
     } finally {
       setLoading(false);
     }
@@ -843,11 +1063,12 @@ const Almacen = () => {
       </div>
 
       {/* TARJETAS ESTADÍSTICAS KPI — estilo unificado con demás módulos */}
-      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(6, 1fr)', gap: '15px', marginBottom: '25px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(7, 1fr)', gap: '15px', marginBottom: '25px' }}>
         {[
           { label: 'Compras Totales',      value: stats.total,      sub: 'en sistema',           color: '#3b82f6' },
-          { label: 'Recibido Almacén',    value: stats.recibidos,  sub: 'ingresados',            color: '#16a34a' },
-          { label: 'Pendiente Ingreso',    value: stats.pendientes, sub: 'por clasificar',        color: '#f59e0b' },
+          { label: 'Ubicados/Asignados',  value: stats.recibidos,  sub: 'en estantería',        color: '#f59e0b' },
+          { label: 'Pendiente Ubicar',    value: stats.pendientes, sub: 'por clasificar',        color: '#ef4444' },
+          { label: 'Entregados Final',    value: stats.entregados, sub: 'entregados a usuario', color: '#16a34a' },
           { label: 'Campo Boscán',        value: stats.boscan,     sub: 'almacén ubicados',     color: '#06b6d4' },
           { label: 'Maracaibo',            value: stats.maracaibo,  sub: 'almacén ubicados',     color: '#8b5cf6' },
           { label: 'Bajo Grande',          value: stats.bajoGrande, sub: 'almacén ubicados',     color: '#ec4899' },
@@ -921,7 +1142,7 @@ const Almacen = () => {
             </select>
           </div>
           <div>
-            <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '800', color: '#64748b', marginBottom: '6px', textTransform: 'uppercase' }}>Rango de Fechas Recepción</label>
+            <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '800', color: '#64748b', marginBottom: '6px', textTransform: 'uppercase' }}>Rango de Fechas</label>
             <div style={{ display: 'flex', gap: '5px' }}>
               <input 
                 type="date" 
@@ -942,7 +1163,7 @@ const Almacen = () => {
 
       {/* BARRA UNIFICADA DE PESTAÑAS — debajo de filtros */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '15px', backgroundColor: 'white', padding: '6px', borderRadius: '14px', border: '1px solid #e2e8f0', boxShadow: '0 2px 8px rgba(0,0,0,0.03)', flexWrap: 'wrap' }}>
-        {/* Grupo: Recepción / Historial */}
+        {/* Grupo: Recepción / Historial de Entregados / Historial General */}
         <button
           onClick={() => setActiveTab('recepcion')}
           style={{
@@ -953,19 +1174,31 @@ const Almacen = () => {
             boxShadow: activeTab === 'recepcion' ? '0 4px 12px rgba(22,163,74,0.35)' : 'none',
           }}
         >
-          📦 Recepción
+          📦 Recepción (Activo)
+        </button>
+        <button
+          onClick={() => setActiveTab('entregados')}
+          style={{
+            padding: '8px 18px', borderRadius: '10px', border: 'none', cursor: 'pointer',
+            fontWeight: '800', fontSize: '0.8rem', transition: 'all 0.2s', whiteSpace: 'nowrap',
+            backgroundColor: activeTab === 'entregados' ? '#3b82f6' : 'transparent',
+            color: activeTab === 'entregados' ? 'white' : '#64748b',
+            boxShadow: activeTab === 'entregados' ? '0 4px 12px rgba(59,130,246,0.35)' : 'none',
+          }}
+        >
+          🚚 Historial de Entregados
         </button>
         <button
           onClick={() => setActiveTab('historial')}
           style={{
             padding: '8px 18px', borderRadius: '10px', border: 'none', cursor: 'pointer',
             fontWeight: '800', fontSize: '0.8rem', transition: 'all 0.2s', whiteSpace: 'nowrap',
-            backgroundColor: activeTab === 'historial' ? '#16a34a' : 'transparent',
+            backgroundColor: activeTab === 'historial' ? '#475569' : 'transparent',
             color: activeTab === 'historial' ? 'white' : '#64748b',
-            boxShadow: activeTab === 'historial' ? '0 4px 12px rgba(22,163,74,0.35)' : 'none',
+            boxShadow: activeTab === 'historial' ? '0 4px 12px rgba(71,85,105,0.35)' : 'none',
           }}
         >
-          🗂️ Historial
+          🗂️ Bitácora General
         </button>
 
         {/* Divisor vertical y Grupo de vistas rápidas solo para Recepción */}
@@ -993,7 +1226,7 @@ const Almacen = () => {
                 color: vistaTab === 'recibidos' ? 'white' : '#64748b',
               }}
             >
-              Ingresados 📦
+              Ubicados 📦
             </button>
             <button
               onClick={() => setVistaTab('pendientes')}
@@ -1004,7 +1237,7 @@ const Almacen = () => {
                 color: vistaTab === 'pendientes' ? 'white' : '#64748b',
               }}
             >
-              Pendientes 📥
+              Pendientes Asignar 📥
             </button>
           </>
         )}
@@ -1018,13 +1251,13 @@ const Almacen = () => {
         <div style={{ backgroundColor: '#16a34a', color: 'white', padding: '15px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: '900', letterSpacing: '0.5px' }}>
             {vistaTab === 'todos' 
-              ? 'TOTAL CLEAN C.A. - REPORTE DE COMPRAS COMPLETADAS'
+              ? 'TOTAL CLEAN C.A. - REPORTE DE TRABAJO ACTIVO (COMPRAS Y ALMACÉN)'
               : vistaTab === 'recibidos'
-                ? 'TOTAL CLEAN C.A. - REPORTE DE COMPRAS INGRESADAS A ALMACÉN'
-                : 'TOTAL CLEAN C.A. - REPORTE DE COMPRAS PENDIENTES EN ALMACÉN'}
+                ? 'TOTAL CLEAN C.A. - MATERIALES UBICADOS EN ALMACÉN'
+                : 'TOTAL CLEAN C.A. - MATERIALES PENDIENTES DE ASIGNAR UBICACIÓN'}
           </h3>
           <span style={{ fontSize: '0.75rem', fontWeight: 'bold', opacity: 0.9 }}>
-            Filtradas: {filteredCompras.length} de {comprasRaw.length}
+            Filtradas: {filteredCompras.length} de {comprasRaw.filter(c => !c.is_entregado).length}
           </span>
         </div>
 
@@ -1032,14 +1265,14 @@ const Almacen = () => {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
             <thead>
               <tr style={{ backgroundColor: '#1e293b', color: '#f8fafc', borderBottom: '2px solid #cbd5e1' }}>
-                <th style={{ padding: '12px 10px', textAlign: 'center', width: '80px' }}>ALMACÉN</th>
+                <th style={{ padding: '12px 10px', textAlign: 'center', width: '80px' }}>ESTADO</th>
                 <th style={{ padding: '12px 10px', textAlign: 'center', width: '120px' }}>REQUISICIÓN</th>
                 <th style={{ padding: '12px 10px', textAlign: 'left', minWidth: '220px' }}>DESCRIPCIÓN</th>
                 <th style={{ padding: '12px 10px', textAlign: 'left' }}>PROVEEDOR</th>
                 <th style={{ padding: '12px 10px', textAlign: 'center' }}>NRO DE FACTURA</th>
                 <th style={{ padding: '12px 10px', textAlign: 'center', minWidth: '140px' }}>LISTO PARA ALMACÉN</th>
                 <th style={{ padding: '12px 10px', textAlign: 'center', minWidth: '180px' }}>INGRESO ALMACÉN (FECHA/USUARIO)</th>
-                <th style={{ padding: '12px 10px', textAlign: 'center', minWidth: '210px' }}>ALMACÉN DESTINO / INGRESO</th>
+                <th style={{ padding: '12px 10px', textAlign: 'center', minWidth: '220px' }}>ALMACÉN DESTINO / ACCIONES</th>
                 <th style={{ padding: '12px 10px', textAlign: 'left', minWidth: '180px' }}>SOLICITANTE / GERENCIA</th>
                 <th style={{ padding: '12px 10px', textAlign: 'left' }}>CENTRO DE COSTO</th>
                 <th style={{ padding: '12px 10px', textAlign: 'right' }}>CANTIDAD</th>
@@ -1051,7 +1284,7 @@ const Almacen = () => {
                 <tr>
                   <td colSpan="12" style={{ padding: '50px', textAlign: 'center', color: '#64748b' }}>
                     <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px' }}>
-                      <Loader2 className="animate-spin" /> Cargando compras completadas...
+                      <Loader2 className="animate-spin" /> Cargando compras...
                     </div>
                   </td>
                 </tr>
@@ -1065,15 +1298,16 @@ const Almacen = () => {
               ) : filteredCompras.map((compra) => {
                 const isRecibida = compra.recibido;
                 const selectedLoc = selectedAlmacenes[compra.id] || '';
+                const rowBg = isRecibida ? '#fffdf0' : 'transparent'; // amarillo tenue / beige claro para asignados
 
                 return (
-                  <tr key={compra.transaction_id || compra.id} style={{ borderBottom: '1px solid #e2e8f0', transition: 'background-color 0.2s', backgroundColor: isRecibida ? '#f0fdf4' : 'transparent' }} className="row-hover">
-                    {/* ALMACÉN */}
+                  <tr key={compra.transaction_id || compra.id} style={{ borderBottom: '1px solid #e2e8f0', transition: 'background-color 0.2s', backgroundColor: rowBg }} className="row-hover">
+                    {/* ESTADO */}
                     <td style={{ padding: '10px', textAlign: 'center' }}>
                       {isRecibida ? (
-                        <span style={{ display: 'inline-block', padding: '4px 8px', borderRadius: '6px', backgroundColor: '#16a34a', color: 'white', fontWeight: '900', fontSize: '0.7rem' }}>SÍ</span>
+                        <span style={{ display: 'inline-block', padding: '4px 8px', borderRadius: '6px', backgroundColor: '#dcfce7', color: '#16a34a', fontWeight: '900', fontSize: '0.68rem', border: '1px solid #bbf7d0' }}>ASIGNADO</span>
                       ) : (
-                        <span style={{ display: 'inline-block', padding: '4px 8px', borderRadius: '6px', backgroundColor: '#94a3b8', color: 'white', fontWeight: '900', fontSize: '0.7rem' }}>NO</span>
+                        <span style={{ display: 'inline-block', padding: '4px 8px', borderRadius: '6px', backgroundColor: '#f1f5f9', color: '#475569', fontWeight: '900', fontSize: '0.68rem', border: '1px solid #e2e8f0' }}>PENDIENTE</span>
                       )}
                     </td>
                     
@@ -1102,7 +1336,7 @@ const Almacen = () => {
 
                     {/* LISTO PARA ALMACÉN — hora en que se hizo clic en Recibir */}
                     <td style={{ padding: '10px', textAlign: 'center', color: '#334155', fontWeight: '600' }}>
-                      {isRecibida ? formatFechaHora(compra.fecha_entrada_almacen) : <span style={{ color: '#94a3b8', fontStyle: 'italic', fontSize: '0.75rem' }}>Pendiente</span>}
+                      {formatFechaHora(compra.fecha_compra)}
                     </td>
 
                     {/* INGRESO ALMACÉN (FECHA/USUARIO) */}
@@ -1119,24 +1353,35 @@ const Almacen = () => {
                           )}
                         </div>
                       ) : (
-                        <span style={{ color: '#94a3b8', fontStyle: 'italic', fontSize: '0.75rem' }}>{"Pendiente de ubicar"}</span>
+                        <span style={{ color: '#94a3b8', fontStyle: 'italic', fontSize: '0.75rem' }}>Pendiente de ubicar</span>
                       )}
                     </td>
 
-                    {/* ALMACÉN DESTINO / REGISTRO INGRESO */}
+                    {/* ALMACÉN DESTINO / REGISTRO INGRESO / ACCIONES */}
                     <td style={{ padding: '10px', textAlign: 'center' }}>
                       {isRecibida ? (
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                          <span style={{ fontWeight: '700', color: '#16a34a', fontSize: '0.8rem' }}>
-                            {compra.ubicacion_almacen}
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px', justifyContent: 'center' }}>
+                          <span style={{ fontWeight: '800', color: '#b45309', fontSize: '0.72rem', backgroundColor: '#fef3c7', padding: '3px 8px', borderRadius: '12px', border: '1px solid #fde68a' }}>
+                            📍 Asignado a: {compra.ubicacion_almacen}
                           </span>
-                          <button 
-                            onClick={() => handleDeshacer(compra)} 
-                            title="Revertir Ingreso"
-                            style={{ padding: '4px 8px', backgroundColor: '#fee2e2', border: '1px solid #fecaca', borderRadius: '6px', color: '#ef4444', fontWeight: 'bold', cursor: 'pointer', transition: 'all 0.2s', display: 'flex', alignItems: 'center' }}
-                          >
-                            <Trash2 size={12} />
-                          </button>
+                          <div style={{ display: 'flex', gap: '5px' }}>
+                            <button 
+                              type="button"
+                              onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleEntregar(compra); }} 
+                              title="Marcar como Entregado"
+                              style={{ padding: '5px 10px', backgroundColor: '#3b82f6', border: 'none', borderRadius: '6px', color: 'white', fontWeight: 'bold', cursor: 'pointer', transition: 'all 0.2s', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.7rem' }}
+                            >
+                              🚚 Entregar
+                            </button>
+                            <button 
+                              type="button"
+                              onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleDeshacer(compra); }} 
+                              title="Revertir Ingreso"
+                              style={{ padding: '4px 8px', backgroundColor: '#fee2e2', border: '1px solid #fecaca', borderRadius: '6px', color: '#ef4444', fontWeight: 'bold', cursor: 'pointer', transition: 'all 0.2s', display: 'flex', alignItems: 'center' }}
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          </div>
                         </div>
                       ) : (
                         <div style={{ display: 'flex', gap: '5px', justifyContent: 'center', alignItems: 'center' }}>
@@ -1151,7 +1396,8 @@ const Almacen = () => {
                             ))}
                           </select>
                           <button 
-                            onClick={() => handleRecibir(compra)}
+                            type="button"
+                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleRecibir(compra); }}
                             disabled={!selectedLoc}
                             style={{ 
                               padding: '6px 12px', 
@@ -1200,7 +1446,7 @@ const Almacen = () => {
               <tfoot>
                 <tr style={{ backgroundColor: '#f1f5f9', borderTop: '2px solid #cbd5e1', fontWeight: '900', color: '#0f172a' }}>
                   <td colSpan="11" style={{ padding: '15px 20px', textAlign: 'right', fontSize: '0.9rem' }}>
-                    TOTAL GENERAL COMPLETADO ($):
+                    TOTAL TRABAJO ACTIVO ($):
                   </td>
                   <td style={{ padding: '15px 10px', textAlign: 'right', fontSize: '1rem', color: '#16a34a' }}>
                     $ {totalGeneralFiltrado.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
@@ -1208,6 +1454,102 @@ const Almacen = () => {
                 </tr>
               </tfoot>
             )}
+          </table>
+        </div>
+      </div>
+      )}
+
+      {/* HISTORIAL DE ENTREGADOS — pestaña separada */}
+      {activeTab === 'entregados' && (
+      <div style={{ backgroundColor: 'white', borderRadius: '24px', overflow: 'hidden', border: '1px solid #e2e8f0', boxShadow: '0 10px 30px rgba(0,0,0,0.03)' }}>
+        
+        <div style={{ backgroundColor: '#3b82f6', color: 'white', padding: '15px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: '900', letterSpacing: '0.5px' }}>
+            📦 HISTORIAL DE MATERIALES ENTREGADOS AL USUARIO FINAL
+          </h3>
+          <span style={{ fontSize: '0.75rem', fontWeight: 'bold', opacity: 0.9 }}>
+            Entregados: {entregadosCompras.length}
+          </span>
+        </div>
+
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+            <thead>
+              <tr style={{ backgroundColor: '#1e293b', color: '#f8fafc', borderBottom: '2px solid #cbd5e1' }}>
+                <th style={{ padding: '12px 10px', textAlign: 'center', width: '120px' }}>REQUISICIÓN</th>
+                <th style={{ padding: '12px 10px', textAlign: 'left', minWidth: '220px' }}>DESCRIPCIÓN</th>
+                <th style={{ padding: '12px 10px', textAlign: 'left' }}>PROVEEDOR</th>
+                <th style={{ padding: '12px 10px', textAlign: 'center' }}>NRO DE FACTURA</th>
+                <th style={{ padding: '12px 10px', textAlign: 'center', minWidth: '160px' }}>INGRESO ALMACÉN</th>
+                <th style={{ padding: '12px 10px', textAlign: 'center', minWidth: '160px' }}>ENTREGA FINAL</th>
+                <th style={{ padding: '12px 10px', textAlign: 'center', minWidth: '180px' }}>UBICACIÓN / ENTREGADO POR</th>
+                <th style={{ padding: '12px 10px', textAlign: 'left', minWidth: '180px' }}>SOLICITANTE / GERENCIA</th>
+                <th style={{ padding: '12px 10px', textAlign: 'right' }}>CANTIDAD</th>
+                <th style={{ padding: '12px 10px', textAlign: 'right' }}>TOTAL ($)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr>
+                  <td colSpan="10" style={{ padding: '50px', textAlign: 'center', color: '#64748b' }}>
+                    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px' }}>
+                      <Loader2 className="animate-spin" /> Cargando entregados...
+                    </div>
+                  </td>
+                </tr>
+              ) : entregadosCompras.length === 0 ? (
+                <tr>
+                  <td colSpan="10" style={{ padding: '50px', textAlign: 'center', color: '#94a3b8', fontWeight: '600' }}>
+                    <ShieldAlert size={24} style={{ display: 'block', margin: '0 auto 10px auto', color: '#94a3b8' }} />
+                    No hay materiales entregados registrados bajo los filtros actuales.
+                  </td>
+                </tr>
+              ) : entregadosCompras.map((compra) => {
+                return (
+                  <tr key={compra.transaction_id || compra.id} style={{ borderBottom: '1px solid #e2e8f0', backgroundColor: '#f8fafc' }} className="row-hover">
+                    <td 
+                      onClick={() => handleVerDetalleTicket(compra)}
+                      style={{ padding: '10px', textAlign: 'center', fontWeight: 'bold', color: '#1e40af', cursor: 'pointer', textDecoration: 'underline' }}
+                    >
+                      {compra.correlativo}
+                    </td>
+                    <td style={{ padding: '10px', fontWeight: '600', color: '#0f172a' }}>{compra.descripcion}</td>
+                    <td style={{ padding: '10px', color: '#475569' }}>{compra.proveedor}</td>
+                    <td style={{ padding: '10px', textAlign: 'center', fontWeight: '700', color: '#2563eb' }}>{compra.numero_factura}</td>
+                    <td style={{ padding: '10px', textAlign: 'center', color: '#64748b' }}>{formatFechaHora(compra.fecha_entrada_almacen)}</td>
+                    <td style={{ padding: '10px', textAlign: 'center', color: '#16a34a', fontWeight: 'bold' }}>{formatFechaHora(compra.fecha_salida_almacen)}</td>
+                    <td style={{ padding: '10px', textAlign: 'center' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                        <div>
+                          <div style={{ fontWeight: '700', color: '#1e293b' }}>📍 {compra.ubicacion_almacen}</div>
+                          {compra.usuario_salida_nombre && (
+                            <div style={{ fontSize: '0.68rem', color: '#475569', marginTop: '2px' }}>
+                              👤 Por: {compra.usuario_salida_nombre}
+                            </div>
+                          )}
+                        </div>
+                        <button 
+                          type="button"
+                          onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleDeshacerEntrega(compra); }} 
+                          title="Revertir Entrega (Volver a Asignado)"
+                          style={{ padding: '6px', backgroundColor: '#fee2e2', border: '1px solid #fecaca', borderRadius: '6px', color: '#ef4444', fontWeight: 'bold', cursor: 'pointer', transition: 'all 0.2s', display: 'flex', alignItems: 'center' }}
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    </td>
+                    <td style={{ padding: '10px', color: '#475569' }}>
+                      <div style={{ fontWeight: '600', color: '#0f172a' }}>{compra.solicitante}</div>
+                      <div style={{ fontSize: '0.72rem', color: '#64748b' }}>🏢 {compra.gerencia}</div>
+                    </td>
+                    <td style={{ padding: '10px', textAlign: 'right', fontWeight: 'bold' }}>{compra.cantidad_comprada}</td>
+                    <td style={{ padding: '10px', textAlign: 'right', fontWeight: '800', color: '#16a34a' }}>
+                      $ {(compra.total || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
           </table>
         </div>
       </div>

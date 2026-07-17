@@ -565,7 +565,8 @@ const Compras = () => {
     return historial.filter(req => {
       const matchTexto =
         req.solicitante.toLowerCase().includes(busqueda.toLowerCase()) ||
-        req.correlativo.toLowerCase().includes(busqueda.toLowerCase());
+        req.correlativo.toLowerCase().includes(busqueda.toLowerCase()) ||
+        (req.items || []).some(it => (it.descripcion || '').toLowerCase().includes(busqueda.toLowerCase()));
       const matchGerencia = filtroGerencia === 'Todos' || req.gerencia === filtroGerencia;
       
       const matchStatus =
@@ -2730,7 +2731,7 @@ const Compras = () => {
             <input
               className="input-tc"
               style={{ width: '100%', paddingLeft: '35px', margin: 0, backgroundColor: 'white', boxSizing: 'border-box' }}
-              placeholder="Filtrar por solicitante o folio..."
+              placeholder="Filtrar por solicitante, folio o descripción..."
               value={busqueda}
               onChange={(e) => setBusqueda(e.target.value)}
             />

@@ -2901,6 +2901,23 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                   }} title={req.justificacion}>
                     {req.justificacion || 'SIN JUSTIFICACIÓN'}
                     {req.observaciones && <MessageSquare size={14} style={{ color: '#8b5cf6', marginLeft: '8px', verticalAlign: 'middle' }} title="Tiene observaciones" />}
+                    {(req.detalles || req.items || [])?.some(it => it.historial_compras?.some(h => h.tipo === 'JUSTIFICACION')) && (
+                      <span 
+                        style={{ 
+                          color: '#d97706', 
+                          marginLeft: '8px', 
+                          fontSize: '13px', 
+                          verticalAlign: 'middle', 
+                          cursor: 'help',
+                          fontWeight: 'bold',
+                          display: 'inline-flex',
+                          alignItems: 'center'
+                        }} 
+                        title="Esta requisición posee alertas/justificaciones de compras"
+                      >
+                        ⚠️
+                      </span>
+                    )}
                   </div>
                   <div style={{ fontSize: '11px', color: '#757575', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '5px' }}>
                     <span>{req.estado_aprobacion === 'ANULADA' ? '-' : (req.detalles?.[0]?.categoria || 'N/A')}</span>
@@ -2935,7 +2952,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
 
                 <td data-label="TIEMPO SLA" style={{ textAlign: 'center', verticalAlign: 'middle' }}>
                   {(() => {
-                    const isJustificada = req.items?.some(it => 
+                    const isJustificada = (req.detalles || req.items || [])?.some(it => 
                       it.historial_compras?.some(h => h.tipo === 'JUSTIFICACION')
                     );
 
@@ -3785,56 +3802,106 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                               {(() => {
                                 const statusAlmacen = f.estatus_almacen || (f.enviado_almacen ? 'Ubicado' : 'Pendiente_Compras');
                                 const ubicacionVal = f.ubicacion_almacen || f.almacen_destino;
-                                if (statusAlmacen !== 'Ubicado') return null;
-
-                                return (
-                                  <div 
-                                    className="warehouse-located-icon-wrapper"
-                                    style={{ 
-                                      position: 'relative',
-                                      display: 'inline-block',
-                                      fontSize: '1.2rem',
-                                      cursor: 'help',
-                                      transition: 'all 0.3s ease',
-                                      userSelect: 'none'
-                                    }}
-                                  >
-                                    📦
+                                if (statusAlmacen === 'Ubicado' || statusAlmacen === 'asignado') {
+                                  return (
                                     <div 
-                                      className="warehouse-located-tooltip"
-                                      style={{
-                                        position: 'absolute',
-                                        bottom: '125%',
-                                        left: '50%',
-                                        transform: 'translateX(-50%)',
-                                        backgroundColor: '#1e293b',
-                                        color: '#f8fafc',
-                                        padding: '6px 10px',
-                                        borderRadius: '6px',
-                                        fontSize: '11px',
-                                        fontWeight: '400',
-                                        whiteSpace: 'nowrap',
-                                        zIndex: 100,
-                                        boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
-                                        opacity: 0,
-                                        pointerEvents: 'none',
-                                        transition: 'opacity 0.2s',
-                                        fontFamily: 'Inter, sans-serif'
+                                      className="warehouse-located-icon-wrapper"
+                                      style={{ 
+                                        position: 'relative',
+                                        display: 'inline-block',
+                                        fontSize: '1.2rem',
+                                        cursor: 'help',
+                                        transition: 'all 0.3s ease',
+                                        userSelect: 'none'
                                       }}
                                     >
-                                      Ubicado en: {ubicacionVal || 'Almacén general'}
-                                      <div style={{
-                                        position: 'absolute',
-                                        top: '100%',
-                                        left: '50%',
-                                        marginLeft: '-5px',
-                                        borderWidth: '5px',
-                                        borderStyle: 'solid',
-                                        borderColor: '#1e293b transparent transparent transparent'
-                                      }} />
+                                      📦
+                                      <div 
+                                        className="warehouse-located-tooltip"
+                                        style={{
+                                          position: 'absolute',
+                                          bottom: '125%',
+                                          left: '50%',
+                                          transform: 'translateX(-50%)',
+                                          backgroundColor: '#1e293b',
+                                          color: '#f8fafc',
+                                          padding: '6px 10px',
+                                          borderRadius: '6px',
+                                          fontSize: '11px',
+                                          fontWeight: '400',
+                                          whiteSpace: 'nowrap',
+                                          zIndex: 100,
+                                          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+                                          opacity: 0,
+                                          pointerEvents: 'none',
+                                          transition: 'opacity 0.2s',
+                                          fontFamily: 'Inter, sans-serif'
+                                        }}
+                                      >
+                                        Ubicado en: {ubicacionVal || 'Almacén general'}
+                                        <div style={{
+                                          position: 'absolute',
+                                          top: '100%',
+                                          left: '50%',
+                                          marginLeft: '-5px',
+                                          borderWidth: '5px',
+                                          borderStyle: 'solid',
+                                          borderColor: '#1e293b transparent transparent transparent'
+                                        }} />
+                                      </div>
                                     </div>
-                                  </div>
-                                );
+                                  );
+                                } else if (statusAlmacen === 'entregado') {
+                                  return (
+                                    <div 
+                                      className="warehouse-located-icon-wrapper"
+                                      style={{ 
+                                        position: 'relative',
+                                        display: 'inline-block',
+                                        fontSize: '1.2rem',
+                                        cursor: 'help',
+                                        transition: 'all 0.3s ease',
+                                        userSelect: 'none'
+                                      }}
+                                    >
+                                      ✅
+                                      <div 
+                                        className="warehouse-located-tooltip"
+                                        style={{
+                                          position: 'absolute',
+                                          bottom: '125%',
+                                          left: '50%',
+                                          transform: 'translateX(-50%)',
+                                          backgroundColor: '#16a34a',
+                                          color: '#ffffff',
+                                          padding: '6px 10px',
+                                          borderRadius: '6px',
+                                          fontSize: '11px',
+                                          fontWeight: 'bold',
+                                          whiteSpace: 'nowrap',
+                                          zIndex: 100,
+                                          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+                                          opacity: 0,
+                                          pointerEvents: 'none',
+                                          transition: 'opacity 0.2s',
+                                          fontFamily: 'Inter, sans-serif'
+                                        }}
+                                      >
+                                        Entregado al usuario final
+                                        <div style={{
+                                          position: 'absolute',
+                                          top: '100%',
+                                          left: '50%',
+                                          marginLeft: '-5px',
+                                          borderWidth: '5px',
+                                          borderStyle: 'solid',
+                                          borderColor: '#16a34a transparent transparent transparent'
+                                        }} />
+                                      </div>
+                                    </div>
+                                  );
+                                }
+                                return null;
                               })()}
                               <style>{`
                                 .warehouse-located-icon-wrapper:hover .warehouse-located-tooltip {
