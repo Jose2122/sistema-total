@@ -545,6 +545,8 @@ const ModuloTicketsPago = () => {
   const [expandirHistorial, setExpandirHistorial] = useState({}); // { itemID: boolean }
   const [centrosCosto, setCentrosCosto] = useState([]);
   const [todasCategorias, setTodasCategorias] = useState([]);
+  const [mostrarTimeline, setMostrarTimeline] = useState(false);
+  const [forzarVistaAnalista, setForzarVistaAnalista] = useState(false);
 
   const todasCategoriasUnicas = useMemo(() => {
     const vistos = new Set();
@@ -1722,6 +1724,12 @@ const ModuloTicketsPago = () => {
         updatePayload.banco_pago_id = ticketSeleccionado.banco_pago_id;
       }
 
+      // Registrar quién pagó y cuándo (para trazabilidad)
+      if (estatusFinal === 'Pagado') {
+        updatePayload.pagado_por_nombre = currentUser?.nombre || currentUser?.correo || 'Usuario';
+        updatePayload.fecha_pago = new Date().toISOString();
+      }
+
       const { error } = await supabase.from('tickets_directos').update(updatePayload).eq('id', ticketSeleccionado.id);
 
       if (error) throw error;
@@ -1898,40 +1906,123 @@ const ModuloTicketsPago = () => {
   const aprobarTicket = async () => {
     setLoading(true);
     try {
-      const { data: updatedData, error } = await supabase.from('tickets_directos').update({
-        status: 'EMITIDO',
-        aprobado_por: currentUser.id,
-        fecha_aprobacion: new Date().toISOString()
-      }).eq('id', ticketSeleccionado.id).select('id');
+      const emailLower = (currentUser?.correo || '').toLowerCase().trim();
+      const esGG = emailLower === 'cvega@totalclean.com' || emailLower === 'cvega.totalclean@gmail.com' || (currentUser?.rol || '').toUpperCase().includes('GERENTE GENERAL');
+
+      // Buscar ID del Gerente General
+      let ggId = null;
+      try {
+        const { data: ggData } = await supabase
+          .from('perfiles')
+          .select('id')
+          .or('correo.ilike.cvega@totalclean.com,correo.ilike.cvega.totalclean@gmail.com')
+          .limit(1);
+        if (ggData && ggData.length > 0) {
+          ggId = ggData[0].id;
+        } else {
+          const { data: ggRolData } = await supabase
+            .from('perfiles')
+            .select('id')
+            .ilike('rol', '%gerente general%')
+            .limit(1);
+          if (ggRolData && ggRolData.length > 0) {
+            ggId = ggRolData[0].id;
+          }
+        }
+      } catch (err) {
+        console.error("Error al obtener Gerente General:", err);
+      }
+
+      const t = ticketSeleccionado;
+      const yaAprobadoArea = t.aprobado_gerente_area === true;
+
+      const updatePayload = {};
+
+      if (esGG) {
+        // Aprobación General
+        updatePayload.aprobado_gerente_area = true;
+        if (!t.n_aprobacion_area) {
+          updatePayload.n_aprobacion_area = t.gerente_nombre || 'Gerente Área';
+          updatePayload.f_aprobacion_area = t.fecha_emision || new Date().toISOString();
+        }
+        updatePayload.aprobado_gerente_general = true;
+        updatePayload.n_aprobacion_general = currentUser.nombre;
+        updatePayload.f_aprobacion_general = new Date().toISOString();
+        updatePayload.status = 'EMITIDO';
+        updatePayload.aprobado_por = currentUser.id;
+        updatePayload.fecha_aprobacion = new Date().toISOString();
+        updatePayload.aprobador_id = null;
+      } else if (!yaAprobadoArea) {
+        // Aprobación de Área
+        updatePayload.aprobado_gerente_area = true;
+        updatePayload.n_aprobacion_area = currentUser.nombre;
+        updatePayload.f_aprobacion_area = new Date().toISOString();
+        updatePayload.aprobado_gerente_general = false;
+        updatePayload.status = 'Pendiente Aprobación';
+        updatePayload.aprobador_id = ggId;
+      } else {
+        // Fallback: Aprobación General por otro usuario con privilegios
+        updatePayload.aprobado_gerente_general = true;
+        updatePayload.n_aprobacion_general = currentUser.nombre;
+        updatePayload.f_aprobacion_general = new Date().toISOString();
+        updatePayload.status = 'EMITIDO';
+        updatePayload.aprobado_por = currentUser.id;
+        updatePayload.fecha_aprobacion = new Date().toISOString();
+        updatePayload.aprobador_id = null;
+      }
+
+      const { data: updatedData, error } = await supabase
+        .from('tickets_directos')
+        .update(updatePayload)
+        .eq('id', ticketSeleccionado.id)
+        .select('id');
 
       if (error) throw error;
       if (!updatedData || updatedData.length === 0) {
         throw new Error('No se pudo actualizar el ticket. Es posible que no tengas permisos de base de datos (RLS) para aprobar tickets de otros usuarios.');
       }
       
-      // NOTIFICAR A ADMINISTRACIÓN Y CONTABILIDAD QUE EL TICKET FUE APROBADO
-      try {
-        const { data: perfiles } = await supabase
-          .from('perfiles')
-          .select('id, rol, departamento');
-        if (perfiles) {
-          const admins = perfiles.filter(p => {
-            const rol = (p.rol || '').toLowerCase();
-            const depto = (p.departamento || '').toLowerCase();
-            return rol.includes('administra') || rol.includes('contabil') || depto.includes('administra') || depto.includes('contabil');
-          });
-          for (const admin of admins) {
+      // Notificaciones según el nuevo estado
+      if (updatePayload.status === 'EMITIDO') {
+        // NOTIFICAR A ADMINISTRACIÓN Y CONTABILIDAD QUE EL TICKET FUE APROBADO COMPLETAMENTE
+        try {
+          const { data: perfiles } = await supabase
+            .from('perfiles')
+            .select('id, rol, departamento');
+          if (perfiles) {
+            const admins = perfiles.filter(p => {
+              const rol = (p.rol || '').toLowerCase();
+              const depto = (p.departamento || '').toLowerCase();
+              return rol.includes('administra') || rol.includes('contabil') || depto.includes('administra') || depto.includes('contabil');
+            });
+            for (const admin of admins) {
+              await supabase.from('notificaciones').insert([{
+                usuario_id: admin.id,
+                mensaje: `Ticket de Pago ${ticketSeleccionado.codigo_control} aprobado y listo para procesar.`,
+                tipo: 'Ticket Aprobado',
+                leido: false,
+                requisicion_id: null
+              }]);
+            }
+          }
+        } catch (err) {
+          console.error("Error al notificar aprobación final:", err);
+        }
+      } else {
+        // NOTIFICAR AL GERENTE GENERAL QUE EL TICKET REQUIERE SU APROBACIÓN
+        if (ggId) {
+          try {
             await supabase.from('notificaciones').insert([{
-              usuario_id: admin.id,
-              mensaje: `Ticket de Pago ${ticketSeleccionado.codigo_control} aprobado y listo para procesar.`,
-              tipo: 'Ticket Aprobado',
+              usuario_id: ggId,
+              mensaje: `El Ticket de Pago ${ticketSeleccionado.codigo_control} aprobado por Gerencia de Área (${currentUser.nombre}) requiere su aprobación de Gerencia General.`,
+              tipo: 'Aprobación Pendiente',
               leido: false,
               requisicion_id: null
             }]);
+          } catch (err) {
+            console.error("Error al notificar a Gerente General:", err);
           }
         }
-      } catch (err) {
-        console.error("Error al notificar aprobación:", err);
       }
 
       toast.success("Ticket aprobado exitosamente.");
@@ -3010,35 +3101,37 @@ const ModuloTicketsPago = () => {
               </motion.button>
             )}
           </div>
-          {/* Fila 2: Filtros avanzados */}
-          <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
-              <Calendar size={14} style={{ color: '#94a3b8' }} />
-              <input
-                type="date"
-                value={filtroFechaDesde}
-                onChange={(e) => setFiltroFechaDesde(e.target.value)}
-                style={{ padding: '8px 10px', borderRadius: '10px', border: '1px solid #e2e8f0', backgroundColor: '#f8fafc', color: '#475569', fontSize: '12px', outline: 'none' }}
-              />
-              <span style={{ color: '#94a3b8', fontSize: '12px' }}>al</span>
-              <input
-                type="date"
-                value={filtroFechaHasta}
-                onChange={(e) => setFiltroFechaHasta(e.target.value)}
-                style={{ padding: '8px 10px', borderRadius: '10px', border: '1px solid #e2e8f0', backgroundColor: '#f8fafc', color: '#475569', fontSize: '12px', outline: 'none' }}
-              />
-            </div>
-            {(filtroCategoria !== 'Todos' || filtroCC !== 'Todos' || filtroFechaDesde || filtroFechaHasta) && (
-              <button
-                onClick={() => { setFiltroCategoria('Todos'); setFiltroCC('Todos'); setFiltroFechaDesde(''); setFiltroFechaHasta(''); }}
-                style={{ padding: '8px 12px', backgroundColor: '#fef2f2', color: '#ef4444', border: '1px solid #fecaca', borderRadius: '10px', cursor: 'pointer', fontSize: '11px', fontWeight: '700' }}
-              >
-                Limpiar
-              </button>
-            )}
-          </div>
+          {!forzarVistaAnalista && (
+            <>
+              {/* Fila 2: Filtros avanzados */}
+              <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+                  <Calendar size={14} style={{ color: '#94a3b8' }} />
+                  <input
+                    type="date"
+                    value={filtroFechaDesde}
+                    onChange={(e) => setFiltroFechaDesde(e.target.value)}
+                    style={{ padding: '8px 10px', borderRadius: '10px', border: '1px solid #e2e8f0', backgroundColor: '#f8fafc', color: '#475569', fontSize: '12px', outline: 'none' }}
+                  />
+                  <span style={{ color: '#94a3b8', fontSize: '12px' }}>al</span>
+                  <input
+                    type="date"
+                    value={filtroFechaHasta}
+                    onChange={(e) => setFiltroFechaHasta(e.target.value)}
+                    style={{ padding: '8px 10px', borderRadius: '10px', border: '1px solid #e2e8f0', backgroundColor: '#f8fafc', color: '#475569', fontSize: '12px', outline: 'none' }}
+                  />
+                </div>
+                {(filtroCategoria !== 'Todos' || filtroCC !== 'Todos' || filtroFechaDesde || filtroFechaHasta) && (
+                  <button
+                    onClick={() => { setFiltroCategoria('Todos'); setFiltroCC('Todos'); setFiltroFechaDesde(''); setFiltroFechaHasta(''); }}
+                    style={{ padding: '8px 12px', backgroundColor: '#fef2f2', color: '#ef4444', border: '1px solid #fecaca', borderRadius: '10px', cursor: 'pointer', fontSize: '11px', fontWeight: '700' }}
+                  >
+                    Limpiar
+                  </button>
+                )}
+              </div>
+            </>
+          )}
         </div>
 
         {cargandoHistorial ? (
@@ -3270,6 +3363,7 @@ const ModuloTicketsPago = () => {
   const renderDetalle = () => {
     if (!ticketSeleccionado) return null;
     const t = ticketSeleccionado;
+    const esPrivilegiadoRender = esPrivilegiado && !forzarVistaAnalista;
 
     return (
       <motion.div
@@ -3334,8 +3428,46 @@ const ModuloTicketsPago = () => {
                 </div>
               </div>
 
-              {/* DERECHA: ID TICKET (CÓDIGO DE CONTROL) */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '25px', marginRight: '50px' }}>
+              {/* DERECHA: BOTONES + ID TICKET */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginRight: '50px' }}>
+                {/* Botón Timeline */}
+                <button
+                  onClick={() => setMostrarTimeline(!mostrarTimeline)}
+                  style={{
+                    width: '32px', height: '32px', borderRadius: '50%',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    cursor: 'pointer', transition: 'all 0.2s',
+                    backgroundColor: mostrarTimeline ? '#0ea5e9' : 'white',
+                    color: mostrarTimeline ? 'white' : '#64748b',
+                    boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
+                    border: '1px solid #e2e8f0',
+                    outline: 'none'
+                  }}
+                  title="Ver Línea de Trazabilidad"
+                >
+                  <Clock size={16} />
+                </button>
+                {/* Botón Vista Analista / Admin (solo para privilegiados) */}
+                {esPrivilegiado && (
+                  <button
+                    onClick={() => setForzarVistaAnalista(!forzarVistaAnalista)}
+                    style={{
+                      width: '32px', height: '32px', borderRadius: '50%',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      cursor: 'pointer', transition: 'all 0.2s',
+                      backgroundColor: forzarVistaAnalista ? '#f1f5f9' : '#0ea5e9',
+                      color: forzarVistaAnalista ? '#64748b' : 'white',
+                      boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
+                      border: '1px solid #e2e8f0',
+                      outline: 'none',
+                      opacity: 0.7
+                    }}
+                    title={forzarVistaAnalista ? 'Ver Vista Administración' : 'Ver Vista Analista (Solo Lectura)'}
+                  >
+                    <Eye size={16} />
+                  </button>
+                )}
+                {/* ID Ticket */}
                 <div style={{ textAlign: 'right' }}>
                   <div style={{
                     fontSize: '1.8rem',
@@ -3361,6 +3493,103 @@ const ModuloTicketsPago = () => {
             </div>
 
             <hr style={{ border: 'none', height: '1px', backgroundColor: '#f1f5f9', margin: '15px 0 12px 0' }} />
+
+            {/* PANEL DE TRAZABILIDAD DESPLEGABLE */}
+            {mostrarTimeline && (() => {
+              const safeFormatDate = (dateStr) => {
+                if (!dateStr) return null;
+                try {
+                  const d = new Date(dateStr);
+                  if (isNaN(d.getTime())) return dateStr;
+                  return d.toLocaleString('es-ES', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
+                } catch (e) {
+                  return dateStr;
+                }
+              };
+
+              const steps = [
+                {
+                  label: 'EMITIDO',
+                  icon: '📝',
+                  name: t.gerente_nombre ? t.gerente_nombre.split(' ').slice(0, 2).join(' ') : 'Sistema',
+                  date: safeFormatDate(t.fecha_emision) || '—',
+                  done: true,
+                  color: '#6366f1'
+                },
+                {
+                  label: 'GERENTE ÁREA',
+                  icon: '✅',
+                  name: t.n_aprobacion_area || (t.aprobado_gerente_area ? 'Gerencia Área' : null),
+                  date: safeFormatDate(t.f_aprobacion_area),
+                  done: t.aprobado_gerente_area === true,
+                  color: '#10b981'
+                },
+                {
+                  label: 'GERENTE GENERAL',
+                  icon: '👑',
+                  name: t.n_aprobacion_general || (t.aprobado_gerente_general ? 'Carlos Vega' : null),
+                  date: safeFormatDate(t.f_aprobacion_general),
+                  done: t.aprobado_gerente_general === true,
+                  color: '#8b5cf6'
+                },
+                {
+                  label: 'PROCESADO / PAGADO',
+                  icon: '💳',
+                  name: t.pagado_por_nombre,
+                  date: safeFormatDate(t.fecha_pago),
+                  done: (t.status || '').toUpperCase() === 'PAGADO' || (t.status || '').toUpperCase() === 'COMPLETADO',
+                  color: '#0ea5e9'
+                }
+              ];
+              return (
+                <div style={{ marginBottom: '14px', backgroundColor: '#f8fafc', borderRadius: '12px', padding: '14px 18px', border: '1px solid #e2e8f0' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    {steps.map((step, idx) => (
+                      <div key={idx} style={{ display: 'flex', alignItems: 'center', flex: idx < steps.length - 1 ? 1 : 'none' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '90px' }}>
+                          <div style={{
+                            width: '34px', height: '34px', borderRadius: '50%', fontSize: '15px',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            backgroundColor: step.done ? step.color : '#e2e8f0',
+                            color: step.done ? 'white' : '#94a3b8',
+                            boxShadow: step.done ? `0 2px 8px ${step.color}44` : 'none',
+                            border: step.done ? `2px solid ${step.color}` : '2px solid #e2e8f0',
+                            transition: 'all 0.3s',
+                          }}>
+                            {step.icon}
+                          </div>
+                          <span style={{ fontSize: '8px', fontWeight: '900', color: step.done ? step.color : '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px', marginTop: '5px', textAlign: 'center' }}>
+                            {step.label}
+                          </span>
+                          {step.name && (
+                            <span style={{ fontSize: '10px', fontWeight: '700', color: '#1e293b', marginTop: '2px', textAlign: 'center', maxWidth: '100px', wordBreak: 'break-word' }}>
+                              {step.name}
+                            </span>
+                          )}
+                          {step.date && (
+                            <span style={{ fontSize: '9px', color: '#64748b', marginTop: '2px', textAlign: 'center' }}>
+                              {step.date}
+                            </span>
+                          )}
+                          {!step.done && (
+                            <span style={{ fontSize: '9px', color: '#94a3b8', marginTop: '2px', fontStyle: 'italic' }}>
+                              Pendiente
+                            </span>
+                          )}
+                        </div>
+                        {idx < steps.length - 1 && (
+                          <div style={{
+                            flex: 1, height: '2px', marginBottom: '28px',
+                            background: step.done && steps[idx + 1].done ? `linear-gradient(90deg, ${step.color}, ${steps[idx + 1].color})` : '#e2e8f0',
+                            transition: 'all 0.3s'
+                          }} />
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Fila 2: SOLICITANTE, CENTRO DE COSTO, POSEE OBSERVACIONES, FECHAS */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '30px', flexWrap: 'wrap' }}>

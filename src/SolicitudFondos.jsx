@@ -55,12 +55,52 @@ const getWeeksForMonth = (monthVal, year = 2026) => {
 
 const esRequisicionCompletada = (requisicion) => {
   if (!requisicion) return false;
+  if (requisicion.status_compra) {
+    const st = requisicion.status_compra.toUpperCase();
+    if (st !== 'COMPLETADO' && st !== 'COMPLETADA') return false;
+  }
   if (!requisicion.items || !Array.isArray(requisicion.items)) return false;
   return requisicion.items.every(item => {
     const cantPedida = parseFloat(item.cantidad_pedida ?? item.cant) || 0;
     const cantComprada = parseFloat(item.cantidad_comprada || 0);
     if (item.anulado) return true;
     return cantComprada >= cantPedida;
+  });
+};
+
+const checkIsCulminada = (sol, partidas, tickets) => {
+  if (sol.estado === 'COMPLETADA') return true;
+  
+  const activePartidas = partidas.filter(p => p.status !== 'ANULADO_POR_USUARIO');
+  if (activePartidas.length === 0) return true;
+  
+  return activePartidas.every(p => {
+    // 1. Si es requisición
+    if (p.requisicion_id && p.requisiciones) {
+      return esRequisicionCompletada(p.requisiciones);
+    }
+    
+    // 2. Si es ticket de pago
+    if (p.ticket_id || p.codigo_ticket?.startsWith('TP-')) {
+      const tk = tickets.find(t => t.id === p.ticket_id || t.codigo_control === p.codigo_ticket);
+      if (tk) {
+        const statusUpper = (tk.status || '').toUpperCase();
+        if (statusUpper === 'PAGADO' || statusUpper === 'COMPLETADO' || statusUpper === 'ANULADO' || statusUpper === 'RECHAZADO') {
+          return true;
+        }
+        if (tk.items && tk.items.length > 0) {
+          const it = tk.items.find(item =>
+            (item.desc || item.descripcion || '').trim().toUpperCase() === (p.descripcion || '').trim().toUpperCase() &&
+            (Number(item.cantidad_pedida || item.cant) === Number(p.cantidad))
+          );
+          if (it && Number(it.cantidad_pendiente) === 0) return true;
+        }
+      }
+      return false;
+    }
+    
+    // 3. Si no tiene referencia (pago manual/transferencia directa)
+    return p.pago_realizado === true;
   });
 };
 
@@ -516,8 +556,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       h.id.includes(`SEMANA ${filtroSemana}`) ||
       getWeek(new Date(h.fecha_operativa + 'T12:00:00'), { weekStartsOn: 1 }) === parseInt(filtroSemana);
 
-    const isPagado = h.total_pagado >= h.total && h.total > 0;
-    const isCulminada = h.tiene_requisiciones ? h.requisiciones_completadas : isPagado;
+    const isCulminada = h.is_culminada;
     const isPendiente = !isCulminada;
 
     const matchStatus = filtroStatus === "Todos" ||
@@ -713,7 +752,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       // Obtenemos un resumen de pagos por solicitud para los stats
       const { data: pagosData } = await supabase
         .from('partidas_fondos')
-        .select('solicitud_id, pu_bs, pu_usd, cantidad, pago_realizado, status, requisicion_id, ticket_id, codigo_ticket, descripcion, requisiciones(id, items)')
+        .select('solicitud_id, pu_bs, pu_usd, cantidad, pago_realizado, status, requisicion_id, ticket_id, codigo_ticket, descripcion, requisiciones(id, items, status_compra)')
         .in('solicitud_id', dataHist.map(h => h.id));
 
       // Obtener Tickets directos involucrados en estas solicitudes
@@ -858,6 +897,9 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
           .filter(p => p.requisicion_id)
           .every(p => p.requisiciones ? esRequisicionCompletada(p.requisiciones) : false);
 
+        const isCulminadaValue = checkIsCulminada(h, misPartidas, ticketsInvolucrados);
+        const dynamicEstado = (h.estado === 'COMPLETADA' || isCulminadaValue) ? 'COMPLETADA' : getEstadoSolicitud(h);
+
         return {
           ...h,
           id_db: h.id,
@@ -871,7 +913,9 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
           pending_bs: pendingBs,
           pending_usd: pendingUsd,
           tiene_requisiciones: tieneRequisiciones,
-          requisiciones_completadas: requisicionesCompletadas
+          requisiciones_completadas: requisicionesCompletadas,
+          estado: dynamicEstado,
+          is_culminada: isCulminadaValue
         };
       }));
     }

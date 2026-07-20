@@ -745,6 +745,73 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
         }
       }
 
+      // Buscar ID del Gerente General
+      let ggId = null;
+      try {
+        const { data: ggData } = await supabase
+          .from('perfiles')
+          .select('id')
+          .or('correo.ilike.cvega@totalclean.com,correo.ilike.cvega.totalclean@gmail.com')
+          .limit(1);
+        if (ggData && ggData.length > 0) {
+          ggId = ggData[0].id;
+        } else {
+          const { data: ggRolData } = await supabase
+            .from('perfiles')
+            .select('id')
+            .ilike('rol', '%gerente general%')
+            .limit(1);
+          if (ggRolData && ggRolData.length > 0) {
+            ggId = ggRolData[0].id;
+          }
+        }
+      } catch (err) {
+        console.error("Error al obtener Gerente General:", err);
+      }
+
+      const emailLower = (currentUser?.correo || '').toLowerCase().trim();
+      const esGG = emailLower === 'cvega@totalclean.com' || emailLower === 'cvega.totalclean@gmail.com' || (currentUser?.rol || '').toUpperCase().includes('GERENTE GENERAL');
+
+      let initialStatus = 'Pendiente Aprobación';
+      let apArea = false;
+      let apGeneral = false;
+      let nArea = null;
+      let fArea = null;
+      let nGeneral = null;
+      let fGeneral = null;
+      let finalAprobadorId = targetAprobadorId;
+      let finalAprobadoPor = null;
+      let finalFechaAprobacion = null;
+
+      if (esGG) {
+        initialStatus = 'EMITIDO';
+        apArea = true;
+        apGeneral = true;
+        nArea = currentUser.nombre;
+        fArea = new Date().toISOString();
+        nGeneral = currentUser.nombre;
+        fGeneral = new Date().toISOString();
+        finalAprobadorId = null;
+        finalAprobadoPor = currentUser.id;
+        finalFechaAprobacion = new Date().toISOString();
+      } else if (esGerenteOCorporativo) {
+        initialStatus = 'Pendiente Aprobación';
+        apArea = true;
+        nArea = currentUser.nombre;
+        fArea = new Date().toISOString();
+        apGeneral = false;
+        finalAprobadorId = ggId;
+        finalAprobadoPor = null;
+        finalFechaAprobacion = null;
+      } else {
+        initialStatus = 'Pendiente Aprobación';
+        apArea = false;
+        apGeneral = false;
+        finalAprobadorId = targetAprobadorId || ggId;
+        finalAprobadoPor = null;
+        finalFechaAprobacion = null;
+      }
+
       const payload = {
         usuario_id: currentUser.id,
         gerente_nombre: form.solicitante || currentUser.nombre,
@@ -759,16 +826,22 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
           ...(idx === 0 ? { justificacion_detallada: form.justificacion_detallada } : {})
         })),
         factura_url: form.facturas_url || [],
-        status: esGerenteOCorporativo ? (form.status || 'EMITIDO') : 'Pendiente Aprobación',
+        status: initialStatus,
         solicitud_ref: form.solicitud_ref || null,
         clasificacion_admin: form.clasificacion_admin || null,
         justificacion: form.justificacion || form.justificacion_detallada || null,
         centro_costo: cc,
         con_iva: form.con_iva !== false,
         prioridad: form.prioridad || 'Normal',
-        aprobador_id: targetAprobadorId,
-        aprobado_por: esGerenteOCorporativo ? currentUser.id : null,
-        fecha_aprobacion: esGerenteOCorporativo ? new Date().toISOString() : null
+        aprobador_id: finalAprobadorId,
+        aprobado_por: finalAprobadoPor,
+        fecha_aprobacion: finalFechaAprobacion,
+        aprobado_gerente_area: apArea,
+        n_aprobacion_area: nArea,
+        f_aprobacion_area: fArea,
+        aprobado_gerente_general: apGeneral,
+        n_aprobacion_general: nGeneral,
+        f_aprobacion_general: fGeneral
       };
 
       console.log("[TicketExpress] Payload de inserción:", payload);
@@ -1123,40 +1196,123 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
   const aprobarTicket = async () => {
     setLoading(true);
     try {
-      const { data: updatedData, error } = await supabase.from('tickets_directos').update({
-        status: 'EMITIDO',
-        aprobado_por: currentUser.id,
-        fecha_aprobacion: new Date().toISOString()
-      }).eq('id', form.id).select('id');
+      const emailLower = (currentUser?.correo || '').toLowerCase().trim();
+      const esGG = emailLower === 'cvega@totalclean.com' || emailLower === 'cvega.totalclean@gmail.com' || (currentUser?.rol || '').toUpperCase().includes('GERENTE GENERAL');
+
+      // Buscar ID del Gerente General
+      let ggId = null;
+      try {
+        const { data: ggData } = await supabase
+          .from('perfiles')
+          .select('id')
+          .or('correo.ilike.cvega@totalclean.com,correo.ilike.cvega.totalclean@gmail.com')
+          .limit(1);
+        if (ggData && ggData.length > 0) {
+          ggId = ggData[0].id;
+        } else {
+          const { data: ggRolData } = await supabase
+            .from('perfiles')
+            .select('id')
+            .ilike('rol', '%gerente general%')
+            .limit(1);
+          if (ggRolData && ggRolData.length > 0) {
+            ggId = ggRolData[0].id;
+          }
+        }
+      } catch (err) {
+        console.error("Error al obtener Gerente General:", err);
+      }
+
+      const t = form;
+      const yaAprobadoArea = t.aprobado_gerente_area === true;
+
+      const updatePayload = {};
+
+      if (esGG) {
+        // Aprobación General
+        updatePayload.aprobado_gerente_area = true;
+        if (!t.n_aprobacion_area) {
+          updatePayload.n_aprobacion_area = t.gerente_nombre || 'Gerente Área';
+          updatePayload.f_aprobacion_area = t.fecha_emision || new Date().toISOString();
+        }
+        updatePayload.aprobado_gerente_general = true;
+        updatePayload.n_aprobacion_general = currentUser.nombre;
+        updatePayload.f_aprobacion_general = new Date().toISOString();
+        updatePayload.status = 'EMITIDO';
+        updatePayload.aprobado_por = currentUser.id;
+        updatePayload.fecha_aprobacion = new Date().toISOString();
+        updatePayload.aprobador_id = null;
+      } else if (!yaAprobadoArea) {
+        // Aprobación de Área
+        updatePayload.aprobado_gerente_area = true;
+        updatePayload.n_aprobacion_area = currentUser.nombre;
+        updatePayload.f_aprobacion_area = new Date().toISOString();
+        updatePayload.aprobado_gerente_general = false;
+        updatePayload.status = 'Pendiente Aprobación';
+        updatePayload.aprobador_id = ggId;
+      } else {
+        // Fallback: Aprobación General por otro usuario con privilegios
+        updatePayload.aprobado_gerente_general = true;
+        updatePayload.n_aprobacion_general = currentUser.nombre;
+        updatePayload.f_aprobacion_general = new Date().toISOString();
+        updatePayload.status = 'EMITIDO';
+        updatePayload.aprobado_por = currentUser.id;
+        updatePayload.fecha_aprobacion = new Date().toISOString();
+        updatePayload.aprobador_id = null;
+      }
+
+      const { data: updatedData, error } = await supabase
+        .from('tickets_directos')
+        .update(updatePayload)
+        .eq('id', form.id)
+        .select('id');
 
       if (error) throw error;
       if (!updatedData || updatedData.length === 0) {
         throw new Error('No se pudo actualizar el ticket. Es posible que no tengas permisos de base de datos (RLS) para aprobar tickets de otros usuarios.');
       }
       
-      // NOTIFICAR A ADMINISTRACIÓN Y CONTABILIDAD QUE EL TICKET FUE APROBADO
-      try {
-        const { data: perfiles } = await supabase
-          .from('perfiles')
-          .select('id, rol, departamento');
-        if (perfiles) {
-          const admins = perfiles.filter(p => {
-            const rol = (p.rol || '').toLowerCase();
-            const depto = (p.departamento || '').toLowerCase();
-            return rol.includes('administra') || rol.includes('contabil') || depto.includes('administra') || depto.includes('contabil');
-          });
-          for (const admin of admins) {
+      // Notificaciones según el nuevo estado
+      if (updatePayload.status === 'EMITIDO') {
+        // NOTIFICAR A ADMINISTRACIÓN Y CONTABILIDAD QUE EL TICKET FUE APROBADO COMPLETAMENTE
+        try {
+          const { data: perfiles } = await supabase
+            .from('perfiles')
+            .select('id, rol, departamento');
+          if (perfiles) {
+            const admins = perfiles.filter(p => {
+              const rol = (p.rol || '').toLowerCase();
+              const depto = (p.departamento || '').toLowerCase();
+              return rol.includes('administra') || rol.includes('contabil') || depto.includes('administra') || depto.includes('contabil');
+            });
+            for (const admin of admins) {
+              await supabase.from('notificaciones').insert([{
+                usuario_id: admin.id,
+                mensaje: `Ticket de Pago ${form.id_control || form.codigo_control} aprobado y listo para procesar.`,
+                tipo: 'Ticket Aprobado',
+                leido: false,
+                requisicion_id: null
+              }]);
+            }
+          }
+        } catch (err) {
+          console.error("Error al notificar aprobación final:", err);
+        }
+      } else {
+        // NOTIFICAR AL GERENTE GENERAL QUE EL TICKET REQUIERE SU APROBACIÓN
+        if (ggId) {
+          try {
             await supabase.from('notificaciones').insert([{
-              usuario_id: admin.id,
-              mensaje: `Ticket de Pago ${form.id_control} aprobado y listo para procesar.`,
-              tipo: 'Ticket Aprobado',
+              usuario_id: ggId,
+              mensaje: `El Ticket de Pago ${form.id_control || form.codigo_control} aprobado por Gerencia de Área (${currentUser.nombre}) requiere su aprobación de Gerencia General.`,
+              tipo: 'Aprobación Pendiente',
               leido: false,
               requisicion_id: null
             }]);
+          } catch (err) {
+            console.error("Error al notificar a Gerente General:", err);
           }
         }
-      } catch (err) {
-        console.error("Error al notificar aprobación:", err);
       }
 
       toast.success("Ticket aprobado exitosamente.");
