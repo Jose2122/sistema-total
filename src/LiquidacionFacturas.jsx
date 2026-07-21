@@ -324,8 +324,8 @@ const LiquidacionFacturas = ({ currentUser }) => {
     return Object.values(grupos).map(factura => {
       // Filter abonos that match this invoice number and provider
       const abonosFactura = abonosGlobales.filter(
-        ab => ab.factura_num.trim().toUpperCase() === factura.doc_numero.trim().toUpperCase() &&
-              ab.proveedor_nombre.trim().toUpperCase() === factura.proveedor_nombre.trim().toUpperCase()
+        ab => (ab.factura_num || '').trim().toUpperCase() === factura.doc_numero.trim().toUpperCase() &&
+              (ab.proveedor_nombre || '').trim().toUpperCase() === factura.proveedor_nombre.trim().toUpperCase()
       ).sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
 
       const totalAbonado = abonosFactura.reduce((sum, ab) => sum + (Number(ab.monto) || 0), 0);
@@ -341,14 +341,16 @@ const LiquidacionFacturas = ({ currentUser }) => {
 
       if (factura.fecha_compra) {
         const fComp = new Date(factura.fecha_compra + 'T12:00:00');
-        fComp.setDate(fComp.getDate() + diasCredito);
-        fechaVencimiento = fComp;
+        if (!isNaN(fComp.getTime())) {
+          fComp.setDate(fComp.getDate() + diasCredito);
+          fechaVencimiento = fComp;
 
-        const hoy = new Date();
-        if (saldoPendiente > 0.01 && hoy > fComp) {
-          esVencida = true;
-          const diffTime = Math.abs(hoy - fComp);
-          diasVencida = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+          const hoy = new Date();
+          if (saldoPendiente > 0.01 && hoy > fComp) {
+            esVencida = true;
+            const diffTime = Math.abs(hoy - fComp);
+            diasVencida = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+          }
         }
       }
 
@@ -368,7 +370,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
         saldo_pendiente: saldoPendiente,
         dias_credito: diasCredito,
         limite_credito: limiteCredito,
-        fecha_vencimiento: fechaVencimiento ? fechaVencimiento.toISOString().split('T')[0] : null,
+        fecha_vencimiento: (fechaVencimiento && !isNaN(fechaVencimiento.getTime())) ? fechaVencimiento.toISOString().split('T')[0] : null,
         esVencida,
         diasVencida,
         estatus
@@ -981,8 +983,8 @@ const LiquidacionFacturas = ({ currentUser }) => {
                           <tr key={idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
                             <td style={{ padding: '8px 12px', fontWeight: '600' }}>{it.descripcion}</td>
                             <td style={{ padding: '8px 12px', textAlign: 'center' }}>{it.cant}</td>
-                            <td style={{ padding: '8px 12px', textAlign: 'right' }}>$ {it.pu.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
-                            <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: '700' }}>$ {it.total.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
+                            <td style={{ padding: '8px 12px', textAlign: 'right' }}>$ {(Number(it.pu) || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
+                            <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: '700' }}>$ {(Number(it.total) || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
                             <td style={{ padding: '8px 12px', color: '#64748b' }}>
                               <span style={{ fontSize: '10px', backgroundColor: '#f1f5f9', padding: '2px 6px', borderRadius: '4px', fontWeight: 'bold' }}>
                                 {it.correlativo_req}
@@ -1045,7 +1047,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
                       <div key={ab.abono_id || idx} className="liquidacion-abono-history-item">
                         <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
                           <div style={{ fontSize: '14px', fontWeight: '800', color: '#10b981' }}>
-                            + $ {ab.monto.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                            + $ {(Number(ab.monto) || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
                           </div>
                           <div style={{ fontSize: '11px', color: '#64748b', display: 'flex', flexDirection: 'column' }}>
                             <span style={{ fontWeight: '700', color: '#475569' }}>Ref: {ab.referencia}</span>
@@ -1083,7 +1085,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
                                   title={u.name}
                                 >
                                   <FileText size={11} />
-                                  {u.name.length > 15 ? `${u.name.slice(0, 12)}...` : u.name}
+                                  {(u.name || 'Archivo').length > 15 ? `${(u.name || 'Archivo').slice(0, 12)}...` : (u.name || 'Archivo')}
                                 </a>
                               ))}
                             </div>

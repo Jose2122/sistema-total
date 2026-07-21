@@ -1642,10 +1642,30 @@ const Compras = () => {
 
   const liberarPartidasFondos = async (requisicionId) => {
     try {
-      const { error } = await supabase
-        .from('partidas_fondos')
-        .update({ status: 'Disponible', requisicion_id: null })
-        .eq('requisicion_id', requisicionId);
+      let correlativo = null;
+      if (requisicionId) {
+        const { data: req } = await supabase.from('requisiciones').select('correlativo_req').eq('id', requisicionId).single();
+        correlativo = req?.correlativo_req;
+      }
+
+      let query = supabase.from('partidas_fondos').update({
+        status: 'Disponible',
+        requisicion_id: null,
+        codigo_ticket: null,
+        emisor_nombre: null
+      });
+
+      if (requisicionId && correlativo) {
+        query = query.or(`requisicion_id.eq.${requisicionId},codigo_ticket.eq.${correlativo}`);
+      } else if (requisicionId) {
+        query = query.eq('requisicion_id', requisicionId);
+      } else if (correlativo) {
+        query = query.eq('codigo_ticket', correlativo);
+      } else {
+        return;
+      }
+
+      const { error } = await query;
       if (error) throw error;
     } catch (err) {
       console.error("Error al liberar partidas:", err.message);

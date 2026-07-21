@@ -779,11 +779,11 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
     const { data: dataHist } = await query.order('created_at', { ascending: false });
 
     if (dataHist) {
-      // Obtenemos un resumen de pagos por solicitud para los stats
+      const reqIdsAndCodes = dataHist.flatMap(h => [h.id, h.codigo_control]).filter(Boolean);
       const { data: pagosData } = await supabase
         .from('partidas_fondos')
-        .select('solicitud_id, pu_bs, pu_usd, cantidad, pago_realizado, status, requisicion_id, ticket_id, codigo_ticket, descripcion, requisiciones(id, items, status_compra)')
-        .in('solicitud_id', dataHist.map(h => h.id));
+        .select('solicitud_id, pu_bs, pu_usd, cantidad, pago_realizado, status, requisicion_id, ticket_id, codigo_ticket, descripcion, requisiciones(id, items, status_compra, estado_aprobacion)')
+        .in('solicitud_id', reqIdsAndCodes);
 
       // Obtener Tickets directos involucrados en estas solicitudes
       const ticketIds = (pagosData || []).map(p => p.ticket_id).filter(Boolean);
@@ -807,7 +807,10 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       }
 
       setHistorial(dataHist.map(h => {
-        const misPartidas = (pagosData || []).filter(p => p.solicitud_id === h.id);
+        const misPartidas = (pagosData || []).filter(p =>
+          String(p.solicitud_id) === String(h.id) ||
+          (h.codigo_control && String(p.solicitud_id) === String(h.codigo_control))
+        );
 
         let calculatedTotalBs = parseFloat(h.total_bs || 0);
         let calculatedTotalUsd = parseFloat(h.total_usd || 0);
@@ -1275,10 +1278,41 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       // 1. Obtener Partidas
       const { data: partidasRaw } = await supabase
         .from('partidas_fondos')
-        .select('*, requisiciones(id, correlativo_req, items, status_compra)')
+        .select('*, requisiciones(id, correlativo_req, items, status_compra, estado_aprobacion)')
         .eq('solicitud_id', targetId);
 
-      // 1.1 Obtener Tickets Directos Involucrados para calcular ejecución
+      // 1.1 Obtener Requisiciones vinculadas por correlativo o ID para verificar estado (en caso de desvinculación previa o join directo)
+      const rrCodigos = (partidasRaw || []).map(p => p.codigo_ticket).filter(c => c && c.startsWith('RR-'));
+      const rrIds = (partidasRaw || []).map(p => p.requisicion_id).filter(Boolean);
+      let requisicionesInvolucradas = [];
+      if (rrCodigos.length > 0 || rrIds.length > 0) {
+        try {
+          let query = supabase.from('requisiciones').select('id, correlativo_req, estado_aprobacion, items, status_compra');
+          if (rrIds.length > 0 && rrCodigos.length > 0) {
+            query = query.or(`id.in.(${rrIds.join(',')}),correlativo_req.in.(${rrCodigos.map(c => `"${c}"`).join(',')})`);
+          } else if (rrIds.length > 0) {
+            query = query.in('id', rrIds);
+          } else {
+            query = query.in('correlativo_req', rrCodigos);
+          }
+          const { data: rData } = await query;
+          if (rData) requisicionesInvolucradas = rData;
+        } catch (e) {
+          console.error("Error fetching requisiciones involucradas:", e);
+        }
+      }
+
+      // Auto-limpieza en BD: desvincular partidas de requisiciones anuladas
+      const partidasParaLiberar = (partidasRaw || []).filter(p => {
+        const r = p.requisiciones || requisicionesInvolucradas.find(req => req.id === p.requisicion_id || (p.codigo_ticket && req.correlativo_req === p.codigo_ticket));
+        return r?.estado_aprobacion === 'ANULADA' || r?.estado_aprobacion === 'RECHAZADA';
+      });
+      if (partidasParaLiberar.length > 0) {
+        const idsLiberar = partidasParaLiberar.map(p => p.id);
+        supabase.from('partidas_fondos').update({ status: 'Disponible', requisicion_id: null, codigo_ticket: null, emisor_nombre: null }).in('id', idsLiberar).then(() => console.log('[AUTO-LIMPIEZA FONDOS] Liberadas:', idsLiberar));
+      }
+
+      // 1.2 Obtener Tickets Directos Involucrados para calcular ejecución
       const ticketIds = partidasRaw.map(p => p.ticket_id).filter(Boolean);
       const ticketCodigos = partidasRaw.map(p => p.codigo_ticket).filter(c => c && c.startsWith('TP-'));
       let ticketsInvolucrados = [];
@@ -1407,6 +1441,10 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         partidas: partidasRaw.filter(p => !p.clasificacion.includes('[*]') && p.clasificacion !== 'Gastos Imprevistos' && p.clasificacion !== 'Ticket de Pago' && p.clasificacion !== 'Solicitud de ticket').map(p => {
           const { montoReal, montoPendiente } = procesarEjecucion(p);
           const isReqCompletada = getIsCompletado(p);
+          const reqObj = p.requisiciones || requisicionesInvolucradas.find(r => r.id === p.requisicion_id || (p.codigo_ticket && r.correlativo_req === p.codigo_ticket)) || null;
+          const isReqAnulada = reqObj?.estado_aprobacion === 'ANULADA' || reqObj?.estado_aprobacion === 'RECHAZADA';
+          const tieneReqValida = (p.requisicion_id || reqObj?.id) && !isReqAnulada;
+
           return {
             id: p.id,
             cc: p.centro_costo,
@@ -1420,22 +1458,26 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
             puUsd: p.pu_usd,
             pago_realizado: p.pago_realizado || false,
             emisor: p.emisor_nombre || 'S/E',
-            requisicion_id: p.requisicion_id || null,
+            requisicion_id: tieneReqValida ? (p.requisicion_id || reqObj?.id) : null,
             ticket_id: p.ticket_id || null,
-            codigo_ticket: (p.codigo_ticket?.startsWith('RR-') && !p.requisicion_id) ? null : (p.codigo_ticket || null),
-            codigo_ref: (p.codigo_ticket?.startsWith('RR-') && !p.requisicion_id) ? null : (p.codigo_ticket || p.requisiciones?.correlativo_req || null),
-            isReqCompletada,
-            status: (p.status === 'Bloqueado' && !p.requisicion_id) ? 'Disponible' : (p.status || 'Disponible'),
+            codigo_ticket: (p.codigo_ticket?.startsWith('RR-') && !tieneReqValida) ? null : (p.codigo_ticket || null),
+            codigo_ref: (p.codigo_ticket?.startsWith('RR-') && !tieneReqValida) ? null : (isReqAnulada ? null : (p.codigo_ticket || reqObj?.correlativo_req || null)),
+            isReqCompletada: isReqAnulada ? false : isReqCompletada,
+            status: (isReqAnulada || (p.status === 'Bloqueado' && !tieneReqValida)) ? 'Disponible' : (p.status || 'Disponible'),
             selected: false,
-            montoReal,
-            montoPendiente,
-            requisiciones: p.requisicion_id ? (p.requisiciones || null) : null
+            montoReal: isReqAnulada ? 0 : montoReal,
+            montoPendiente: isReqAnulada ? (p.pu_bs || p.pu_usd || 0) * (p.cantidad || 1) : montoPendiente,
+            requisiciones: tieneReqValida ? reqObj : null
           };
         }),
         imprevistos: partidasRaw.filter(p => p.clasificacion.includes('[*]') || p.clasificacion === 'Gastos Imprevistos' || p.clasificacion === 'Ticket de Pago' || p.clasificacion === 'Solicitud de ticket').length > 0
           ? partidasRaw.filter(p => p.clasificacion.includes('[*]') || p.clasificacion === 'Gastos Imprevistos' || p.clasificacion === 'Ticket de Pago' || p.clasificacion === 'Solicitud de ticket').map(p => {
             const { montoReal, montoPendiente } = procesarEjecucion(p);
             const isReqCompletada = getIsCompletado(p);
+            const reqObj = p.requisiciones || requisicionesInvolucradas.find(r => r.id === p.requisicion_id || (p.codigo_ticket && r.correlativo_req === p.codigo_ticket)) || null;
+            const isReqAnulada = reqObj?.estado_aprobacion === 'ANULADA' || reqObj?.estado_aprobacion === 'RECHAZADA';
+            const tieneReqValida = (p.requisicion_id || reqObj?.id) && !isReqAnulada;
+
             return {
               id: p.id,
               cc: p.centro_costo,
@@ -1449,16 +1491,16 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
               puUsd: p.pu_usd,
               pago_realizado: p.pago_realizado || false,
               emisor: p.emisor_nombre || 'S/E',
-              requisicion_id: p.requisicion_id || null,
+              requisicion_id: tieneReqValida ? (p.requisicion_id || reqObj?.id) : null,
               ticket_id: p.ticket_id || null,
-              codigo_ticket: (p.codigo_ticket?.startsWith('RR-') && !p.requisicion_id) ? null : (p.codigo_ticket || null),
-              codigo_ref: (p.codigo_ticket?.startsWith('RR-') && !p.requisicion_id) ? null : (p.codigo_ticket || p.requisiciones?.correlativo_req || null),
-              isReqCompletada,
-              status: (p.status === 'Bloqueado' && !p.requisicion_id) ? 'Disponible' : (p.status || 'Disponible'),
+              codigo_ticket: (p.codigo_ticket?.startsWith('RR-') && !tieneReqValida) ? null : (p.codigo_ticket || null),
+              codigo_ref: (p.codigo_ticket?.startsWith('RR-') && !tieneReqValida) ? null : (isReqAnulada ? null : (p.codigo_ticket || reqObj?.correlativo_req || null)),
+              isReqCompletada: isReqAnulada ? false : isReqCompletada,
+              status: (isReqAnulada || (p.status === 'Bloqueado' && !tieneReqValida)) ? 'Disponible' : (p.status || 'Disponible'),
               selected: false,
-              montoReal,
-              montoPendiente,
-              requisiciones: p.requisicion_id ? (p.requisiciones || null) : null
+              montoReal: isReqAnulada ? 0 : montoReal,
+              montoPendiente: isReqAnulada ? (p.pu_bs || p.pu_usd || 0) * (p.cantidad || 1) : montoPendiente,
+              requisiciones: tieneReqValida ? reqObj : null
             };
           })
           : [{ id: Date.now() + 1, selected: false, cc: '', clasif: '', cat: '', cant: 1, uni: 'UNID', desc: '', ben: '', puBs: '', puUsd: '', pago_realizado: false, isReqCompletada: false, montoReal: 0, montoPendiente: 0 }]
