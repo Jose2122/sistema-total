@@ -1450,9 +1450,14 @@ export default function AdminAnalytics() {
                     </div>
 
                     <div>
-                      <label style={{ display: 'block', fontSize: '0.8rem', color: '#94a3b8', marginBottom: '6px', textTransform: 'uppercase', fontWeight: 'bold' }}>Descripción de Cambios</label>
+                      <label style={{ display: 'block', fontSize: '0.8rem', color: '#94a3b8', marginBottom: '4px', textTransform: 'uppercase', fontWeight: 'bold' }}>
+                        Descripción de Cambios (Uno por línea)
+                      </label>
+                      <div style={{ fontSize: '0.72rem', color: '#38bdf8', marginBottom: '8px', fontWeight: '600', backgroundColor: 'rgba(56, 189, 248, 0.08)', padding: '6px 10px', borderRadius: '6px', border: '1px solid rgba(56, 189, 248, 0.2)' }}>
+                        💡 Formato sugerido: <code>[Módulo] Título: Explicación detallada</code>
+                      </div>
                       <textarea 
-                        placeholder="Escribe los cambios, uno por línea (ej: - Corregido error en historial de compras)" 
+                        placeholder="[Cuentas por Pagar] Asignación de Fondos: Ahora finanzas asigna fondos directos.&#10;[Proveedores] Ficha SRM: Control de límite de crédito, días de pago y calificación." 
                         value={nuevaVersion.descripcion}
                         onChange={(e) => setNuevaVersion({...nuevaVersion, descripcion: e.target.value})}
                         style={{ width: '100%', minHeight: '120px', padding: '10px 12px', borderRadius: '10px', backgroundColor: 'rgba(15, 23, 42, 0.6)', border: '1px solid rgba(255,255,255,0.08)', color: 'white', outline: 'none', resize: 'vertical', fontFamily: 'inherit' }}
@@ -1488,38 +1493,14 @@ export default function AdminAnalytics() {
                     <span>Vista Previa del Modal (Inicio de Sesión)</span>
                   </div>
                   
-                  {/* Mockup del modal de inicio de sesión de usuario */}
-                  <div style={{ flexGrow: 1, display: 'flex', flexDirection: 'column', borderRadius: '16px', border: '1px solid rgba(255,255,255,0.08)', overflow: 'hidden', background: '#ffffff', color: '#0f172a' }}>
-                    {/* Header del Mockup */}
-                    <div style={{ padding: '15px 20px', background: 'linear-gradient(135deg, #0ea5e9 0%, #6366f1 100%)', color: 'white' }}>
-                      <span style={{ fontSize: '9px', fontWeight: 'bold', textTransform: 'uppercase', background: 'rgba(255,255,255,0.2)', padding: '2px 6px', borderRadius: '4px', letterSpacing: '0.05em' }}>¡Nueva Versión!</span>
-                      <h3 style={{ fontSize: '1.1rem', fontWeight: '900', margin: '4px 0 0 0' }}>Novedades v{nuevaVersion.version || '1.X.X'}</h3>
-                    </div>
-                    
-                    {/* Contenido del Mockup */}
-                    <div style={{ padding: '20px', flexGrow: 1, overflowY: 'auto', maxHeight: '180px' }}>
-                      <p style={{ fontSize: '10px', color: '#64748b', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: '8px', letterSpacing: '0.05em' }}>Cambios y mejoras:</p>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                        {(nuevaVersion.descripcion || '- Escribe los cambios para verlos aquí.').split('\n').map((l, i) => {
-                          const t = l.trim().replace(/^-\s*/, '').replace(/^\*\s*/, '');
-                          if (!t) return null;
-                          return (
-                            <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', fontSize: '11px', fontWeight: '600', color: '#334155' }}>
-                              <span style={{ color: '#6366f1' }}>✓</span>
-                              <span>{t}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    {/* Footer del Mockup */}
-                    <div style={{ padding: '12px 20px', background: '#f8fafc', borderTop: '1px solid #f1f5f9', display: 'flex', justifyContent: 'end' }}>
-                      <button type="button" style={{ padding: '6px 16px', borderRadius: '8px', fontSize: '10px', fontWeight: 'bold', color: 'white', backgroundColor: '#6366f1', border: 'none', cursor: 'default' }}>
-                        ¡Entendido!
-                      </button>
-                    </div>
-                  </div>
+                  {/* Mockup interactivo 1:1 con la experiencia real del usuario */}
+                  <ModalNovedades 
+                    isOpen={true} 
+                    isInline={true}
+                    version={nuevaVersion.version || '2.5'} 
+                    descripcion={nuevaVersion.descripcion} 
+                    onClose={() => {}} 
+                  />
                 </div>
               </div>
 

@@ -39,9 +39,70 @@ const RequisicionesTable = ({
             <tr key={req.id} style={{ borderBottom: '1px solid #f8fafc', fontSize: '0.85rem' }}>
               <td style={{ padding: '12px' }}>{req.correlativo || req.correlativo_req}</td>
               <td style={{ textAlign: 'center' }}>
-                <span style={{ fontSize: '0.7rem', fontWeight: '900', color: getStatusStyle(req.estado_aprobacion).color }}>
-                  {getStatusStyle(req.estado_aprobacion).label}
-                </span>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px' }}>
+                  <span style={{ fontSize: '0.7rem', fontWeight: '900', color: getStatusStyle(req.estado_aprobacion).color }}>
+                    {getStatusStyle(req.estado_aprobacion).label}
+                  </span>
+
+                  {(() => {
+                    const items = req.filas || req.detalles || req.items || [];
+                    if (!items || items.length === 0) return null;
+
+                    const total = items.length;
+                    const entregados = items.filter(f => 
+                      f.estatus_almacen === 'entregado' || 
+                      f.is_entregado === true || 
+                      f.estado === 'entregado'
+                    ).length;
+
+                    if (entregados === 0) return null;
+
+                    const ratio = entregados / total;
+                    const completo = entregados === total;
+
+                    let bgBadge = '#16a34a';
+                    let borderBadge = '#15803d';
+                    let textBadge = '#ffffff';
+
+                    if (completo) {
+                      bgBadge = '#16a34a';
+                      borderBadge = '#15803d';
+                      textBadge = '#ffffff';
+                    } else if (ratio <= 0.35) {
+                      bgBadge = '#dcfce7';
+                      borderBadge = '#86efac';
+                      textBadge = '#15803d';
+                    } else if (ratio <= 0.7) {
+                      bgBadge = '#86efac';
+                      borderBadge = '#4ade80';
+                      textBadge = '#166534';
+                    } else {
+                      bgBadge = '#4ade80';
+                      borderBadge = '#22c55e';
+                      textBadge = '#064e3b';
+                    }
+
+                    return (
+                      <span
+                        title={`Almacén: ${entregados} de ${total} entregados`}
+                        style={{
+                          fontSize: '8px',
+                          fontWeight: '900',
+                          backgroundColor: bgBadge,
+                          color: textBadge,
+                          border: `1px solid ${borderBadge}`,
+                          padding: '1px 5px',
+                          borderRadius: '4px',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '3px'
+                        }}
+                      >
+                        ✓ {completo ? 'ENTREGADO' : `${entregados}/${total}`}
+                      </span>
+                    );
+                  })()}
+                </div>
               </td>
               <td>{req.fecha ? format(new Date(req.fecha + 'T12:00:00'), 'dd/MM/yyyy') : 'N/A'}</td>
               <td>{req.solicitante}</td>

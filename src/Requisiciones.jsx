@@ -2866,7 +2866,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                     else if (isGerente) { bg = '#EFF6FF'; color = '#1E40AF'; }
 
                     return (
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px' }}>
                         <span style={{
                           fontSize: '11px',
                           fontWeight: '500',
@@ -2883,6 +2883,95 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                                   req.estado_aprobacion === 'rechazada' ? 'RECHAZADA' :
                                     req.estado_aprobacion?.toUpperCase()?.replace('_', ' ') || 'PENDIENTE'}
                         </span>
+
+                        {/* Indicador de Entrega en Almacén con Graduación de Color por Avance */}
+                        {(() => {
+                          const items = req.filas || req.detalles || req.items || [];
+                          if (!items || items.length === 0) return null;
+
+                          const total = items.length;
+                          const entregados = items.filter(f => 
+                            f.estatus_almacen === 'entregado' || 
+                            f.is_entregado === true || 
+                            f.estado === 'entregado'
+                          ).length;
+
+                          if (entregados === 0) return null;
+
+                          const ratio = entregados / total;
+                          const completo = entregados === total;
+
+                          let bgBadge = '#16a34a';
+                          let borderBadge = '#15803d';
+                          let textBadge = '#ffffff';
+                          let opacityVal = 1;
+
+                          if (completo) {
+                            bgBadge = '#16a34a'; // Verde Puro Intenso
+                            borderBadge = '#15803d';
+                            textBadge = '#ffffff';
+                            opacityVal = 1;
+                          } else if (ratio <= 0.35) {
+                            bgBadge = '#dcfce7'; // Verde Claro Pastel (ej. 1 de 3)
+                            borderBadge = '#86efac';
+                            textBadge = '#15803d';
+                            opacityVal = 0.7;
+                          } else if (ratio <= 0.7) {
+                            bgBadge = '#86efac'; // Verde Medio (ej. 2 de 3)
+                            borderBadge = '#4ade80';
+                            textBadge = '#166534';
+                            opacityVal = 0.85;
+                          } else {
+                            bgBadge = '#4ade80'; // Verde Vívido Cerca de Completar
+                            borderBadge = '#22c55e';
+                            textBadge = '#064e3b';
+                            opacityVal = 0.95;
+                          }
+
+                          return (
+                            <div
+                              title={`Almacén: ${entregados} de ${total} ítems entregados al usuario final`}
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                padding: '2px 7px',
+                                borderRadius: '5px',
+                                backgroundColor: bgBadge,
+                                border: `1px solid ${borderBadge}`,
+                                color: textBadge,
+                                fontSize: '9px',
+                                fontWeight: '900',
+                                lineHeight: 1,
+                                opacity: opacityVal,
+                                boxShadow: completo ? '0 2px 6px rgba(22, 163, 74, 0.35)' : 'none',
+                                transition: 'all 0.3s ease',
+                                cursor: 'help',
+                                userSelect: 'none',
+                                marginTop: '2px'
+                              }}
+                            >
+                              <span
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  width: '13px',
+                                  height: '13px',
+                                  borderRadius: '3px',
+                                  backgroundColor: completo ? '#ffffff' : (ratio <= 0.35 ? '#15803d' : '#ffffff'),
+                                  color: completo ? '#16a34a' : (ratio <= 0.35 ? '#ffffff' : '#15803d'),
+                                  fontWeight: '900',
+                                  fontSize: '9px',
+                                  lineHeight: 1
+                                }}
+                              >
+                                ✓
+                              </span>
+                              <span>{completo ? 'ENTREGADO' : `${entregados}/${total}`}</span>
+                            </div>
+                          );
+                        })()}
                       </div>
                     );
                   })()}
