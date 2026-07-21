@@ -8,6 +8,7 @@ import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { getSemanaInfo } from './utils/helpers';
 import {
   Plus,
   ChevronDown,
@@ -37,7 +38,8 @@ import {
   Landmark,
   FileSpreadsheet,
   MessageSquare,
-  Ban
+  Ban,
+  Edit2
 } from 'lucide-react';
 import './ModuloTicketsPago.css';
 
@@ -529,6 +531,17 @@ const ModuloTicketsPago = () => {
   const [imagenUrlpreview, setImagenUrlpreview] = useState('');
   const [responsableText, setResponsableText] = useState('');
 
+  // ==========================================
+  // ESTADOS SUBMÓDULO ASIGNACIÓN DE FONDOS A COMPRAS (CXP)
+  // ==========================================
+  const [showModalAsignarFondo, setShowModalAsignarFondo] = useState(false);
+  const [montoFondoInput, setMontoFondoInput] = useState('');
+  const [semanaFondoInput, setSemanaFondoInput] = useState('');
+  const [fechaFondoInput, setFechaFondoInput] = useState(new Date().toISOString().split('T')[0]);
+  const [observacionesFondoInput, setObservacionesFondoInput] = useState('');
+  const [historialFondosCxp, setHistorialFondosCxp] = useState([]);
+  const [guardandoFondoCxp, setGuardandoFondoCxp] = useState(false);
+
   const [renglones, setRenglones] = useState([]);
 
   const [editandoObs, setEditandoObs] = useState(false);
@@ -596,6 +609,58 @@ const ModuloTicketsPago = () => {
     const { data: bData } = await supabase.from('bancos').select('*').eq('activo', true).order('nombre');
     if (bData) setBancos(bData);
   }, []);
+
+  const fetchHistorialFondosCxp = useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from('presupuesto_compras')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (!error && data) {
+        setHistorialFondosCxp(data);
+      }
+    } catch (err) {
+      console.warn("Tabla presupuesto_compras no disponible aún en CxP:", err.message);
+    }
+  }, []);
+
+  const ejecutarAsignacionFondoCxp = async (e) => {
+    e?.preventDefault();
+    const monto = parseFloat(montoFondoInput);
+    if (isNaN(monto) || monto <= 0) {
+      return toast.error("Ingrese un monto válido mayor a $0.");
+    }
+
+    setGuardandoFondoCxp(true);
+    try {
+      const fechaRef = fechaFondoInput || new Date().toISOString();
+      const semanaCalculada = getSemanaInfo(fechaRef)?.label || semanaFondoInput || 'SEM ACTUAL';
+
+      const payload = {
+        monto_asignado: monto,
+        monto_usado: 0,
+        semana_key: semanaCalculada,
+        fecha_asignacion: fechaRef,
+        observaciones: observacionesFondoInput || `Asignación de Fondo desde Cuentas por Pagar (${semanaCalculada})`,
+        usuario_id: currentUser?.id || null,
+        usuario_nombre: `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim() || 'Finanzas CxP'
+      };
+
+      const { error } = await supabase.from('presupuesto_compras').insert([payload]);
+      if (error) throw error;
+
+      toast.success(`Fondo de $ ${monto.toLocaleString('de-DE', { minimumFractionDigits: 2 })} asignado con éxito a Compras.`);
+      setMontoFondoInput('');
+      setObservacionesFondoInput('');
+      setShowModalAsignarFondo(false);
+      await fetchHistorialFondosCxp();
+    } catch (err) {
+      console.error("Error al asignar fondo desde CxP:", err.message);
+      toast.error("Error al registrar fondo: " + err.message);
+    } finally {
+      setGuardandoFondoCxp(false);
+    }
+  };
 
   useEffect(() => {
     cargarInitialData();
@@ -3363,7 +3428,6 @@ const ModuloTicketsPago = () => {
   const renderDetalle = () => {
     if (!ticketSeleccionado) return null;
     const t = ticketSeleccionado;
-    const esPrivilegiadoRender = esPrivilegiado && !forzarVistaAnalista;
 
     return (
       <motion.div
@@ -3384,6 +3448,44 @@ const ModuloTicketsPago = () => {
         >
           {/* --- CABECERA FIJA --- */}
           <div style={{ padding: '20px 35px 15px 35px', flexShrink: 0, borderBottom: '1px solid #e2e8f0', backgroundColor: 'white', position: 'relative' }}>
+            {/* BARRA DE BOTONES SUPERIOR (VOLVER) - ESTILO REQUISICIONES / IMAGEN 1 */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px', paddingRight: '45px' }}>
+              <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                <button
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '8px 16px',
+                    borderRadius: '10px',
+                    border: '1px solid #cbd5e1',
+                    backgroundColor: 'transparent',
+                    color: '#475569',
+                    fontWeight: '800',
+                    fontSize: '0.82rem',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                    fontFamily: 'Inter, sans-serif'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = '#f1f5f9';
+                    e.currentTarget.style.borderColor = '#94a3b8';
+                    e.currentTarget.style.color = '#1e293b';
+                    e.currentTarget.style.transform = 'translateY(-1px)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = 'transparent';
+                    e.currentTarget.style.borderColor = '#cbd5e1';
+                    e.currentTarget.style.color = '#475569';
+                    e.currentTarget.style.transform = 'scale(1)';
+                  }}
+                  onClick={() => { setVistaActual('historial'); setTicketSeleccionado(null); }}
+                >
+                  <ArrowLeft size={16} /> VOLVER
+                </button>
+              </div>
+            </div>
+
             {/* Botón de cerrar arriba a la derecha */}
             <button
               onClick={() => { setVistaActual('historial'); setTicketSeleccionado(null); }}
@@ -4805,97 +4907,79 @@ const ModuloTicketsPago = () => {
                 * El estatus cambiará según el saldo restante.
               </div>
 
-              {/* Botón de Imprimir PDF del Ticket */}
-              <motion.button
+              {/* Botón PDF (Estilo Requisiciones / Imagen 1) */}
+              <button
+                className="btn-tc btn-tc-dark"
                 onClick={generarTicketPDF}
-                whileHover={{ scale: 1.04 }}
-                whileTap={{ scale: 0.97 }}
+                title="Descargar como PDF"
                 style={{
                   display: 'inline-flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                   gap: '8px',
-                  padding: '12px 24px',
-                  background: 'linear-gradient(135deg, #64748b, #475569)',
-                  color: 'white',
-                  border: 'none',
+                  padding: '10px 20px',
                   borderRadius: '10px',
+                  backgroundColor: '#0f172a',
+                  color: 'white',
+                  fontWeight: '800',
+                  fontSize: '0.82rem',
+                  border: 'none',
                   cursor: 'pointer',
-                  fontSize: '13px',
-                  fontWeight: '700',
-                  boxShadow: '0 4px 12px rgba(100,116,139,0.25)',
+                  boxShadow: '0 4px 10px rgba(15, 23, 42, 0.25)',
                   transition: 'all 0.2s',
-                  minWidth: '140px',
                   height: '46px',
-                  boxSizing: 'border-box'
+                  boxSizing: 'border-box',
+                  fontFamily: 'Inter, sans-serif'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = '#020617';
+                  e.currentTarget.style.transform = 'scale(1.03)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = '#0f172a';
+                  e.currentTarget.style.transform = 'scale(1)';
                 }}
               >
-                <FileText size={15} />
-                Imprimir Ticket
-              </motion.button>
+                <FileText size={18} /> PDF
+              </button>
 
-              {/* Botón de Anulación */}
-              {ticketSeleccionado?.status?.toUpperCase() !== 'ANULADO' && ticketSeleccionado?.status?.toUpperCase() !== 'PAGADO' && ticketSeleccionado?.status?.toUpperCase() !== 'COMPLETADO' && (
-                <motion.button
-                  onClick={() => anularTicket(ticketSeleccionado)}
-                  whileHover={{ scale: 1.04 }}
-                  whileTap={{ scale: 0.97 }}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '8px',
-                    padding: '12px 24px',
-                    background: 'linear-gradient(135deg, #f59e0b, #d97706)',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '10px',
-                    cursor: 'pointer',
-                    fontSize: '13px',
-                    fontWeight: '700',
-                    boxShadow: '0 4px 12px rgba(245,158,11,0.25)',
-                    transition: 'all 0.2s',
-                    minWidth: '140px',
-                    height: '46px',
-                    boxSizing: 'border-box'
-                  }}
-                >
-                  <Ban size={15} />
-                  Anular Ticket
-                </motion.button>
-              )}
-
-              {/* Habilitar Edición — movido abajo al lado de finalizar ticket */}
+              {/* Botón Habilitar Edición (Estilo Requisiciones / Imagen 1) */}
               {(esPrivilegiado || (ticketSeleccionado?.usuario_id === currentUser?.id && ticketSeleccionado?.status !== 'Pagado')) && (
-                <motion.button
-                  onClick={() => setModoEdicion(prev => !prev)}
-                  whileHover={{ scale: 1.04 }}
-                  whileTap={{ scale: 0.97 }}
+                <button
+                  className="btn-tc"
                   style={{
+                    backgroundColor: modoEdicion ? '#d97706' : '#2563eb', // Premium Blue-600 / Amber if active
+                    color: 'white',
+                    fontWeight: '800',
+                    padding: '10px 22px',
+                    borderRadius: '10px',
+                    border: 'none',
+                    boxShadow: modoEdicion ? '0 4px 10px rgba(217, 119, 6, 0.35)' : '0 4px 10px rgba(37, 99, 235, 0.35)',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s',
                     display: 'inline-flex',
                     alignItems: 'center',
                     justifyContent: 'center',
                     gap: '8px',
-                    padding: '12px 24px',
-                    background: modoEdicion
-                      ? 'linear-gradient(135deg, #f59e0b, #d97706)'
-                      : 'linear-gradient(135deg, #6366f1, #4f46e5)',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '10px',
-                    cursor: 'pointer',
-                    fontSize: '13px',
-                    fontWeight: '700',
-                    boxShadow: modoEdicion ? '0 4px 12px rgba(245,158,11,0.3)' : '0 4px 12px rgba(99,102,241,0.25)',
-                    transition: 'all 0.2s',
-                    minWidth: '160px',
+                    fontSize: '0.85rem',
                     height: '46px',
-                    boxSizing: 'border-box'
+                    boxSizing: 'border-box',
+                    fontFamily: 'Inter, sans-serif'
                   }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = modoEdicion ? '#b45309' : '#1d4ed8';
+                    e.currentTarget.style.transform = 'scale(1.03)';
+                    e.currentTarget.style.boxShadow = modoEdicion ? '0 6px 14px rgba(217, 119, 6, 0.45)' : '0 6px 14px rgba(29, 78, 216, 0.45)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = modoEdicion ? '#d97706' : '#2563eb';
+                    e.currentTarget.style.transform = 'scale(1)';
+                    e.currentTarget.style.boxShadow = modoEdicion ? '0 4px 10px rgba(217, 119, 6, 0.35)' : '0 4px 10px rgba(37, 99, 235, 0.35)';
+                  }}
+                  onClick={() => setModoEdicion(prev => !prev)}
                 >
-                  <Activity size={15} />
-                  {modoEdicion ? 'Edición Activa' : 'Habilitar Edición'}
-                </motion.button>
+                  <Edit2 size={16} /> {modoEdicion ? 'EDICIÓN ACTIVA' : 'HABILITAR EDICIÓN'}
+                </button>
               )}
 
               <motion.button

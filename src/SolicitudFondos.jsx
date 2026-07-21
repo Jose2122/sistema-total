@@ -53,14 +53,29 @@ const getWeeksForMonth = (monthVal, year = 2026) => {
   }
 };
 
+const safeArray = (val) => {
+  if (!val) return [];
+  if (Array.isArray(val)) return val;
+  if (typeof val === 'string') {
+    try {
+      const parsed = JSON.parse(val);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+      return [];
+    }
+  }
+  return [];
+};
+
 const esRequisicionCompletada = (requisicion) => {
   if (!requisicion) return false;
   if (requisicion.status_compra) {
-    const st = requisicion.status_compra.toUpperCase();
+    const st = String(requisicion.status_compra).toUpperCase();
     if (st !== 'COMPLETADO' && st !== 'COMPLETADA') return false;
   }
-  if (!requisicion.items || !Array.isArray(requisicion.items)) return false;
-  return requisicion.items.every(item => {
+  const items = safeArray(requisicion.items);
+  if (items.length === 0) return false;
+  return items.every(item => {
     const cantPedida = parseFloat(item.cantidad_pedida ?? item.cant) || 0;
     const cantComprada = parseFloat(item.cantidad_comprada || 0);
     if (item.anulado) return true;
@@ -68,28 +83,37 @@ const esRequisicionCompletada = (requisicion) => {
   });
 };
 
-const checkIsCulminada = (sol, partidas, tickets) => {
-  if (sol.estado === 'COMPLETADA') return true;
-  
-  const activePartidas = partidas.filter(p => p.status !== 'ANULADO_POR_USUARIO');
-  if (activePartidas.length === 0) return true;
-  
+const checkIsCulminada = (sol, partidas, tickets, pendingBs = 0, pendingUsd = 0) => {
+  // Si aún queda saldo pendiente por comprar/pagar, NO puede estar completada
+  if (pendingBs > 0.01 || pendingUsd > 0.01) return false;
+
+  const activePartidas = (partidas || []).filter(p => p.status !== 'ANULADO_POR_USUARIO');
+  if (activePartidas.length === 0) return false;
+
   return activePartidas.every(p => {
-    // 1. Si es requisición
-    if (p.requisicion_id && p.requisiciones) {
-      return esRequisicionCompletada(p.requisiciones);
+    // 1. Si es/tiene requisición (por id o por código_ref de requisición)
+    if (p.requisicion_id || p.codigo_ref?.startsWith('RR-')) {
+      if (p.requisiciones) {
+        return esRequisicionCompletada(p.requisiciones);
+      }
+      return false;
     }
-    
+
     // 2. Si es ticket de pago
-    if (p.ticket_id || p.codigo_ticket?.startsWith('TP-')) {
-      const tk = tickets.find(t => t.id === p.ticket_id || t.codigo_control === p.codigo_ticket);
+    if (p.ticket_id || p.codigo_ticket?.startsWith('TP-') || p.codigo_ref?.startsWith('TP-')) {
+      const tk = (tickets || []).find(t =>
+        t.id === p.ticket_id ||
+        t.codigo_control === p.codigo_ticket ||
+        t.codigo_control === p.codigo_ref
+      );
       if (tk) {
         const statusUpper = (tk.status || '').toUpperCase();
         if (statusUpper === 'PAGADO' || statusUpper === 'COMPLETADO' || statusUpper === 'ANULADO' || statusUpper === 'RECHAZADO') {
           return true;
         }
-        if (tk.items && tk.items.length > 0) {
-          const it = tk.items.find(item =>
+        const tkItems = safeArray(tk.items);
+        if (tkItems.length > 0) {
+          const it = tkItems.find(item =>
             (item.desc || item.descripcion || '').trim().toUpperCase() === (p.descripcion || '').trim().toUpperCase() &&
             (Number(item.cantidad_pedida || item.cant) === Number(p.cantidad))
           );
@@ -98,7 +122,7 @@ const checkIsCulminada = (sol, partidas, tickets) => {
       }
       return false;
     }
-    
+
     // 3. Si no tiene referencia (pago manual/transferencia directa)
     return p.pago_realizado === true;
   });
@@ -106,7 +130,13 @@ const checkIsCulminada = (sol, partidas, tickets) => {
 
 const getEstadoSolicitud = (solicitud) => {
   if (!solicitud) return 'ACTIVA';
-  if (solicitud.estado === 'COMPLETADA') return 'COMPLETADA';
+
+  // Si la solicitud tiene saldo pendiente (pending_bs > 0 o pending_usd > 0)
+  // o si no es culminada (is_culminada es false), NUNCA puede ser 'COMPLETADA'
+  const hasPending = (parseFloat(solicitud.pending_bs) > 0.01 || parseFloat(solicitud.pending_usd) > 0.01);
+  if (solicitud.estado === 'COMPLETADA' && !hasPending && solicitud.is_culminada !== false) {
+    return 'COMPLETADA';
+  }
 
   const fechaStr = solicitud.fecha_operativa || solicitud.fecha;
   if (!fechaStr) return 'ACTIVA';
@@ -897,8 +927,8 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
           .filter(p => p.requisicion_id)
           .every(p => p.requisiciones ? esRequisicionCompletada(p.requisiciones) : false);
 
-        const isCulminadaValue = checkIsCulminada(h, misPartidas, ticketsInvolucrados);
-        const dynamicEstado = (h.estado === 'COMPLETADA' || isCulminadaValue) ? 'COMPLETADA' : getEstadoSolicitud(h);
+        const isCulminadaValue = checkIsCulminada(h, misPartidas, ticketsInvolucrados, pendingBs, pendingUsd);
+        const dynamicEstado = isCulminadaValue ? 'COMPLETADA' : getEstadoSolicitud(h);
 
         return {
           ...h,
@@ -1356,6 +1386,15 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         return false;
       };
 
+      const activePartidasRaw = partidasRaw.filter(p => p.status !== 'ANULADO_POR_USUARIO' && !p.clasificacion?.includes('[*]') && p.clasificacion !== 'Gastos Imprevistos' && p.clasificacion !== 'Ticket de Pago' && p.clasificacion !== 'Solicitud de ticket');
+      const hasPartidasIncompletas = activePartidasRaw.length === 0 || activePartidasRaw.some(p => !getIsCompletado(p));
+
+      const estadoFinalReal = hasPartidasIncompletas 
+        ? (getEstadoSolicitud(solicitud) === 'COMPLETADA' ? 'EN PROCESO' : getEstadoSolicitud(solicitud))
+        : (solicitud.estado || 'COMPLETADA');
+
+      setIsReadOnly(estadoFinalReal === 'COMPLETADA' && !esRrHhOAdm);
+
       setForm({
         ...solicitud,
         id: solicitud.codigo_control || solicitud.id,
@@ -1363,7 +1402,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         fecha: solicitud.fecha_operativa,
         gerencia: solicitud.gerencia,
         responsable: solicitud.responsable,
-        estado: solicitud.estado || 'ACTIVA',
+        estado: estadoFinalReal,
         bloque_operativo: solicitud.bloque_operativo || null,
         partidas: partidasRaw.filter(p => !p.clasificacion.includes('[*]') && p.clasificacion !== 'Gastos Imprevistos' && p.clasificacion !== 'Ticket de Pago' && p.clasificacion !== 'Solicitud de ticket').map(p => {
           const { montoReal, montoPendiente } = procesarEjecucion(p);
@@ -1631,7 +1670,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
   };
 
   const deadlineDate = calculateDeadline(form.fecha);
-  const isExpired = estadoActual !== 'ACTIVA' && !esRrHhOAdm;
+  const isExpired = estadoActual === 'COMPLETADA' && !esRrHhOAdm;
 
   const verificarDisponibilidad = async () => {
     if (!fechaPreVal) return setErrorCheck("Por favor, seleccione una fecha operativa.");

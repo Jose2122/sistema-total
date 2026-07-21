@@ -22,6 +22,46 @@ export const getWeekRange = (weekNum, year) => {
 };
 
 /**
+ * Obtiene objeto de información detallada de semana (número, rango, etiqueta).
+ */
+export const getSemanaInfo = (dateInput) => {
+  if (!dateInput) return null;
+  try {
+    let d;
+    if (dateInput instanceof Date) {
+      d = dateInput;
+    } else if (typeof dateInput === 'string' && dateInput.includes('T')) {
+      d = new Date(dateInput);
+    } else if (typeof dateInput === 'string') {
+      d = new Date(dateInput + 'T12:00:00');
+    } else {
+      d = new Date(dateInput);
+    }
+
+    if (isNaN(d.getTime())) return null;
+
+    const weekNum = getWeek(d, { weekStartsOn: 1 });
+    const year = d.getFullYear();
+    const start = startOfWeek(d, { weekStartsOn: 1 });
+    const end = endOfWeek(d, { weekStartsOn: 1 });
+    const startStr = format(start, 'dd/MM');
+    const endStr = format(end, 'dd/MM');
+
+    return {
+      weekNum,
+      year,
+      label: `SEM ${weekNum}`,
+      rango: `${startStr} al ${endStr}`,
+      fullLabel: `SEM ${weekNum} (${startStr} al ${endStr})`,
+      key: `SEM-${weekNum}-${year}`
+    };
+  } catch (err) {
+    console.error("Error al calcular getSemanaInfo:", err);
+    return null;
+  }
+};
+
+/**
  * Formatea un número como moneda ($).
  */
 export const formatCurrency = (value) => {

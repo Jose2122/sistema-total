@@ -7,8 +7,23 @@ import toast from 'react-hot-toast';
 import { format } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Loader2, Upload, FileText, MessageSquare, Paperclip, Clock, CheckCircle2, AlertCircle, ShoppingBag, ChevronDown, X } from 'lucide-react';
+import { getSemanaInfo } from './utils/helpers';
 import './Requisiciones.css';
 import './ReportesMaestro.css';
+
+const safeArray = (val) => {
+  if (!val) return [];
+  if (Array.isArray(val)) return val;
+  if (typeof val === 'string') {
+    try {
+      const parsed = JSON.parse(val);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+      return [];
+    }
+  }
+  return [];
+};
 
 const FormularioAdjuntoToast = ({ cantProcesar, onConfirm, onCancel }) => {
   const [docNumero, setDocNumero] = useState('');
@@ -270,7 +285,37 @@ const Compras = () => {
   const [filtroStatusCompra, setFiltroStatusCompra] = useState('Todos');
   const [filtroCategoria, setFiltroCategoria] = useState('Todos');
   const [filtroCentroCosto, setFiltroCentroCosto] = useState('Todos');
+  const [filtroSemana, setFiltroSemana] = useState('Actual'); // 'Actual' (Semana Actual por defecto), 'Todas', o key de semana
   const [proveedores, setProveedores] = useState([]);
+
+  // --- ESTADOS DE CONTROL DE FONDOS EN TIEMPO REAL ---
+  const [presupuestoAsignado, setPresupuestoAsignado] = useState(0);
+  const [historialPresupuesto, setHistorialPresupuesto] = useState([]);
+  const [showModalPresupuesto, setShowModalPresupuesto] = useState(false);
+  const [nuevoMontoFondo, setNuevoMontoFondo] = useState('');
+  const [conceptoFondo, setConceptoFondo] = useState('');
+  const [guardandoFondo, setGuardandoFondo] = useState(false);
+
+  // --- ESTADOS PARA COMPARATIVA DE PRECIOS Y SUGERENCIA DE PROVEEDOR ---
+  const [showComparativaModal, setShowComparativaModal] = useState(false);
+  const [itemParaComparar, setItemParaComparar] = useState(null);
+  const [historialPreciosProducto, setHistorialPreciosProducto] = useState([]);
+
+  // --- CÁLCULO DE SEMANA ACTUAL Y DISPONIBLES ---
+  const semanaActualObj = useMemo(() => getSemanaInfo(new Date()), []);
+
+  const semanasDisponibles = useMemo(() => {
+    const map = new Map();
+    historial.forEach(req => {
+      if (req.semanaInfo) {
+        map.set(req.semanaInfo.key, req.semanaInfo);
+      }
+    });
+    return Array.from(map.values()).sort((a, b) => {
+      if (b.year !== a.year) return b.year - a.year;
+      return b.weekNum - a.weekNum;
+    });
+  }, [historial]);
 
   const categoriasProveedores = useMemo(() => {
     const cats = new Set();
@@ -285,8 +330,8 @@ const Compras = () => {
 
   const categoriasUnicas = useMemo(() => {
     const cats = new Set();
-    historial.forEach(req => {
-      (req.items || []).forEach(it => { if (it.categoria) cats.add(it.categoria); });
+    (historial || []).forEach(req => {
+      safeArray(req?.items).forEach(it => { if (it && it.categoria) cats.add(it.categoria); });
     });
     return ['Todos', ...Array.from(cats).sort()];
   }, [historial]);
@@ -404,14 +449,19 @@ const Compras = () => {
         .order('fecha_emision', { ascending: false });
 
       if (error) throw error;
-      setHistorial(data.map(db => {
+      setHistorial((data || []).map(db => {
+        const itemsArr = safeArray(db.items);
         const esCcTigre = (db.centro_costo || '').toLowerCase().includes('tigre');
+        const fechaRef = db.f_aprobacion_general || db.fecha_aprobacion_general || db.f_aprobacion_area || db.fecha_emision || db.created_at;
+        const semanaInfo = getSemanaInfo(fechaRef);
         return {
           ...db,
-          correlativo: db.correlativo_req,
-          total: db.total_bs,
-          detalles: db.items,
-          fecha: db.fecha_emision ? db.fecha_emision.split('T')[0] : '',
+          correlativo: db.correlativo_req || `REQ-${db.id}`,
+          total: db.total_bs || 0,
+          items: itemsArr,
+          detalles: itemsArr,
+          fecha: db.fecha_emision ? String(db.fecha_emision).split('T')[0] : '',
+          semanaInfo,
           ...(esCcTigre && zProfile ? {
             asignado_a: zProfile.id,
             asignado_nombre: `${zProfile.nombre} ${zProfile.apellido}`
@@ -445,6 +495,22 @@ const Compras = () => {
       setAnalistas(data || []);
     } catch (err) {
       console.error("Error cargando analistas:", err.message);
+    }
+  }, []);
+
+  const cargarPresupuesto = useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from('presupuesto_compras')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (!error && data) {
+        setHistorialPresupuesto(data);
+        const total = data.reduce((acc, p) => acc + (parseFloat(p.monto_asignado) || 0), 0);
+        setPresupuestoAsignado(total);
+      }
+    } catch (err) {
+      console.warn("Tabla presupuesto_compras no disponible aún:", err.message);
     }
   }, []);
 
@@ -533,22 +599,28 @@ const Compras = () => {
     cargarRequisicionesAprobadas();
     cargarProveedores();
     cargarAnalistasCompras();
+    cargarPresupuesto();
 
     const channel = supabase
       .channel('compras_realtime')
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'requisiciones' }, (payload) => {
-        setHistorial(prev => prev.map(req => {
+        setHistorial(prev => (prev || []).map(req => {
           if (req.id === payload.new.id) {
+            const itemsArr = safeArray(payload.new.items);
+            const fechaRef = payload.new.f_aprobacion_general || payload.new.fecha_aprobacion_general || payload.new.f_aprobacion_area || payload.new.fecha_emision || payload.new.created_at;
+            const semanaInfo = getSemanaInfo(fechaRef);
             return {
               ...req,
               ...payload.new,
-              correlativo: payload.new.correlativo_req,
-              total: payload.new.total_bs,
-              detalles: payload.new.items,
-              fecha: payload.new.fecha_emision ? payload.new.fecha_emision.split('T')[0] : '',
+              correlativo: payload.new.correlativo_req || req.correlativo,
+              total: payload.new.total_bs || req.total,
+              items: itemsArr,
+              detalles: itemsArr,
+              fecha: payload.new.fecha_emision ? String(payload.new.fecha_emision).split('T')[0] : req.fecha,
+              semanaInfo,
               observaciones: payload.new.observaciones || '',
               observaciones_direccion: payload.new.observaciones_direccion || '',
-              facturas_url: payload.new.facturas_url || []
+              facturas_url: safeArray(payload.new.facturas_url)
             };
           }
           return req;
@@ -556,17 +628,26 @@ const Compras = () => {
       })
       .subscribe();
 
+    const channelPresupuesto = supabase
+      .channel('presupuesto_compras_realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'presupuesto_compras' }, () => {
+        cargarPresupuesto();
+      })
+      .subscribe();
+
     return () => {
       supabase.removeChannel(channel);
+      supabase.removeChannel(channelPresupuesto);
     };
-  }, [cargarRequisicionesAprobadas, cargarProveedores, cargarAnalistasCompras]);
+  }, [cargarRequisicionesAprobadas, cargarProveedores, cargarAnalistasCompras, cargarPresupuesto]);
 
   const historialFiltrado = useMemo(() => {
-    return historial.filter(req => {
+    return (historial || []).filter(req => {
+      if (!req) return false;
       const matchTexto =
-        req.solicitante.toLowerCase().includes(busqueda.toLowerCase()) ||
-        req.correlativo.toLowerCase().includes(busqueda.toLowerCase()) ||
-        (req.items || []).some(it => (it.descripcion || '').toLowerCase().includes(busqueda.toLowerCase()));
+        (req.solicitante || '').toLowerCase().includes((busqueda || '').toLowerCase()) ||
+        (req.correlativo || '').toLowerCase().includes((busqueda || '').toLowerCase()) ||
+        safeArray(req.items).some(it => (it && it.descripcion ? String(it.descripcion).toLowerCase() : '').includes((busqueda || '').toLowerCase()));
       const matchGerencia = filtroGerencia === 'Todos' || req.gerencia === filtroGerencia;
       
       const matchStatus =
@@ -576,7 +657,7 @@ const Compras = () => {
           : (req.status_compra || 'En espera') === filtroStatusCompra);
 
       const matchCC = filtroCentroCosto === 'Todos' || req.centro_costo === filtroCentroCosto;
-      const matchCat = filtroCategoria === 'Todos' || (req.items || []).some(it => it.categoria === filtroCategoria);
+      const matchCat = filtroCategoria === 'Todos' || safeArray(req.items).some(it => it && it.categoria === filtroCategoria);
 
       // Filtro por analista seleccionado en la barra
       const matchAnalista =
@@ -590,9 +671,19 @@ const Compras = () => {
         esGerenteDeCompras || // El gerente ve todo
         req.asignado_a === currentUser?.id;
 
-      return matchTexto && matchGerencia && matchStatus && matchCC && matchCat && matchAnalista && matchMisAsignadas;
+      // Filtro por Semana Operativa
+      const matchSemana = (() => {
+        if (filtroSemana === 'Todas') return true;
+        if (filtroSemana === 'Actual') {
+          if (!req.semanaInfo || !semanaActualObj) return false;
+          return req.semanaInfo.weekNum === semanaActualObj.weekNum && req.semanaInfo.year === semanaActualObj.year;
+        }
+        return req.semanaInfo?.key === filtroSemana;
+      })();
+
+      return matchTexto && matchGerencia && matchStatus && matchCC && matchCat && matchAnalista && matchMisAsignadas && matchSemana;
     });
-  }, [historial, busqueda, filtroGerencia, filtroStatusCompra, filtroCentroCosto, filtroCategoria, filtroAnalista, verSoloMisAsignadas, esGerenteDeCompras, currentUser]);
+  }, [historial, busqueda, filtroGerencia, filtroStatusCompra, filtroCentroCosto, filtroCategoria, filtroAnalista, filtroSemana, semanaActualObj, verSoloMisAsignadas, esGerenteDeCompras, currentUser]);
 
   const abrirProcesamiento = async (req) => {
     setRequisicionActiva(req);
@@ -2654,6 +2745,170 @@ const Compras = () => {
     return `${nombre?.charAt(0) || ''}${apellido?.charAt(0) || ''}`.toUpperCase();
   };
 
+  // --- CÁLCULO DE MONTO TOTAL EJECUTADO Y SALDO DISPONIBLE DEL FONDO ---
+  const totalEjecutadoCompras = useMemo(() => {
+    let total = 0;
+    (historial || []).forEach(req => {
+      const items = safeArray(req.items);
+      items.forEach(it => {
+        const compras = safeArray(it?.historial_compras);
+        compras.forEach(c => {
+          if (c && c.tipo !== 'JUSTIFICACION') {
+            const cant = parseFloat(c.cant) || 0;
+            const pu = parseFloat(c.pu) || 0;
+            total += (cant * pu);
+          }
+        });
+      });
+    });
+    return total;
+  }, [historial]);
+
+  const saldoDisponibleFondo = useMemo(() => {
+    return presupuestoAsignado - totalEjecutadoCompras;
+  }, [presupuestoAsignado, totalEjecutadoCompras]);
+
+  const porcentajeDisponible = useMemo(() => {
+    if (presupuestoAsignado <= 0) return 0;
+    return (saldoDisponibleFondo / presupuestoAsignado) * 100;
+  }, [presupuestoAsignado, saldoDisponibleFondo]);
+
+  // --- CONFIGURACIÓN DE ALERTA VISUAL (SEMAFORIZACIÓN) ---
+  const semaforoConfig = useMemo(() => {
+    if (presupuestoAsignado <= 0) {
+      return {
+        bg: '#f8fafc',
+        borderColor: '#cbd5e1',
+        color: '#64748b',
+        badgeBg: '#f1f5f9',
+        badgeText: '#475569',
+        estadoText: 'SIN FONDO ASIGNADO',
+        icon: '💵'
+      };
+    }
+    if (porcentajeDisponible > 30) {
+      return {
+        bg: '#f0fdf4',
+        borderColor: '#86efac',
+        color: '#166534',
+        badgeBg: '#dcfce7',
+        badgeText: '#15803d',
+        estadoText: 'FONDOS DISPONIBLES',
+        icon: '🟢'
+      };
+    }
+    if (porcentajeDisponible >= 10) {
+      return {
+        bg: '#fffbeb',
+        borderColor: '#fde68a',
+        color: '#92400e',
+        badgeBg: '#fef3c7',
+        badgeText: '#b45309',
+        estadoText: 'FONDOS POR AGOTARSE',
+        icon: '⚠️'
+      };
+    }
+    return {
+      bg: '#fef2f2',
+      borderColor: '#ef4444',
+      color: '#991b1b',
+      badgeBg: '#fee2e2',
+      badgeText: '#dc2626',
+      estadoText: '¡ALERTA DE FONDOS!',
+      icon: '🚨'
+    };
+  }, [presupuestoAsignado, porcentajeDisponible]);
+
+  // --- ALERTA VISUAL / TOAST CUANDO EL SALDO ES MENOR AL 10% ---
+  useEffect(() => {
+    if (presupuestoAsignado > 0 && porcentajeDisponible < 10) {
+      toast.error(
+        "🚨 ATENCIÓN: El fondo de compras está por agotarse (< 10% disponible). Requiere recarga de Administración.",
+        { id: 'alerta-fondo-bajo', duration: 7000 }
+      );
+    }
+  }, [porcentajeDisponible, presupuestoAsignado]);
+
+  const guardarAporteFondo = async (e) => {
+    e?.preventDefault();
+    const monto = parseFloat(nuevoMontoFondo);
+    if (isNaN(monto) || monto <= 0) {
+      return toast.error("Ingrese un monto válido mayor a $0.");
+    }
+
+    setGuardandoFondo(true);
+    try {
+      const payload = {
+        monto_asignado: monto,
+        monto_usado: 0,
+        observaciones: conceptoFondo || 'Asignación de Fondo a Compras',
+        usuario_id: currentUser?.id || null,
+        usuario_nombre: `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim() || 'Finanzas'
+      };
+
+      const { error } = await supabase.from('presupuesto_compras').insert([payload]);
+      if (error) throw error;
+
+      toast.success(`Fondo de $ ${monto.toLocaleString('de-DE', { minimumFractionDigits: 2 })} asignado con éxito.`);
+      setNuevoMontoFondo('');
+      setConceptoFondo('');
+      setShowModalPresupuesto(false);
+      await cargarPresupuesto();
+    } catch (err) {
+      console.error("Error al asignar fondo:", err.message);
+      toast.error("Error al registrar fondo: " + err.message);
+    } finally {
+      setGuardandoFondo(false);
+    }
+  };
+
+  const abrirComparativaPrecio = (item) => {
+    setItemParaComparar(item);
+    setShowComparativaModal(true);
+
+    const descTarget = (item.descripcion || '').trim().toLowerCase();
+    if (!descTarget) {
+      setHistorialPreciosProducto([]);
+      return;
+    }
+
+    const comparativa = [];
+    (historial || []).forEach(req => {
+      const items = safeArray(req.items);
+      items.forEach(it => {
+        const hist = safeArray(it.historial_compras);
+        hist.forEach(h => {
+          if (h && h.tipo !== 'JUSTIFICACION' && h.tipo !== 'ANULACION') {
+            const desc = (it.descripcion || '').trim().toLowerCase();
+            if (desc.includes(descTarget) || descTarget.includes(desc)) {
+              const provId = h.proveedor_id;
+              const provMatch = proveedores.find(p => p.id === provId || (p.razon_social || '').trim().toLowerCase() === (h.proveedor_nombre || '').trim().toLowerCase());
+
+              comparativa.push({
+                proveedor_id: provId,
+                proveedor_nombre: h.proveedor_nombre || 'Desconocido',
+                descripcion: it.descripcion,
+                cant: Number(h.cant) || 0,
+                pu: Number(h.pu) || 0,
+                total: (Number(h.cant) || 0) * (Number(h.pu) || 0),
+                fecha: h.fecha ? h.fecha.split('T')[0] : (req.fecha_emision ? req.fecha_emision.split('T')[0] : '—'),
+                requisicion: req.correlativo || `REQ-${req.id}`,
+                calificacion_precio: provMatch?.calificacion_precio || 5,
+                calificacion_cumplimiento: provMatch?.calificacion_cumplimiento || 5,
+                proveedor_preferencial: Boolean(provMatch?.proveedor_preferencial),
+                dias_credito: provMatch?.dias_credito || 0,
+                monto_limite_credito: provMatch?.monto_limite_credito || 0
+              });
+            }
+          }
+        });
+      });
+    });
+
+    comparativa.sort((a, b) => a.pu - b.pu);
+    setHistorialPreciosProducto(comparativa);
+  };
+
   // --- RESTRICCIÓN DE ACCESO (VISTA) ---
 
   if (!esDeCompras && currentUser) {
@@ -2667,18 +2922,80 @@ const Compras = () => {
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
     >
-      {/* --- ENCABECERA UNIFICADA PREMIUM --- */}
+      {/* --- ENCABECERA UNIFICADA PREMIUM CON CONTROL DE FONDOS --- */}
       <div style={{
-        borderLeft: '6px solid #0ea5e9',
-        paddingLeft: '16px',
-        marginBottom: '30px'
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: '25px',
+        flexWrap: 'wrap',
+        gap: '15px'
       }}>
-        <h1 style={{ margin: 0, color: '#0f172a', fontSize: '1.8rem', fontWeight: '900', fontFamily: 'Inter, sans-serif', letterSpacing: '-0.5px' }}>
-          Gestión de Compras
-        </h1>
-        <p style={{ margin: '4px 0 0 0', color: '#64748b', fontSize: '0.9rem', fontWeight: '500', fontFamily: 'Inter, sans-serif' }}>
-          Procesamiento de requisiciones con aprobación de Gerencia General
-        </p>
+        <div style={{ borderLeft: '6px solid #0ea5e9', paddingLeft: '16px' }}>
+          <h1 style={{ margin: 0, color: '#0f172a', fontSize: '1.8rem', fontWeight: '900', fontFamily: 'Inter, sans-serif', letterSpacing: '-0.5px' }}>
+            Gestión de Compras
+          </h1>
+          <p style={{ margin: '4px 0 0 0', color: '#64748b', fontSize: '0.9rem', fontWeight: '500', fontFamily: 'Inter, sans-serif' }}>
+            Procesamiento de requisiciones con aprobación de Gerencia General
+          </p>
+        </div>
+
+        {/* TARJETA / BADGE DE CONTROL DE FONDOS EN TIEMPO REAL */}
+        <div style={{
+          backgroundColor: semaforoConfig.bg,
+          border: `2px solid ${semaforoConfig.borderColor}`,
+          borderRadius: '16px',
+          padding: '12px 20px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '16px',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.04)',
+          transition: 'all 0.3s ease'
+        }}>
+          <div style={{
+            width: '42px',
+            height: '42px',
+            borderRadius: '12px',
+            backgroundColor: semaforoConfig.badgeBg,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: '20px'
+          }}>
+            {semaforoConfig.icon}
+          </div>
+
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: '10px', fontWeight: '900', letterSpacing: '0.05em', color: semaforoConfig.color, textTransform: 'uppercase' }}>
+                {semaforoConfig.estadoText}
+              </span>
+              {presupuestoAsignado > 0 && (
+                <span style={{
+                  fontSize: '9px',
+                  fontWeight: '800',
+                  backgroundColor: semaforoConfig.badgeBg,
+                  color: semaforoConfig.badgeText,
+                  padding: '2px 6px',
+                  borderRadius: '4px'
+                }}>
+                  {porcentajeDisponible.toFixed(1)}% DISP.
+                </span>
+              )}
+            </div>
+
+            <div style={{ fontSize: '1.25rem', fontWeight: '950', color: '#0f172a', margin: '2px 0' }}>
+              $ {saldoDisponibleFondo.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              <span style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: '700', marginLeft: '6px' }}>
+                disponibles
+              </span>
+            </div>
+
+            <div style={{ fontSize: '0.7rem', color: '#475569', fontWeight: '600' }}>
+              Asignados: <strong style={{ color: '#0f172a' }}>$ {presupuestoAsignado.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</strong> | Ejecutado: <strong>$ {totalEjecutadoCompras.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</strong>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '15px', marginBottom: '25px' }}>
@@ -2736,6 +3053,36 @@ const Compras = () => {
               onChange={(e) => setBusqueda(e.target.value)}
             />
           </div>
+
+          {/* SELECTOR DE SEMANA OPERATIVA */}
+          <select
+            className="input-tc"
+            style={{
+              width: '230px',
+              margin: 0,
+              backgroundColor: filtroSemana === 'Actual' ? '#eff6ff' : 'white',
+              color: filtroSemana === 'Actual' ? '#1d4ed8' : '#1e293b',
+              borderColor: filtroSemana === 'Actual' ? '#93c5fd' : '#cbd5e1',
+              fontWeight: '800'
+            }}
+            value={filtroSemana}
+            onChange={(e) => setFiltroSemana(e.target.value)}
+          >
+            <option value="Actual">
+              📅 Semana Actual ({semanaActualObj?.label || 'Activa'})
+            </option>
+            <option value="Todas">🗓️ Todas las Semanas</option>
+
+            {semanasDisponibles.length > 0 && (
+              <optgroup label="Semanas Anteriores / Histórico">
+                {semanasDisponibles.map(s => (
+                  <option key={s.key} value={s.key}>
+                    {s.fullLabel} {s.weekNum === semanaActualObj?.weekNum && s.year === semanaActualObj?.year ? ' (Actual)' : ''}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+          </select>
 
           <select
             className="input-tc"
@@ -2814,7 +3161,8 @@ const Compras = () => {
           <thead>
             <tr>
               <th style={{ width: '45px', textAlign: 'center', padding: '12px 5px' }}>📌</th>
-              <th style={{ width: '220px', padding: '12px 15px' }}>ID REQ</th>
+              <th style={{ width: '180px', padding: '12px 15px' }}>ID REQ</th>
+              <th style={{ width: '110px', textAlign: 'center', padding: '12px 10px' }}>SEMANA</th>
               <th style={{ padding: '12px 15px' }}>CATEGORÍA</th>
               <th style={{ padding: '12px 15px' }}>SOLICITANTE / GERENCIA</th>
               <th style={{ padding: '12px 15px' }}>C. COSTOS</th>
@@ -2828,6 +3176,25 @@ const Compras = () => {
           <tbody>
             {(loading && historial.length === 0) ? (
               <tr><td colSpan="11" style={{ textAlign: 'center', padding: '30px' }}><Loader2 className="animate-spin" /> Cargando...</td></tr>
+            ) : historialFiltrado.length === 0 ? (
+              <tr>
+                <td colSpan="11" style={{ textAlign: 'center', padding: '40px 20px', color: '#64748b' }}>
+                  <div style={{ fontSize: '1.5rem', marginBottom: '8px' }}>📭</div>
+                  <div style={{ fontWeight: '700', fontSize: '0.95rem', color: '#334155' }}>
+                    {filtroSemana === 'Actual'
+                      ? `No se encontraron requisiciones para la Semana Actual (${semanaActualObj?.label || 'Activa'})`
+                      : 'No hay requisiciones que coincidan con los filtros aplicados'}
+                  </div>
+                  {filtroSemana === 'Actual' && (
+                    <button
+                      onClick={() => setFiltroSemana('Todas')}
+                      style={{ marginTop: '12px', padding: '6px 14px', borderRadius: '8px', border: '1px solid #cbd5e1', backgroundColor: '#f8fafc', color: '#0ea5e9', fontWeight: '800', cursor: 'pointer', fontSize: '0.8rem' }}
+                    >
+                      🗓️ Ver Todas las Semanas
+                    </button>
+                  )}
+                </td>
+              </tr>
             ) : historialFiltrado.map(req => (
               <tr key={req.id} className="hover:bg-slate-50 transition-colors" style={{ borderBottom: '1px solid #f1f5f9' }}>
                 <td style={{ width: '45px', textAlign: 'center', padding: '8px 5px' }}>
@@ -2899,20 +3266,52 @@ const Compras = () => {
                   </div>
                 </td>
 
+                {/* COLUMNA SEMANA OPERATIVA (CHIP INFORMATIVO) */}
+                <td style={{ textAlign: 'center', padding: '8px 10px' }}>
+                  {req.semanaInfo ? (
+                    <span
+                      style={{
+                        fontSize: '10px',
+                        fontWeight: '800',
+                        backgroundColor: (req.semanaInfo.weekNum === semanaActualObj?.weekNum && req.semanaInfo.year === semanaActualObj?.year) ? '#dcfce7' : '#f1f5f9',
+                        color: (req.semanaInfo.weekNum === semanaActualObj?.weekNum && req.semanaInfo.year === semanaActualObj?.year) ? '#15803d' : '#475569',
+                        padding: '3px 8px',
+                        borderRadius: '6px',
+                        border: (req.semanaInfo.weekNum === semanaActualObj?.weekNum && req.semanaInfo.year === semanaActualObj?.year) ? '1px solid #86efac' : '1px solid #cbd5e1',
+                        display: 'inline-block',
+                        whiteSpace: 'nowrap'
+                      }}
+                      title={`Rango: ${req.semanaInfo.rango}`}
+                    >
+                      {req.semanaInfo.label}
+                    </span>
+                  ) : (
+                    <span style={{ fontSize: '10px', color: '#94a3b8', fontStyle: 'italic' }}>—</span>
+                  )}
+                </td>
+
                 <td style={{ padding: '8px 15px' }}>
-                  <div style={{ fontSize: '0.85rem', fontWeight: 'bold', color: '#1e293b', maxWidth: '250px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={req.items?.[0]?.descripcion}>
-                    {req.items?.[0]?.descripcion || 'Sin descripción'}
-                  </div>
-                  <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '500' }}>
-                    {req.items?.[0]?.categoria || 'N/A'} {req.items?.length > 1 ? (
-                      <span
-                        style={{ color: '#0ea5e9', cursor: 'help', fontWeight: '800' }}
-                        title={req.items.slice(1).map(it => `- ${it.descripcion}`).join('\n')}
-                      >
-                        (+{req.items.length - 1} más)
-                      </span>
-                    ) : ''}
-                  </div>
+                  {(() => {
+                    const itemsArr = safeArray(req.items);
+                    const primerItem = itemsArr[0];
+                    return (
+                      <>
+                        <div style={{ fontSize: '0.85rem', fontWeight: 'bold', color: '#1e293b', maxWidth: '250px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={primerItem?.descripcion}>
+                          {primerItem?.descripcion || 'Sin descripción'}
+                        </div>
+                        <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '500' }}>
+                          {primerItem?.categoria || 'N/A'} {itemsArr.length > 1 ? (
+                            <span
+                              style={{ color: '#0ea5e9', cursor: 'help', fontWeight: '800' }}
+                              title={itemsArr.slice(1).map(it => `- ${it?.descripcion || ''}`).join('\n')}
+                            >
+                              (+{itemsArr.length - 1} más)
+                            </span>
+                          ) : ''}
+                        </div>
+                      </>
+                    );
+                  })()}
                 </td>
                 <td style={{ padding: '8px 15px' }}>
                   <div style={{ fontSize: '0.85rem', fontWeight: '700', color: '#1e293b', lineHeight: '1.2' }}>{req.solicitante}</div>
@@ -2928,15 +3327,38 @@ const Compras = () => {
                 </td>
                 <td style={{ textAlign: 'center', padding: '8px 15px' }}>
                   {(() => {
-                    const isJustificada = req.items?.some(it => 
-                      it.historial_compras?.some(h => h.tipo === 'JUSTIFICACION')
+                    // Si la compra NO ha sido asignada a ningún comprador/analista, el SLA no arranca
+                    if (!req.asignado_a) {
+                      return (
+                        <div style={{
+                          fontSize: '0.75rem',
+                          fontWeight: '800',
+                          backgroundColor: '#f1f5f9',
+                          color: '#64748b',
+                          padding: '4px 10px',
+                          borderRadius: '6px',
+                          border: '1px solid #cbd5e1',
+                          display: 'inline-block',
+                          whiteSpace: 'nowrap'
+                        }} title="El tiempo SLA comenzará a contar una vez que la compra sea asignada a un analista.">
+                          NO DESIGNADO
+                        </div>
+                      );
+                    }
+
+                    const itemsArr = safeArray(req.items);
+                    const isJustificada = itemsArr.some(it => 
+                      safeArray(it?.historial_compras).some(h => h && h.tipo === 'JUSTIFICACION')
                     );
 
                     let deadline = req.fecha_limite_compra;
-                    if (!deadline && req.fecha_emision) {
-                      const base = new Date(req.fecha_emision);
-                      const dias = req.prioridad === 'Emergencia' ? 2 : 5;
-                      deadline = new Date(base.getTime() + (dias * 24 * 60 * 60 * 1000)).toISOString();
+                    if (!deadline) {
+                      const fechaBaseStr = req.f_inicio_compras || req.fecha_emision;
+                      if (fechaBaseStr) {
+                        const base = new Date(fechaBaseStr);
+                        const dias = req.prioridad === 'Emergencia' ? 2 : 5;
+                        deadline = new Date(base.getTime() + (dias * 24 * 60 * 60 * 1000)).toISOString();
+                      }
                     }
 
                     if (deadline && req.status_compra !== 'Completado') {
@@ -2984,7 +3406,8 @@ const Compras = () => {
                       const horasRestantes = horasTotales % 24;
                       const label = horasTotales < 0 ? 'VENCIDO' : (dias > 0 ? `${dias}d ${horasRestantes}h` : `${horasRestantes}h`);
 
-                      const msCreationDiff = hoy.getTime() - new Date(req.fecha_emision).getTime();
+                      const fechaBaseAtencion = req.f_inicio_compras || req.fecha_emision;
+                      const msCreationDiff = hoy.getTime() - new Date(fechaBaseAtencion).getTime();
                       const hoursSinceCreation = msCreationDiff / (1000 * 60 * 60);
                       const isUnattendedNormal = req.prioridad !== 'Emergencia' && hoursSinceCreation >= 72 && (req.status_compra === 'En espera' || !req.status_compra) && !isJustificada;
                       const isUnattendedEmergencia = req.prioridad === 'Emergencia' && hoursSinceCreation >= 24 && (req.status_compra === 'En espera' || !req.status_compra) && !isJustificada;
@@ -3015,7 +3438,7 @@ const Compras = () => {
                               alignItems: 'center',
                               gap: '3px',
                               cursor: 'help'
-                            }} title="Esta requisición de prioridad Normal lleva más de 72 horas sin compras ni justificaciones registradas. Requiere acción inmediata.">
+                            }} title="Esta requisición de prioridad Normal lleva más de 72 horas asignada sin compras ni justificaciones registradas. Requiere acción inmediata.">
                               {"⚠️ SIN ATENDER (>72h)"}
                             </span>
                           )}
@@ -3032,14 +3455,15 @@ const Compras = () => {
                               alignItems: 'center',
                               gap: '3px',
                               cursor: 'help'
-                            }} title="Esta requisición de prioridad Emergencia lleva más de 24 horas sin compras ni justificaciones registradas. Requiere acción inmediata.">
+                            }} title="Esta requisición de prioridad Emergencia lleva más de 24 horas asignada sin compras ni justificaciones registradas. Requiere acción inmediata.">
                               {"⚠️ SIN ATENDER (>24h)"}
                             </span>
                           )}
                         </div>
                       );
                     }
-                    return <span style={{ color: '#94a3b8', fontSize: '0.7rem' }}>-</span>;
+
+                    return <span style={{ fontSize: '0.75rem', color: '#94a3b8', fontWeight: '700' }}>—</span>;
                   })()}
                 </td>
                 <td style={{ textAlign: 'right', fontWeight: 'bold', color: '#1e293b', padding: '8px 15px' }}>
@@ -3539,6 +3963,27 @@ const Compras = () => {
                         <td style={{ verticalAlign: 'middle' }}>
                           <div style={{ fontWeight: 'bold', color: '#1e293b', fontSize: '0.9rem', textDecoration: f.anulado ? 'line-through' : 'none' }}>{f.descripcion}</div>
                           <div style={{ fontSize: '10px', color: '#64748b', fontWeight: '600' }}>{f.categoria}</div>
+                          <button
+                            type="button"
+                            onClick={() => abrirComparativaPrecio(f)}
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              padding: '2px 8px',
+                              backgroundColor: '#fef3c7',
+                              color: '#92400e',
+                              border: '1px solid #fde68a',
+                              borderRadius: '6px',
+                              fontSize: '10px',
+                              fontWeight: '900',
+                              cursor: 'pointer',
+                              marginTop: '4px'
+                            }}
+                            title="Consultar mejor precio histórico y sugerencia SRM"
+                          >
+                            💡 Mejor Precio Histórico
+                          </button>
                           {f.beneficiario && (
                             <div style={{ 
                               fontSize: '10px', 
@@ -4376,6 +4821,155 @@ const Compras = () => {
                 disabled={loading || !motivoAnulacion || comentarioAnulacion.trim().length < 5}
               >
                 {loading ? <Loader2 className="animate-spin" size={16} /> : 'ANULAR SALDO'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* MODAL DE ASIGNACIÓN DE FONDO (FINANZAS / ADMINISTRACIÓN) */}
+      {showModalPresupuesto && (
+        <div className="sf-modal-overlay">
+          <div className="sf-modal-container" style={{ maxWidth: '500px', borderRadius: '20px', padding: '25px', backgroundColor: 'white' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ width: '36px', height: '36px', borderRadius: '10px', backgroundColor: '#e0f2fe', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px' }}>💰</div>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: '900', color: '#0f172a' }}>Asignar Fondo a Compras</h3>
+                  <p style={{ margin: 0, fontSize: '0.75rem', color: '#64748b' }}>Cuentas por Pagar / Finanzas SITC</p>
+                </div>
+              </div>
+              <button onClick={() => setShowModalPresupuesto(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748b' }}><X size={20} /></button>
+            </div>
+
+            <form onSubmit={guardarAporteFondo} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+              <div>
+                <label style={{ fontSize: '11px', fontWeight: '800', color: '#334155', display: 'block', marginBottom: '6px' }}>MONTO A APORTAR ($ USD)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  required
+                  placeholder="Ej: 5000.00"
+                  value={nuevoMontoFondo}
+                  onChange={(e) => setNuevoMontoFondo(e.target.value)}
+                  style={{ width: '100%', padding: '10px 14px', borderRadius: '10px', border: '1px solid #cbd5e1', fontSize: '1.1rem', fontWeight: '900', color: '#0f172a', boxSizing: 'border-box' }}
+                />
+              </div>
+
+              <div>
+                <label style={{ fontSize: '11px', fontWeight: '800', color: '#334155', display: 'block', marginBottom: '6px' }}>CONCEPTO / OBSERVACIONES</label>
+                <input
+                  type="text"
+                  placeholder="Ej: Asignación Semanal de Fondos para Operaciones"
+                  value={conceptoFondo}
+                  onChange={(e) => setConceptoFondo(e.target.value)}
+                  style={{ width: '100%', padding: '10px 14px', borderRadius: '10px', border: '1px solid #cbd5e1', fontSize: '0.85rem', color: '#0f172a', boxSizing: 'border-box' }}
+                />
+              </div>
+
+              <div style={{ backgroundColor: '#f8fafc', padding: '12px', borderRadius: '10px', border: '1px solid #e2e8f0', fontSize: '0.75rem', color: '#475569' }}>
+                💡 <strong>Nota:</strong> Este monto se sumará al fondo total asignado para compras y actualizará el saldo disponible inmediatamente.
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>
+                <button type="button" onClick={() => setShowModalPresupuesto(false)} style={{ padding: '8px 16px', borderRadius: '10px', border: '1px solid #cbd5e1', background: 'white', color: '#475569', fontWeight: '700', fontSize: '0.85rem', cursor: 'pointer' }}>
+                  Cancelar
+                </button>
+                <button type="submit" disabled={guardandoFondo} style={{ padding: '8px 20px', borderRadius: '10px', border: 'none', background: '#0f172a', color: 'white', fontWeight: '800', fontSize: '0.85rem', cursor: 'pointer' }}>
+                  {guardandoFondo ? 'Guardando...' : '💾 Registrar Fondo'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE COMPARATIVA Y MEJOR PRECIO POR PRODUCTO */}
+      {showComparativaModal && itemParaComparar && (
+        <div className="sf-modal-overlay" style={{ zIndex: 1100 }}>
+          <div className="sf-modal-container" style={{ maxWidth: '850px', width: '90%', borderRadius: '24px', padding: '25px', backgroundColor: 'white' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: '1px solid #e2e8f0', paddingBottom: '15px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{ width: '40px', height: '40px', borderRadius: '12px', backgroundColor: '#fef3c7', color: '#b45309', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px' }}>💡</div>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: '900', color: '#0f172a' }}>
+                    Comparativa de Precios por Producto
+                  </h3>
+                  <p style={{ margin: 0, fontSize: '0.8rem', color: '#64748b' }}>
+                    Ítem: <strong style={{ color: '#0f172a' }}>{itemParaComparar.descripcion}</strong>
+                  </p>
+                </div>
+              </div>
+              <button onClick={() => setShowComparativaModal(false)} style={{ background: '#f1f5f9', border: 'none', borderRadius: '10px', width: '32px', height: '32px', cursor: 'pointer', color: '#64748b' }}><X size={18} /></button>
+            </div>
+
+            <div style={{ maxHeight: '400px', overflowY: 'auto', borderRadius: '12px', border: '1px solid #e2e8f0', marginBottom: '20px' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', textAlign: 'left' }}>
+                <thead style={{ backgroundColor: '#f1f5f9', color: '#475569', fontWeight: '800', position: 'sticky', top: 0 }}>
+                  <tr>
+                    <th style={{ padding: '10px 12px' }}>PROVEEDOR</th>
+                    <th style={{ padding: '10px 12px', textAlign: 'right' }}>P. UNITARIO ($)</th>
+                    <th style={{ padding: '10px 12px', textAlign: 'center' }}>CALIFICACIÓN</th>
+                    <th style={{ padding: '10px 12px', textAlign: 'center' }}>CRÉDITO</th>
+                    <th style={{ padding: '10px 12px', textAlign: 'center' }}>FECHA</th>
+                    <th style={{ padding: '10px 12px', textAlign: 'center' }}>REQ</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {historialPreciosProducto.length === 0 ? (
+                    <tr>
+                      <td colSpan="6" style={{ padding: '30px', textAlign: 'center', color: '#94a3b8' }}>
+                        No hay historial de compras registrado para este producto.
+                      </td>
+                    </tr>
+                  ) : (
+                    historialPreciosProducto.map((c, idx) => {
+                      const esMejor = idx === 0;
+                      return (
+                        <tr key={idx} style={{ borderBottom: '1px solid #f1f5f9', backgroundColor: esMejor ? '#f0fdf4' : (idx % 2 === 0 ? 'white' : '#fafafa') }}>
+                          <td style={{ padding: '10px 12px', fontWeight: '700', color: '#0f172a' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <span>{c.proveedor_nombre}</span>
+                              {esMejor && (
+                                <span style={{ backgroundColor: '#dcfce7', color: '#15803d', fontSize: '9px', fontWeight: '900', padding: '2px 6px', borderRadius: '4px' }}>
+                                  🏆 MEJOR PRECIO
+                                </span>
+                              )}
+                              {c.proveedor_preferencial && (
+                                <span style={{ backgroundColor: '#fef3c7', color: '#b45309', fontSize: '9px', fontWeight: '900', padding: '2px 6px', borderRadius: '4px' }}>
+                                  ⭐ PREFERENCIAL
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: '900', color: esMejor ? '#16a34a' : '#0f172a', fontSize: '13px' }}>
+                            $ {c.pu.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                          </td>
+                          <td style={{ padding: '10px 12px', textAlign: 'center' }}>
+                            <span style={{ color: '#f59e0b', fontSize: '12px' }}>
+                              {'★'.repeat(c.calificacion_precio)}
+                            </span>
+                          </td>
+                          <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: '700', color: '#475569' }}>
+                            {c.dias_credito > 0 ? `${c.dias_credito} días` : 'Contado'}
+                          </td>
+                          <td style={{ padding: '10px 12px', textAlign: 'center', color: '#64748b' }}>
+                            {c.fecha}
+                          </td>
+                          <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: '800', color: '#0284c7' }}>
+                            {c.requisicion}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button onClick={() => setShowComparativaModal(false)} style={{ padding: '8px 20px', borderRadius: '10px', border: '1px solid #cbd5e1', background: '#f1f5f9', color: '#475569', fontWeight: '700', fontSize: '0.85rem', cursor: 'pointer' }}>
+                Cerrar
               </button>
             </div>
           </div>

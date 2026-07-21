@@ -199,19 +199,24 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 20px;
+  padding: 16px;
 }
 
 .prov-modal {
-  background-color: rgba(255, 255, 255, 0.9);
+  background-color: rgba(255, 255, 255, 0.98);
   backdrop-filter: blur(16px);
   width: 100%;
-  max-width: 900px;
-  border-radius: 24px;
-  border: 1px solid rgba(255, 255, 255, 0.6);
+  max-width: 672px; /* max-w-2xl */
+  max-height: 94vh;
+  display: flex;
+  flex-direction: column;
+  border-radius: 20px;
+  border: 1px solid rgba(226, 232, 240, 0.9);
   box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
   overflow: hidden;
+  padding: 14px 18px;
   animation: modalScaleUp 0.3s cubic-bezier(0.19, 1, 0.22, 1);
+  box-sizing: border-box;
 }
 
 @keyframes modalScaleUp {
@@ -220,16 +225,17 @@
 }
 
 .prov-modal-header {
-  padding: 30px 35px 20px;
+  padding: 4px 4px 8px 4px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  border-bottom: 1px solid var(--prov-slate-200);
+  flex-shrink: 0;
 }
 
 .prov-modal-title {
-  font-size: 1.5rem;
-  font-weight: 900;
+  font-size: 1.15rem;
+  font-weight: 800;
   color: var(--prov-slate-900);
   margin: 0;
 }
@@ -238,7 +244,7 @@
   background: var(--prov-slate-100);
   border: none;
   border-radius: 50%;
-  padding: 8px;
+  padding: 6px;
   color: var(--prov-slate-600);
   cursor: pointer;
   transition: all 0.2s;
@@ -252,60 +258,70 @@
   transform: rotate(90deg);
 }
 
+.prov-form-wrapper {
+  display: flex;
+  flex-direction: column;
+  flex-grow: 1;
+  overflow: hidden;
+  min-height: 0;
+}
+
 .prov-form {
-  padding: 25px 35px 35px;
+  padding: 8px 4px 4px 4px;
+  overflow-y: auto;
+  flex-grow: 1;
+  min-height: 0;
 }
 
 .prov-field {
-  margin-bottom: 20px;
+  margin-bottom: 8px;
 }
 
 .prov-label {
   display: block;
-  font-size: 0.65rem;
-  font-weight: 800;
+  font-size: 0.72rem; /* text-xs */
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--prov-slate-600);
-  margin-bottom: 8px;
-  padding-left: 5px;
+  letter-spacing: 0.04em;
+  color: #64748b; /* text-gray-500 */
+  margin-bottom: 3px; /* mb-1 */
+  padding-left: 2px;
 }
 
 .prov-input {
   width: 100%;
   background-color: white;
   border: 1px solid var(--prov-slate-200);
-  border-radius: 12px;
-  padding: 12px 18px;
-  font-size: 0.85rem;
+  border-radius: 8px;
+  padding: 6px 12px; /* py-1.5 px-3 */
+  font-size: 0.85rem; /* text-sm */
   font-weight: 600;
   color: var(--prov-slate-900);
   outline: none;
-  transition: all 0.3s cubic-bezier(0.19, 1, 0.22, 1);
+  transition: all 0.2s ease;
   box-sizing: border-box;
 }
 
 .prov-input:focus {
   border-color: var(--prov-accent);
-  box-shadow: 0 0 0 4px rgba(14, 165, 233, 0.1);
-  transform: translateY(-1px);
+  box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.12);
 }
 
 .prov-textarea {
-  min-height: 100px;
+  min-height: 52px;
   resize: vertical;
 }
 
 .status-toggle-group {
   display: flex;
-  gap: 10px;
+  gap: 8px;
 }
 
 .status-btn {
   flex: 1;
-  padding: 10px;
+  padding: 6px 12px;
   border: 1px solid var(--prov-slate-200);
-  border-radius: 10px;
+  border-radius: 8px;
   font-size: 0.7rem;
   font-weight: 800;
   text-transform: uppercase;
@@ -329,8 +345,11 @@
 
 .prov-modal-footer {
   display: flex;
-  gap: 15px;
-  margin-top: 30px;
+  gap: 10px;
+  margin-top: 15px;
+  padding-top: 10px;
+  border-top: 1px solid var(--prov-slate-200);
+  flex-shrink: 0;
 }
 
 .btn-cancel {
@@ -341,8 +360,8 @@
   font-weight: 800;
   font-size: 0.75rem;
   text-transform: uppercase;
-  padding: 14px;
-  border-radius: 12px;
+  padding: 10px 16px;
+  border-radius: 8px;
   cursor: pointer;
   transition: all 0.2s;
 }
@@ -356,21 +375,21 @@
   background: linear-gradient(135deg, #1e3a8a, #3b82f6);
   color: white;
   border: none;
-  border-radius: 12px;
-  padding: 14px;
+  border-radius: 8px;
+  padding: 10px 16px;
   font-size: 0.75rem;
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   cursor: pointer;
-  box-shadow: 0 10px 15px -3px rgba(30, 58, 138, 0.2);
-  transition: all 0.3s cubic-bezier(0.19, 1, 0.22, 1);
+  box-shadow: 0 4px 10px rgba(30, 58, 138, 0.2);
+  transition: all 0.2s ease;
 }
 
 .btn-submit:hover {
-  transform: translateY(-2px);
+  transform: translateY(-1px);
   filter: brightness(1.1);
-  box-shadow: 0 15px 20px -5px rgba(30, 58, 138, 0.25);
+  box-shadow: 0 6px 14px rgba(30, 58, 138, 0.25);
 }
 
 .btn-submit:disabled {

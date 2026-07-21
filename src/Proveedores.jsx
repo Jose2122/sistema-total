@@ -30,6 +30,12 @@ const Proveedores = () => {
     telefono: '',
     direccion: '',
     categoria: [], // Cambiado a array
+    monto_limite_credito: 0,
+    dias_credito: 0,
+    calificacion_precio: 5,
+    calificacion_cumplimiento: 5,
+    observaciones_negociacion: '',
+    proveedor_preferencial: false,
     status: true
   });
 
@@ -37,6 +43,9 @@ const Proveedores = () => {
   const [loadingHistorial, setLoadingHistorial] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [provSeleccionado, setProvSeleccionado] = useState(null);
+  const [mostrarParametrosSrm, setMostrarParametrosSrm] = useState(false);
+  const [subTabFicha, setSubTabFicha] = useState('credito'); // 'credito' | 'historial' | 'evaluacion'
+  const [guardandoSrmProv, setGuardandoSrmProv] = useState(false);
 
   const [tabActiva, setTabActiva] = useState('directorio');
   const [todasLasCompras, setTodasLasCompras] = useState([]);
@@ -118,33 +127,33 @@ const Proveedores = () => {
 
     setSaving(true);
     try {
+      const payload = {
+        rif: formData.rif,
+        razon_social: formData.razon_social,
+        correo: formData.correo,
+        telefono: formData.telefono,
+        direccion: formData.direccion,
+        categoria: Array.isArray(formData.categoria) ? formData.categoria.join(', ') : formData.categoria,
+        monto_limite_credito: Number(formData.monto_limite_credito) || 0,
+        dias_credito: Number(formData.dias_credito) || 0,
+        calificacion_precio: Number(formData.calificacion_precio) || 5,
+        calificacion_cumplimiento: Number(formData.calificacion_cumplimiento) || 5,
+        observaciones_negociacion: formData.observaciones_negociacion || '',
+        proveedor_preferencial: Boolean(formData.proveedor_preferencial),
+        status: formData.status
+      };
+
       if (formData.id) {
         const { error } = await supabase
           .from('proveedores')
-          .update({
-            rif: formData.rif,
-            razon_social: formData.razon_social,
-            correo: formData.correo,
-            telefono: formData.telefono,
-            direccion: formData.direccion,
-            categoria: Array.isArray(formData.categoria) ? formData.categoria.join(', ') : formData.categoria,
-            status: formData.status
-          })
+          .update(payload)
           .eq('id', formData.id);
         if (error) throw error;
         toast.success('Proveedor actualizado con éxito');
       } else {
         const { error } = await supabase
           .from('proveedores')
-          .insert([{
-            rif: formData.rif,
-            razon_social: formData.razon_social,
-            correo: formData.correo,
-            telefono: formData.telefono,
-            direccion: formData.direccion,
-            categoria: Array.isArray(formData.categoria) ? formData.categoria.join(', ') : formData.categoria,
-            status: formData.status
-          }]);
+          .insert([payload]);
         if (error) throw error;
         toast.success('Proveedor registrado con éxito');
       }
@@ -195,9 +204,16 @@ const Proveedores = () => {
       telefono: '',
       direccion: '',
       categoria: [],
+      monto_limite_credito: 0,
+      dias_credito: 0,
+      calificacion_precio: 5,
+      calificacion_cumplimiento: 5,
+      observaciones_negociacion: '',
+      proveedor_preferencial: false,
       status: true
     });
     setNuevaCategoriaText('');
+    setMostrarParametrosSrm(false);
   };
 
   const agregarCategoriaSession = () => {
@@ -607,9 +623,16 @@ const Proveedores = () => {
 
   const handleEdit = (p) => {
     setFormData({
-        ...p,
-        categoria: p.categoria ? p.categoria.split(', ').filter(c => c) : []
+      ...p,
+      categoria: p.categoria ? p.categoria.split(', ').filter(c => c) : [],
+      monto_limite_credito: p.monto_limite_credito ?? 0,
+      dias_credito: p.dias_credito ?? 0,
+      calificacion_precio: p.calificacion_precio ?? 5,
+      calificacion_cumplimiento: p.calificacion_cumplimiento ?? 5,
+      observaciones_negociacion: p.observaciones_negociacion || '',
+      proveedor_preferencial: Boolean(p.proveedor_preferencial)
     });
+    setMostrarParametrosSrm(Boolean(p.monto_limite_credito > 0 || p.dias_credito > 0 || p.observaciones_negociacion || p.proveedor_preferencial));
     setShowModal(true);
   };
 
@@ -1056,7 +1079,8 @@ const Proveedores = () => {
                 </button>
               </div>
 
-              <form onSubmit={guardarProveedor} className="prov-form prov-form-grid">
+              <form onSubmit={guardarProveedor} className="prov-form-wrapper">
+                <div className="prov-form prov-form-grid">
                   <div className="prov-field">
                     <label className="prov-label">RIF</label>
                     <input 
@@ -1234,14 +1258,143 @@ const Proveedores = () => {
                     />
                   </div>
 
+                <div className="prov-field prov-form-full" style={{ marginTop: '4px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <button
+                      type="button"
+                      onClick={() => setMostrarParametrosSrm(!mostrarParametrosSrm)}
+                      title="Parámetros Financieros & Evaluación SRM"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '5px',
+                        padding: mostrarParametrosSrm ? '4px 10px' : '4px 8px',
+                        backgroundColor: mostrarParametrosSrm ? '#e0f2fe' : '#f1f5f9',
+                        color: '#0284c7',
+                        border: `1px solid ${mostrarParametrosSrm ? '#bae6fd' : '#e2e8f0'}`,
+                        borderRadius: '8px',
+                        fontSize: '0.7rem',
+                        fontWeight: '800',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s'
+                      }}
+                    >
+                      <span>💳</span>
+                      {mostrarParametrosSrm ? (
+                        <>
+                          <span>SRM</span>
+                          <ChevronUp size={13} />
+                        </>
+                      ) : (
+                        <>
+                          <span>SRM</span>
+                          <ChevronDown size={13} />
+                        </>
+                      )}
+                    </button>
+                    {!mostrarParametrosSrm && (Number(formData.monto_limite_credito) > 0 || Number(formData.dias_credito) > 0 || formData.proveedor_preferencial) && (
+                      <span style={{ backgroundColor: '#dcfce7', color: '#15803d', padding: '2px 7px', borderRadius: '10px', fontSize: '0.6rem', fontWeight: '900', border: '1px solid #bbf7d0' }}>
+                        ✓ Configurado
+                      </span>
+                    )}
+                  </div>
+
+                  {mostrarParametrosSrm && (
+                    <div style={{ marginTop: '10px', backgroundColor: '#f8fafc', padding: '10px 12px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px' }}>
+                        <div>
+                          <label className="prov-label">LÍMITE DE CRÉDITO ($ USD)</label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            className="prov-input"
+                            placeholder="Ej: 5000.00"
+                            value={formData.monto_limite_credito}
+                            onChange={e => setFormData({ ...formData, monto_limite_credito: e.target.value })}
+                          />
+                        </div>
+
+                        <div>
+                          <label className="prov-label">DÍAS DE CRÉDITO (PAGO)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            className="prov-input"
+                            placeholder="Ej: 15 (días)"
+                            value={formData.dias_credito}
+                            onChange={e => setFormData({ ...formData, dias_credito: e.target.value })}
+                          />
+                        </div>
+
+                        <div>
+                          <label className="prov-label">CALIF. PRECIO (1 AL 5)</label>
+                          <select
+                            className="prov-input"
+                            value={formData.calificacion_precio}
+                            onChange={e => setFormData({ ...formData, calificacion_precio: Number(e.target.value) })}
+                          >
+                            <option value={5}>⭐⭐⭐⭐⭐ (5 - Excelente)</option>
+                            <option value={4}>⭐⭐⭐⭐ (4 - Bueno)</option>
+                            <option value={3}>⭐⭐⭐ (3 - Regular)</option>
+                            <option value={2}>⭐⭐ (2 - Costoso)</option>
+                            <option value={1}>⭐ (1 - Muy Costoso)</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="prov-label">CALIF. CUMPLIMIENTO</label>
+                          <select
+                            className="prov-input"
+                            value={formData.calificacion_cumplimiento}
+                            onChange={e => setFormData({ ...formData, calificacion_cumplimiento: Number(e.target.value) })}
+                          >
+                            <option value={5}>⭐⭐⭐⭐⭐ (5 - Impecable)</option>
+                            <option value={4}>⭐⭐⭐⭐ (4 - Confiable)</option>
+                            <option value={3}>⭐⭐⭐ (3 - Aceptable)</option>
+                            <option value={2}>⭐⭐ (2 - Irregular)</option>
+                            <option value={1}>⭐ (1 - Problemático)</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '10px' }}>
+                        <input
+                          type="checkbox"
+                          id="chk-preferencial"
+                          checked={formData.proveedor_preferencial}
+                          onChange={e => setFormData({ ...formData, proveedor_preferencial: e.target.checked })}
+                          style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+                        />
+                        <label htmlFor="chk-preferencial" style={{ fontSize: '0.75rem', fontWeight: '800', color: '#15803d', cursor: 'pointer' }}>
+                          ⭐ Proveedor Preferencial
+                        </label>
+                      </div>
+
+                      <div style={{ marginTop: '8px' }}>
+                        <label className="prov-label">OBSERVACIONES DE NEGOCIACIÓN</label>
+                        <textarea
+                          className="prov-input"
+                          rows={2}
+                          placeholder="Ej: Descuento 5% por pronto pago, entregas directas en almacén Central, etc."
+                          value={formData.observaciones_negociacion}
+                          onChange={e => setFormData({ ...formData, observaciones_negociacion: e.target.value })}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 <div className="prov-field prov-form-full">
                   <label className="prov-label">Dirección</label>
                   <textarea 
+                    rows={2}
                     className="prov-input prov-textarea"
                     placeholder="Dirección fiscal completa..."
                     value={formData.direccion}
                     onChange={e => setFormData({...formData, direccion: e.target.value})}
                   />
+                </div>
                 </div>
 
                 <div className="prov-modal-footer">
@@ -1265,162 +1418,405 @@ const Proveedores = () => {
           </div>
         )}
 
-        {/* Modal Historial de Compras */}
+        {/* Modal Ficha Detallada del Proveedor (SRM) con 3 Pestañas */}
         {showHistoryModal && provSeleccionado && (
           <div className="prov-modal-overlay" style={{ zIndex: 1000 }}>
-            <div className="prov-modal" style={{ maxWidth: '950px', width: '90%' }}>
-              <div className="prov-modal-header" style={{ borderBottom: '2px solid #e2e8f0', paddingBottom: '15px' }}>
-                <div>
-                  <h2 className="prov-modal-title" style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#0f172a' }}>
-                    <ShoppingBag size={24} style={{ color: '#0ea5e9' }} />
-                    Historial de Adquisiciones
-                  </h2>
-                  <p style={{ margin: '4px 0 0 0', fontSize: '0.85rem', color: '#64748b', fontWeight: '500' }}>
-                    Proveedor: <strong style={{ color: '#1e293b' }}>{provSeleccionado.razon_social}</strong> | RIF: {provSeleccionado.rif}
-                  </p>
+            <div className="prov-modal" style={{ maxWidth: '980px', width: '92%', borderRadius: '24px', padding: '25px', backgroundColor: 'white' }}>
+              
+              {/* Header Ficha SRM */}
+              <div style={{ borderBottom: '2px solid #e2e8f0', paddingBottom: '15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                  <div style={{ width: '48px', height: '48px', borderRadius: '14px', backgroundColor: '#e0f2fe', color: '#0284c7', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px', fontWeight: '900' }}>
+                    🏢
+                  </div>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <h2 style={{ margin: 0, fontSize: '1.4rem', fontWeight: '900', color: '#0f172a' }}>
+                        {provSeleccionado.razon_social}
+                      </h2>
+                      {provSeleccionado.proveedor_preferencial && (
+                        <span style={{ backgroundColor: '#fef3c7', color: '#b45309', fontSize: '10px', fontWeight: '900', padding: '3px 8px', borderRadius: '20px', border: '1px solid #fde68a', textTransform: 'uppercase' }}>
+                          ⭐ Preferencial
+                        </span>
+                      )}
+                    </div>
+                    <p style={{ margin: '4px 0 0 0', fontSize: '0.85rem', color: '#64748b', fontWeight: '600' }}>
+                      RIF: <strong>{provSeleccionado.rif}</strong> | Categoría: {provSeleccionado.categoria || 'Sin Categoría'}
+                    </p>
+                  </div>
                 </div>
-                <button onClick={() => setShowHistoryModal(false)} className="prov-modal-close" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', transition: 'color 0.2s' }}>
-                  <XCircle size={24} />
+
+                <button onClick={() => setShowHistoryModal(false)} className="prov-modal-close" style={{ background: '#f1f5f9', border: 'none', borderRadius: '12px', width: '36px', height: '36px', cursor: 'pointer', color: '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <XCircle size={20} />
+                </button>
+              </div>
+
+              {/* Sub-Pestañas SRM */}
+              <div style={{ display: 'flex', gap: '10px', borderBottom: '1px solid #e2e8f0', margin: '15px 0 20px 0' }}>
+                <button
+                  type="button"
+                  onClick={() => setSubTabFicha('credito')}
+                  style={{
+                    padding: '10px 18px',
+                    border: 'none',
+                    borderBottom: subTabFicha === 'credito' ? '3px solid #0ea5e9' : '3px solid transparent',
+                    backgroundColor: subTabFicha === 'credito' ? '#f0f9ff' : 'transparent',
+                    color: subTabFicha === 'credito' ? '#0369a1' : '#64748b',
+                    fontWeight: '800',
+                    fontSize: '0.85rem',
+                    cursor: 'pointer',
+                    borderRadius: '8px 8px 0 0',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  💳 Datos Financieros y Crédito
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSubTabFicha('historial')}
+                  style={{
+                    padding: '10px 18px',
+                    border: 'none',
+                    borderBottom: subTabFicha === 'historial' ? '3px solid #0ea5e9' : '3px solid transparent',
+                    backgroundColor: subTabFicha === 'historial' ? '#f0f9ff' : 'transparent',
+                    color: subTabFicha === 'historial' ? '#0369a1' : '#64748b',
+                    fontWeight: '800',
+                    fontSize: '0.85rem',
+                    cursor: 'pointer',
+                    borderRadius: '8px 8px 0 0',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  📜 Historial de Compras ({historialCompras.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSubTabFicha('evaluacion')}
+                  style={{
+                    padding: '10px 18px',
+                    border: 'none',
+                    borderBottom: subTabFicha === 'evaluacion' ? '3px solid #0ea5e9' : '3px solid transparent',
+                    backgroundColor: subTabFicha === 'evaluacion' ? '#f0f9ff' : 'transparent',
+                    color: subTabFicha === 'evaluacion' ? '#0369a1' : '#64748b',
+                    fontWeight: '800',
+                    fontSize: '0.85rem',
+                    cursor: 'pointer',
+                    borderRadius: '8px 8px 0 0',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  🌟 Rendimiento y Precios (SRM)
                 </button>
               </div>
 
               {loadingHistorial ? (
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '50px 0', gap: '15px' }}>
                   <Loader2 className="animate-spin" size={32} style={{ color: '#0ea5e9' }} />
-                  <p style={{ color: '#64748b', fontWeight: 'bold', fontSize: '0.85rem', textTransform: 'uppercase' }}>Cargando transacciones...</p>
+                  <p style={{ color: '#64748b', fontWeight: 'bold', fontSize: '0.85rem', textTransform: 'uppercase' }}>Cargando expediente del proveedor...</p>
                 </div>
               ) : (
-                <div style={{ marginTop: '20px' }}>
-                  {/* KPI Cards */}
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '15px', marginBottom: '20px' }}>
-                    <div style={{ backgroundColor: '#f8fafc', padding: '15px', borderRadius: '12px', borderLeft: '4px solid #0ea5e9', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
-                      <div style={{ fontSize: '0.65rem', color: '#64748b', fontWeight: '800', textTransform: 'uppercase' }}>Total Facturado</div>
-                      <div style={{ fontSize: '1.25rem', fontWeight: '900', color: '#0f172a', marginTop: '4px' }}>
-                        $ {historialCompras.reduce((sum, c) => sum + c.total, 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
-                      </div>
-                    </div>
-                    <div style={{ backgroundColor: '#f8fafc', padding: '15px', borderRadius: '12px', borderLeft: '4px solid #16a34a', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
-                      <div style={{ fontSize: '0.65rem', color: '#64748b', fontWeight: '800', textTransform: 'uppercase' }}>Cantidad de Compras</div>
-                      <div style={{ fontSize: '1.25rem', fontWeight: '900', color: '#0f172a', marginTop: '4px' }}>
-                        {historialCompras.length} transacciones
-                      </div>
-                    </div>
-                    <div style={{ backgroundColor: '#f8fafc', padding: '15px', borderRadius: '12px', borderLeft: '4px solid #f59e0b', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
-                      <div style={{ fontSize: '0.65rem', color: '#64748b', fontWeight: '800', textTransform: 'uppercase' }}>Items Adquiridos</div>
-                      <div style={{ fontSize: '1.25rem', fontWeight: '900', color: '#0f172a', marginTop: '4px' }}>
-                        {historialCompras.reduce((sum, c) => sum + c.cantidad, 0)} unidades
-                      </div>
-                    </div>
-                  </div>
+                <div>
+                  {/* PESTAÑA 1: DATOS FINANCIEROS Y CRÉDITO */}
+                  {subTabFicha === 'credito' && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                      {(() => {
+                        const limite = Number(provSeleccionado.monto_limite_credito) || 0;
+                        const dias = Number(provSeleccionado.dias_credito) || 0;
+                        const gastado = historialCompras.reduce((sum, c) => sum + c.total, 0);
+                        const disponible = limite - gastado;
+                        const pctDisp = limite > 0 ? (disponible / limite) * 100 : 0;
 
-                  {/* Acciones de exportación */}
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '15px' }}>
-                    <button
-                      type="button"
-                      onClick={() => exportHistoryToExcel(provSeleccionado)}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '6px',
-                        padding: '8px 16px',
-                        backgroundColor: '#16a34a',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '8px',
-                        fontWeight: 'bold',
-                        fontSize: '0.75rem',
-                        cursor: 'pointer',
-                        boxShadow: '0 2px 4px rgba(22,163,74,0.15)',
-                        transition: 'all 0.2s'
-                      }}
-                    >
-                      <FileSpreadsheet size={14} />
-                      Exportar Historial
-                    </button>
-                  </div>
+                        let semaforoBg = '#f0fdf4';
+                        let semaforoBorder = '#86efac';
+                        let semaforoColor = '#166534';
+                        let semaforoTexto = '🟢 CRÉDITO SALUDABLE';
 
-                  {/* Tabla de Historial */}
-                  <div style={{ overflowY: 'auto', maxHeight: '350px', border: '1px solid #e2e8f0', borderRadius: '12px' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem', textAlign: 'left' }}>
-                      <thead>
-                        <tr style={{ backgroundColor: '#1e293b', color: '#f8fafc', position: 'sticky', top: 0 }}>
-                          <th style={{ padding: '10px 12px', textAlign: 'center' }}>FECHA</th>
-                          <th style={{ padding: '10px 12px', textAlign: 'center' }}>REQUISICIÓN</th>
-                          <th style={{ padding: '10px 12px' }}>DESCRIPCIÓN</th>
-                          <th style={{ padding: '10px 12px', textAlign: 'right' }}>CANTIDAD</th>
-                          <th style={{ padding: '10px 12px', textAlign: 'right' }}>P. UNITARIO</th>
-                          <th style={{ padding: '10px 12px', textAlign: 'right' }}>TOTAL</th>
-                          <th style={{ padding: '10px 12px', textAlign: 'center' }}>FACTURA</th>
-                          <th style={{ padding: '10px 12px', textAlign: 'center' }}>MÉTODO PAGO</th>
-                          <th style={{ padding: '10px 12px' }}>SOLICITANTE / GERENCIA</th>
-                          <th style={{ padding: '10px 12px', textAlign: 'center' }}>SOPORTE</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {historialCompras.length === 0 ? (
-                          <tr>
-                            <td colSpan="10" style={{ padding: '40px', textAlign: 'center', color: '#94a3b8', fontWeight: 'bold' }}>
-                              No se registran compras para este proveedor en requisiciones finalizadas.
-                            </td>
-                          </tr>
-                        ) : (
-                          historialCompras.map((c, i) => (
-                            <tr key={i} style={{ borderBottom: '1px solid #e2e8f0' }}>
-                              <td style={{ padding: '10px 12px', textAlign: 'center', color: '#475569', fontWeight: '500' }}>
-                                {c.fecha !== '—' ? c.fecha.split('-').reverse().join('/') : '—'}
-                              </td>
-                              <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 'bold', color: '#1e40af' }}>{c.requisicion}</td>
-                              <td style={{ padding: '10px 12px', color: '#0f172a', fontWeight: '600' }}>{c.descripcion}</td>
-                              <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 'bold' }}>{c.cantidad}</td>
-                              <td style={{ padding: '10px 12px', textAlign: 'right', color: '#475569' }}>$ {c.pu.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
-                              <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: '800', color: '#16a34a' }}>$ {c.total.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
-                              <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: '700', color: '#2563eb' }}>{c.factura}</td>
-                              <td style={{ padding: '10px 12px', textAlign: 'center', color: '#475569' }}>{c.metodoPago}</td>
-                              <td style={{ padding: '10px 12px' }}>
-                                <div style={{ fontWeight: '500', color: '#1e293b' }}>{c.solicitante}</div>
-                                <div style={{ fontSize: '0.7rem', color: '#64748b' }}>{c.gerencia}</div>
-                              </td>
-                              <td style={{ padding: '10px 12px', textAlign: 'center' }}>
-                                {c.facturaUrl ? (
-                                  <a
-                                    href={c.facturaUrl}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    style={{
-                                      display: 'inline-block',
-                                      padding: '4px 8px',
-                                      backgroundColor: '#eff6ff',
-                                      color: '#2563eb',
-                                      borderRadius: '6px',
-                                      fontWeight: 'bold',
-                                      fontSize: '0.7rem',
-                                      textDecoration: 'none',
-                                      border: '1px solid #bfdbfe'
-                                    }}
-                                  >
-                                    Ver 📄
-                                  </a>
-                                ) : (
-                                  <span style={{ color: '#cbd5e1', fontSize: '0.7rem' }}>S/S</span>
-                                )}
-                              </td>
+                        if (limite <= 0) {
+                          semaforoBg = '#f8fafc';
+                          semaforoBorder = '#cbd5e1';
+                          semaforoColor = '#475569';
+                          semaforoTexto = '⚪ PAGO DE CONTADO (SIN LÍNEA DE CRÉDITO)';
+                        } else if (disponible < 0 || pctDisp < 10) {
+                          semaforoBg = '#fef2f2';
+                          semaforoBorder = '#fca5a5';
+                          semaforoColor = '#991b1b';
+                          semaforoTexto = '🚨 SOBREGIRADO / ALERTA CRÍTICA DE CRÉDITO';
+                        } else if (pctDisp <= 30) {
+                          semaforoBg = '#fffbeb';
+                          semaforoBorder = '#fde68a';
+                          semaforoColor = '#92400e';
+                          semaforoTexto = '⚠️ CRÉDITO POR AGOTARSE (< 30% DISPONIBLE)';
+                        }
+
+                        return (
+                          <>
+                            {/* BANNER DE SEMÁFORO DE CRÉDITO */}
+                            <div style={{ backgroundColor: semaforoBg, border: `2px solid ${semaforoBorder}`, borderRadius: '16px', padding: '16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                              <div>
+                                <div style={{ fontSize: '11px', fontWeight: '900', color: semaforoColor, letterSpacing: '0.05em' }}>
+                                  {semaforoTexto}
+                                </div>
+                                <div style={{ fontSize: '0.85rem', color: '#334155', fontWeight: '600', marginTop: '4px' }}>
+                                  Plazo de Pago Acordado: <strong>{dias > 0 ? `${dias} Días Crédito` : 'Contado / Inmediato'}</strong>
+                                </div>
+                              </div>
+
+                              <div style={{ textAlign: 'right' }}>
+                                <div style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: '700' }}>Crédito Disponible</div>
+                                <div style={{ fontSize: '1.5rem', fontWeight: '950', color: disponible < 0 ? '#dc2626' : '#0f172a' }}>
+                                  $ {disponible.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* GRILLA DE TARJETAS FINANCIERAS */}
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '15px' }}>
+                              <div style={{ backgroundColor: '#f8fafc', padding: '16px', borderRadius: '14px', border: '1px solid #e2e8f0' }}>
+                                <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '800', textTransform: 'uppercase' }}>Límite de Crédito Aprobado</div>
+                                <div style={{ fontSize: '1.3rem', fontWeight: '900', color: '#0f172a', marginTop: '6px' }}>
+                                  $ {limite.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                                </div>
+                              </div>
+
+                              <div style={{ backgroundColor: '#f8fafc', padding: '16px', borderRadius: '14px', border: '1px solid #e2e8f0' }}>
+                                <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '800', textTransform: 'uppercase' }}>Crédito Utilizado / Saldo</div>
+                                <div style={{ fontSize: '1.3rem', fontWeight: '900', color: '#eab308', marginTop: '6px' }}>
+                                  $ {gastado.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                                </div>
+                              </div>
+
+                              <div style={{ backgroundColor: '#f8fafc', padding: '16px', borderRadius: '14px', border: '1px solid #e2e8f0' }}>
+                                <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '800', textTransform: 'uppercase' }}>Días de Crédito</div>
+                                <div style={{ fontSize: '1.3rem', fontWeight: '900', color: '#0ea5e9', marginTop: '6px' }}>
+                                  {dias} días
+                                </div>
+                              </div>
+                            </div>
+                          </>
+                        );
+                      })()}
+                    </div>
+                  )}
+
+                  {/* PESTAÑA 2: HISTORIAL DE COMPRAS Y FACTURAS */}
+                  {subTabFicha === 'historial' && (
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
+                        <div style={{ fontSize: '0.85rem', fontWeight: '700', color: '#475569' }}>
+                          Total Compras: <strong>$ {historialCompras.reduce((sum, c) => sum + c.total, 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</strong> ({historialCompras.length} transacciones)
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => exportHistoryToExcel(provSeleccionado)}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            padding: '8px 16px',
+                            backgroundColor: '#16a34a',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '8px',
+                            fontWeight: 'bold',
+                            fontSize: '0.75rem',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          <FileSpreadsheet size={14} />
+                          Exportar Excel
+                        </button>
+                      </div>
+
+                      <div style={{ overflowY: 'auto', maxHeight: '350px', border: '1px solid #e2e8f0', borderRadius: '14px' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem', textAlign: 'left' }}>
+                          <thead>
+                            <tr style={{ backgroundColor: '#1e293b', color: '#f8fafc', position: 'sticky', top: 0 }}>
+                              <th style={{ padding: '10px 12px', textAlign: 'center' }}>FECHA EMISIÓN</th>
+                              <th style={{ padding: '10px 12px', textAlign: 'center' }}>VENCIMIENTO</th>
+                              <th style={{ padding: '10px 12px', textAlign: 'center' }}>REQ</th>
+                              <th style={{ padding: '10px 12px' }}>DESCRIPCIÓN</th>
+                              <th style={{ padding: '10px 12px', textAlign: 'right' }}>CANT.</th>
+                              <th style={{ padding: '10px 12px', textAlign: 'right' }}>P. UNIT</th>
+                              <th style={{ padding: '10px 12px', textAlign: 'right' }}>TOTAL</th>
+                              <th style={{ padding: '10px 12px', textAlign: 'center' }}>FACTURA</th>
+                              <th style={{ padding: '10px 12px', textAlign: 'center' }}>SOPORTE</th>
                             </tr>
-                          ))
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
+                          </thead>
+                          <tbody>
+                            {historialCompras.length === 0 ? (
+                              <tr>
+                                <td colSpan="9" style={{ padding: '40px', textAlign: 'center', color: '#94a3b8', fontWeight: 'bold' }}>
+                                  No se registran compras para este proveedor en requisiciones finalizadas.
+                                </td>
+                              </tr>
+                            ) : (
+                              historialCompras.map((c, i) => {
+                                const diasCred = Number(provSeleccionado.dias_credito) || 0;
+                                let fechaVencStr = '—';
+                                if (c.fecha !== '—') {
+                                  const fDate = new Date(c.fecha + 'T12:00:00');
+                                  fDate.setDate(fDate.getDate() + diasCred);
+                                  fechaVencStr = fDate.toISOString().split('T')[0].split('-').reverse().join('/');
+                                }
+
+                                return (
+                                  <tr key={i} style={{ borderBottom: '1px solid #e2e8f0' }}>
+                                    <td style={{ padding: '10px 12px', textAlign: 'center', color: '#475569', fontWeight: '500' }}>
+                                      {c.fecha !== '—' ? c.fecha.split('-').reverse().join('/') : '—'}
+                                    </td>
+                                    <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: '700', color: '#d97706' }}>
+                                      {fechaVencStr}
+                                    </td>
+                                    <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 'bold', color: '#1e40af' }}>{c.requisicion}</td>
+                                    <td style={{ padding: '10px 12px', color: '#0f172a', fontWeight: '600' }}>{c.descripcion}</td>
+                                    <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 'bold' }}>{c.cantidad}</td>
+                                    <td style={{ padding: '10px 12px', textAlign: 'right', color: '#475569' }}>$ {c.pu.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
+                                    <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: '800', color: '#16a34a' }}>$ {c.total.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
+                                    <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: '700', color: '#2563eb' }}>{c.factura}</td>
+                                    <td style={{ padding: '10px 12px', textAlign: 'center' }}>
+                                      {c.facturaUrl ? (
+                                        <a href={c.facturaUrl} target="_blank" rel="noreferrer" style={{ padding: '4px 8px', backgroundColor: '#eff6ff', color: '#2563eb', borderRadius: '6px', fontWeight: 'bold', fontSize: '0.7rem', textDecoration: 'none' }}>Ver 📄</a>
+                                      ) : (
+                                        <span style={{ color: '#cbd5e1', fontSize: '0.7rem' }}>S/S</span>
+                                      )}
+                                    </td>
+                                  </tr>
+                                );
+                              })
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* PESTAÑA 3: RENDIMIENTO Y PRECIOS (SRM) */}
+                  {subTabFicha === 'evaluacion' && (
+                    <div style={{ backgroundColor: '#f8fafc', padding: '20px', borderRadius: '16px', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                      <div style={{ fontSize: '0.85rem', fontWeight: '900', color: '#0f172a', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                        ⭐ Evaluación de Rendimiento SRM y Acuerdos Comerciales
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '20px' }}>
+                        {/* Calificación Precio */}
+                        <div style={{ backgroundColor: 'white', padding: '15px', borderRadius: '12px', border: '1px solid #cbd5e1' }}>
+                          <label style={{ fontSize: '11px', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '6px' }}>CALIFICACIÓN DE PRECIO</label>
+                          <div style={{ display: 'flex', gap: '4px', cursor: 'pointer' }}>
+                            {[1, 2, 3, 4, 5].map(star => (
+                              <span
+                                key={star}
+                                onClick={() => setProvSeleccionado({ ...provSeleccionado, calificacion_precio: star })}
+                                style={{ fontSize: '24px', color: star <= (provSeleccionado.calificacion_precio || 5) ? '#f59e0b' : '#cbd5e1', transition: 'transform 0.1s' }}
+                              >
+                                ★
+                              </span>
+                            ))}
+                          </div>
+                          <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '4px', fontWeight: '600' }}>
+                            {provSeleccionado.calificacion_precio || 5} de 5 Estrellas
+                          </div>
+                        </div>
+
+                        {/* Calificación Cumplimiento */}
+                        <div style={{ backgroundColor: 'white', padding: '15px', borderRadius: '12px', border: '1px solid #cbd5e1' }}>
+                          <label style={{ fontSize: '11px', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '6px' }}>CALIFICACIÓN DE CUMPLIMIENTO</label>
+                          <div style={{ display: 'flex', gap: '4px', cursor: 'pointer' }}>
+                            {[1, 2, 3, 4, 5].map(star => (
+                              <span
+                                key={star}
+                                onClick={() => setProvSeleccionado({ ...provSeleccionado, calificacion_cumplimiento: star })}
+                                style={{ fontSize: '24px', color: star <= (provSeleccionado.calificacion_cumplimiento || 5) ? '#f59e0b' : '#cbd5e1', transition: 'transform 0.1s' }}
+                              >
+                                ★
+                              </span>
+                            ))}
+                          </div>
+                          <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '4px', fontWeight: '600' }}>
+                            {provSeleccionado.calificacion_cumplimiento || 5} de 5 Estrellas
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Estatus Preferencial */}
+                      <div style={{ backgroundColor: 'white', padding: '15px', borderRadius: '12px', border: '1px solid #cbd5e1', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <input
+                          type="checkbox"
+                          id="chk-preferencial-ficha"
+                          checked={Boolean(provSeleccionado.proveedor_preferencial)}
+                          onChange={e => setProvSeleccionado({ ...provSeleccionado, proveedor_preferencial: e.target.checked })}
+                          style={{ width: '20px', height: '20px', cursor: 'pointer' }}
+                        />
+                        <label htmlFor="chk-preferencial-ficha" style={{ fontSize: '0.85rem', fontWeight: '800', color: '#15803d', cursor: 'pointer' }}>
+                          ⭐ Marcar este proveedor como Preferencial en Compras (Sugerencia destacada en requisiciones)
+                        </label>
+                      </div>
+
+                      {/* Notas de Negociación */}
+                      <div style={{ backgroundColor: 'white', padding: '15px', borderRadius: '12px', border: '1px solid #cbd5e1' }}>
+                        <label style={{ fontSize: '11px', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '6px' }}>NOTAS DE NEGOCIACIÓN & ACUERDOS COMERCIALES</label>
+                        <textarea
+                          rows={4}
+                          style={{ width: '100%', padding: '10px 14px', borderRadius: '10px', border: '1px solid #cbd5e1', fontSize: '0.85rem', outline: 'none', boxSizing: 'border-box' }}
+                          placeholder="Escribe acuerdos comerciales, porcentajes de descuento por pronto pago, términos de entrega..."
+                          value={provSeleccionado.observaciones_negociacion || ''}
+                          onChange={e => setProvSeleccionado({ ...provSeleccionado, observaciones_negociacion: e.target.value })}
+                        />
+                      </div>
+
+                      {/* Botón Guardar Cambios SRM */}
+                      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                        <button
+                          type="button"
+                          disabled={guardandoSrmProv}
+                          onClick={async () => {
+                            setGuardandoSrmProv(true);
+                            try {
+                              const { error } = await supabase
+                                .from('proveedores')
+                                .update({
+                                  calificacion_precio: provSeleccionado.calificacion_precio,
+                                  calificacion_cumplimiento: provSeleccionado.calificacion_cumplimiento,
+                                  observaciones_negociacion: provSeleccionado.observaciones_negociacion,
+                                  proveedor_preferencial: provSeleccionado.proveedor_preferencial
+                                })
+                                .eq('id', provSeleccionado.id);
+                              if (error) throw error;
+                              toast.success("Evaluación SRM y Acuerdos guardados con éxito.");
+                              await obtenerProveedores();
+                            } catch (err) {
+                              toast.error("Error guardando SRM: " + err.message);
+                            } finally {
+                              setGuardandoSrmProv(false);
+                            }
+                          }}
+                          style={{
+                            padding: '10px 24px',
+                            backgroundColor: '#0f172a',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '10px',
+                            fontSize: '0.85rem',
+                            fontWeight: '800',
+                            cursor: 'pointer',
+                            boxShadow: '0 2px 6px rgba(15, 23, 42, 0.2)'
+                          }}
+                        >
+                          {guardandoSrmProv ? 'Guardando...' : '💾 Guardar Evaluación SRM'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
-              <div className="prov-modal-footer" style={{ borderTop: '1px solid #e2e8f0', marginTop: '20px', paddingTop: '15px' }}>
+              <div className="prov-modal-footer" style={{ borderTop: '1px solid #e2e8f0', marginTop: '20px', paddingTop: '15px', display: 'flex', justifyContent: 'flex-end' }}>
                 <button
                   type="button"
                   onClick={() => setShowHistoryModal(false)}
                   className="btn-cancel"
                   style={{ padding: '8px 20px', fontSize: '0.8rem', fontWeight: 'bold' }}
                 >
-                  Cerrar Historial
+                  Cerrar Ficha
                 </button>
               </div>
             </div>

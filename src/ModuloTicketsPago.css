@@ -394,6 +394,18 @@
   border: 1px solid var(--slate-200);
 }
 
+.btn-tc-dark {
+  background-color: #0f172a;
+  color: white;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.25);
+  border-radius: 10px;
+}
+
+.btn-tc-dark:hover {
+  background-color: #020617;
+  color: white;
+}
+
 .btn-tc:hover {
   transform: translateY(-4px) scale(1.02);
   box-shadow: 0 10px 20px rgba(0, 0, 0, 0.12);

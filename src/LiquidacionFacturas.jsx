@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from './supabaseClient';
 import toast from 'react-hot-toast';
 import { AnimatePresence } from 'framer-motion';
+import { getSemanaInfo } from './utils/helpers';
 import {
   Search,
   Eye,
@@ -89,6 +90,15 @@ const LiquidacionFacturas = ({ currentUser }) => {
     files: []
   });
 
+  // --- SUBMÓDULO ASIGNACIÓN DE FONDOS A COMPRAS (CUENTAS POR PAGAR) ---
+  const [showModalAsignarFondo, setShowModalAsignarFondo] = useState(false);
+  const [montoFondoInput, setMontoFondoInput] = useState('');
+  const [semanaFondoInput, setSemanaFondoInput] = useState('');
+  const [fechaFondoInput, setFechaFondoInput] = useState(new Date().toISOString().split('T')[0]);
+  const [observacionesFondoInput, setObservacionesFondoInput] = useState('');
+  const [historialFondosCxp, setHistorialFondosCxp] = useState([]);
+  const [guardandoFondoCxp, setGuardandoFondoCxp] = useState(false);
+
   const esAdmin = useMemo(() => {
     if (!currentUser) return false;
     const emailLower = (currentUser.correo || '').toLowerCase().trim();
@@ -142,6 +152,58 @@ const LiquidacionFacturas = ({ currentUser }) => {
       setLoading(false);
     }
   }, []);
+
+  const fetchHistorialFondosCxp = useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from('presupuesto_compras')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (!error && data) {
+        setHistorialFondosCxp(data);
+      }
+    } catch (err) {
+      console.warn("Tabla presupuesto_compras no disponible aún en CxP:", err.message);
+    }
+  }, []);
+
+  const ejecutarAsignacionFondoCxp = async (e) => {
+    e?.preventDefault();
+    const monto = parseFloat(montoFondoInput);
+    if (isNaN(monto) || monto <= 0) {
+      return toast.error("Ingrese un monto válido mayor a $0.");
+    }
+
+    setGuardandoFondoCxp(true);
+    try {
+      const fechaRef = fechaFondoInput || new Date().toISOString();
+      const semanaCalculada = getSemanaInfo(fechaRef)?.label || semanaFondoInput || 'SEM ACTUAL';
+
+      const payload = {
+        monto_asignado: monto,
+        monto_usado: 0,
+        semana_key: semanaCalculada,
+        fecha_asignacion: fechaRef,
+        observaciones: observacionesFondoInput || `Asignación de Fondo desde Cuentas por Pagar (${semanaCalculada})`,
+        usuario_id: currentUser?.id || null,
+        usuario_nombre: `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim() || 'Finanzas CxP'
+      };
+
+      const { error } = await supabase.from('presupuesto_compras').insert([payload]);
+      if (error) throw error;
+
+      toast.success(`Fondo de $ ${monto.toLocaleString('de-DE', { minimumFractionDigits: 2 })} asignado con éxito a Compras.`);
+      setMontoFondoInput('');
+      setObservacionesFondoInput('');
+      setShowModalAsignarFondo(false);
+      await fetchHistorialFondosCxp();
+    } catch (err) {
+      console.error("Error al asignar fondo desde CxP:", err.message);
+      toast.error("Error al registrar fondo: " + err.message);
+    } finally {
+      setGuardandoFondoCxp(false);
+    }
+  };
 
   // Set up realtime updates
   useEffect(() => {
@@ -269,9 +331,34 @@ const LiquidacionFacturas = ({ currentUser }) => {
       const totalAbonado = abonosFactura.reduce((sum, ab) => sum + (Number(ab.monto) || 0), 0);
       const saldoPendiente = Math.max(0, factura.total_factura - totalAbonado);
       
+      const provMatch = proveedores.find(p => p.id === factura.proveedor_id || (p.razon_social || '').trim().toUpperCase() === factura.proveedor_nombre.trim().toUpperCase());
+      const diasCredito = provMatch ? (Number(provMatch.dias_credito) || 0) : 0;
+      const limiteCredito = provMatch ? (Number(provMatch.monto_limite_credito) || 0) : 0;
+
+      let fechaVencimiento = null;
+      let esVencida = false;
+      let diasVencida = 0;
+
+      if (factura.fecha_compra) {
+        const fComp = new Date(factura.fecha_compra + 'T12:00:00');
+        fComp.setDate(fComp.getDate() + diasCredito);
+        fechaVencimiento = fComp;
+
+        const hoy = new Date();
+        if (saldoPendiente > 0.01 && hoy > fComp) {
+          esVencida = true;
+          const diffTime = Math.abs(hoy - fComp);
+          diasVencida = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        }
+      }
+
       let estatus = 'EMITIDO';
-      if (totalAbonado > 0) {
-        estatus = saldoPendiente <= 0.01 ? 'PAGADO' : 'PAGADO PARCIAL';
+      if (saldoPendiente <= 0.01 && totalAbonado > 0) {
+        estatus = 'PAGADO';
+      } else if (esVencida) {
+        estatus = 'VENCIDO';
+      } else if (totalAbonado > 0) {
+        estatus = 'PAGADO PARCIAL';
       }
 
       return {
@@ -279,6 +366,11 @@ const LiquidacionFacturas = ({ currentUser }) => {
         abonos: abonosFactura,
         total_abonado: totalAbonado,
         saldo_pendiente: saldoPendiente,
+        dias_credito: diasCredito,
+        limite_credito: limiteCredito,
+        fecha_vencimiento: fechaVencimiento ? fechaVencimiento.toISOString().split('T')[0] : null,
+        esVencida,
+        diasVencida,
         estatus
       };
     }).sort((a, b) => {
@@ -288,7 +380,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
       if (!aEsPagado && bEsPagado) return -1;
       return new Date(b.fecha_compra) - new Date(a.fecha_compra);
     });
-  }, [requisiciones, abonosGlobales]);
+  }, [requisiciones, abonosGlobales, proveedores]);
 
   // Helper to obtain categories for a provider in a given grouped invoice
   const getProveedorCategorias = useCallback((fac) => {
@@ -650,11 +742,36 @@ const LiquidacionFacturas = ({ currentUser }) => {
   return (
     <div className="liquidacion-container">
       {/* HEADER SECTION */}
-      <div className="liquidacion-header-section">
+      <div className="liquidacion-header-section" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div className="liquidacion-title-group">
           <h1>Liquidación de Facturas de Procura</h1>
           <p>Cuentas por Pagar, Control de Abonos e Historial Financiero</p>
         </div>
+
+        <button
+          onClick={() => {
+            setShowModalAsignarFondo(true);
+            fetchHistorialFondosCxp();
+          }}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            padding: '10px 18px',
+            background: 'linear-gradient(135deg, #10b981, #059669)',
+            color: 'white',
+            border: 'none',
+            borderRadius: '12px',
+            cursor: 'pointer',
+            fontSize: '13px',
+            fontWeight: '800',
+            boxShadow: '0 4px 12px rgba(16, 185, 129, 0.25)',
+            transition: 'transform 0.1s ease'
+          }}
+        >
+          <DollarSign size={16} />
+          <span>💰 Asignar Fondo a Compras</span>
+        </button>
       </div>
 
       {/* FINANCIAL KPIS */}
@@ -1207,6 +1324,130 @@ const LiquidacionFacturas = ({ currentUser }) => {
                 disabled={subiendoAbono}
               >
                 {subiendoAbono ? 'Registrando...' : 'Confirmar Abono'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* SUBMÓDULO DE ASIGNACIÓN DE FONDOS A COMPRAS (CUENTAS POR PAGAR) */}
+      {showModalAsignarFondo && (
+        <div className="sf-modal-overlay">
+          <div className="sf-modal-container" style={{ maxWidth: '850px', width: '90%', borderRadius: '24px', padding: '30px', backgroundColor: 'white' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '25px', borderBottom: '1px solid #e2e8f0', paddingBottom: '15px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{ width: '42px', height: '42px', borderRadius: '12px', backgroundColor: '#dcfce7', color: '#15803d', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '22px' }}>💰</div>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '1.4rem', fontWeight: '900', color: '#0f172a' }}>Asignación de Fondos a Compras</h3>
+                  <p style={{ margin: 0, fontSize: '0.8rem', color: '#64748b' }}>Módulo de Cuentas por Pagar & Control Financiero</p>
+                </div>
+              </div>
+              <button onClick={() => setShowModalAsignarFondo(false)} style={{ background: '#f1f5f9', border: 'none', borderRadius: '10px', width: '32px', height: '32px', cursor: 'pointer', color: '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><X size={18} /></button>
+            </div>
+
+            {/* FORMULARIO DE ASIGNACIÓN */}
+            <form onSubmit={ejecutarAsignacionFondoCxp} style={{ backgroundColor: '#f8fafc', padding: '20px', borderRadius: '16px', border: '1px solid #e2e8f0', marginBottom: '25px' }}>
+              <div style={{ fontSize: '11px', fontWeight: '900', color: '#0369a1', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '15px' }}>
+                ➕ Cargar Nueva Asignación de Presupuesto
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '15px', marginBottom: '15px' }}>
+                <div>
+                  <label style={{ fontSize: '11px', fontWeight: '800', color: '#334155', display: 'block', marginBottom: '6px' }}>MONTO A ASIGNAR ($ USD)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    required
+                    placeholder="Ej: 5000.00"
+                    value={montoFondoInput}
+                    onChange={(e) => setMontoFondoInput(e.target.value)}
+                    style={{ width: '100%', padding: '10px 14px', borderRadius: '10px', border: '1px solid #cbd5e1', fontSize: '1.1rem', fontWeight: '900', color: '#0f172a', boxSizing: 'border-box' }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '11px', fontWeight: '800', color: '#334155', display: 'block', marginBottom: '6px' }}>FECHA DE ASIGNACIÓN</label>
+                  <input
+                    type="date"
+                    required
+                    value={fechaFondoInput}
+                    onChange={(e) => setFechaFondoInput(e.target.value)}
+                    style={{ width: '100%', padding: '10px 14px', borderRadius: '10px', border: '1px solid #cbd5e1', fontSize: '0.9rem', color: '#0f172a', boxSizing: 'border-box' }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '11px', fontWeight: '800', color: '#334155', display: 'block', marginBottom: '6px' }}>CONCEPTO / OBSERVACIONES</label>
+                  <input
+                    type="text"
+                    placeholder="Ej: Presupuesto Operativo Compras Semana 30"
+                    value={observacionesFondoInput}
+                    onChange={(e) => setObservacionesFondoInput(e.target.value)}
+                    style={{ width: '100%', padding: '10px 14px', borderRadius: '10px', border: '1px solid #cbd5e1', fontSize: '0.9rem', color: '#0f172a', boxSizing: 'border-box' }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                <button type="submit" disabled={guardandoFondoCxp} style={{ padding: '10px 24px', borderRadius: '10px', border: 'none', background: 'linear-gradient(135deg, #10b981, #059669)', color: 'white', fontWeight: '800', fontSize: '0.85rem', cursor: 'pointer', boxShadow: '0 2px 6px rgba(16, 185, 129, 0.3)' }}>
+                  {guardandoFondoCxp ? 'Registrando...' : '💾 Registrar Asignación a Compras'}
+                </button>
+              </div>
+            </form>
+
+            {/* TABLA DE HISTORIAL DE ASIGNACIONES */}
+            <div>
+              <h4 style={{ margin: '0 0 12px 0', fontSize: '1rem', fontWeight: '800', color: '#1e293b' }}>
+                📜 Historial de Fondos Asignados a Compras
+              </h4>
+
+              <div style={{ maxHeight: '300px', overflowY: 'auto', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', textAlign: 'left' }}>
+                  <thead style={{ backgroundColor: '#f1f5f9', color: '#475569', fontWeight: '800', position: 'sticky', top: 0 }}>
+                    <tr>
+                      <th style={{ padding: '10px 14px' }}>FECHA</th>
+                      <th style={{ padding: '10px 14px' }}>SEMANA</th>
+                      <th style={{ padding: '10px 14px', textAlign: 'right' }}>MONTO ASIGNADO</th>
+                      <th style={{ padding: '10px 14px' }}>ASIGNADO POR</th>
+                      <th style={{ padding: '10px 14px' }}>CONCEPTO / OBSERVACIONES</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {historialFondosCxp.length === 0 ? (
+                      <tr>
+                        <td colSpan="5" style={{ padding: '25px', textAlign: 'center', color: '#94a3b8' }}>No hay asignaciones de fondos registradas aún.</td>
+                      </tr>
+                    ) : (
+                      historialFondosCxp.map((item, idx) => (
+                        <tr key={item.id || idx} style={{ borderBottom: '1px solid #f1f5f9', backgroundColor: idx % 2 === 0 ? 'white' : '#fafafa' }}>
+                          <td style={{ padding: '10px 14px', fontWeight: '700', color: '#334155' }}>
+                            {item.fecha_asignacion ? String(item.fecha_asignacion).split('T')[0] : (item.created_at ? String(item.created_at).split('T')[0] : '-')}
+                          </td>
+                          <td style={{ padding: '10px 14px' }}>
+                            <span style={{ fontSize: '10px', fontWeight: '800', backgroundColor: '#e0f2fe', color: '#0369a1', padding: '2px 8px', borderRadius: '6px' }}>
+                              {item.semana_key || 'SEM GLOBAL'}
+                            </span>
+                          </td>
+                          <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: '900', color: '#16a34a', fontSize: '13px' }}>
+                            $ {(parseFloat(item.monto_asignado) || 0).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </td>
+                          <td style={{ padding: '10px 14px', fontWeight: '600', color: '#475569' }}>
+                            {item.usuario_nombre || 'Finanzas CxP'}
+                          </td>
+                          <td style={{ padding: '10px 14px', color: '#64748b' }}>
+                            {item.observaciones || '-'}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '20px' }}>
+              <button onClick={() => setShowModalAsignarFondo(false)} style={{ padding: '8px 20px', borderRadius: '10px', border: '1px solid #cbd5e1', background: '#f1f5f9', color: '#475569', fontWeight: '700', fontSize: '0.85rem', cursor: 'pointer' }}>
+                Cerrar
               </button>
             </div>
           </div>
