@@ -21,6 +21,7 @@ const Proveedores = () => {
   const [saving, setSaving] = useState(false);
   const [sessionCategories, setSessionCategories] = useState([]);
   const [nuevaCategoriaText, setNuevaCategoriaText] = useState('');
+  const [columnasDisponibles, setColumnasDisponibles] = useState(null);
 
   const [formData, setFormData] = useState({
     id: null,
@@ -68,6 +69,9 @@ const Proveedores = () => {
 
       if (error) throw error;
       setProveedores(data || []);
+      if (data && data.length > 0) {
+        setColumnasDisponibles(Object.keys(data[0]));
+      }
     } catch (error) {
       console.error('Error fetching suppliers:', error.message);
       toast.error('Error al cargar proveedores. Asegúrate de haber ejecutado el SQL de la tabla.');
@@ -127,7 +131,7 @@ const Proveedores = () => {
 
     setSaving(true);
     try {
-      const payload = {
+      let payload = {
         rif: formData.rif,
         razon_social: formData.razon_social,
         correo: formData.correo,
@@ -143,18 +147,60 @@ const Proveedores = () => {
         status: formData.status
       };
 
+      // Filter payload if we already detected the columns
+      if (columnasDisponibles) {
+        payload = Object.keys(payload)
+          .filter(key => columnasDisponibles.includes(key))
+          .reduce((obj, key) => {
+            obj[key] = payload[key];
+            return obj;
+          }, {});
+      }
+
       if (formData.id) {
         const { error } = await supabase
           .from('proveedores')
           .update(payload)
           .eq('id', formData.id);
-        if (error) throw error;
+        
+        if (error) {
+          // If columns were not detected (e.g. empty table on load) and schema cache missing column error occurs
+          if (error.message.includes('calificacion_cumplimiento') || error.message.includes('column') || error.message.includes('cache')) {
+            const srmKeys = ['calificacion_precio', 'calificacion_cumplimiento', 'observaciones_negociacion', 'proveedor_preferencial'];
+            const fallbackPayload = { ...payload };
+            srmKeys.forEach(k => delete fallbackPayload[k]);
+            
+            const { error: retryError } = await supabase
+              .from('proveedores')
+              .update(fallbackPayload)
+              .eq('id', formData.id);
+            if (retryError) throw retryError;
+            setColumnasDisponibles(Object.keys(fallbackPayload));
+          } else {
+            throw error;
+          }
+        }
         toast.success('Proveedor actualizado con éxito');
       } else {
         const { error } = await supabase
           .from('proveedores')
           .insert([payload]);
-        if (error) throw error;
+        
+        if (error) {
+          if (error.message.includes('calificacion_cumplimiento') || error.message.includes('column') || error.message.includes('cache')) {
+            const srmKeys = ['calificacion_precio', 'calificacion_cumplimiento', 'observaciones_negociacion', 'proveedor_preferencial'];
+            const fallbackPayload = { ...payload };
+            srmKeys.forEach(k => delete fallbackPayload[k]);
+            
+            const { error: retryError } = await supabase
+              .from('proveedores')
+              .insert([fallbackPayload]);
+            if (retryError) throw retryError;
+            setColumnasDisponibles(Object.keys(fallbackPayload));
+          } else {
+            throw error;
+          }
+        }
         toast.success('Proveedor registrado con éxito');
       }
       setShowModal(false);
@@ -1771,6 +1817,9 @@ const Proveedores = () => {
                           onClick={async () => {
                             setGuardandoSrmProv(true);
                             try {
+                              if (columnasDisponibles && !columnasDisponibles.includes('calificacion_cumplimiento')) {
+                                throw new Error("El módulo SRM no está habilitado en la base de datos (faltan las columnas de calificación).");
+                              }
                               const { error } = await supabase
                                 .from('proveedores')
                                 .update({
@@ -1780,11 +1829,16 @@ const Proveedores = () => {
                                   proveedor_preferencial: provSeleccionado.proveedor_preferencial
                                 })
                                 .eq('id', provSeleccionado.id);
-                              if (error) throw error;
+                              if (error) {
+                                if (error.message.includes('calificacion_cumplimiento') || error.message.includes('column') || error.message.includes('cache')) {
+                                  throw new Error("El módulo SRM no está habilitado en la base de datos (faltan las columnas de calificación).");
+                                }
+                                throw error;
+                              }
                               toast.success("Evaluación SRM y Acuerdos guardados con éxito.");
                               await obtenerProveedores();
                             } catch (err) {
-                              toast.error("Error guardando SRM: " + err.message);
+                              toast.error(err.message);
                             } finally {
                               setGuardandoSrmProv(false);
                             }

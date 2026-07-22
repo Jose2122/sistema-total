@@ -2882,6 +2882,23 @@ const Compras = () => {
     }
   };
 
+  const tieneHistorialPrecios = (descripcion) => {
+    const descTarget = (descripcion || '').trim().toLowerCase();
+    if (!descTarget) return false;
+
+    return (historial || []).some(req => {
+      const items = safeArray(req.items);
+      return items.some(it => {
+        const desc = (it.descripcion || '').trim().toLowerCase();
+        if (desc.includes(descTarget) || descTarget.includes(desc)) {
+          const hist = safeArray(it.historial_compras);
+          return hist.some(h => h && h.tipo !== 'JUSTIFICACION' && h.tipo !== 'ANULACION');
+        }
+        return false;
+      });
+    });
+  };
+
   const abrirComparativaPrecio = (item) => {
     setItemParaComparar(item);
     setShowComparativaModal(true);
@@ -3983,27 +4000,29 @@ const Compras = () => {
                         <td style={{ verticalAlign: 'middle' }}>
                           <div style={{ fontWeight: 'bold', color: '#1e293b', fontSize: '0.9rem', textDecoration: f.anulado ? 'line-through' : 'none' }}>{f.descripcion}</div>
                           <div style={{ fontSize: '10px', color: '#64748b', fontWeight: '600' }}>{f.categoria}</div>
-                          <button
-                            type="button"
-                            onClick={() => abrirComparativaPrecio(f)}
-                            style={{
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '4px',
-                              padding: '2px 8px',
-                              backgroundColor: '#fef3c7',
-                              color: '#92400e',
-                              border: '1px solid #fde68a',
-                              borderRadius: '6px',
-                              fontSize: '10px',
-                              fontWeight: '900',
-                              cursor: 'pointer',
-                              marginTop: '4px'
-                            }}
-                            title="Consultar mejor precio histórico y sugerencia SRM"
-                          >
-                            💡 Mejor Precio Histórico
-                          </button>
+                          {tieneHistorialPrecios(f.descripcion) && (
+                            <button
+                              type="button"
+                              onClick={() => abrirComparativaPrecio(f)}
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                padding: '2px 8px',
+                                backgroundColor: '#fef3c7',
+                                color: '#92400e',
+                                border: '1px solid #fde68a',
+                                borderRadius: '6px',
+                                fontSize: '10px',
+                                fontWeight: '900',
+                                cursor: 'pointer',
+                                marginTop: '4px'
+                              }}
+                              title="Consultar mejor precio histórico y sugerencia SRM"
+                            >
+                              💡 Mejor Precio Histórico
+                            </button>
+                          )}
                           {f.beneficiario && (
                             <div style={{ 
                               fontSize: '10px', 
