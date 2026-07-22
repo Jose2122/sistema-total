@@ -595,14 +595,13 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
 
     if (!matchTexto || !matchGerencia || !matchMes || !matchSemana || !matchStatus) return false;
 
-    // Filtro rápido de estrategia (Quick Filter) basado en el ciclo de vida
-    const est = getEstadoSolicitud(h);
+    const est = h.estado || h.estado_dinamico || getEstadoSolicitud(h);
     if (quickFilter === "Activas") {
-      return est === 'ACTIVA';
+      return est === 'ACTIVA' && !h.is_culminada;
     } else if (quickFilter === "EnProceso") {
-      return est === 'EN PROCESO';
+      return est === 'EN PROCESO' && !h.is_culminada;
     } else if (quickFilter === "Completadas") {
-      return est === 'COMPLETADA';
+      return est === 'COMPLETADA' || Boolean(h.is_culminada);
     }
 
     return true; // "Todos"
@@ -779,11 +778,14 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
     const { data: dataHist } = await query.order('created_at', { ascending: false });
 
     if (dataHist) {
-      const reqIdsAndCodes = dataHist.flatMap(h => [h.id, h.codigo_control]).filter(Boolean);
-      const { data: pagosData } = await supabase
+      const reqIds = dataHist.map(h => h.id).filter(Boolean);
+      const { data: pagosData, error: pagosError } = await supabase
         .from('partidas_fondos')
         .select('solicitud_id, pu_bs, pu_usd, cantidad, pago_realizado, status, requisicion_id, ticket_id, codigo_ticket, descripcion, requisiciones(id, items, status_compra, estado_aprobacion)')
-        .in('solicitud_id', reqIdsAndCodes);
+        .in('solicitud_id', reqIds);
+      if (pagosError) {
+        console.error("[ERRORES FONDOS] Error cargando partidas_fondos:", pagosError.message);
+      }
 
       // Obtener Tickets directos involucrados en estas solicitudes
       const ticketIds = (pagosData || []).map(p => p.ticket_id).filter(Boolean);
@@ -819,11 +821,13 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         const esTostitomas = emailLower.includes('tostitomas') || (userContext?.nombre || '').toLowerCase().includes('tostitomas');
 
         if (misPartidas.length > 0 && !esTostitomas) {
-          // Siempre usar la suma dinámica de los items como fuente de verdad.
-          // El valor de cabecera (total_bs/total_usd) puede estar desactualizado
-          // o ser incorrecto por migraciones, por lo que confiamos en los renglones.
-          calculatedTotalBs = misPartidas.reduce((acc, p) => acc + (p.status === 'ANULADO_POR_USUARIO' ? 0 : (parseFloat(p.pu_bs) || 0) * (p.cantidad || 1)), 0);
-          calculatedTotalUsd = misPartidas.reduce((acc, p) => acc + (p.status === 'ANULADO_POR_USUARIO' ? 0 : (parseFloat(p.pu_usd) || 0) * (p.cantidad || 1)), 0);
+          const sumPartidasBs = misPartidas.reduce((acc, p) => acc + (p.status === 'ANULADO_POR_USUARIO' ? 0 : (parseFloat(p.pu_bs) || 0) * (p.cantidad || 1)), 0);
+          const sumPartidasUsd = misPartidas.reduce((acc, p) => acc + (p.status === 'ANULADO_POR_USUARIO' ? 0 : (parseFloat(p.pu_usd) || 0) * (p.cantidad || 1)), 0);
+          
+          if (sumPartidasBs > 0 || sumPartidasUsd > 0) {
+            calculatedTotalBs = sumPartidasBs;
+            calculatedTotalUsd = sumPartidasUsd;
+          }
         }
 
         let totalPagado = 0;
@@ -842,11 +846,27 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
             let mPendingBs = (parseFloat(p.pu_bs) || 0) * (p.cantidad || 1);
             let mPendingUsd = (parseFloat(p.pu_usd) || 0) * (p.cantidad || 1);
 
-            if (p.requisicion_id && p.requisiciones && p.requisiciones.items) {
-              const itemReq = p.requisiciones.items.find(item =>
-                item.descripcion === p.descripcion &&
-                (item.cantidad_pedida === p.cantidad || item.cant === p.cantidad)
-              );
+            const isReqComp = p.requisiciones ? esRequisicionCompletada(p.requisiciones) : false;
+
+            if (p.pago_realizado) {
+              mReal = (parseFloat(p.pu_bs) || parseFloat(p.pu_usd) || 0) * (p.cantidad || 1);
+              mPendingBs = 0;
+              mPendingUsd = 0;
+            } else if (p.requisicion_id && p.requisiciones && p.requisiciones.items) {
+              const normPDesc = (p.descripcion || '').trim().toLowerCase();
+              const pCant = Number(p.cantidad) || 1;
+              const itemsArr = safeArray(p.requisiciones.items);
+
+              let itemReq = itemsArr.find(item => {
+                const normItemDesc = (item.descripcion || item.desc || '').trim().toLowerCase();
+                const descMatch = normItemDesc === normPDesc || (normItemDesc && normPDesc && (normItemDesc.includes(normPDesc) || normPDesc.includes(normItemDesc)));
+                const cantMatch = Number(item.cantidad_pedida ?? item.cant ?? item.cantidad) === pCant;
+                return descMatch && cantMatch;
+              }) || itemsArr.find(item => {
+                const normItemDesc = (item.descripcion || item.desc || '').trim().toLowerCase();
+                return normItemDesc === normPDesc || (normItemDesc && normPDesc && (normItemDesc.includes(normPDesc) || normPDesc.includes(normItemDesc)));
+              });
+
               if (itemReq) {
                 mReal = (itemReq.historial_compras || []).reduce((sum, tx) => {
                   if (tx.tipo === 'JUSTIFICACION') return sum;
@@ -855,13 +875,21 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                 const cantPendiente = parseFloat(itemReq.cantidad_pendiente ?? itemReq.cant) || 0;
                 const puEst = parseFloat(itemReq.pu_estimado ?? itemReq.pu) || 0;
                 
-                if (p.pu_bs > 0) {
+                if (mReal === 0 && isReqComp) {
+                  mReal = (parseFloat(p.pu_bs) || parseFloat(p.pu_usd) || 0) * (p.cantidad || 1);
+                  mPendingBs = 0;
+                  mPendingUsd = 0;
+                } else if (p.pu_bs > 0) {
                   mPendingBs = cantPendiente * puEst;
                   mPendingUsd = 0;
                 } else {
                   mPendingBs = 0;
                   mPendingUsd = cantPendiente * puEst;
                 }
+              } else if (isReqComp) {
+                mReal = (parseFloat(p.pu_bs) || parseFloat(p.pu_usd) || 0) * (p.cantidad || 1);
+                mPendingBs = 0;
+                mPendingUsd = 0;
               }
             } else if (p.ticket_id || p.codigo_ticket?.startsWith('TP-')) {
               const ticketAsociado = ticketsInvolucrados.find(t =>
@@ -870,10 +898,12 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
               );
               if (ticketAsociado) {
                 if (ticketAsociado.items && ticketAsociado.items.length > 0) {
+                  const normPDesc = (p.descripcion || '').trim().toLowerCase();
                   const itemTicket = ticketAsociado.items.find(it =>
-                    (it.desc || it.descripcion || '').trim().toUpperCase() === (p.descripcion || '').trim().toUpperCase() &&
+                    (it.desc || it.descripcion || '').trim().toLowerCase() === normPDesc &&
                     (Number(it.cantidad_pedida || it.cant) === Number(p.cantidad))
-                  );
+                  ) || ticketAsociado.items.find(it => (it.desc || it.descripcion || '').trim().toLowerCase() === normPDesc);
+                  
                   if (itemTicket) {
                     mReal = (itemTicket.historial_compras || []).reduce((sum, tx) => {
                       return sum + ((parseFloat(tx.cant) || 0) * (parseFloat(tx.pu) || 0));
@@ -881,7 +911,11 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                     const cantPendiente = parseFloat(itemTicket.cantidad_pendiente ?? itemTicket.cant) || 0;
                     const puEst = parseFloat(itemTicket.pu_estimado ?? itemTicket.pu) || 0;
                     
-                    if (p.pu_bs > 0) {
+                    if (mReal === 0 && (ticketAsociado.status === 'Pagado' || ticketAsociado.status === 'COMPLETADO')) {
+                      mReal = (parseFloat(p.pu_bs) || parseFloat(p.pu_usd) || 0) * (p.cantidad || 1);
+                      mPendingBs = 0;
+                      mPendingUsd = 0;
+                    } else if (p.pu_bs > 0) {
                       mPendingBs = cantPendiente * puEst;
                       mPendingUsd = 0;
                     } else {
@@ -889,23 +923,17 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                       mPendingUsd = cantPendiente * puEst;
                     }
                   } else {
-                    if (ticketAsociado.status === 'Pagado') {
+                    if (ticketAsociado.status === 'Pagado' || ticketAsociado.status === 'COMPLETADO') {
                       mReal = (parseFloat(p.pu_bs) || parseFloat(p.pu_usd) || 0) * (p.cantidad || 1);
                       mPendingBs = 0;
                       mPendingUsd = 0;
                     }
                   }
-                } else if (ticketAsociado.status === 'Pagado') {
+                } else if (ticketAsociado.status === 'Pagado' || ticketAsociado.status === 'COMPLETADO') {
                   mReal = (parseFloat(p.pu_bs) || parseFloat(p.pu_usd) || 0) * (p.cantidad || 1);
                   mPendingBs = 0;
                   mPendingUsd = 0;
                 }
-              }
-            } else {
-              if (p.pago_realizado) {
-                mReal = (parseFloat(p.pu_bs) || parseFloat(p.pu_usd) || 0) * (p.cantidad || 1);
-                mPendingBs = 0;
-                mPendingUsd = 0;
               }
             }
 
@@ -917,10 +945,17 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
           totalPagado = totalMontoReal;
           pendingBs = totalPendingBs;
           pendingUsd = totalPendingUsd;
+
+          const reqsAllComp = misPartidas.length > 0 && misPartidas.every(p => p.pago_realizado || (p.requisiciones && esRequisicionCompletada(p.requisiciones)));
+          if ((h.pago_realizado || h.estado === 'COMPLETADA' || h.status === 'COMPLETADA' || reqsAllComp) && totalPagado < (calculatedTotalBs + calculatedTotalUsd)) {
+            totalPagado = calculatedTotalBs + calculatedTotalUsd;
+            pendingBs = 0;
+            pendingUsd = 0;
+          }
         } else {
-          totalPagado = h.pago_realizado ? (calculatedTotalBs + calculatedTotalUsd) : 0;
-          pendingBs = h.pago_realizado ? 0 : calculatedTotalBs;
-          pendingUsd = h.pago_realizado ? 0 : calculatedTotalUsd;
+          totalPagado = (h.pago_realizado || h.estado === 'COMPLETADA' || h.status === 'COMPLETADA') ? (calculatedTotalBs + calculatedTotalUsd) : 0;
+          pendingBs = (h.pago_realizado || h.estado === 'COMPLETADA' || h.status === 'COMPLETADA') ? 0 : calculatedTotalBs;
+          pendingUsd = (h.pago_realizado || h.estado === 'COMPLETADA' || h.status === 'COMPLETADA') ? 0 : calculatedTotalUsd;
         }
 
         const total = calculatedTotalBs + calculatedTotalUsd;
@@ -1338,57 +1373,87 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         if (p.status === 'ANULADO_POR_USUARIO') {
           return { montoReal: 0, montoPendiente: 0 };
         }
+
+        const isReqComp = p.requisiciones ? esRequisicionCompletada(p.requisiciones) : false;
+
+        if (p.pago_realizado) {
+          return {
+            montoReal: (parseFloat(p.pu_bs) || parseFloat(p.pu_usd) || 0) * (p.cantidad || 1),
+            montoPendiente: 0
+          };
+        }
+
         let montoReal = 0;
-        let montoPendiente = (p.pu_bs || p.pu_usd || 0) * (p.cantidad || 1); // Por defecto todo es pendiente
+        let montoPendiente = (p.pu_bs || p.pu_usd || 0) * (p.cantidad || 1);
 
         if (p.requisiciones && p.requisiciones.items) {
-          // Intentar hacer match del item de la requisición con esta partida
-          // Usamos descripción y cantidad como match primario para solicitudes de fondos
-          const itemReq = p.requisiciones.items.find(item =>
-            item.descripcion === p.descripcion &&
-            (item.cantidad_pedida === p.cantidad || item.cant === p.cantidad)
-          );
+          const normPDesc = (p.descripcion || '').trim().toLowerCase();
+          const pCant = Number(p.cantidad) || 1;
+          const itemsArr = safeArray(p.requisiciones.items);
+
+          let itemReq = itemsArr.find(item => {
+            const normItemDesc = (item.descripcion || item.desc || '').trim().toLowerCase();
+            const descMatch = normItemDesc === normPDesc || (normItemDesc && normPDesc && (normItemDesc.includes(normPDesc) || normPDesc.includes(normItemDesc)));
+            const cantMatch = Number(item.cantidad_pedida ?? item.cant ?? item.cantidad) === pCant;
+            return descMatch && cantMatch;
+          }) || itemsArr.find(item => {
+            const normItemDesc = (item.descripcion || item.desc || '').trim().toLowerCase();
+            return normItemDesc === normPDesc || (normItemDesc && normPDesc && (normItemDesc.includes(normPDesc) || normPDesc.includes(normItemDesc)));
+          });
 
           if (itemReq) {
-            // Calcular Ejecutado (Historial de Compras)
             montoReal = (itemReq.historial_compras || []).reduce((sum, h) => {
               if (h.tipo === 'JUSTIFICACION') return sum;
               return sum + ((parseFloat(h.cant) || 0) * (parseFloat(h.pu) || 0));
             }, 0);
 
-            // Calcular Pendiente (Cant Pendiente * PU Estimado)
             const cantPendiente = parseFloat(itemReq.cantidad_pendiente ?? itemReq.cant) || 0;
             const puEst = parseFloat(itemReq.pu_estimado ?? itemReq.pu) || 0;
-            montoPendiente = cantPendiente * puEst;
+            
+            if (montoReal === 0 && isReqComp) {
+              montoReal = (parseFloat(p.pu_bs) || parseFloat(p.pu_usd) || 0) * (p.cantidad || 1);
+              montoPendiente = 0;
+            } else {
+              montoPendiente = cantPendiente * puEst;
+            }
+          } else if (isReqComp) {
+            montoReal = (parseFloat(p.pu_bs) || parseFloat(p.pu_usd) || 0) * (p.cantidad || 1);
+            montoPendiente = 0;
           }
         } else {
-          // Intentar buscar en tickets directos si es de tipo ticket de pago
           const ticketAsociado = ticketsInvolucrados.find(t =>
             t.id === p.ticket_id ||
             (p.codigo_ticket && t.codigo_control === p.codigo_ticket)
           );
           if (ticketAsociado) {
             if (ticketAsociado.items && ticketAsociado.items.length > 0) {
+              const normPDesc = (p.descripcion || '').trim().toLowerCase();
               const itemTicket = ticketAsociado.items.find(it =>
-                (it.desc || it.descripcion || '').trim().toUpperCase() === (p.descripcion || '').trim().toUpperCase() &&
+                (it.desc || it.descripcion || '').trim().toLowerCase() === normPDesc &&
                 (Number(it.cantidad_pedida || it.cant) === Number(p.cantidad))
-              );
+              ) || ticketAsociado.items.find(it => (it.desc || it.descripcion || '').trim().toLowerCase() === normPDesc);
+              
               if (itemTicket) {
                 montoReal = (itemTicket.historial_compras || []).reduce((sum, h) => {
                   return sum + ((parseFloat(h.cant) || 0) * (parseFloat(h.pu) || 0));
                 }, 0);
                 const cantPendiente = parseFloat(itemTicket.cantidad_pendiente ?? itemTicket.cant) || 0;
                 const puEst = parseFloat(itemTicket.pu_estimado ?? itemTicket.pu) || 0;
-                montoPendiente = cantPendiente * puEst;
+                
+                if (montoReal === 0 && (ticketAsociado.status === 'Pagado' || ticketAsociado.status === 'COMPLETADO')) {
+                  montoReal = (parseFloat(p.pu_bs) || parseFloat(p.pu_usd) || 0) * (p.cantidad || 1);
+                  montoPendiente = 0;
+                } else {
+                  montoPendiente = cantPendiente * puEst;
+                }
               } else {
-                // Fallback si no hace match por descripción exacta: si el ticket está pagado, asumimos completo
-                if (ticketAsociado.status === 'Pagado') {
-                  montoReal = (p.pu_bs || p.pu_usd || 0) * (p.cantidad || 1);
+                if (ticketAsociado.status === 'Pagado' || ticketAsociado.status === 'COMPLETADO') {
+                  montoReal = (parseFloat(p.pu_bs) || parseFloat(p.pu_usd) || 0) * (p.cantidad || 1);
                   montoPendiente = 0;
                 }
               }
-            } else if (ticketAsociado.status === 'Pagado') {
-              montoReal = (p.pu_bs || p.pu_usd || 0) * (p.cantidad || 1);
+            } else if (ticketAsociado.status === 'Pagado' || ticketAsociado.status === 'COMPLETADO') {
+              montoReal = (parseFloat(p.pu_bs) || parseFloat(p.pu_usd) || 0) * (p.cantidad || 1);
               montoPendiente = 0;
             }
           }
