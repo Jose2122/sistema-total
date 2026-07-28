@@ -917,7 +917,7 @@ const ModuloTicketsPago = () => {
   };
 
   const abrirDetalleTicket = async (ticket) => {
-    if (!esPrivilegiado && ticket?.usuario_id !== currentUser?.id) {
+    if (!esPrivilegiado) {
       setDatosParaTicketExpress({
         isExistingTicket: true,
         ticket: ticket
@@ -1787,6 +1787,11 @@ const ModuloTicketsPago = () => {
       // Preservar banco_pago_id si ya estaba en el ticket
       if (ticketSeleccionado.banco_pago_id) {
         updatePayload.banco_pago_id = ticketSeleccionado.banco_pago_id;
+      }
+
+      // Guardar fecha_emision si fue modificada en modoEdicion
+      if (ticketSeleccionado.fecha_emision) {
+        updatePayload.fecha_emision = ticketSeleccionado.fecha_emision;
       }
 
       // Registrar quién pagó y cuándo (para trazabilidad)
@@ -3753,9 +3758,26 @@ const ModuloTicketsPago = () => {
               <div style={{ marginLeft: 'auto', display: 'flex', gap: '25px' }}>
                 <div>
                   <span style={{ display: 'block', fontSize: '9px', fontWeight: '800', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>FECHA EMISIÓN</span>
-                  <span style={{ fontSize: '0.85rem', fontWeight: '600', color: '#475569' }}>
-                    {t.fecha_emision ? new Date(t.fecha_emision).toLocaleDateString() : 'N/A'}
-                  </span>
+                  {modoEdicion ? (
+                    <input
+                      type="date"
+                      value={ticketSeleccionado.fecha_emision ? ticketSeleccionado.fecha_emision.split('T')[0] : ''}
+                      onChange={(e) => setTicketSeleccionado({ ...ticketSeleccionado, fecha_emision: e.target.value })}
+                      style={{
+                        padding: '4px 8px',
+                        borderRadius: '6px',
+                        border: '1px solid #cbd5e1',
+                        fontSize: '0.85rem',
+                        fontWeight: '600',
+                        color: '#475569',
+                        fontFamily: 'Inter, sans-serif'
+                      }}
+                    />
+                  ) : (
+                    <span style={{ fontSize: '0.85rem', fontWeight: '600', color: '#475569' }}>
+                      {t.fecha_emision ? new Date(t.fecha_emision).toLocaleDateString() : 'N/A'}
+                    </span>
+                  )}
                 </div>
                 <div>
                   <span style={{ display: 'block', fontSize: '9px', fontWeight: '800', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>FECHA PAGO</span>
@@ -5224,7 +5246,21 @@ const ModuloTicketsPago = () => {
     <>
       {renderHistorial()}
       <AnimatePresence>
-        {vistaActual === 'detalle' && renderDetalle()}
+        {vistaActual === 'detalle' && (
+          esPrivilegiado ? renderDetalle() : (
+            <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10000 }} onClick={() => { setVistaActual('historial'); setTicketSeleccionado(null); }}>
+              <div style={{ width: '95%', maxWidth: '1400px' }} onClick={(e) => e.stopPropagation()}>
+                <TicketExpress
+                  isOpen={vistaActual === 'detalle'}
+                  onClose={() => { setVistaActual('historial'); setTicketSeleccionado(null); }}
+                  datosPredefinidos={{ isExistingTicket: true, ticket: ticketSeleccionado }}
+                  onSuccess={() => { setVistaActual('historial'); setTicketSeleccionado(null); fetchHistorial(); }}
+                  currentUser={currentUser}
+                />
+              </div>
+            </div>
+          )
+        )}
       </AnimatePresence>
       {renderModalBancos()}
       {showTicketExpress && (

@@ -141,23 +141,41 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
           }
         }
       } else if (estado === 'pendiente_area') {
-        const { data: gerentesArea } = await supabase
-          .from('perfiles')
-          .select('id, rol')
-          .eq('departamento', gerenciaDepto);
-        if (gerentesArea) {
-          const areaManagers = gerentesArea.filter(g => {
-            const r = (g.rol || '').toLowerCase();
-            return (r.includes('área') || r.includes('area') || g.rol === 'Gerente') && !r.includes('proyecto');
-          });
-          for (const g of areaManagers) {
-            await enviarNotificacion(
-              g.id,
-              `Nueva Requisición ${correlativo} de ${creadorNombre} requiere su aprobación de Área.`,
-              'Aprobación Pendiente',
-              reqId
-            );
+        let targets = [];
+        const deptoLower = (gerenciaDepto || '').toLowerCase();
+        if (deptoLower.includes('estimac')) {
+          // Karin Machado
+          const { data: karinData } = await supabase
+            .from('perfiles')
+            .select('id')
+            .eq('correo', 'karincmm1@gmail.com')
+            .limit(1);
+          if (karinData && karinData.length > 0) {
+            targets = [{ id: karinData[0].id }];
           }
+        }
+
+        if (targets.length === 0) {
+          const { data: gerentesArea } = await supabase
+            .from('perfiles')
+            .select('id, rol')
+            .eq('departamento', gerenciaDepto);
+          if (gerentesArea) {
+            const areaManagers = gerentesArea.filter(g => {
+              const r = (g.rol || '').toLowerCase();
+              return (r.includes('área') || r.includes('area') || g.rol === 'Gerente') && !r.includes('proyecto');
+            });
+            targets = areaManagers.map(g => ({ id: g.id }));
+          }
+        }
+
+        for (const g of targets) {
+          await enviarNotificacion(
+            g.id,
+            `Nueva Requisición ${correlativo} de ${creadorNombre} requiere su aprobación de Área.`,
+            'Aprobación Pendiente',
+            reqId
+          );
         }
       } else if (estado === 'enviada_general') {
         const { data: carlos } = await supabase
@@ -465,7 +483,10 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     return historial.filter(req => {
       const matchTexto =
         req.solicitante.toLowerCase().includes(busqueda.toLowerCase()) ||
-        req.correlativo.toLowerCase().includes(busqueda.toLowerCase());
+        req.correlativo.toLowerCase().includes(busqueda.toLowerCase()) ||
+        (Array.isArray(req.detalles) && req.detalles.some(item =>
+          (item.descripcion || item.desc || '').toLowerCase().includes(busqueda.toLowerCase())
+        ));
 
       const matchDepto = filtroDepto === 'Todos' || req.gerencia === filtroDepto;
       const matchStatus = filtroAprobacion === 'Todos' || 

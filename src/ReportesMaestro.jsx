@@ -19,7 +19,9 @@ import {
     FileText,
     Clock,
     CheckCircle2,
-    AlertCircle
+    AlertCircle,
+    User,
+    X
 } from 'lucide-react';
 import {
     BarChart,
@@ -133,6 +135,21 @@ const ReportesMaestro = () => {
     const [selectedFileIndex, setSelectedFileIndex] = useState(0);
     const [gerenciaDetalle, setGerenciaDetalle] = useState(null); // Para drill-down
 
+    // Módulo de Beneficiarios
+    const [busquedaBenef, setBusquedaBenef] = useState('');
+    const [debouncedBusqueda, setDebouncedBusqueda] = useState('');
+    const [ccBenef, setCcBenef] = useState('Todos');
+    const [fechaInicioBenef, setFechaInicioBenef] = useState('');
+    const [fechaFinBenef, setFechaFinBenef] = useState('');
+    const [beneficiarioSeleccionado, setBeneficiarioSeleccionado] = useState(null);
+
+    useEffect(() => {
+        const handler = setTimeout(() => {
+            setDebouncedBusqueda(busquedaBenef);
+        }, 400);
+        return () => clearTimeout(handler);
+    }, [busquedaBenef]);
+
     // Auxiliares de seguridad
     const safeFormatDate = (d, fmt = 'dd/MM/yyyy') => {
         if (!d) return '-';
@@ -164,6 +181,33 @@ const ReportesMaestro = () => {
             return 'Bs/$';
         }
         return '$/$';
+    };
+
+    const extraerDocumentoIdentidad = (texto) => {
+        if (!texto) return 'N/A';
+        const regexRif = /([VJEGvjeg]-\d{8}-\d|\d{7,8}|[VJEGvjeg]\d{7,9})/g;
+        const match = texto.match(regexRif);
+        if (match) return match[0].toUpperCase();
+        
+        const regexCedulaPuntos = /(\d{1,3}\.\d{3}\.\d{3})/g;
+        const matchPuntos = texto.match(regexCedulaPuntos);
+        if (matchPuntos) return matchPuntos[0];
+
+        return 'N/A';
+    };
+
+    const limpiarNombreBeneficiario = (texto) => {
+        if (!texto) return 'S/E';
+        let clean = texto.replace(/([VJEGvjeg]-\d{8}-\d|\d{7,8}|[VJEGvjeg]\d{7,9})/g, '');
+        clean = clean.replace(/(\d{1,3}\.\d{3}\.\d{3})/g, '');
+        clean = clean.replace(/[()\-.,]/g, ' ').replace(/\s+/g, ' ').trim();
+        return clean || texto;
+    };
+
+    const normalizedCompare = (str1, str2) => {
+        if (!str1 || !str2) return false;
+        const clean = (s) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, '');
+        return clean(str1) === clean(str2);
     };
 
     const getMetodoPagoForTicketItem = (item) => {
@@ -257,7 +301,7 @@ const ReportesMaestro = () => {
 
         // 2. Actualización en DB
         try {
-            const req = data.requisiciones.find(r => r.id === requisicionId);
+            const req = (data.requisiciones || []).find(r => r.id === requisicionId);
             if (!req) return;
 
             const nuevosItems = [...(req.items || [])];
@@ -286,7 +330,7 @@ const ReportesMaestro = () => {
     }, [cargarDatos]);
 
     const handleOpenRequisicion = useCallback((ref, realId) => {
-        const found = data.requisiciones.find(r => r.correlativo_req === ref || r.id === realId);
+        const found = (data.requisiciones || []).find(r => r.correlativo_req === ref || r.id === realId);
         if (found) {
             const items = Array.isArray(found.items) ? found.items : [];
             const montoEstimado = items.reduce((sum, i) => sum + (Number(i.cant) * (Number(i.pu) || 0)), 0);
@@ -296,7 +340,7 @@ const ReportesMaestro = () => {
 
     const handleOpenTicket = useCallback(async (ref, uId) => {
         const ticketId = uId ? uId.split('-')[1] : null;
-        const found = data.tickets.find(t => t.codigo_control === ref || (ticketId && String(t.id) === String(ticketId)));
+        const found = (data.tickets || []).find(t => t.codigo_control === ref || (ticketId && String(t.id) === String(ticketId)));
         if (!found) return;
 
         setTickSeleccionado({
@@ -338,18 +382,154 @@ const ReportesMaestro = () => {
         }
     }, [data.tickets]);
 
+    // --- PROCESAMIENTO: MÓDULO DE BENEFICIARIOS ---
+    const beneficiariosList = useMemo(() => {
+        const list = [];
+
+        // 1. Requisiciones
+        (data.requisiciones || []).forEach(req => {
+            const items = Array.isArray(req.items) ? req.items : [];
+            items.forEach((item, idx) => {
+                const rawBenef = item.beneficiario || item.ben || '';
+                if (rawBenef) {
+                    const doc = extraerDocumentoIdentidad(rawBenef);
+                    const nombreClean = limpiarNombreBeneficiario(rawBenef);
+                    const totalItem = (Number(item.cant || item.cantidad) || 1) * (Number(item.pu || item.pu_estimado) || 0);
+                    list.push({
+                        key: `req-${req.id}-${idx}`,
+                        id: req.id,
+                        ref: req.correlativo_req || `REQ-${String(req.id).padStart(3, '0')}`,
+                        tipo: 'Requisición',
+                        fecha: req.fecha_emision ? req.fecha_emision.substring(0, 10) : '',
+                        beneficiarioRaw: rawBenef,
+                        beneficiario: nombreClean,
+                        documento: doc,
+                        centroCosto: req.centro_costo || 'N/A',
+                        concepto: item.descripcion || item.desc || 'N/A',
+                        monto: totalItem,
+                        moneda: 'USD',
+                        estado: req.estado_aprobacion || 'pendiente_area',
+                        record: req,
+                        itemIdx: idx
+                    });
+                }
+            });
+        });
+
+        // 2. Solicitudes de Fondos / Partidas de Fondos
+        (data.partidas || []).forEach((partida, idx) => {
+            const rawBenef = partida.beneficiario || '';
+            if (rawBenef) {
+                const parentSol = (data.solicitudes || []).find(s => s.id === partida.solicitud_id);
+                const doc = extraerDocumentoIdentidad(rawBenef);
+                const nombreClean = limpiarNombreBeneficiario(rawBenef);
+                const totalItem = (Number(partida.cantidad) || 1) * (Number(partida.pu_bs || partida.pu_usd || 0));
+                const moneda = Number(partida.pu_bs) > 0 ? 'Bs' : 'USD';
+                list.push({
+                    key: `partida-${partida.id || idx}`,
+                    id: parentSol ? parentSol.id : partida.solicitud_id,
+                    ref: partida.codigo_ticket || (parentSol ? `SF-${String(parentSol.id).padStart(3, '0')}` : 'SF-N/A'),
+                    tipo: 'Solicitud de Fondo',
+                    fecha: parentSol?.fecha_operativa ? parentSol.fecha_operativa.substring(0, 10) : (partida.created_at ? partida.created_at.substring(0, 10) : ''),
+                    beneficiarioRaw: rawBenef,
+                    beneficiario: nombreClean,
+                    documento: doc,
+                    centroCosto: partida.centro_costo || 'N/A',
+                    concepto: partida.descripcion || 'N/A',
+                    monto: totalItem,
+                    moneda: moneda,
+                    estado: parentSol?.estado || parentSol?.status || 'Procesando',
+                    record: parentSol || partida,
+                    partidaId: partida.id
+                });
+            }
+        });
+
+        // 3. Tickets Directos
+        (data.tickets || []).forEach(ticket => {
+            const items = Array.isArray(ticket.items) ? ticket.items : [];
+            items.forEach((item, idx) => {
+                const rawBenef = item.beneficiario || item.ben || '';
+                if (rawBenef) {
+                    const doc = extraerDocumentoIdentidad(rawBenef);
+                    const nombreClean = limpiarNombreBeneficiario(rawBenef);
+                    const totalItem = (Number(item.cantidad_pedida || item.cant) || 1) * (Number(item.pu_estimado || item.pu) || 0);
+                    list.push({
+                        key: `ticket-${ticket.id}-${idx}`,
+                        id: ticket.id,
+                        ref: ticket.codigo_control || `TK-${String(ticket.id).padStart(3, '0')}`,
+                        tipo: 'Ticket Directo',
+                        fecha: ticket.fecha_emision ? ticket.fecha_emision.substring(0, 10) : '',
+                        beneficiarioRaw: rawBenef,
+                        beneficiario: nombreClean,
+                        documento: doc,
+                        centroCosto: ticket.centro_costo || 'N/A',
+                        concepto: item.desc || item.descripcion || 'N/A',
+                        monto: totalItem,
+                        moneda: 'USD',
+                        estado: ticket.status || 'Emitido',
+                        record: ticket,
+                        itemIdx: idx
+                    });
+                }
+            });
+        });
+
+        return list;
+    }, [data.requisiciones, data.partidas, data.solicitudes, data.tickets]);
+
+    const beneficiariosFiltrados = useMemo(() => {
+        return beneficiariosList.filter(row => {
+            const term = debouncedBusqueda.toLowerCase().trim();
+            let matchText = true;
+            if (term) {
+                matchText = 
+                    row.beneficiarioRaw.toLowerCase().includes(term) ||
+                    row.ref.toLowerCase().includes(term) ||
+                    row.documento.toLowerCase().includes(term) ||
+                    row.concepto.toLowerCase().includes(term);
+            }
+
+            let matchCc = true;
+            if (ccBenef !== 'Todos') {
+                matchCc = row.centroCosto.toLowerCase().includes(ccBenef.toLowerCase());
+            }
+
+            let matchDate = true;
+            if (fechaInicioBenef && row.fecha && row.fecha < fechaInicioBenef) matchDate = false;
+            if (fechaFinBenef && row.fecha && row.fecha > fechaFinBenef) matchDate = false;
+
+            return matchText && matchCc && matchDate;
+        }).sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+    }, [beneficiariosList, debouncedBusqueda, ccBenef, fechaInicioBenef, fechaFinBenef]);
+
+    const transaccionesBenefSeleccionado = useMemo(() => {
+        if (!beneficiarioSeleccionado) return [];
+        return beneficiariosList.filter(row => 
+            normalizedCompare(row.beneficiario, beneficiarioSeleccionado) || 
+            row.beneficiarioRaw.toLowerCase().includes(beneficiarioSeleccionado.toLowerCase())
+        );
+    }, [beneficiariosList, beneficiarioSeleccionado]);
+
+    const kpisBenefSeleccionado = useMemo(() => {
+        const totalUSD = transaccionesBenefSeleccionado.filter(t => t.moneda === 'USD').reduce((s, t) => s + t.monto, 0);
+        const totalBs = transaccionesBenefSeleccionado.filter(t => t.moneda === 'Bs').reduce((s, t) => s + t.monto, 0);
+        const docId = transaccionesBenefSeleccionado.find(t => t.documento && t.documento !== 'N/A')?.documento || 'N/A';
+        return { totalUSD, totalBs, docId };
+    }, [transaccionesBenefSeleccionado]);
+
     // --- PROCESAMIENTO: VISTA 1 - RELACIÓN DE COSTOS (FLATTENED) ---
     const costosRows = useMemo(() => {
         const rows = [];
 
         // 1. Procesar Tickets Directos
-        data.tickets.forEach(t => {
+        (data.tickets || []).forEach(t => {
             const items = Array.isArray(t.items) ? t.items : [];
             items.forEach(item => {
                 const rowDate = t.fecha_emision ? t.fecha_emision.split('T')[0] : '';
 
                 // Buscar requisición por correlativo_req o id
-                const reqMatch = data.requisiciones.find(r => r.correlativo_req === t.solicitud_ref || r.id === t.solicitud_ref);
+                const reqMatch = (data.requisiciones || []).find(r => r.correlativo_req === t.solicitud_ref || r.id === t.solicitud_ref);
                 const proyectoRef = reqMatch ? (reqMatch.id_referencia_proyecto || 'Sin ID Proyecto') : 'Directo / Sin Proyecto';
 
                 const metodo = getMetodoPagoForTicketItem(item);
@@ -377,7 +557,7 @@ const ReportesMaestro = () => {
         });
 
         // 2. Procesar Requisiciones (Historial de Compras sólamente para Relación de Costos)
-        data.requisiciones.filter(r => r.estado_aprobacion === 'aprobado_final').forEach(r => {
+        (data.requisiciones || []).filter(r => r.estado_aprobacion === 'aprobado_final').forEach(r => {
             const items = Array.isArray(r.items) ? r.items : [];
             items.forEach(item => {
                 const historial = Array.isArray(item.historial_compras) ? item.historial_compras : [];
@@ -431,7 +611,7 @@ const ReportesMaestro = () => {
 
     // --- PROCESAMIENTO: VISTA 2 - CONTROL DE TICKETS ---
     const ticketsFiltered = useMemo(() => {
-        return data.tickets.filter(t => {
+        return (data.tickets || []).filter(t => {
             const matchBusqueda = t.codigo_control?.toLowerCase().includes(busqueda.toLowerCase()) || t.responsable_nombre?.toLowerCase().includes(busqueda.toLowerCase());
             const matchGerencia = filtroGerencia === 'Todos' || t.departamento === filtroGerencia;
             let matchFecha = true;
@@ -443,7 +623,7 @@ const ReportesMaestro = () => {
 
     // --- PROCESAMIENTO: VISTA 3 - CONTROL DE REQUISICIONES ---
     const requisicionesControl = useMemo(() => {
-        return data.requisiciones.map(r => {
+        return (data.requisiciones || []).map(r => {
             const items = Array.isArray(r.items) ? r.items : [];
             const montoEstimado = items.reduce((sum, i) => sum + (Number(i.cant) * (Number(i.pu) || 0)), 0);
 
@@ -523,7 +703,7 @@ const ReportesMaestro = () => {
 
     // --- PROCESAMIENTO: VISTA 4 - CONTROL DE TICKETS ---
     const ticketsControl = useMemo(() => {
-        return data.tickets.map(t => {
+        return (data.tickets || []).map(t => {
             const items = Array.isArray(t.items) ? t.items : [];
             const status = t.status?.toUpperCase() || 'EMITIDO';
             const statusDisplay = (status === 'PAGADO' || status === 'COMPLETADO' || status === 'COMPLETADA') ? 'Completada' : 'Pendiente';
@@ -637,8 +817,8 @@ const ReportesMaestro = () => {
             });
         };
 
-        if (incluirReqs) procesar(data.requisiciones, false);
-        if (incluirTickets) procesar(data.tickets, true);
+        if (incluirReqs) procesar(data.requisiciones || [], false);
+        if (incluirTickets) procesar(data.tickets || [], true);
 
         return Object.values(stats).map(g => {
             const topCategories = Object.entries(g.categories)
@@ -683,7 +863,7 @@ const ReportesMaestro = () => {
         });
 
         const totalGeneral = totBs + totUsd;
-        const ticketsPendientes = data.tickets.filter(t => t.status?.toUpperCase() === 'EMITIDO').length;
+        const ticketsPendientes = (data.tickets || []).filter(t => t.status?.toUpperCase() === 'EMITIDO').length;
 
         return { totBs, totUsd, totalGeneral, ticketsPendientes };
     }, [requisicionesControl, ticketsControl, bancos, data.tickets]);
@@ -968,6 +1148,335 @@ const ReportesMaestro = () => {
         saveAs(new Blob([buffer]), `Relacion_Costos_Por_Proyecto_TC_${format(new Date(), 'yyyy-MM-dd')}.xlsx`);
     };
 
+    const exportExcelMatricial = async () => {
+        if (filtroCC === 'Todos') {
+            toast.error("Por favor, selecciona un Centro de Costo específico en los filtros antes de exportar el reporte matricial.");
+            return;
+        }
+
+        const MAPPING_CATEGORIAS = {
+            "materiales instalables": "Materiales",
+            "materiales consumibles": "Materiales",
+            "fletes": "Materiales",
+            "pintura y materiales de pintura": "Materiales",
+            "depreciación eq": "Depreciación de Equipos",
+            "depreciacion eq": "Depreciación de Equipos",
+            "depreciación de equipos": "Depreciación de Equipos",
+            "depreciacion de equipos": "Depreciación de Equipos",
+            "gasoil": "Equipos Propios",
+            "gasolina": "Equipos Propios",
+            "aceites": "Equipos Propios",
+            "refrigerante": "Equipos Propios",
+            "grasa": "Equipos Propios",
+            "baterías": "Equipos Propios",
+            "baterias": "Equipos Propios",
+            "cauchos": "Equipos Propios",
+            "reparación de cauchos": "Equipos Propios",
+            "reparacion de cauchos": "Equipos Propios",
+            "filtros": "Equipos Propios",
+            "gamusa": "Equipos Propios",
+            "reparaciones/repuestos": "Equipos Propios",
+            "reparaciones/mano de obra": "Equipos Propios",
+            "monitoreo gps": "Equipos Propios",
+            "transporte de personal": "Equipos de Terceros",
+            "otros equipos de terceros": "Equipos de Terceros",
+            "nóminas y salarios indirecto": "Mano de Obra Indirecta",
+            "nominas y salarios indirecto": "Mano de Obra Indirecta",
+            "complementos indirecto": "Mano de Obra Indirecta",
+            "cesta ticket indirecto": "Mano de Obra Indirecta",
+            "comidas indirecto": "Mano de Obra Indirecta",
+            "préstamos indirectos": "Mano de Obra Indirecta",
+            "prestamos indirectos": "Mano de Obra Indirecta",
+            "vacaciones indirectos": "Mano de Obra Indirecta",
+            "pres./liquidacion indirecto": "Mano de Obra Indirecta",
+            "comidas sobretiempo ind.": "Mano de Obra Indirecta",
+            "nóminas y salarios p. directo": "Mano de Obra Directa",
+            "nominas y salarios p. directo": "Mano de Obra Directa",
+            "complementos directo": "Mano de Obra Directa",
+            "cesta ticket (tea) directo": "Mano de Obra Directa",
+            "comidas directo": "Mano de Obra Directa",
+            "préstamos directos": "Mano de Obra Directa",
+            "prestamos directos": "Mano de Obra Directa",
+            "vacaciones directos": "Mano de Obra Directa",
+            "pres./liquidacion directos": "Mano de Obra Directa",
+            "útiles escolares/nac/muerte": "Mano de Obra Directa",
+            "utiles escolares/nac/muerte": "Mano de Obra Directa",
+            "personal eventual": "Mano de Obra Directa",
+            "implementos de seguridad": "Seguridad",
+            "equipos de seguridad": "Seguridad",
+            "exámenes de ingreso/egreso": "Gastos Médicos",
+            "examenes de ingreso/egreso": "Gastos Médicos",
+            "pólizas hcm": "Gastos Médicos",
+            "polizas hcm": "Gastos Médicos",
+            "reembolsos de gastos médicos": "Gastos Médicos",
+            "reembolsos de gastos medicos": "Gastos Médicos",
+            "sucursal agua, hielo, vasos": "Gastos Médicos",
+            "certificaciones de equipos": "Gastos Adm de Obra",
+            "incret y socioambiental": "Gastos Adm de Obra",
+            "sucursal cursos y capacitación": "Gastos Adm de Obra",
+            "sucursal cursos y capacitacion": "Gastos Adm de Obra"
+        };
+
+        const workbook = new ExcelJS.Workbook();
+        const worksheet = workbook.addWorksheet(`Matricial - ${filtroCC.slice(0, 20)}`);
+
+        worksheet.views = [{ showGridLines: true }];
+
+        worksheet.mergeCells('A1:F1');
+        const hCell = worksheet.getCell('A1');
+        hCell.value = `REPORTE MATRICIAL DE COSTOS - CC: ${filtroCC.toUpperCase()}`;
+        hCell.font = { name: 'Calibri', size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
+        hCell.alignment = { horizontal: 'center', vertical: 'middle' };
+        hCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } };
+        worksheet.getRow(1).height = 32;
+
+        const cols = [
+            { header: 'GRUPO / CLASIFICACIÓN', key: 'grupo', width: 28 },
+            { header: 'CATEGORÍA / CONCEPTO', key: 'categoria', width: 32 },
+            { header: 'DESCRIPCIÓN / RENGLÓN', key: 'descripcion', width: 42 },
+            { header: 'FECHA', key: 'fecha', width: 14 },
+            { header: 'SOLICITANTE', key: 'solicitante', width: 22 },
+            { header: 'MONTO ($)', key: 'monto', width: 18 }
+        ];
+
+        worksheet.getRow(3).values = cols.map(c => c.header);
+        worksheet.getRow(3).height = 24;
+        for (let col = 1; col <= 6; col++) {
+            const cell = worksheet.getCell(3, col);
+            cell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF3B82F6' } };
+            cell.alignment = { horizontal: 'center', vertical: 'middle' };
+        }
+
+        const rowsFiltradas = costosRows.filter(r => r.cc === filtroCC || r.cc?.includes(filtroCC));
+
+        let currentIdx = 4;
+        rowsFiltradas.forEach(r => {
+            const catLower = (r.categoria || '').toLowerCase().trim();
+            const grupo = MAPPING_CATEGORIAS[catLower] || 'Otros Gastos Directos';
+            worksheet.addRow({
+                grupo: grupo,
+                categoria: r.categoria,
+                descripcion: r.descripcion,
+                fecha: r.fecha,
+                solicitante: r.solicitante || 'N/A',
+                monto: Number(r.monto) || 0
+            });
+
+            worksheet.getCell(`A${currentIdx}`).alignment = { horizontal: 'left', vertical: 'middle' };
+            worksheet.getCell(`B${currentIdx}`).alignment = { horizontal: 'left', vertical: 'middle' };
+            worksheet.getCell(`C${currentIdx}`).alignment = { horizontal: 'left', vertical: 'middle' };
+            worksheet.getCell(`D${currentIdx}`).alignment = { horizontal: 'center', vertical: 'middle' };
+            worksheet.getCell(`E${currentIdx}`).alignment = { horizontal: 'left', vertical: 'middle' };
+            
+            const cellM = worksheet.getCell(`F${currentIdx}`);
+            cellM.numFmt = '"$"#,##0.00';
+            cellM.alignment = { horizontal: 'right', vertical: 'middle' };
+            cellM.font = { bold: true };
+
+            currentIdx++;
+        });
+
+        const totalRow = currentIdx;
+        worksheet.getCell(`E${totalRow}`).value = 'TOTAL CENTRO DE COSTO:';
+        worksheet.getCell(`E${totalRow}`).font = { bold: true };
+        worksheet.getCell(`E${totalRow}`).alignment = { horizontal: 'right', vertical: 'middle' };
+        worksheet.getCell(`F${totalRow}`).value = { formula: `=SUM(F4:F${totalRow - 1})` };
+        worksheet.getCell(`F${totalRow}`).font = { bold: true, color: { argb: 'FF1E3A8A' } };
+        worksheet.getCell(`F${totalRow}`).numFmt = '"$"#,##0.00';
+
+        cols.forEach((col, i) => { worksheet.getColumn(i + 1).width = col.width; });
+
+        try {
+            const buffer = await workbook.xlsx.writeBuffer();
+            saveAs(new Blob([buffer]), `Reporte_Matricial_${filtroCC.replace(/[^a-zA-Z0-9]/g, '_')}_${format(new Date(), 'yyyy-MM-dd')}.xlsx`);
+            toast.success("Reporte por Centro de Costo (Matricial) generado con éxito.");
+        } catch (e) {
+            console.error("Error al generar el buffer de ExcelJS:", e);
+            toast.error("Ocurrió un error al escribir el archivo de Excel: " + e.message);
+        }
+    };
+
+    const exportExcelResumenCC = async () => {
+        const workbook = new ExcelJS.Workbook();
+        const worksheet = workbook.addWorksheet('Resumen Global CC');
+
+        worksheet.views = [{ showGridLines: true }];
+
+        const centrosCostosUnicos = Array.from(new Set(costosRows.map(r => r.cc).filter(Boolean)));
+
+        worksheet.mergeCells('A1:C1');
+        const headerCell = worksheet.getCell('A1');
+        headerCell.value = 'RESUMEN GLOBAL POR CENTRO DE COSTO';
+        headerCell.font = { name: 'Calibri', size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
+        headerCell.alignment = { horizontal: 'center', vertical: 'middle' };
+        headerCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } };
+        worksheet.getRow(1).height = 32;
+
+        const columns = [
+            { header: 'CENTRO DE COSTO / PROYECTO', key: 'cc', width: 35 },
+            { header: 'CANTIDAD DE MOVIMIENTOS', key: 'count', width: 22 },
+            { header: 'TOTAL EJECUTADO ($)', key: 'total', width: 25 }
+        ];
+
+        worksheet.getRow(3).values = columns.map(c => c.header);
+        worksheet.getRow(3).height = 24;
+        for (let col = 1; col <= 3; col++) {
+            const cell = worksheet.getCell(3, col);
+            cell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF475569' } };
+            cell.alignment = { horizontal: 'center', vertical: 'middle' };
+        }
+
+        let rowIdx = 4;
+        centrosCostosUnicos.forEach(cc => {
+            const itemsCC = costosRows.filter(r => r.cc === cc);
+            const totalCC = itemsCC.reduce((s, r) => s + (Number(r.monto) || 0), 0);
+
+            worksheet.addRow({
+                cc: cc,
+                count: itemsCC.length,
+                total: totalCC
+            });
+
+            worksheet.getCell(`A${rowIdx}`).alignment = { horizontal: 'left', vertical: 'middle' };
+            worksheet.getCell(`B${rowIdx}`).alignment = { horizontal: 'center', vertical: 'middle' };
+            
+            const cellT = worksheet.getCell(`C${rowIdx}`);
+            cellT.numFmt = '"$"#,##0.00';
+            cellT.alignment = { horizontal: 'right', vertical: 'middle' };
+            cellT.font = { bold: true };
+
+            rowIdx++;
+        });
+
+        const lastRow = rowIdx;
+        worksheet.getCell(`A${lastRow}`).value = 'TOTAL GENERAL:';
+        worksheet.getCell(`A${lastRow}`).font = { bold: true };
+        worksheet.getCell(`B${lastRow}`).value = { formula: `=SUM(B4:B${lastRow - 1})` };
+        worksheet.getCell(`B${lastRow}`).font = { bold: true };
+        worksheet.getCell(`B${lastRow}`).alignment = { horizontal: 'center' };
+
+        worksheet.getCell(`C${lastRow}`).value = { formula: `=SUM(C4:C${lastRow - 1})` };
+        worksheet.getCell(`C${lastRow}`).font = { bold: true, color: { argb: 'FF1E3A8A' } };
+        worksheet.getCell(`C${lastRow}`).numFmt = '"$"#,##0.00';
+
+        columns.forEach((col, i) => { worksheet.getColumn(i + 1).width = col.width; });
+
+        try {
+            const buffer = await workbook.xlsx.writeBuffer();
+            saveAs(new Blob([buffer]), `Resumen_Global_Centros_Costo_${format(new Date(), 'yyyy-MM-dd')}.xlsx`);
+            toast.success("Resumen Global por CC generado con éxito.");
+        } catch (e) {
+            console.error("Error al generar el resumen por CC:", e);
+            toast.error("Error al escribir el archivo: " + e.message);
+        }
+    };
+
+    const exportExcelBeneficiarios = async (rowsToExport, title = "Reporte_Beneficiarios") => {
+        const workbook = new ExcelJS.Workbook();
+        const worksheet = workbook.addWorksheet('Beneficiarios');
+
+        worksheet.views = [{ showGridLines: true }];
+
+        worksheet.mergeCells('A1:I1');
+        const headerCell = worksheet.getCell('A1');
+        headerCell.value = title.replace(/_/g, ' ').toUpperCase();
+        headerCell.font = { name: 'Calibri', size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
+        headerCell.alignment = { horizontal: 'center', vertical: 'middle' };
+        headerCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } };
+        worksheet.getRow(1).height = 35;
+
+        worksheet.mergeCells('A2:I2');
+        const subCell = worksheet.getCell('A2');
+        subCell.value = `Generado el: ${new Date().toLocaleString()}`;
+        subCell.font = { name: 'Calibri', size: 9, italic: true };
+        subCell.alignment = { horizontal: 'center', vertical: 'middle' };
+        worksheet.getRow(2).height = 18;
+
+        const columns = [
+            { header: 'N° REF / DOCUMENTO', key: 'ref', width: 22 },
+            { header: 'TIPO', key: 'tipo', width: 18 },
+            { header: 'FECHA REGISTRO', key: 'fecha', width: 16 },
+            { header: 'BENEFICIARIO', key: 'beneficiario', width: 32 },
+            { header: 'CEDULA / RIF', key: 'documento', width: 16 },
+            { header: 'CENTRO COSTO / PROYECTO', key: 'cc', width: 25 },
+            { header: 'CONCEPTO / DETALLE', key: 'concepto', width: 38 },
+            { header: 'MONTO', key: 'monto', width: 16 },
+            { header: 'ESTADO', key: 'estado', width: 15 }
+        ];
+
+        worksheet.getRow(4).values = columns.map(c => c.header);
+        worksheet.getRow(4).height = 24;
+
+        for (let col = 1; col <= 9; col++) {
+            const cell = worksheet.getCell(4, col);
+            cell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF3B82F6' } };
+            cell.alignment = { horizontal: 'center', vertical: 'middle' };
+            cell.border = {
+                top: { style: 'thin' },
+                bottom: { style: 'medium' },
+                left: { style: 'thin' },
+                right: { style: 'thin' }
+            };
+        }
+
+        rowsToExport.forEach((r, idx) => {
+            const rowIdx = 5 + idx;
+            worksheet.addRow({
+                ref: r.ref,
+                tipo: r.tipo,
+                fecha: r.fecha,
+                beneficiario: r.beneficiario,
+                documento: r.documento,
+                cc: r.centroCosto,
+                concepto: r.concepto,
+                monto: r.monto,
+                estado: r.estado
+            });
+
+            worksheet.getRow(rowIdx).height = 20;
+
+            worksheet.getCell(`A${rowIdx}`).alignment = { horizontal: 'center', vertical: 'middle' };
+            worksheet.getCell(`A${rowIdx}`).font = { name: 'Calibri', size: 10, bold: true };
+            worksheet.getCell(`B${rowIdx}`).alignment = { horizontal: 'center', vertical: 'middle' };
+            worksheet.getCell(`C${rowIdx}`).alignment = { horizontal: 'center', vertical: 'middle' };
+            worksheet.getCell(`D${rowIdx}`).alignment = { horizontal: 'left', vertical: 'middle' };
+            worksheet.getCell(`E${rowIdx}`).alignment = { horizontal: 'center', vertical: 'middle' };
+            worksheet.getCell(`F${rowIdx}`).alignment = { horizontal: 'left', vertical: 'middle' };
+            worksheet.getCell(`G${rowIdx}`).alignment = { horizontal: 'left', vertical: 'middle' };
+
+            const cellMonto = worksheet.getCell(`H${rowIdx}`);
+            cellMonto.value = Number(r.monto) || 0;
+            cellMonto.numFmt = r.moneda === 'Bs' ? '"Bs."#,##0.00' : '"$"#,##0.00';
+            cellMonto.alignment = { horizontal: 'right', vertical: 'middle' };
+            cellMonto.font = { name: 'Calibri', size: 10, bold: true };
+
+            worksheet.getCell(`I${rowIdx}`).alignment = { horizontal: 'center', vertical: 'middle' };
+
+            for (let col = 1; col <= 9; col++) {
+                worksheet.getCell(rowIdx, col).border = {
+                    top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+                    bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+                    left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+                    right: { style: 'thin', color: { argb: 'FFE2E8F0' } }
+                };
+            }
+        });
+
+        columns.forEach((col, i) => { worksheet.getColumn(i + 1).width = col.width; });
+
+        try {
+            const buffer = await workbook.xlsx.writeBuffer();
+            saveAs(new Blob([buffer]), `${title}_${format(new Date(), 'yyyy-MM-dd')}.xlsx`);
+            toast.success("Excel de beneficiarios exportado con éxito.");
+        } catch (err) {
+            console.error("Error al exportar beneficiarios a excel:", err);
+            toast.error("Ocurrió un error al generar el archivo Excel: " + err.message);
+        }
+    };
+
     const exportPDF = () => {
         const doc = new jsPDF('l', 'mm', 'a4');
         doc.setFillColor(30, 58, 138);
@@ -1021,8 +1530,23 @@ const ReportesMaestro = () => {
                     </div>
                 </div>
                 <div className="rm-actions">
-                    <button className="rm-btn rm-btn-outline" onClick={exportExcel}><FileSpreadsheet size={18} /> EXCEL</button>
-                    <button className="rm-btn rm-btn-outline" style={{ borderColor: '#8b5cf6', color: '#8b5cf6' }} onClick={exportExcelByProject}><FileSpreadsheet size={18} /> EXCEL POR PROYECTO</button>
+                    {activeTab === 'costos' && (
+                        <>
+                            <button className="rm-btn rm-btn-outline" onClick={exportExcelMatricial}><FileSpreadsheet size={18} /> EXCEL POR CC</button>
+                            <button className="rm-btn rm-btn-outline" onClick={exportExcelResumenCC}><FileSpreadsheet size={18} /> EXCEL GLOBAL CC</button>
+                            <button className="rm-btn rm-btn-outline" onClick={exportExcel}><FileSpreadsheet size={18} /> EXCEL</button>
+                            <button className="rm-btn rm-btn-outline" onClick={exportExcelByProject}><FileSpreadsheet size={18} /> EXCEL POR PROYECTO</button>
+                        </>
+                    )}
+                    {activeTab === 'beneficiarios' && (
+                        <button className="rm-btn rm-btn-outline" onClick={() => exportExcelBeneficiarios(beneficiariosFiltrados, "Consulta_Beneficiarios")}><FileSpreadsheet size={18} /> EXPORTAR EXCEL</button>
+                    )}
+                    {activeTab !== 'costos' && activeTab !== 'beneficiarios' && (
+                        <>
+                            <button className="rm-btn rm-btn-outline" onClick={exportExcel}><FileSpreadsheet size={18} /> EXCEL</button>
+                            <button className="rm-btn rm-btn-outline" onClick={exportExcelByProject}><FileSpreadsheet size={18} /> EXCEL POR PROYECTO</button>
+                        </>
+                    )}
                     <button className="rm-btn rm-btn-gradient" onClick={exportPDF}><Printer size={18} /> IMPRIMIR CIERRE</button>
                 </div>
             </div>
@@ -1040,102 +1564,152 @@ const ReportesMaestro = () => {
             </div>
 
             <div className="rm-filter-section-premium">
-                <div className="rm-filter-grid-layout main-filters">
-                    <div className="filter-item-premium">
-                        <label className="filter-label-premium">Fechas</label>
-                        <div className="date-input-group">
-                            <input type="date" value={fechaDesde} onChange={e => setFechaDesde(e.target.value)} />
-                            <input type="date" value={fechaHasta} onChange={e => setFechaHasta(e.target.value)} />
+                {activeTab === 'beneficiarios' ? (
+                    <div className="rm-filter-grid-layout main-filters" style={{ gridTemplateColumns: '2fr 1fr 1.5fr auto' }}>
+                        <div className="filter-item-premium">
+                            <label className="filter-label-premium">Búsqueda Libre</label>
+                            <div className="search-input-wrapper">
+                                <input
+                                    type="text"
+                                    placeholder="Nombre Beneficiario, Cédula / RIF, N° Requisición..."
+                                    value={busquedaBenef}
+                                    onChange={e => setBusquedaBenef(e.target.value)}
+                                />
+                            </div>
+                        </div>
+
+                        <div className="filter-item-premium">
+                            <label className="filter-label-premium">Centro de Costo</label>
+                            <select value={ccBenef} onChange={e => setCcBenef(e.target.value)}>
+                                <option value="Todos">Todos los Centros</option>
+                                {listaCentrosCostos.map(cc => <option key={cc.id} value={cc.nombre}>{cc.nombre}</option>)}
+                            </select>
+                        </div>
+
+                        <div className="filter-item-premium">
+                            <label className="filter-label-premium">Rango de Fechas</label>
+                            <div className="date-input-group">
+                                <input type="date" value={fechaInicioBenef} onChange={e => setFechaInicioBenef(e.target.value)} />
+                                <input type="date" value={fechaFinBenef} onChange={e => setFechaFinBenef(e.target.value)} />
+                            </div>
+                        </div>
+
+                        <div className="filter-item-premium" style={{ alignSelf: 'flex-end' }}>
+                            <button
+                                className="rm-btn rm-btn-outline"
+                                style={{ padding: '8px 12px', fontSize: '0.8rem' }}
+                                onClick={() => {
+                                    setBusquedaBenef('');
+                                    setCcBenef('Todos');
+                                    setFechaInicioBenef('');
+                                    setFechaFinBenef('');
+                                }}
+                            >
+                                Limpiar Filtros
+                            </button>
                         </div>
                     </div>
-
-                    <div className="filter-item-premium" style={{ maxWidth: '120px' }}>
-                        <label className="filter-label-premium">Mes</label>
-                        <select value={filtroMes} onChange={e => setFiltroMes(e.target.value)}>
-                            <option value="Todos">Todos</option>
-                            {["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"].map(m => <option key={m} value={m}>{m}</option>)}
-                        </select>
-                    </div>
-
-                    <div className="filter-item-premium" style={{ maxWidth: '150px' }}>
-                        <label className="filter-label-premium">C. Costo</label>
-                        <select value={filtroCC} onChange={e => setFiltroCC(e.target.value)}>
-                            <option value="Todos">Todos</option>
-                            {listaCentrosCostos.map(cc => <option key={cc.id} value={cc.nombre}>{cc.nombre}</option>)}
-                        </select>
-                    </div>
-
-                    <div className="filter-item-premium" style={{ maxWidth: '150px' }}>
-                        <label className="filter-label-premium">Gerencia</label>
-                        <select
-                            value={activeTab === 'operaciones' ? 'Operaciones' : filtroGerencia}
-                            onChange={e => setFiltroGerencia(e.target.value)}
-                            disabled={activeTab === 'operaciones'}
-                        >
-                            <option value="Todos">Todas</option>
-                            {["Administración Maracaibo", "Administración El Tigre", "Operaciones", "Mantenimiento", "Seguridad", "Recursos Humanos", "Gerencia General"].map(g => <option key={g} value={g}>{g}</option>)}
-                        </select>
-                    </div>
-
-                    <div className="filter-item-premium">
-                        <label className="filter-label-premium">ALM.</label>
-                        <select value={filtroAlmacen} onChange={e => setFiltroAlmacen(e.target.value)}>
-                            <option value="Todos">Todos</option>
-                            <option value="Si">Si 📦</option>
-                            <option value="No">No 📥</option>
-                        </select>
-                    </div>
-
-                    <div className="filter-item-premium" style={{ flex: 1, minWidth: '150px' }}>
-                        <label className="filter-label-premium">Búsqueda</label>
-                        <div className="search-input-wrapper">
-                            <input type="text" placeholder="ID, Descripción..." value={busqueda} onChange={e => setBusqueda(e.target.value)} />
-                        </div>
-                    </div>
-
-                    <div className="filter-item-premium" style={{ alignSelf: 'flex-end', display: 'flex', gap: '8px' }}>
-                        <button
-                            className={`btn-toggle-filters ${showMoreFilters ? 'active' : ''}`}
-                            onClick={() => setShowMoreFilters(!showMoreFilters)}
-                            title="Más Filtros"
-                        >
-                            <Filter size={14} />
-                        </button>
-                    </div>
-                </div>
-
-                <AnimatePresence>
-                    {showMoreFilters && (
-                        <motion.div
-                            initial={{ height: 0, opacity: 0 }}
-                            animate={{ height: 'auto', opacity: 1 }}
-                            exit={{ height: 0, opacity: 0 }}
-                            className="rm-filter-grid-layout secondary-filters"
-                            style={{ overflow: 'hidden', borderTop: '1px dashed #e2e8f0', paddingTop: '10px', marginTop: '10px' }}
-                        >
+                ) : (
+                    <>
+                        <div className="rm-filter-grid-layout main-filters">
                             <div className="filter-item-premium">
-                                <label className="filter-label-premium">Categoría</label>
-                                <select value={filtroCategoria} onChange={e => setFiltroCategoria(e.target.value)}>
-                                    <option value="Todos">Todas</option>
-                                    {Array.from(new Set([
-                                        ...data.requisiciones.flatMap(r => (r.items || []).map(it => it.categoria || it.cat)),
-                                        ...data.tickets.flatMap(t => (t.items || []).map(it => it.categoria || it.cat))
-                                    ].filter(Boolean))).map(cat => (
-                                        <option key={cat} value={cat}>{cat}</option>
-                                    ))}
+                                <label className="filter-label-premium">Fechas</label>
+                                <div className="date-input-group">
+                                    <input type="date" value={fechaDesde} onChange={e => setFechaDesde(e.target.value)} />
+                                    <input type="date" value={fechaHasta} onChange={e => setFechaHasta(e.target.value)} />
+                                </div>
+                            </div>
+
+                            <div className="filter-item-premium" style={{ maxWidth: '120px' }}>
+                                <label className="filter-label-premium">Mes</label>
+                                <select value={filtroMes} onChange={e => setFiltroMes(e.target.value)}>
+                                    <option value="Todos">Todos</option>
+                                    {["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"].map(m => <option key={m} value={m}>{m}</option>)}
                                 </select>
                             </div>
-                            <div className="filter-item-premium">
-                                <label className="filter-label-premium">Semana</label>
-                                <input type="number" placeholder="Ej: 15" value={filtroSemana} onChange={e => setFiltroSemana(e.target.value)} />
+
+                            <div className="filter-item-premium" style={{ maxWidth: '150px' }}>
+                                <label className="filter-label-premium">C. Costo</label>
+                                <select value={filtroCC} onChange={e => setFiltroCC(e.target.value)}>
+                                    <option value="Todos">Todos</option>
+                                    {listaCentrosCostos.map(cc => <option key={cc.id} value={cc.nombre}>{cc.nombre}</option>)}
+                                </select>
                             </div>
-                        </motion.div>
-                    )}
-                </AnimatePresence>
+
+                            <div className="filter-item-premium" style={{ maxWidth: '150px' }}>
+                                <label className="filter-label-premium">Gerencia</label>
+                                <select
+                                    value={activeTab === 'operaciones' ? 'Operaciones' : filtroGerencia}
+                                    onChange={e => setFiltroGerencia(e.target.value)}
+                                    disabled={activeTab === 'operaciones'}
+                                >
+                                    <option value="Todos">Todas</option>
+                                    {["Administración Maracaibo", "Administración El Tigre", "Operaciones", "Mantenimiento", "Seguridad", "Recursos Humanos", "Gerencia General"].map(g => <option key={g} value={g}>{g}</option>)}
+                                </select>
+                            </div>
+
+                            <div className="filter-item-premium">
+                                <label className="filter-label-premium">ALM.</label>
+                                <select value={filtroAlmacen} onChange={e => setFiltroAlmacen(e.target.value)}>
+                                    <option value="Todos">Todos</option>
+                                    <option value="Si">Si 📦</option>
+                                    <option value="No">No 📥</option>
+                                </select>
+                            </div>
+
+                            <div className="filter-item-premium" style={{ flex: 1, minWidth: '150px' }}>
+                                <label className="filter-label-premium">Búsqueda</label>
+                                <div className="search-input-wrapper">
+                                    <input type="text" placeholder="ID, Descripción..." value={busqueda} onChange={e => setBusqueda(e.target.value)} />
+                                </div>
+                            </div>
+
+                            <div className="filter-item-premium" style={{ alignSelf: 'flex-end', display: 'flex', gap: '8px' }}>
+                                <button
+                                    className={`btn-toggle-filters ${showMoreFilters ? 'active' : ''}`}
+                                    onClick={() => setShowMoreFilters(!showMoreFilters)}
+                                    title="Más Filtros"
+                                >
+                                    <Filter size={14} />
+                                </button>
+                            </div>
+                        </div>
+
+                        <AnimatePresence>
+                            {showMoreFilters && (
+                                <motion.div
+                                    initial={{ height: 0, opacity: 0 }}
+                                    animate={{ height: 'auto', opacity: 1 }}
+                                    exit={{ height: 0, opacity: 0 }}
+                                    className="rm-filter-grid-layout secondary-filters"
+                                    style={{ overflow: 'hidden', borderTop: '1px dashed #e2e8f0', paddingTop: '10px', marginTop: '10px' }}
+                                >
+                                    <div className="filter-item-premium">
+                                        <label className="filter-label-premium">Categoría</label>
+                                        <select value={filtroCategoria} onChange={e => setFiltroCategoria(e.target.value)}>
+                                            <option value="Todos">Todas</option>
+                                            {Array.from(new Set([
+                                                ...(data.requisiciones || []).flatMap(r => (r.items || []).map(it => it.categoria || it.cat)),
+                                                ...(data.tickets || []).flatMap(t => (t.items || []).map(it => it.categoria || it.cat))
+                                            ].filter(Boolean))).map(cat => (
+                                                <option key={cat} value={cat}>{cat}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <div className="filter-item-premium">
+                                        <label className="filter-label-premium">Semana</label>
+                                        <input type="number" placeholder="Ej: 15" value={filtroSemana} onChange={e => setFiltroSemana(e.target.value)} />
+                                    </div>
+                                </motion.div>
+                            )}
+                        </AnimatePresence>
+                    </>
+                )}
             </div>
 
             <div className="rm-tabs">
                 <button className={`rm-tab ${activeTab === 'costos' ? 'active' : ''}`} onClick={() => setActiveTab('costos')}>RELACIÓN DE GASTOS</button>
+                <button className={`rm-tab ${activeTab === 'beneficiarios' ? 'active' : ''}`} onClick={() => setActiveTab('beneficiarios')}>CONSULTA DE BENEFICIARIOS</button>
                 <button className={`rm-tab ${activeTab === 'reqs' ? 'active' : ''}`} onClick={() => setActiveTab('reqs')}>CONTROL DE REQUISICIONES</button>
                 <button className={`rm-tab ${activeTab === 'tickets_ctrl' ? 'active' : ''}`} onClick={() => setActiveTab('tickets_ctrl')}>CONTROL DE TICKETS</button>
                 <button className={`rm-tab ${activeTab === 'operaciones' ? 'active' : ''}`} onClick={() => { setActiveTab('operaciones'); setFiltroGerencia('Operaciones'); }}>REPORTE OPERACIONES</button>
@@ -1162,15 +1736,15 @@ const ReportesMaestro = () => {
                             </select>
                             <select value={filtroCategoria} onChange={e => setFiltroCategoria(e.target.value)}>
                                 <option value="Todos">Categoría (Todas)</option>
-                                {Array.from(new Set(data.requisiciones.flatMap(r => (r.items || []).map(it => it.categoria)).filter(Boolean))).map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                                {Array.from(new Set((data.requisiciones || []).flatMap(r => (r.items || []).map(it => it.categoria)).filter(Boolean))).map(cat => <option key={cat} value={cat}>{cat}</option>)}
                             </select>
                             <select value={filtroCC_Tab} onChange={e => setFiltroCC_Tab(e.target.value)}>
                                 <option value="Todos">Proyecto/CC (Todos)</option>
-                                {Array.from(new Set(data.requisiciones.map(r => r.centro_costo).filter(Boolean))).map(cc => <option key={cc} value={cc}>{cc}</option>)}
+                                {Array.from(new Set((data.requisiciones || []).map(r => r.centro_costo).filter(Boolean))).map(cc => <option key={cc} value={cc}>{cc}</option>)}
                             </select>
                             <select value={filtroSolicitante} onChange={e => setFiltroSolicitante(e.target.value)}>
                                 <option value="Todos">Solicitante (Todos)</option>
-                                {Array.from(new Set(data.requisiciones.map(r => r.solicitante))).map(s => <option key={s} value={s}>{s}</option>)}
+                                {Array.from(new Set((data.requisiciones || []).map(r => r.solicitante).filter(Boolean))).map(s => <option key={s} value={s}>{s}</option>)}
                             </select>
                         </div>
                     </div>
@@ -1190,11 +1764,11 @@ const ReportesMaestro = () => {
                             </select>
                             <select value={filtroCategoria} onChange={e => setFiltroCategoria(e.target.value)}>
                                 <option value="Todos">Categoría (Todas)</option>
-                                {Array.from(new Set(data.tickets.map(t => t.clasificacion_admin).filter(Boolean))).map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                                {Array.from(new Set((data.tickets || []).map(t => t.clasificacion_admin).filter(Boolean))).map(cat => <option key={cat} value={cat}>{cat}</option>)}
                             </select>
                             <select value={filtroCC_Tab} onChange={e => setFiltroCC_Tab(e.target.value)}>
                                 <option value="Todos">Proyecto/CC (Todos)</option>
-                                {Array.from(new Set(data.tickets.map(t => t.centro_costo).filter(Boolean))).map(cc => <option key={cc} value={cc}>{cc}</option>)}
+                                {Array.from(new Set((data.tickets || []).map(t => t.centro_costo).filter(Boolean))).map(cc => <option key={cc} value={cc}>{cc}</option>)}
                             </select>
                         </div>
                     </div>
@@ -1562,6 +2136,99 @@ const ReportesMaestro = () => {
                                     {reporteOperacionesRows.length === 0 && (
                                         <div style={{ padding: '60px', textAlign: 'center', color: '#94a3b8' }}>
                                             No se encontraron proyectos de Operaciones.
+                                        </div>
+                                    )}
+                                </div>
+                            </motion.div>
+                        )}
+
+                        {activeTab === 'beneficiarios' && (
+                            <motion.div key="beneficiarios" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="rm-view-wrapper">
+                                <div className="rm-table-card">
+                                    <table className="rm-table">
+                                        <thead>
+                                            <tr>
+                                                <th style={{ width: '160px' }}>REF / CORRELATIVO</th>
+                                                <th style={{ width: '150px' }}>TIPO</th>
+                                                <th style={{ width: '130px' }}>FECHA</th>
+                                                <th>BENEFICIARIO</th>
+                                                <th style={{ width: '140px' }}>CÉDULA / RIF</th>
+                                                <th>CENTRO DE COSTO</th>
+                                                <th>CONCEPTO / DETALLE</th>
+                                                <th style={{ textAlign: 'right', width: '150px' }}>MONTO</th>
+                                                <th style={{ textAlign: 'center', width: '130px' }}>ESTADO</th>
+                                                <th style={{ textAlign: 'center', width: '110px' }}>ACCIONES</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {beneficiariosFiltrados.map((row) => (
+                                                <tr key={row.key}>
+                                                    <td>
+                                                        <span 
+                                                            className="rm-table-link"
+                                                            style={{ cursor: 'pointer', fontWeight: 'bold', color: '#1e40af', textDecoration: 'underline' }}
+                                                            onClick={() => {
+                                                                if (row.tipo === 'Requisición') handleOpenRequisicion(row.ref, `REQ-${row.id}`);
+                                                                else if (row.tipo === 'Ticket Directo') handleOpenTicket(row.ref, `TK-${row.id}`);
+                                                                else toast.info(`Solicitud de Fondo: ${row.ref}`);
+                                                            }}
+                                                        >
+                                                            {row.ref}
+                                                        </span>
+                                                    </td>
+                                                    <td>
+                                                        <span style={{ fontSize: '0.8rem', fontWeight: '700', padding: '3px 8px', borderRadius: '6px', backgroundColor: row.tipo === 'Requisición' ? '#e0f2fe' : (row.tipo === 'Solicitud de Fondo' ? '#fef3c7' : '#f3e8ff'), color: row.tipo === 'Requisición' ? '#0369a1' : (row.tipo === 'Solicitud de Fondo' ? '#b45309' : '#6b21a8') }}>
+                                                            {row.tipo}
+                                                        </span>
+                                                    </td>
+                                                    <td style={{ fontSize: '0.85rem' }}>{safeFormatDate(row.fecha)}</td>
+                                                    <td>
+                                                        <span 
+                                                            style={{ cursor: 'pointer', fontWeight: '700', color: '#0f172a', textDecoration: 'underline', textUnderlineOffset: '3px' }}
+                                                            onClick={() => setBeneficiarioSeleccionado(row.beneficiario)}
+                                                            title="Ver historial completo acumulado de este beneficiario"
+                                                        >
+                                                            {row.beneficiario}
+                                                        </span>
+                                                    </td>
+                                                    <td>
+                                                        <span style={{ fontFamily: 'monospace', fontSize: '0.85rem', fontWeight: '600', color: '#475569' }}>
+                                                            {row.documento}
+                                                        </span>
+                                                    </td>
+                                                    <td>
+                                                        <span style={{ fontSize: '0.85rem', color: '#334155' }}>
+                                                            {row.centroCosto}
+                                                        </span>
+                                                    </td>
+                                                    <td style={{ fontSize: '0.85rem', color: '#475569' }}>
+                                                        {row.concepto}
+                                                    </td>
+                                                    <td style={{ textAlign: 'right', fontWeight: '800', fontSize: '0.9rem', color: row.moneda === 'Bs' ? '#4f46e5' : '#059669' }}>
+                                                        {row.moneda === 'Bs' ? `Bs. ${row.monto.toLocaleString('de-DE', { minimumFractionDigits: 2 })}` : `$ ${row.monto.toLocaleString('de-DE', { minimumFractionDigits: 2 })}`}
+                                                    </td>
+                                                    <td style={{ textAlign: 'center' }}>
+                                                        <span className={`rm-badge-status ${String(row.estado).toLowerCase().replace(/\s+/g, '_')}`}>
+                                                            {row.estado}
+                                                        </span>
+                                                    </td>
+                                                    <td style={{ textAlign: 'center' }}>
+                                                        <button
+                                                            className="rm-btn rm-btn-outline"
+                                                            style={{ padding: '4px 8px', fontSize: '0.75rem' }}
+                                                            onClick={() => setBeneficiarioSeleccionado(row.beneficiario)}
+                                                            title="Histórico del Beneficiario"
+                                                        >
+                                                            <User size={14} /> Auditar
+                                                        </button>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                    {beneficiariosFiltrados.length === 0 && (
+                                        <div style={{ padding: '60px', textAlign: 'center', color: '#94a3b8' }}>
+                                            No se encontraron beneficiarios con los criterios seleccionados.
                                         </div>
                                     )}
                                 </div>
@@ -2063,6 +2730,126 @@ const ReportesMaestro = () => {
                             </div>
                         </motion.div>
                     </div>
+                )}
+            </AnimatePresence>
+
+            {/* MODAL / OVERLAY VISTA INVERSA (HISTORIAL DE BENEFICIARIO SELECCIONADO) */}
+            <AnimatePresence>
+                {beneficiarioSeleccionado && (
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15, 23, 42, 0.75)', backdropFilter: 'blur(4px)', zIndex: 99999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}
+                        onClick={() => setBeneficiarioSeleccionado(null)}
+                    >
+                        <motion.div
+                            initial={{ scale: 0.95, y: 20 }}
+                            animate={{ scale: 1, y: 0 }}
+                            exit={{ scale: 0.95, y: 20 }}
+                            style={{ backgroundColor: '#ffffff', borderRadius: '16px', width: '100%', maxWidth: '1100px', maxHeight: '90vh', overflow: 'hidden', display: 'flex', flexDirection: 'column', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)' }}
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            {/* Header Modal */}
+                            <div style={{ padding: '20px 24px', backgroundColor: '#1e3a8a', color: '#ffffff', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                        <User size={24} color="#93c5fd" />
+                                        <h2 style={{ margin: 0, fontSize: '1.4rem', fontWeight: '800' }}>{beneficiarioSeleccionado}</h2>
+                                    </div>
+                                    <p style={{ margin: '4px 0 0 34px', fontSize: '0.85rem', color: '#bfdbfe' }}>
+                                        Cédula / RIF: <strong style={{ fontFamily: 'monospace' }}>{kpisBenefSeleccionado.docId}</strong> | Histórico acumulado de transacciones
+                                    </p>
+                                </div>
+                                <button
+                                    onClick={() => setBeneficiarioSeleccionado(null)}
+                                    style={{ background: 'none', border: 'none', color: '#ffffff', cursor: 'pointer', padding: '6px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                                >
+                                    <X size={24} />
+                                </button>
+                            </div>
+
+                            {/* KPIs Modal */}
+                            <div style={{ padding: '16px 24px', backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px' }}>
+                                <div style={{ backgroundColor: '#ffffff', padding: '12px 16px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+                                    <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#64748b', textTransform: 'uppercase' }}>Operaciones Registradas</span>
+                                    <h3 style={{ margin: '4px 0 0 0', fontSize: '1.4rem', fontWeight: '900', color: '#0f172a' }}>{transaccionesBenefSeleccionado.length}</h3>
+                                </div>
+                                <div style={{ backgroundColor: '#ffffff', padding: '12px 16px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+                                    <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#059669', textTransform: 'uppercase' }}>Total Acumulado ($)</span>
+                                    <h3 style={{ margin: '4px 0 0 0', fontSize: '1.4rem', fontWeight: '900', color: '#059669' }}>$ {kpisBenefSeleccionado.totalUSD.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</h3>
+                                </div>
+                                <div style={{ backgroundColor: '#ffffff', padding: '12px 16px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+                                    <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#4f46e5', textTransform: 'uppercase' }}>Total Acumulado (Bs)</span>
+                                    <h3 style={{ margin: '4px 0 0 0', fontSize: '1.4rem', fontWeight: '900', color: '#4f46e5' }}>Bs. {kpisBenefSeleccionado.totalBs.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</h3>
+                                </div>
+                            </div>
+
+                            {/* Actions Bar */}
+                            <div style={{ padding: '12px 24px', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                                <button
+                                    className="rm-btn rm-btn-outline"
+                                    style={{ fontSize: '0.8rem', padding: '6px 14px' }}
+                                    onClick={() => exportExcelBeneficiarios(transaccionesBenefSeleccionado, `Historial_${beneficiarioSeleccionado.replace(/\s+/g, '_')}`)}
+                                >
+                                    <FileSpreadsheet size={16} /> EXPORTAR HISTORIAL A EXCEL
+                                </button>
+                            </div>
+
+                            {/* Table Modal */}
+                            <div style={{ padding: '24px', overflowY: 'auto', flex: 1 }}>
+                                <table className="rm-table">
+                                    <thead>
+                                        <tr>
+                                            <th style={{ width: '160px' }}>N° REF</th>
+                                            <th style={{ width: '140px' }}>TIPO</th>
+                                            <th style={{ width: '130px' }}>FECHA</th>
+                                            <th>CENTRO DE COSTO</th>
+                                            <th>CONCEPTO / DESCRIPCIÓN</th>
+                                            <th style={{ textAlign: 'right', width: '140px' }}>MONTO</th>
+                                            <th style={{ textAlign: 'center', width: '120px' }}>ESTADO</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {transaccionesBenefSeleccionado.map((t) => (
+                                            <tr key={t.key}>
+                                                <td>
+                                                    <span 
+                                                        className="rm-table-link"
+                                                        style={{ cursor: 'pointer', fontWeight: 'bold', color: '#1e40af' }}
+                                                        onClick={() => {
+                                                            setBeneficiarioSeleccionado(null);
+                                                            if (t.tipo === 'Requisición') handleOpenRequisicion(t.ref, `REQ-${t.id}`);
+                                                            else if (t.tipo === 'Ticket Directo') handleOpenTicket(t.ref, `TK-${t.id}`);
+                                                            else toast.info(`Solicitud de Fondo: ${t.ref}`);
+                                                        }}
+                                                    >
+                                                        {t.ref}
+                                                    </span>
+                                                </td>
+                                                <td>
+                                                    <span style={{ fontSize: '0.75rem', fontWeight: '700', padding: '2px 6px', borderRadius: '4px', backgroundColor: '#f1f5f9', color: '#475569' }}>
+                                                        {t.tipo}
+                                                    </span>
+                                                </td>
+                                                <td>{safeFormatDate(t.fecha)}</td>
+                                                <td>{t.centroCosto}</td>
+                                                <td>{t.concepto}</td>
+                                                <td style={{ textAlign: 'right', fontWeight: '800', color: t.moneda === 'Bs' ? '#4f46e5' : '#059669' }}>
+                                                    {t.moneda === 'Bs' ? `Bs. ${t.monto.toLocaleString('de-DE', { minimumFractionDigits: 2 })}` : `$ ${t.monto.toLocaleString('de-DE', { minimumFractionDigits: 2 })}`}
+                                                </td>
+                                                <td style={{ textAlign: 'center' }}>
+                                                    <span className={`rm-badge-status ${String(t.estado).toLowerCase().replace(/\s+/g, '_')}`}>
+                                                        {t.estado}
+                                                    </span>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </motion.div>
+                    </motion.div>
                 )}
             </AnimatePresence>
         </div>

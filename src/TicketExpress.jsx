@@ -300,7 +300,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
           const factUrls = Array.isArray(t.factura_url) ? t.factura_url : (t.factura_url ? [t.factura_url] : []);
           setForm({
             id: t.id,
-            fecha: t.fecha_emision,
+            fecha: t.fecha_emision ? t.fecha_emision.substring(0, 10) : '',
             gerente: t.gerente_nombre,
             solicitante: t.gerente_nombre,
             departamento: t.departamento,
@@ -703,49 +703,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
                                      currentUser?.esSuperAdmin === true ||
                                      currentUser?.esAdminReal === true;
 
-      const cc = form.centro_costo || form.partidas?.[0]?.cc || null;
-      let targetAprobadorId = null;
-
-      if (!esGerenteOCorporativo) {
-        targetAprobadorId = currentUser?.gerente_directo_id || null;
-
-        if (!targetAprobadorId && cc) {
-          const { data: gerentesProyecto } = await supabase
-            .from('perfiles')
-            .select('id')
-            .contains('obras_asignadas', [cc])
-            .ilike('rol', '%proyecto%')
-            .limit(1);
-          if (gerentesProyecto && gerentesProyecto.length > 0) {
-            targetAprobadorId = gerentesProyecto[0].id;
-          }
-        }
-
-        if (!targetAprobadorId && currentUser?.departamento) {
-          const { data: gerentesDepto } = await supabase
-            .from('perfiles')
-            .select('id')
-            .eq('departamento', currentUser.departamento)
-            .in('rol', ['Gerente', 'Coordinador', 'Director'])
-            .limit(1);
-          if (gerentesDepto && gerentesDepto.length > 0) {
-            targetAprobadorId = gerentesDepto[0].id;
-          }
-        }
-
-        if (!targetAprobadorId) {
-          const { data: defaultAdmins } = await supabase
-            .from('perfiles')
-            .select('id')
-            .in('rol', ['Gerente General', 'Admin', 'Director'])
-            .limit(1);
-          if (defaultAdmins && defaultAdmins.length > 0) {
-            targetAprobadorId = defaultAdmins[0].id;
-          }
-        }
-      }
-
-      // Buscar ID del Gerente General
+      // Buscar ID del Gerente General primero para usarlo como fallback
       let ggId = null;
       try {
         const { data: ggData } = await supabase
@@ -767,6 +725,80 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
         }
       } catch (err) {
         console.error("Error al obtener Gerente General:", err);
+      }
+
+      const cc = form.centro_costo || form.partidas?.[0]?.cc || null;
+      let targetAprobadorId = null;
+
+      if (!esGerenteOCorporativo) {
+        const deptoNormalizado = (form.departamento || currentUser?.departamento || '').trim().toLowerCase();
+
+        if (deptoNormalizado.includes('operac')) {
+          // En Operaciones, buscar gerente de proyecto de la obra (CC)
+          if (cc) {
+            const { data: gerentesProyecto } = await supabase
+              .from('perfiles')
+              .select('id')
+              .contains('obras_asignadas', [cc])
+              .ilike('rol', '%proyecto%')
+              .limit(1);
+            if (gerentesProyecto && gerentesProyecto.length > 0) {
+              targetAprobadorId = gerentesProyecto[0].id;
+            }
+          }
+          // Si no se asignó un gerente de proyecto para esa obra, usar gerente_directo_id o Carlos Vega
+          if (!targetAprobadorId) {
+            targetAprobadorId = currentUser?.gerente_directo_id || ggId;
+          }
+        } else if (deptoNormalizado.includes('estimac')) {
+          // En Estimaciones, el gerente directo para aprobaciones es Karin Machado (karincmm1@gmail.com)
+          try {
+            const { data: karinData } = await supabase
+              .from('perfiles')
+              .select('id')
+              .eq('correo', 'karincmm1@gmail.com')
+              .limit(1);
+            if (karinData && karinData.length > 0) {
+              targetAprobadorId = karinData[0].id;
+            }
+          } catch (e) {
+            console.error("Error al buscar a Karin Machado:", e);
+          }
+          if (!targetAprobadorId) {
+            targetAprobadorId = currentUser?.gerente_directo_id || ggId;
+          }
+        } else {
+          // Lógica por defecto para otros departamentos
+          targetAprobadorId = currentUser?.gerente_directo_id || null;
+
+          if (!targetAprobadorId && cc) {
+            const { data: gerentesProyecto } = await supabase
+              .from('perfiles')
+              .select('id')
+              .contains('obras_asignadas', [cc])
+              .ilike('rol', '%proyecto%')
+              .limit(1);
+            if (gerentesProyecto && gerentesProyecto.length > 0) {
+              targetAprobadorId = gerentesProyecto[0].id;
+            }
+          }
+
+          if (!targetAprobadorId && currentUser?.departamento) {
+            const { data: gerentesDepto } = await supabase
+              .from('perfiles')
+              .select('id')
+              .eq('departamento', currentUser.departamento)
+              .in('rol', ['Gerente', 'Coordinador', 'Director'])
+              .limit(1);
+            if (gerentesDepto && gerentesDepto.length > 0) {
+              targetAprobadorId = gerentesDepto[0].id;
+            }
+          }
+
+          if (!targetAprobadorId) {
+            targetAprobadorId = ggId;
+          }
+        }
       }
 
       const emailLower = (currentUser?.correo || '').toLowerCase().trim();
@@ -949,7 +981,8 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
           clasificacion_admin: form.clasificacion_admin,
           justificacion: form.justificacion || form.justificacion_detallada || null,
           con_iva: form.con_iva !== false,
-          prioridad: form.prioridad || 'Normal'
+          prioridad: form.prioridad || 'Normal',
+          fecha_emision: form.fecha
         })
         .eq('id', form.id);
 
@@ -1363,7 +1396,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
     setIsEditing(true); // Usamos isEditing para modo "Ver/Solo Lectura"
     setForm({
       id: t.id,
-      fecha: t.fecha_emision,
+      fecha: t.fecha_emision ? t.fecha_emision.substring(0, 10) : '',
       gerente: t.gerente_nombre,
       solicitante: t.gerente_nombre, // Compatibilidad con tickets viejos
       departamento: t.departamento,
