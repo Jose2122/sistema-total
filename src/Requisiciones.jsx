@@ -178,15 +178,37 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
           );
         }
       } else if (estado === 'enviada_general') {
-        const { data: carlos } = await supabase
-          .from('perfiles')
-          .select('id')
-          .ilike('rol', 'Gerente General')
-          .limit(1)
-          .single();
-        if (carlos) {
+        let destinatarioGGId = null;
+        const deptoLower = (gerenciaDepto || '').toLowerCase();
+        if (deptoLower.includes('el tigre') || deptoLower.includes('tigre')) {
+          // Si es El Tigre, notificar a Favio Bavuso
+          const { data: favioData } = await supabase
+            .from('perfiles')
+            .select('id')
+            .ilike('nombre', '%Favio%')
+            .ilike('apellido', '%Bavuso%')
+            .limit(1);
+          if (favioData && favioData.length > 0) {
+            destinatarioGGId = favioData[0].id;
+          }
+        }
+        
+        if (!destinatarioGGId) {
+          // Fallback a Carlos Vega (Gerente General de la empresa)
+          const { data: carlos } = await supabase
+            .from('perfiles')
+            .select('id')
+            .ilike('rol', 'Gerente General')
+            .limit(1)
+            .single();
+          if (carlos) {
+            destinatarioGGId = carlos.id;
+          }
+        }
+
+        if (destinatarioGGId) {
           await enviarNotificacion(
-            carlos.id,
+            destinatarioGGId,
             `Nueva Requisición ${correlativo} de ${creadorNombre} requiere su Aprobación Final.`,
             'Aprobación Pendiente',
             reqId
@@ -330,14 +352,21 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
           query = query.or(orQ);
 
         } else if (rolUserLower.includes('gerente') || rolUserLower.includes('coordinador')) {
-          // 2. GERENTES DE ÁREA/PROYECTO: Ven su DEPARTAMENTO Y sus OBRAS ASIGNADAS (AND, no OR)
+          // 2. GERENTES DE ÁREA/PROYECTO: Ven su DEPARTAMENTO O sus OBRAS ASIGNADAS (OR, no AND)
+          // También ven las requisiciones donde son el gerente directo del creador.
+          let orConditions = [];
           if (deptoMatch) {
-            query = query.ilike('gerencia', `%${deptoMatch}%`);
+            orConditions.push(`gerencia.ilike.%${deptoMatch}%`);
           }
           if (misObras.length > 0) {
-            query = query.in('centro_costo', misObras);
+            const obrasFiltro = `centro_costo.in.(${misObras.map(o => `"${o}"`).join(',')})`;
+            orConditions.push(obrasFiltro);
           }
-          if (!deptoMatch && misObras.length === 0) {
+          orConditions.push(`user_id.eq.${userIdMatch}`);
+
+          if (orConditions.length > 0) {
+            query = query.or(orConditions.join(','));
+          } else {
             // Seguridad de respaldo
             query = query.or(`user_id.eq.${userIdMatch},solicitante.ilike.%${nombreMatch}%`);
           }
@@ -1426,8 +1455,12 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
 
   const manejarAprobarGerenteArea = async () => {
     const reqActual = historial.find(h => String(h.id) === String(editandoId));
-    if (!editandoId || !currentUser?.rol?.toLowerCase()?.includes('gerente')) {
-      toast.error('Solo el Gerente de Área puede realizar esta aprobación.');
+    const esGerenteArea = currentUser?.rol?.toLowerCase()?.includes('gerente') && !currentUser?.rol?.toLowerCase()?.includes('general');
+    const esSuGerenteDirecto = gerenteDirectoIdCreador && currentUser?.id === gerenteDirectoIdCreador;
+    const esFavio = (currentUser?.nombre || '').toUpperCase().includes('FAVIO') && (currentUser?.apellido || '').toUpperCase().includes('BAVUSO');
+
+    if (!editandoId || (!esGerenteArea && !esSuGerenteDirecto && !esFavio)) {
+      toast.error('Solo el Gerente de Área o el superior directo correspondiente puede realizar esta aprobación.');
       return;
     }
     if (reqActual?.solicitante === `${currentUser.nombre} ${currentUser.apellido}`) {
@@ -1436,36 +1469,79 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     }
     setLoading(true);
     try {
-      const { error } = await supabase.from('requisiciones').update({
-        aprobado_gerente_area: true,
-        firma_gerente: currentUser.firma_url || null, // Firma Nivel 1 guardada en firma_gerente
-        estado_aprobacion: 'enviada_general',
-        aprobacion_nombre: 'Aprobado por Área',
-        f_aprobacion_area: new Date().toISOString(),
-        n_aprobacion_area: `${currentUser.nombre} ${currentUser.apellido}`.trim()
-      }).eq('id', editandoId);
-      if (error) throw error;
-      toast.success('Aprobada por Gerente de Área. Enviada al Gerente General.');
-      
-      // NOTIFICAR AL GERENTE GENERAL
-      try {
-        const { data: carlos } = await supabase
-          .from('perfiles')
-          .select('id')
-          .ilike('rol', 'Gerente General')
-          .limit(1)
-          .single();
-        if (carlos) {
-          const correlativoStr = reqActual?.correlativo || reqActual?.correlativo_req || `ID: ${editandoId}`;
-          await enviarNotificacion(
-            carlos.id,
-            `Requisición ${correlativoStr} aprobada por Área. Requiere su Aprobación Final.`,
-            'Aprobación Pendiente',
-            editandoId
-          );
+      if (esFavio) {
+        // Favio es el máximo tope de aprobación para El Tigre. Si él la aprueba, pasa directo a compras.
+        const updates = {
+          aprobado_gerente_area: true,
+          firma_gerente: currentUser.firma_url || null,
+          aprobado_gerente_general: true,
+          firma_gerente_general: currentUser.firma_url || null,
+          estado_aprobacion: 'aprobado_final',
+          aprobacion_nombre: 'Aprobación Final (Favio Bavuso)',
+          status_compra: 'En espera',
+          f_aprobacion_area: new Date().toISOString(),
+          n_aprobacion_area: `${currentUser.nombre} ${currentUser.apellido}`.trim(),
+          f_aprobacion_general: new Date().toISOString(),
+          n_aprobacion_general: `${currentUser.nombre} ${currentUser.apellido}`.trim()
+        };
+
+        const { error } = await supabase.from('requisiciones').update(updates).eq('id', editandoId);
+        if (error) throw error;
+        toast.success('Aprobación Final registrada por Favio Bavuso. Enviada directamente a Compras.');
+      } else {
+        // Flujo normal: enviar a aprobación de Gerente General
+        const { error } = await supabase.from('requisiciones').update({
+          aprobado_gerente_area: true,
+          firma_gerente: currentUser.firma_url || null, // Firma Nivel 1 guardada en firma_gerente
+          estado_aprobacion: 'enviada_general',
+          aprobacion_nombre: 'Aprobado por Área',
+          f_aprobacion_area: new Date().toISOString(),
+          n_aprobacion_area: `${currentUser.nombre} ${currentUser.apellido}`.trim()
+        }).eq('id', editandoId);
+        if (error) throw error;
+        toast.success('Aprobada por Gerente de Área. Enviada al Gerente General.');
+        
+        // NOTIFICAR AL GERENTE GENERAL
+        try {
+          let destinatarioGGId = null;
+          const deptoLower = (reqActual?.gerencia || '').toLowerCase();
+          if (deptoLower.includes('el tigre') || deptoLower.includes('tigre')) {
+            // Si es El Tigre, notificar a Favio Bavuso
+            const { data: favioData } = await supabase
+              .from('perfiles')
+              .select('id')
+              .ilike('nombre', '%Favio%')
+              .ilike('apellido', '%Bavuso%')
+              .limit(1);
+            if (favioData && favioData.length > 0) {
+              destinatarioGGId = favioData[0].id;
+            }
+          }
+          
+          if (!destinatarioGGId) {
+            const { data: carlos } = await supabase
+              .from('perfiles')
+              .select('id')
+              .ilike('rol', 'Gerente General')
+              .limit(1)
+              .single();
+            if (carlos) {
+              destinatarioGGId = carlos.id;
+            }
+          }
+
+          if (destinatarioGGId) {
+            const correlativoStr = reqActual?.correlativo || reqActual?.correlativo_req || `ID: ${editandoId}`;
+            await enviarNotificacion(
+              destinatarioGGId,
+              `Requisición ${correlativoStr} aprobada por Área. Requiere su Aprobación Final.`,
+              'Aprobación Pendiente',
+              editandoId
+            );
+          }
+        } catch (err) {
+          console.error("Error al notificar al Gerente General:", err);
         }
-      } catch (err) {
-        console.error("Error al notificar al Gerente General:", err);
       }
 
       await cargarHistorialDesdeBD();
@@ -1478,11 +1554,13 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     const reqActual = historial.find(h => String(h.id) === String(editandoId));
     const rolUpper = (currentUser?.rol || '').toUpperCase();
     const emailLower = (currentUser?.correo || '').toLowerCase();
+    const esFavio = (currentUser?.nombre || '').toUpperCase().includes('FAVIO') && (currentUser?.apellido || '').toUpperCase().includes('BAVUSO');
 
     const esAdminPermitido = currentUser?.esAdminReal ||
       rolUpper === 'GERENTE GENERAL' ||
       rolUpper === 'ADMIN' ||
-      emailLower.includes('cvega');
+      emailLower.includes('cvega') ||
+      esFavio;
 
     if (reqActual?.solicitante === `${currentUser.nombre} ${currentUser.apellido}`) {
       toast.error('No puede aprobar su propia requisición.');
@@ -4524,7 +4602,11 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                                 </>
                               );
                             }
-                            if (reqActual?.estado_aprobacion === 'pendiente_area' && currentUser?.rol?.toLowerCase()?.includes('gerente') && !currentUser?.rol?.toLowerCase()?.includes('general')) {
+                            const esGerenteArea = currentUser?.rol?.toLowerCase()?.includes('gerente') && !currentUser?.rol?.toLowerCase()?.includes('general');
+                            const esSuGerenteDirecto = gerenteDirectoIdCreador && currentUser?.id === gerenteDirectoIdCreador;
+                            const esFavio = (currentUser?.nombre || '').toUpperCase().includes('FAVIO') && (currentUser?.apellido || '').toUpperCase().includes('BAVUSO');
+
+                            if (reqActual?.estado_aprobacion === 'pendiente_area' && (esGerenteArea || esSuGerenteDirecto || esFavio)) {
                               return (
                                 <>
                                   <button className="btn-tc btn-tc-danger" onClick={manejarRechazarGerenteArea} disabled={loading}>
@@ -4539,7 +4621,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
 
                             const rolUpper = (currentUser?.rol || '').toUpperCase();
                             const emailLower = (currentUser?.correo || '').toLowerCase();
-                            const esGG = currentUser?.esAdminReal || rolUpper === 'GERENTE GENERAL' || rolUpper === 'ADMIN' || emailLower.includes('cvega');
+                            const esGG = currentUser?.esAdminReal || rolUpper === 'GERENTE GENERAL' || rolUpper === 'ADMIN' || emailLower.includes('cvega') || esFavio;
 
                             if (esGG && reqActual?.estado_aprobacion === 'enviada_general' && reqActual?.solicitante !== `${currentUser.nombre} ${currentUser.apellido}`) {
                               return (

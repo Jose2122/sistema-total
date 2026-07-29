@@ -1217,159 +1217,672 @@ const ReportesMaestro = () => {
             "sucursal cursos y capacitacion": "Gastos Adm de Obra"
         };
 
-        const workbook = new ExcelJS.Workbook();
-        const worksheet = workbook.addWorksheet(`Matricial - ${filtroCC.slice(0, 20)}`);
-
-        worksheet.views = [{ showGridLines: true }];
-
-        worksheet.mergeCells('A1:F1');
-        const hCell = worksheet.getCell('A1');
-        hCell.value = `REPORTE MATRICIAL DE COSTOS - CC: ${filtroCC.toUpperCase()}`;
-        hCell.font = { name: 'Calibri', size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
-        hCell.alignment = { horizontal: 'center', vertical: 'middle' };
-        hCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } };
-        worksheet.getRow(1).height = 32;
-
-        const cols = [
-            { header: 'GRUPO / CLASIFICACIÓN', key: 'grupo', width: 28 },
-            { header: 'CATEGORÍA / CONCEPTO', key: 'categoria', width: 32 },
-            { header: 'DESCRIPCIÓN / RENGLÓN', key: 'descripcion', width: 42 },
-            { header: 'FECHA', key: 'fecha', width: 14 },
-            { header: 'SOLICITANTE', key: 'solicitante', width: 22 },
-            { header: 'MONTO ($)', key: 'monto', width: 18 }
-        ];
-
-        worksheet.getRow(3).values = cols.map(c => c.header);
-        worksheet.getRow(3).height = 24;
-        for (let col = 1; col <= 6; col++) {
-            const cell = worksheet.getCell(3, col);
-            cell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
-            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF3B82F6' } };
-            cell.alignment = { horizontal: 'center', vertical: 'middle' };
-        }
+        const getColLetter = (colIdx) => {
+            let temp = colIdx;
+            let letter = "";
+            while (temp > 0) {
+                let modulo = (temp - 1) % 26;
+                letter = String.fromCharCode(65 + modulo) + letter;
+                temp = Math.floor((temp - modulo) / 26);
+            }
+            return letter;
+        };
 
         const rowsFiltradas = costosRows.filter(r => r.cc === filtroCC || r.cc?.includes(filtroCC));
+        if (rowsFiltradas.length === 0) {
+            toast.info("No hay datos registrados para este Centro de Costo en el período seleccionado.");
+            return;
+        }
 
-        let currentIdx = 4;
+        // Obtener semanas únicas
+        const uniqueWeeks = Array.from(new Set(rowsFiltradas.map(r => r.semana).filter(w => w > 0))).sort((a, b) => a - b);
+        const W = uniqueWeeks.length;
+        if (W === 0) {
+            toast.error("Error al determinar las semanas del período.");
+            return;
+        }
+
+        // Obtener el año de los registros (o usar el año actual)
+        const sampleYear = new Date(rowsFiltradas[0].fecha || new Date()).getFullYear();
+
+        // Estructura matricial
+        const matrix = {};
         rowsFiltradas.forEach(r => {
-            const catLower = (r.categoria || '').toLowerCase().trim();
-            const grupo = MAPPING_CATEGORIAS[catLower] || 'Otros Gastos Directos';
-            worksheet.addRow({
-                grupo: grupo,
-                categoria: r.categoria,
-                descripcion: r.descripcion,
-                fecha: r.fecha,
-                solicitante: r.solicitante || 'N/A',
-                monto: Number(r.monto) || 0
-            });
+            const catRaw = r.categoria || 'Otros';
+            const categoryName = catRaw.charAt(0).toUpperCase() + catRaw.slice(1);
+            const catLower = catRaw.toLowerCase().trim();
+            const groupName = MAPPING_CATEGORIAS[catLower] || 'Gastos Generales';
+            const week = r.semana;
+            const monto = Number(r.monto) || 0;
 
-            worksheet.getCell(`A${currentIdx}`).alignment = { horizontal: 'left', vertical: 'middle' };
-            worksheet.getCell(`B${currentIdx}`).alignment = { horizontal: 'left', vertical: 'middle' };
-            worksheet.getCell(`C${currentIdx}`).alignment = { horizontal: 'left', vertical: 'middle' };
-            worksheet.getCell(`D${currentIdx}`).alignment = { horizontal: 'center', vertical: 'middle' };
-            worksheet.getCell(`E${currentIdx}`).alignment = { horizontal: 'left', vertical: 'middle' };
-            
-            const cellM = worksheet.getCell(`F${currentIdx}`);
-            cellM.numFmt = '"$"#,##0.00';
-            cellM.alignment = { horizontal: 'right', vertical: 'middle' };
-            cellM.font = { bold: true };
-
-            currentIdx++;
+            if (!matrix[groupName]) {
+                matrix[groupName] = {};
+            }
+            if (!matrix[groupName][categoryName]) {
+                matrix[groupName][categoryName] = {};
+            }
+            matrix[groupName][categoryName][week] = (matrix[groupName][categoryName][week] || 0) + monto;
         });
 
-        const totalRow = currentIdx;
-        worksheet.getCell(`E${totalRow}`).value = 'TOTAL CENTRO DE COSTO:';
-        worksheet.getCell(`E${totalRow}`).font = { bold: true };
-        worksheet.getCell(`E${totalRow}`).alignment = { horizontal: 'right', vertical: 'middle' };
-        worksheet.getCell(`F${totalRow}`).value = { formula: `=SUM(F4:F${totalRow - 1})` };
-        worksheet.getCell(`F${totalRow}`).font = { bold: true, color: { argb: 'FF1E3A8A' } };
-        worksheet.getCell(`F${totalRow}`).numFmt = '"$"#,##0.00';
+        // Crear Libro
+        const workbook = new ExcelJS.Workbook();
+        const worksheet = workbook.addWorksheet(`Matricial - CC`);
+        worksheet.views = [{ showGridLines: true }];
 
-        cols.forEach((col, i) => { worksheet.getColumn(i + 1).width = col.width; });
+        const lastColLetter = getColLetter(4 + W);
+
+        // Titulo principal
+        worksheet.mergeCells(`A1:${lastColLetter}1`);
+        const titleCell = worksheet.getCell('A1');
+        titleCell.value = 'RESUMEN MATRICIAL DE COSTOS';
+        titleCell.font = { name: 'Calibri', size: 16, bold: true, color: { argb: 'FFFFFFFF' } };
+        titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+        titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } };
+        worksheet.getRow(1).height = 36;
+
+        // Subtítulo
+        let periodoStr = 'Todos los registros';
+        if (fechaDesde && fechaHasta) {
+            periodoStr = `Período: ${safeFormatDate(fechaDesde)} al ${safeFormatDate(fechaHasta)}`;
+        } else {
+            const dates = rowsFiltradas.map(r => r.fecha).filter(Boolean).sort();
+            if (dates.length > 0) {
+                periodoStr = `Período: ${safeFormatDate(dates[0])} al ${safeFormatDate(dates[dates.length - 1])}`;
+            }
+        }
+
+        worksheet.mergeCells(`A2:${lastColLetter}2`);
+        const subCell = worksheet.getCell('A2');
+        subCell.value = `Centro de Costo: ${filtroCC} | ${periodoStr}`;
+        subCell.font = { name: 'Calibri', size: 11, italic: true, color: { argb: 'FFFFFFFF' } };
+        subCell.alignment = { horizontal: 'center', vertical: 'middle' };
+        subCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2563EB' } };
+        worksheet.getRow(2).height = 24;
+
+        // Fila vacía
+        worksheet.getRow(3).height = 10;
+
+        // Columnas
+        const getWeekRangeString = (weekNum, year) => {
+            const simple = new Date(year, 0, 1 + (weekNum - 1) * 7);
+            const dow = simple.getDay();
+            const ISOweekStart = simple;
+            if (dow <= 4) {
+                ISOweekStart.setDate(simple.getDate() - simple.getDay() + 1);
+            } else {
+                ISOweekStart.setDate(simple.getDate() + 8 - simple.getDay());
+            }
+            const ISOweekEnd = new Date(ISOweekStart);
+            ISOweekEnd.setDate(ISOweekStart.getDate() + 6);
+            
+            const formatDM = (date) => {
+                const d = String(date.getDate()).padStart(2, '0');
+                const m = String(date.getMonth() + 1).padStart(2, '0');
+                return `${d}/${m}`;
+            };
+            return `${formatDM(ISOweekStart)} - ${formatDM(ISOweekEnd)}`;
+        };
+
+        const headers = [
+            'CLASIFICACIÓN DE GASTO',
+            'TOTAL ACUMULADO ($)',
+            '% SOBRE TOTAL'
+        ];
+        uniqueWeeks.forEach((w, idx) => {
+            headers.push(`Semana ${idx + 1}\n(Sem. ${w}: ${getWeekRangeString(w, sampleYear)})`);
+        });
+        headers.push('TOTAL MES');
+
+        worksheet.getRow(4).values = headers;
+        worksheet.getRow(4).height = 35;
+
+        // Formato cabeceras
+        for (let colIdx = 1; colIdx <= 4 + W; colIdx++) {
+            const cell = worksheet.getCell(4, colIdx);
+            cell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F172A' } };
+            cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+            cell.border = {
+                bottom: { style: 'medium', color: { argb: 'FF1E293B' } },
+                top: { style: 'medium', color: { argb: 'FF1E293B' } }
+            };
+        }
+
+        // Definir anchos
+        worksheet.getColumn(1).width = 38;
+        worksheet.getColumn(2).width = 24;
+        worksheet.getColumn(3).width = 16;
+        for (let i = 0; i < W; i++) {
+            worksheet.getColumn(4 + i).width = 22;
+        }
+        worksheet.getColumn(4 + W).width = 22;
+
+        let currentIdx = 5;
+        const groupHeaderRowsList = [];
+
+        // Primero calcularemos la fila del total general para poder usarla en el porcentaje de cada fila
+        let totalRowsCount = 4; // 4 filas de cabecera
+        Object.keys(matrix).forEach(groupName => {
+            totalRowsCount += 1; // Fila de cabecera del grupo
+            totalRowsCount += Object.keys(matrix[groupName]).length; // Filas de categorías
+        });
+        const totalGeneralRowIdx = totalRowsCount + 1; // Fila final del TOTAL GENERAL
+
+        // Recorrer grupos y categorías
+        Object.keys(matrix).forEach(groupName => {
+            const categories = Object.keys(matrix[groupName]);
+            const numCategories = categories.length;
+            if (numCategories === 0) return;
+
+            const groupHeaderRowIdx = currentIdx;
+            groupHeaderRowsList.push(groupHeaderRowIdx);
+
+            // 1. Agregar Fila de Cabecera del Grupo
+            const groupRow = worksheet.getRow(groupHeaderRowIdx);
+            groupRow.getCell(1).value = groupName;
+            groupRow.getCell(2).value = { formula: `=SUM(B${groupHeaderRowIdx + 1}:B${groupHeaderRowIdx + numCategories})` };
+            groupRow.getCell(3).value = { formula: `=B${groupHeaderRowIdx}/$B$${totalGeneralRowIdx}` };
+            
+            // Fórmulas para las semanas
+            for (let i = 0; i < W; i++) {
+                const colLetter = getColLetter(4 + i);
+                groupRow.getCell(4 + i).value = { formula: `=SUM(${colLetter}${groupHeaderRowIdx + 1}:${colLetter}${groupHeaderRowIdx + numCategories})` };
+            }
+            // TOTAL MES
+            const totalMesColLetter = getColLetter(4 + W);
+            groupRow.getCell(4 + W).value = { formula: `=SUM(${totalMesColLetter}${groupHeaderRowIdx + 1}:${totalMesColLetter}${groupHeaderRowIdx + numCategories})` };
+
+            // Estilo Fila Grupo
+            groupRow.height = 22;
+            for (let c = 1; c <= 4 + W; c++) {
+                const cell = groupRow.getCell(c);
+                cell.font = { name: 'Calibri', size: 10, bold: true, italic: true, color: { argb: 'FF1E293B' } };
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
+                cell.border = {
+                    bottom: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+                    top: { style: 'thin', color: { argb: 'FFCBD5E1' } }
+                };
+                if (c === 1) {
+                    cell.alignment = { horizontal: 'left', vertical: 'middle' };
+                } else if (c === 3) {
+                    cell.numFmt = '0.0%';
+                    cell.alignment = { horizontal: 'right', vertical: 'middle' };
+                } else {
+                    cell.numFmt = '"$"#,##0.00;[Red]("$"#,##0.00);"-"';
+                    cell.alignment = { horizontal: 'right', vertical: 'middle' };
+                }
+            }
+
+            currentIdx++;
+
+            // 2. Agregar Categorías del Grupo
+            categories.forEach(categoryName => {
+                const catRowIdx = currentIdx;
+                const catRow = worksheet.getRow(catRowIdx);
+                catRow.getCell(1).value = `  ${categoryName}`; // indentación
+                
+                const lastWeekLetter = getColLetter(4 + W - 1);
+                catRow.getCell(2).value = { formula: `=SUM(D${catRowIdx}:${lastWeekLetter}${catRowIdx})` };
+                catRow.getCell(3).value = { formula: `=B${catRowIdx}/$B$${totalGeneralRowIdx}` };
+
+                // Valores por semana
+                uniqueWeeks.forEach((w, i) => {
+                    const value = matrix[groupName][categoryName][w] || 0;
+                    catRow.getCell(4 + i).value = value;
+                });
+
+                // TOTAL MES
+                catRow.getCell(4 + W).value = { formula: `=B${catRowIdx}` };
+
+                // Estilo Fila Categoría
+                catRow.height = 20;
+                for (let c = 1; c <= 4 + W; c++) {
+                    const cell = catRow.getCell(c);
+                    cell.font = { name: 'Calibri', size: 10, color: { argb: 'FF475569' } };
+                    cell.border = {
+                        bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+                        left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+                        right: { style: 'thin', color: { argb: 'FFE2E8F0' } }
+                    };
+                    if (c === 1) {
+                        cell.alignment = { horizontal: 'left', vertical: 'middle' };
+                    } else if (c === 3) {
+                        cell.numFmt = '0.0%';
+                        cell.alignment = { horizontal: 'right', vertical: 'middle' };
+                    } else {
+                        cell.numFmt = '"$"#,##0.00;[Red]("$"#,##0.00);"-"';
+                        cell.alignment = { horizontal: 'right', vertical: 'middle' };
+                    }
+                }
+
+                currentIdx++;
+            });
+        });
+
+        // 3. Fila de TOTAL GENERAL
+        const totalGenRow = worksheet.getRow(totalGeneralRowIdx);
+        totalGenRow.getCell(1).value = 'TOTAL GENERAL';
+        
+        // Sumar todos los grupos
+        totalGenRow.getCell(2).value = { formula: `=${groupHeaderRowsList.map(idx => `B${idx}`).join('+')}` };
+        totalGenRow.getCell(3).value = { formula: `=B${totalGeneralRowIdx}/B${totalGeneralRowIdx}` };
+
+        for (let i = 0; i < W; i++) {
+            const colLetter = getColLetter(4 + i);
+            totalGenRow.getCell(4 + i).value = { formula: `=${groupHeaderRowsList.map(idx => `${colLetter}${idx}`).join('+')}` };
+        }
+
+        const totalMesColLetter = getColLetter(4 + W);
+        totalGenRow.getCell(4 + W).value = { formula: `=${groupHeaderRowsList.map(idx => `${totalMesColLetter}${idx}`).join('+')}` };
+
+        // Estilo Fila TOTAL GENERAL
+        totalGenRow.height = 24;
+        for (let c = 1; c <= 4 + W; c++) {
+            const cell = totalGenRow.getCell(c);
+            cell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: 'FF0F172A' } };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } };
+            cell.border = {
+                bottom: { style: 'double', color: { argb: 'FF0F172A' } },
+                top: { style: 'thin', color: { argb: 'FF0F172A' } }
+            };
+            if (c === 1) {
+                cell.alignment = { horizontal: 'left', vertical: 'middle' };
+            } else if (c === 3) {
+                cell.numFmt = '0.0%';
+                cell.alignment = { horizontal: 'right', vertical: 'middle' };
+            } else {
+                cell.numFmt = '"$"#,##0.00;[Red]("$"#,##0.00);"-"';
+                cell.alignment = { horizontal: 'right', vertical: 'middle' };
+            }
+        }
 
         try {
             const buffer = await workbook.xlsx.writeBuffer();
-            saveAs(new Blob([buffer]), `Reporte_Matricial_${filtroCC.replace(/[^a-zA-Z0-9]/g, '_')}_${format(new Date(), 'yyyy-MM-dd')}.xlsx`);
-            toast.success("Reporte por Centro de Costo (Matricial) generado con éxito.");
+            saveAs(new Blob([buffer]), `Resumen_Matricial_${filtroCC.replace(/[^a-zA-Z0-9]/g, '_')}_${format(new Date(), 'yyyy-MM-dd')}.xlsx`);
+            toast.success("Resumen matricial por Centro de Costo exportado con éxito.");
         } catch (e) {
-            console.error("Error al generar el buffer de ExcelJS:", e);
-            toast.error("Ocurrió un error al escribir el archivo de Excel: " + e.message);
+            console.error("Error al exportar reporte matricial:", e);
+            toast.error("Ocurrió un error al generar el archivo Excel: " + e.message);
         }
     };
 
     const exportExcelResumenCC = async () => {
-        const workbook = new ExcelJS.Workbook();
-        const worksheet = workbook.addWorksheet('Resumen Global CC');
+        // 1. Obtener todos los gastos sin aplicar el filtro de CC (pero respetando los demás filtros de la vista)
+        const getGlobalCostosRows = () => {
+            const rows = [];
 
-        worksheet.views = [{ showGridLines: true }];
+            // 1. Tickets
+            (data.tickets || []).forEach(t => {
+                const items = Array.isArray(t.items) ? t.items : [];
+                items.forEach(item => {
+                    const rowDate = t.fecha_emision ? t.fecha_emision.split('T')[0] : '';
+                    const reqMatch = (data.requisiciones || []).find(r => r.correlativo_req === t.solicitud_ref || r.id === t.solicitud_ref);
+                    const proyectoRef = reqMatch ? (reqMatch.id_referencia_proyecto || 'Sin ID Proyecto') : 'Directo / Sin Proyecto';
+                    const metodo = getMetodoPagoForTicketItem(item);
+                    const monedaPago = parseMonedaPago(metodo);
+                    const docNumero = (item.historial_compras || []).map(h => h.doc_numero).filter(Boolean).join(', ') || '-';
 
-        const centrosCostosUnicos = Array.from(new Set(costosRows.map(r => r.cc).filter(Boolean)));
-
-        worksheet.mergeCells('A1:C1');
-        const headerCell = worksheet.getCell('A1');
-        headerCell.value = 'RESUMEN GLOBAL POR CENTRO DE COSTO';
-        headerCell.font = { name: 'Calibri', size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
-        headerCell.alignment = { horizontal: 'center', vertical: 'middle' };
-        headerCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } };
-        worksheet.getRow(1).height = 32;
-
-        const columns = [
-            { header: 'CENTRO DE COSTO / PROYECTO', key: 'cc', width: 35 },
-            { header: 'CANTIDAD DE MOVIMIENTOS', key: 'count', width: 22 },
-            { header: 'TOTAL EJECUTADO ($)', key: 'total', width: 25 }
-        ];
-
-        worksheet.getRow(3).values = columns.map(c => c.header);
-        worksheet.getRow(3).height = 24;
-        for (let col = 1; col <= 3; col++) {
-            const cell = worksheet.getCell(3, col);
-            cell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
-            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF475569' } };
-            cell.alignment = { horizontal: 'center', vertical: 'middle' };
-        }
-
-        let rowIdx = 4;
-        centrosCostosUnicos.forEach(cc => {
-            const itemsCC = costosRows.filter(r => r.cc === cc);
-            const totalCC = itemsCC.reduce((s, r) => s + (Number(r.monto) || 0), 0);
-
-            worksheet.addRow({
-                cc: cc,
-                count: itemsCC.length,
-                total: totalCC
+                    rows.push({
+                        uId: `TK-${t.id}-${item.id || Math.random()}`,
+                        fecha: rowDate,
+                        semana: getWeekNumber(rowDate),
+                        categoria: item.cat || item.categoria || t.clasificacion_admin || 'Directo',
+                        descripcion: item.desc || item.descripcion || 'Sin descripción',
+                        monto: Number(item.total || item.pu * item.cant || 0),
+                        cc: item.cc || t.centro_costo || 'N/A',
+                        gerencia: t.departamento || 'N/A',
+                        tipo: 'TICKET',
+                        ref: t.codigo_control || `TK-${t.id}`,
+                        proyecto: proyectoRef,
+                        moneda_pago: monedaPago,
+                        solicitante: t.responsable_nombre || 'N/A',
+                        factura: docNumero,
+                        almacen: false
+                    });
+                });
             });
 
-            worksheet.getCell(`A${rowIdx}`).alignment = { horizontal: 'left', vertical: 'middle' };
-            worksheet.getCell(`B${rowIdx}`).alignment = { horizontal: 'center', vertical: 'middle' };
-            
-            const cellT = worksheet.getCell(`C${rowIdx}`);
-            cellT.numFmt = '"$"#,##0.00';
-            cellT.alignment = { horizontal: 'right', vertical: 'middle' };
-            cellT.font = { bold: true };
+            // 2. Requisiciones
+            (data.requisiciones || []).filter(r => r.estado_aprobacion === 'aprobado_final').forEach(r => {
+                const items = Array.isArray(r.items) ? r.items : [];
+                items.forEach(item => {
+                    const historial = Array.isArray(item.historial_compras) ? item.historial_compras : [];
+                    historial.filter(h => h.tipo !== 'JUSTIFICACION').forEach((h, hIdx) => {
+                        const rowDate = h.fecha ? h.fecha.split('T')[0] : '';
+                        const monedaPago = parseMonedaPago(h.metodo_pago);
+                        rows.push({
+                            uId: `REQ-${r.id}-${item.id || Math.random()}-${hIdx}`,
+                            fecha: rowDate,
+                            semana: getWeekNumber(rowDate),
+                            categoria: item.categoria || 'Compra',
+                            descripcion: item.descripcion,
+                            monto: Number(h.cant || 0) * Number(h.pu || 0),
+                            cc: r.centro_costo || 'N/A',
+                            gerencia: r.departamento || 'N/A',
+                            tipo: 'REQ',
+                            ref: r.correlativo_req || `REQ-${r.id}`,
+                            proyecto: r.id_referencia_proyecto || 'Sin ID Proyecto',
+                            moneda_pago: monedaPago,
+                            solicitante: r.solicitante || 'N/A',
+                            factura: h.doc_numero || '-',
+                            almacen: Boolean(h.almacen)
+                        });
+                    });
+                });
+            });
 
-            rowIdx++;
+            return rows.filter(row => {
+                const matchBusqueda = row.descripcion.toLowerCase().includes(busqueda.toLowerCase()) ||
+                    row.ref.toLowerCase().includes(busqueda.toLowerCase()) ||
+                    row.proyecto.toLowerCase().includes(busqueda.toLowerCase());
+                const matchGerencia = filtroGerencia === 'Todos' || row.gerencia === filtroGerencia;
+                const matchSemana = !filtroSemana || String(row.semana) === String(filtroSemana);
+                let matchFecha = true;
+                if (fechaDesde && row.fecha < fechaDesde) matchFecha = false;
+                if (fechaHasta && row.fecha > fechaHasta) matchFecha = false;
+                const matchAlmacen = filtroAlmacen === 'Todos' || (filtroAlmacen === 'Si' ? row.almacen : !row.almacen);
+                const matchCategoria = filtroCategoria === 'Todos' || row.categoria === filtroCategoria;
+                return matchBusqueda && matchGerencia && matchSemana && matchFecha && matchAlmacen && matchCategoria;
+            });
+        };
+
+        const rowsGlobales = getGlobalCostosRows();
+        if (rowsGlobales.length === 0) {
+            toast.info("No hay datos registrados para generar el resumen global.");
+            return;
+        }
+
+        const MAPPING_CATEGORIAS = {
+            "materiales instalables": "Materiales",
+            "materiales consumibles": "Materiales",
+            "fletes": "Materiales",
+            "pintura y materiales de pintura": "Materiales",
+            "depreciación eq": "Depreciación de Equipos",
+            "depreciacion eq": "Depreciación de Equipos",
+            "depreciación de equipos": "Depreciación de Equipos",
+            "depreciacion de equipos": "Depreciación de Equipos",
+            "gasoil": "Equipos Propios",
+            "gasolina": "Equipos Propios",
+            "aceites": "Equipos Propios",
+            "refrigerante": "Equipos Propios",
+            "grasa": "Equipos Propios",
+            "baterías": "Equipos Propios",
+            "baterias": "Equipos Propios",
+            "cauchos": "Equipos Propios",
+            "reparación de cauchos": "Equipos Propios",
+            "reparacion de cauchos": "Equipos Propios",
+            "filtros": "Equipos Propios",
+            "gamusa": "Equipos Propios",
+            "reparaciones/repuestos": "Equipos Propios",
+            "reparaciones/mano de obra": "Equipos Propios",
+            "monitoreo gps": "Equipos Propios",
+            "transporte de personal": "Equipos de Terceros",
+            "otros equipos de terceros": "Equipos de Terceros",
+            "nóminas y salarios indirecto": "Mano de Obra Indirecta",
+            "nominas y salarios indirecto": "Mano de Obra Indirecta",
+            "complementos indirecto": "Mano de Obra Indirecta",
+            "cesta ticket indirecto": "Mano de Obra Indirecta",
+            "comidas indirecto": "Mano de Obra Indirecta",
+            "préstamos indirectos": "Mano de Obra Indirecta",
+            "prestamos indirectos": "Mano de Obra Indirecta",
+            "vacaciones indirectos": "Mano de Obra Indirecta",
+            "pres./liquidacion indirecto": "Mano de Obra Indirecta",
+            "comidas sobretiempo ind.": "Mano de Obra Indirecta",
+            "nóminas y salarios p. directo": "Mano de Obra Directa",
+            "nominas y salarios p. directo": "Mano de Obra Directa",
+            "complementos directo": "Mano de Obra Directa",
+            "cesta ticket (tea) directo": "Mano de Obra Directa",
+            "comidas directo": "Mano de Obra Directa",
+            "préstamos directos": "Mano de Obra Directa",
+            "prestamos directos": "Mano de Obra Directa",
+            "vacaciones directos": "Mano de Obra Directa",
+            "pres./liquidacion directos": "Mano de Obra Directa",
+            "útiles escolares/nac/muerte": "Mano de Obra Directa",
+            "utiles escolares/nac/muerte": "Mano de Obra Directa",
+            "personal eventual": "Mano de Obra Directa",
+            "implementos de seguridad": "Seguridad",
+            "equipos de seguridad": "Seguridad",
+            "exámenes de ingreso/egreso": "Gastos Médicos",
+            "examenes de ingreso/egreso": "Gastos Médicos",
+            "pólizas hcm": "Gastos Médicos",
+            "polizas hcm": "Gastos Médicos",
+            "reembolsos de gastos médicos": "Gastos Médicos",
+            "reembolsos de gastos medicos": "Gastos Médicos",
+            "sucursal agua, hielo, vasos": "Gastos Médicos",
+            "certificaciones de equipos": "Gastos Adm de Obra",
+            "incret y socioambiental": "Gastos Adm de Obra",
+            "sucursal cursos y capacitación": "Gastos Adm de Obra",
+            "sucursal cursos y capacitacion": "Gastos Adm de Obra"
+        };
+
+        const getColLetter = (colIdx) => {
+            let temp = colIdx;
+            let letter = "";
+            while (temp > 0) {
+                let modulo = (temp - 1) % 26;
+                letter = String.fromCharCode(65 + modulo) + letter;
+                temp = Math.floor((temp - modulo) / 26);
+            }
+            return letter;
+        };
+
+        // Centros de Costo únicos presentes
+        const uniqueCCs = Array.from(new Set(rowsGlobales.map(r => r.cc).filter(Boolean))).sort();
+        const CC_count = uniqueCCs.length;
+
+        // Estructura matricial
+        const matrix = {};
+        rowsGlobales.forEach(r => {
+            const catRaw = r.categoria || 'Otros';
+            const categoryName = catRaw.charAt(0).toUpperCase() + catRaw.slice(1);
+            const catLower = catRaw.toLowerCase().trim();
+            const groupName = MAPPING_CATEGORIAS[catLower] || 'Gastos Generales';
+            const cc = r.cc || 'N/A';
+            const monto = Number(r.monto) || 0;
+
+            if (!matrix[groupName]) {
+                matrix[groupName] = {};
+            }
+            if (!matrix[groupName][categoryName]) {
+                matrix[groupName][categoryName] = {};
+            }
+            matrix[groupName][categoryName][cc] = (matrix[groupName][categoryName][cc] || 0) + monto;
         });
 
-        const lastRow = rowIdx;
-        worksheet.getCell(`A${lastRow}`).value = 'TOTAL GENERAL:';
-        worksheet.getCell(`A${lastRow}`).font = { bold: true };
-        worksheet.getCell(`B${lastRow}`).value = { formula: `=SUM(B4:B${lastRow - 1})` };
-        worksheet.getCell(`B${lastRow}`).font = { bold: true };
-        worksheet.getCell(`B${lastRow}`).alignment = { horizontal: 'center' };
+        // Crear Libro
+        const workbook = new ExcelJS.Workbook();
+        const worksheet = workbook.addWorksheet(`Global CC`);
+        worksheet.views = [{ showGridLines: true }];
 
-        worksheet.getCell(`C${lastRow}`).value = { formula: `=SUM(C4:C${lastRow - 1})` };
-        worksheet.getCell(`C${lastRow}`).font = { bold: true, color: { argb: 'FF1E3A8A' } };
-        worksheet.getCell(`C${lastRow}`).numFmt = '"$"#,##0.00';
+        const lastColLetter = getColLetter(3 + CC_count);
 
-        columns.forEach((col, i) => { worksheet.getColumn(i + 1).width = col.width; });
+        // Titulo principal
+        worksheet.mergeCells(`A1:${lastColLetter}1`);
+        const titleCell = worksheet.getCell('A1');
+        titleCell.value = 'COSTOS OPERATIVOS';
+        titleCell.font = { name: 'Calibri', size: 16, bold: true, color: { argb: 'FFFFFFFF' } };
+        titleCell.alignment = { horizontal: 'left', vertical: 'middle', indent: 1 };
+        titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F172A' } };
+        worksheet.getRow(1).height = 36;
+
+        // Subtítulo
+        let periodoStr = 'Todos los registros';
+        if (fechaDesde && fechaHasta) {
+            periodoStr = `Período: ${safeFormatDate(fechaDesde)} al ${safeFormatDate(fechaHasta)}`;
+        } else {
+            const dates = rowsGlobales.map(r => r.fecha).filter(Boolean).sort();
+            if (dates.length > 0) {
+                periodoStr = `Período: ${safeFormatDate(dates[0])} al ${safeFormatDate(dates[dates.length - 1])}`;
+            }
+        }
+
+        worksheet.mergeCells(`A2:${lastColLetter}2`);
+        const subCell = worksheet.getCell('A2');
+        subCell.value = periodoStr.toUpperCase();
+        subCell.font = { name: 'Calibri', size: 11, bold: true, color: { argb: 'FFFFFFFF' } };
+        subCell.alignment = { horizontal: 'center', vertical: 'middle' };
+        subCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+        worksheet.getRow(2).height = 24;
+
+        // Columnas
+        const headers = [
+            'COSTOS OPERATIVOS',
+            'Total'
+        ];
+        uniqueCCs.forEach(cc => {
+            headers.push(cc.split('(')[0].trim());
+        });
+
+        worksheet.getRow(3).values = headers;
+        worksheet.getRow(3).height = 28;
+
+        // Formato cabeceras
+        for (let colIdx = 1; colIdx <= 2 + CC_count; colIdx++) {
+            const cell = worksheet.getCell(3, colIdx);
+            cell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+            cell.alignment = { horizontal: colIdx === 1 ? 'left' : 'right', vertical: 'middle', wrapText: true };
+            cell.border = {
+                bottom: { style: 'medium', color: { argb: 'FF0F172A' } },
+                top: { style: 'medium', color: { argb: 'FF0F172A' } }
+            };
+        }
+
+        // Definir anchos
+        worksheet.getColumn(1).width = 38;
+        worksheet.getColumn(2).width = 24;
+        for (let i = 0; i < CC_count; i++) {
+            worksheet.getColumn(3 + i).width = 22;
+        }
+
+        let currentIdx = 4;
+        const groupHeaderRowsList = [];
+
+        // Primero calcularemos la fila del total general para poder usarla en el porcentaje de cada fila
+        let totalRowsCount = 3; // 3 filas de cabecera
+        Object.keys(matrix).forEach(groupName => {
+            totalRowsCount += 1; // Fila de cabecera del grupo
+            totalRowsCount += Object.keys(matrix[groupName]).length; // Filas de categorías
+        });
+        const totalGeneralRowIdx = totalRowsCount + 1; // Fila final del TOTAL GENERAL
+
+        // Recorrer grupos y categorías
+        Object.keys(matrix).forEach(groupName => {
+            const categories = Object.keys(matrix[groupName]);
+            const numCategories = categories.length;
+            if (numCategories === 0) return;
+
+            const groupHeaderRowIdx = currentIdx;
+            groupHeaderRowsList.push(groupHeaderRowIdx);
+
+            // 1. Agregar Fila de Cabecera del Grupo
+            const groupRow = worksheet.getRow(groupHeaderRowIdx);
+            groupRow.getCell(1).value = groupName;
+            
+            // Fórmulas para las CC columns
+            const lastCCColLetter = getColLetter(2 + CC_count);
+            groupRow.getCell(2).value = { formula: `=SUM(C${groupHeaderRowIdx}:${lastCCColLetter}${groupHeaderRowIdx})` };
+            
+            for (let i = 0; i < CC_count; i++) {
+                const colLetter = getColLetter(3 + i);
+                groupRow.getCell(3 + i).value = { formula: `=SUM(${colLetter}${groupHeaderRowIdx + 1}:${colLetter}${groupHeaderRowIdx + numCategories})` };
+            }
+
+            // Estilo Fila Grupo
+            groupRow.height = 22;
+            for (let c = 1; c <= 2 + CC_count; c++) {
+                const cell = groupRow.getCell(c);
+                cell.font = { name: 'Calibri', size: 10, bold: true, italic: true, color: { argb: 'FF1E293B' } };
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
+                cell.border = {
+                    bottom: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+                    top: { style: 'thin', color: { argb: 'FFCBD5E1' } }
+                };
+                if (c === 1) {
+                    cell.alignment = { horizontal: 'left', vertical: 'middle' };
+                } else {
+                    cell.numFmt = '"$"#,##0.00;[Red]("$"#,##0.00);"-"';
+                    cell.alignment = { horizontal: 'right', vertical: 'middle' };
+                }
+            }
+
+            currentIdx++;
+
+            // 2. Agregar Categorías del Grupo
+            categories.forEach(categoryName => {
+                const catRowIdx = currentIdx;
+                const catRow = worksheet.getRow(catRowIdx);
+                catRow.getCell(1).value = `  ${categoryName}`; // indentación
+                
+                const lastCCColLetter = getColLetter(2 + CC_count);
+                catRow.getCell(2).value = { formula: `=SUM(C${catRowIdx}:${lastCCColLetter}${catRowIdx})` };
+
+                // Valores por Centro de Costo
+                uniqueCCs.forEach((cc, i) => {
+                    const value = matrix[groupName][categoryName][cc] || 0;
+                    catRow.getCell(3 + i).value = value;
+                });
+
+                // Estilo Fila Categoría
+                catRow.height = 20;
+                for (let c = 1; c <= 2 + CC_count; c++) {
+                    const cell = catRow.getCell(c);
+                    cell.font = { name: 'Calibri', size: 10, color: { argb: 'FF475569' } };
+                    cell.border = {
+                        bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+                        left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+                        right: { style: 'thin', color: { argb: 'FFE2E8F0' } }
+                    };
+                    if (c === 1) {
+                        cell.alignment = { horizontal: 'left', vertical: 'middle' };
+                    } else {
+                        cell.numFmt = '"$"#,##0.00;[Red]("$"#,##0.00);"-"';
+                        cell.alignment = { horizontal: 'right', vertical: 'middle' };
+                    }
+                }
+
+                currentIdx++;
+            });
+        });
+
+        // 3. Fila de TOTALES POR CENTRO DE COSTO
+        const totalGenRow = worksheet.getRow(totalGeneralRowIdx);
+        totalGenRow.getCell(1).value = 'TOTALES POR CENTRO DE COSTO';
+        
+        // Sumar todos los grupos
+        const lastCCColLetter = getColLetter(2 + CC_count);
+        totalGenRow.getCell(2).value = { formula: `=SUM(C${totalGeneralRowIdx}:${lastCCColLetter}${totalGeneralRowIdx})` };
+
+        for (let i = 0; i < CC_count; i++) {
+            const colLetter = getColLetter(3 + i);
+            totalGenRow.getCell(3 + i).value = { formula: `=${groupHeaderRowsList.map(idx => `${colLetter}${idx}`).join('+')}` };
+        }
+
+        // Estilo Fila TOTAL GENERAL
+        totalGenRow.height = 24;
+        for (let c = 1; c <= 2 + CC_count; c++) {
+            const cell = totalGenRow.getCell(c);
+            cell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: 'FF0F172A' } };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } };
+            cell.border = {
+                bottom: { style: 'double', color: { argb: 'FF0F172A' } },
+                top: { style: 'thin', color: { argb: 'FF0F172A' } }
+            };
+            if (c === 1) {
+                cell.alignment = { horizontal: 'left', vertical: 'middle' };
+            } else {
+                cell.numFmt = '"$"#,##0.00;[Red]("$"#,##0.00);"-"';
+                cell.alignment = { horizontal: 'right', vertical: 'middle' };
+            }
+        }
 
         try {
             const buffer = await workbook.xlsx.writeBuffer();
-            saveAs(new Blob([buffer]), `Resumen_Global_Centros_Costo_${format(new Date(), 'yyyy-MM-dd')}.xlsx`);
-            toast.success("Resumen Global por CC generado con éxito.");
+            saveAs(new Blob([buffer]), `Resumen_Global_CC_${format(new Date(), 'yyyy-MM-dd')}.xlsx`);
+            toast.success("Resumen global por CC exportado con éxito.");
         } catch (e) {
-            console.error("Error al generar el resumen por CC:", e);
-            toast.error("Error al escribir el archivo: " + e.message);
+            console.error("Error al exportar resumen global:", e);
+            toast.error("Ocurrió un error al generar el archivo Excel: " + e.message);
         }
     };
 
