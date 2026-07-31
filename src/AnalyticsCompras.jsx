@@ -79,9 +79,9 @@ const AnalyticsCompras = ({ usuario }) => {
             // Analistas de Compras
             const { data: users, error: userError } = await supabase
                 .from('perfiles')
-                .select('id, nombre, apellido, rol, departamento')
+                .select('id, nombre, apellido, rol, departamento, correo')
                 .eq('activo', true)
-                .eq('departamento', 'Compras');
+                .or('departamento.eq.Compras,correo.ilike.larazuleika9@gmail.com');
             if (!userError) setAnalistas(users || []);
 
             // Logs de Requisiciones

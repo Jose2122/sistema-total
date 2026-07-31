@@ -57,6 +57,7 @@ const Atributos = () => {
   const [editandoItem, setEditandoItem] = useState(null);
   const [formData, setFormData] = useState({ 
     nombre: '', 
+    abreviatura: '',
     padre_ids: [],
     nivel: 99,
     permisos_default: {}
@@ -457,6 +458,10 @@ const Atributos = () => {
           activo: true
         };
         
+        if (listaActiva === 'gerencias') {
+          payload.abreviatura = (formData.abreviatura || '').trim() || nombreGuardado.substring(0, 3).toUpperCase();
+        }
+        
         if (listaActiva === 'cargos') {
           payload.nivel = formData.nivel;
           payload.permisos_default = formData.permisos_default;
@@ -469,7 +474,7 @@ const Atributos = () => {
         const { error } = await supabase.from(config.table).update(payload).eq('id', editandoItem.id);
         if (error) throw error;
       } else {
-        const itemsToInsert = formData.padre_ids.length > 0 
+        const itemsToInsert = (formData.padre_ids.length > 0 && idColumn)
           ? formData.padre_ids.map(pid => ({
               nombre: nombreGuardado,
               activo: true,
@@ -481,6 +486,9 @@ const Atributos = () => {
               ...(listaActiva === 'cargos' ? { 
                 nivel: formData.nivel, 
                 permisos_default: formData.permisos_default 
+              } : {}),
+              ...(listaActiva === 'gerencias' ? {
+                abreviatura: (formData.abreviatura || '').trim() || nombreGuardado.substring(0, 3).toUpperCase()
               } : {})
             }];
 
@@ -493,7 +501,7 @@ const Atributos = () => {
       if (cerrarDespues) {
         setModalAbierto(false);
         setEditandoItem(null);
-        setFormData({ nombre: '', padre_ids: [], nivel: 99, permisos_default: {} });
+        setFormData({ nombre: '', abreviatura: '', padre_ids: [], nivel: 99, permisos_default: {} });
       } else {
         setFormData(prev => ({ ...prev, nombre: '' }));
         // Devolver el foco
@@ -574,7 +582,7 @@ const Atributos = () => {
           )}
           <button key="btn-add-new" className="btn-add" onClick={() => {
             setEditandoItem(null);
-            setFormData({ nombre: '', padre_ids: [], nivel: 99, permisos_default: {} });
+            setFormData({ nombre: '', abreviatura: '', padre_ids: [], nivel: 99, permisos_default: {} });
             setModalAbierto(true);
           }}>
             <Plus size={18} /> AGREGAR NUEVO
@@ -790,6 +798,7 @@ const Atributos = () => {
                                   setEditandoItem(items[0]);
                                   setFormData({
                                     nombre: nombre,
+                                    abreviatura: items[0].abreviatura || '',
                                     padre_ids: items.map(i => i.id),
                                     nivel: items[0].nivel || 99,
                                     permisos_default: items[0].permisos_default || {}
@@ -946,6 +955,24 @@ const Atributos = () => {
                 />
               </div>
 
+              {listaActiva === 'gerencias' && (
+                <div className="form-group" style={{ marginTop: '15px' }}>
+                  <label className="form-label">Abreviatura (Siglas)</label>
+                  <input 
+                    type="text" 
+                    className="form-input" 
+                    placeholder="Ej: ADM, OPE, RRH..."
+                    value={formData.abreviatura}
+                    onChange={(e) => setFormData({...formData, abreviatura: e.target.value.toUpperCase()})}
+                    maxLength={10}
+                    style={{ textTransform: 'uppercase', fontWeight: 'bold', letterSpacing: '1px' }}
+                  />
+                  <span style={{ fontSize: '0.7rem', color: '#94a3b8', marginTop: '4px', display: 'block' }}>
+                    Si se deja vacío, se generará automáticamente desde las primeras letras del nombre.
+                  </span>
+                </div>
+              )}
+
               {listaActiva === 'cargos' && (
                 <div style={{ marginTop: '20px' }}>
                   <div className="form-group">
@@ -992,7 +1019,7 @@ const Atributos = () => {
                 </div>
               )}
 
-              {listaActiva !== 'centros_costo' && (
+              {(listaActiva === 'clasificaciones' || listaActiva === 'categorias') && (
                 <div className="form-group" style={{ marginTop: '25px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
                     <label className="form-label" style={{ margin: 0 }}>

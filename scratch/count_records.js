@@ -22,21 +22,29 @@ envContent.split('\n').forEach(line => {
   }
 });
 
-const supabase = createClient(env.VITE_SUPABASE_URL, env.VITE_SUPABASE_SERVICE_ROLE_KEY || env.VITE_SUPABASE_ANON_KEY);
+const supabase = createClient(env.VITE_SUPABASE_URL, env.VITE_SUPABASE_ANON_KEY);
 
 async function run() {
-  console.log("=== COUNTING MASTER DATA RECORDS ===");
+  console.log("=== COUNTING ALL RECORDS ===");
 
-  const { count: ccc, error: e1 } = await supabase.from('maestros_centros_costo').select('*', { count: 'exact', head: true });
-  const { count: clc, error: e2 } = await supabase.from('maestros_clasificaciones').select('*', { count: 'exact', head: true });
-  const { count: scc, error: e3 } = await supabase.from('maestros_sub_clasificaciones').select('*', { count: 'exact', head: true });
+  const tables = [
+    'maestros_centros_costo',
+    'maestros_clasificaciones',
+    'maestros_sub_clasificaciones',
+    'solicitudes_fondos',
+    'partidas_fondos',
+    'requisiciones',
+    'tickets_directos',
+    'proveedores'
+  ];
 
-  if (e1 || e2 || e3) {
-    console.error("Errors:", { e1, e2, e3 });
-  } else {
-    console.log(`maestros_centros_costo count: ${ccc}`);
-    console.log(`maestros_clasificaciones count: ${clc}`);
-    console.log(`maestros_sub_clasificaciones count: ${scc}`);
+  for (const table of tables) {
+    const { count, error } = await supabase.from(table).select('*', { count: 'exact', head: true });
+    if (error) {
+      console.log(`Table '${table}' error: ${error.message}`);
+    } else {
+      console.log(`Table '${table}' count: ${count}`);
+    }
   }
 }
 

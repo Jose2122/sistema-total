@@ -787,10 +787,14 @@ const ModuloTicketsPago = () => {
     const rol = (currentUser.rol || '').toLowerCase().trim();
     const depto = (currentUser.departamento || '').toLowerCase().trim();
     const email = (currentUser.correo || '').toLowerCase().trim();
+    const nombre = (currentUser.nombre || '').toLowerCase().trim();
 
     const matchRol = rol.includes('administra') || rol.includes('contabil');
     const matchDepto = depto.includes('administra') || depto.includes('contabil');
     const esZuleika = email === 'larazuleika9@gmail.com';
+    const esHilda = nombre.includes('hilda') || email.includes('hilda');
+
+    if (esHilda) return false;
 
     return matchRol || matchDepto || currentUser.esAdminReal === true || currentUser.esSuperAdmin === true || esZuleika;
   }, [currentUser]);
@@ -3912,6 +3916,7 @@ const ModuloTicketsPago = () => {
                     <tr>
                       <th style={{ width: '40px' }}></th>
                       <th>DESCRIPCIÓN DEL ÍTEM</th>
+                      <th style={{ width: '150px' }}>BENEFICIARIO</th>
                       <th style={{ width: '80px', textAlign: 'center' }}>CANTIDAD</th>
                       <th style={{ width: '100px', textAlign: 'center' }}>P.U. ($)</th>
                       <th style={{ width: '160px' }}>PROVEEDOR</th>
@@ -3960,34 +3965,54 @@ const ModuloTicketsPago = () => {
                               </div>
                             )}
                             {modoEdicion ? (
-                              <div style={{ display: 'flex', gap: '8px', marginTop: '6px' }}>
-                                <select
-                                  className="premium-edit-input"
-                                  value={r.cc || ''}
-                                  onChange={(e) => actualizarFila(r.id, 'cc', e.target.value)}
-                                  style={{ fontSize: '0.7rem', padding: '4px 6px', width: '50%', backgroundColor: 'white' }}
-                                >
-                                  <option value="">CC (Seleccionar)...</option>
-                                  {centrosCostoUnicos.map(cc => (
-                                    <option key={cc.id} value={cc.nombre}>{cc.nombre}</option>
-                                  ))}
-                                </select>
-                                <select
-                                  className="premium-edit-input"
-                                  value={r.categoria || ''}
-                                  onChange={(e) => actualizarFila(r.id, 'categoria', e.target.value)}
-                                  style={{ fontSize: '0.7rem', padding: '4px 6px', width: '50%', backgroundColor: 'white' }}
-                                >
-                                  <option value="">Categoría...</option>
-                                  {todasCategoriasUnicas.map(cat => (
-                                    <option key={cat.id} value={cat.nombre}>{cat.nombre}</option>
-                                  ))}
-                                </select>
-                              </div>
-                            ) : (
-                              <div style={{ fontSize: '0.7rem', color: '#94a3b8' }}>CC: {r.cc} | {r.categoria}</div>
-                            )}
-                          </td>
+                               <div style={{ display: 'flex', gap: '8px', marginTop: '6px' }}>
+                                 <select
+                                   className="premium-edit-input"
+                                   value={r.cc || ''}
+                                   onChange={(e) => actualizarFila(r.id, 'cc', e.target.value)}
+                                   style={{ fontSize: '0.7rem', padding: '4px 6px', width: '50%', backgroundColor: 'white' }}
+                                 >
+                                   <option value="">CC (Seleccionar)...</option>
+                                   {centrosCostoUnicos.map(cc => (
+                                     <option key={cc.id} value={cc.nombre}>{cc.nombre}</option>
+                                   ))}
+                                 </select>
+                                 <select
+                                   className="premium-edit-input"
+                                   value={r.categoria || ''}
+                                   onChange={(e) => actualizarFila(r.id, 'categoria', e.target.value)}
+                                   style={{ fontSize: '0.7rem', padding: '4px 6px', width: '50%', backgroundColor: 'white' }}
+                                 >
+                                   <option value="">Categoría...</option>
+                                   {todasCategoriasUnicas.map(cat => (
+                                     <option key={cat.id} value={cat.nombre}>{cat.nombre}</option>
+                                   ))}
+                                 </select>
+                               </div>
+                             ) : (
+                               <div style={{ fontSize: '0.7rem', color: '#94a3b8' }}>CC: {r.cc} | {r.categoria}</div>
+                             )}
+                           </td>
+                           {/* BENEFICIARIO */}
+                           <td>
+                             {modoEdicion ? (
+                               <input
+                                 type="text"
+                                 className="premium-edit-input"
+                                 value={r.beneficiario || r.ben || ''}
+                                 onChange={(e) => {
+                                   actualizarFila(r.id, 'beneficiario', e.target.value);
+                                   actualizarFila(r.id, 'ben', e.target.value);
+                                 }}
+                                 style={{ width: '100%', fontSize: '0.85rem' }}
+                                 placeholder="Beneficiario"
+                               />
+                             ) : (
+                               <span style={{ fontSize: '0.85rem', color: '#475569', fontWeight: '600' }}>
+                                 {r.beneficiario || r.ben || '—'}
+                               </span>
+                             )}
+                           </td>
                           {/* CANTIDAD */}
                           <td style={{ textAlign: 'center' }}>
                             {modoEdicion ? (

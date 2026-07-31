@@ -281,6 +281,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
   const [todasClasificaciones, setTodasClasificaciones] = useState([]);
   const [todasCategorias, setTodasCategorias] = useState([]);
   const [gerentesDisponibles, setGerentesDisponibles] = useState([]);
+  const [gerenciasBaseDatos, setGerenciasBaseDatos] = useState([]);
 
   // --- DATOS MAESTROS ESTÁTICOS ---
   const gerenciasData = {
@@ -318,6 +319,9 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
     if (norm.startsWith('estimac') || norm.startsWith('estimación')) {
       return 'EST';
     }
+    const matchDB = gerenciasBaseDatos.find(g => (g.nombre || '').trim().toLowerCase() === norm);
+    if (matchDB && matchDB.abreviatura) return matchDB.abreviatura;
+
     const mappingGerencias = {
       "Administración Maracaibo": "ADM-MCB",
       "Administración El Tigre": "ADM-TG",
@@ -745,7 +749,8 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         const { data: partidasMias } = await supabase
           .from('partidas_fondos')
           .select('solicitud_id')
-          .in('centro_costo', misObras);
+          .in('centro_costo', misObras)
+          .limit(5000);
 
         const idsSolicitudes = [...new Set((partidasMias || []).map(p => p.solicitud_id).filter(id => id))];
 
@@ -779,10 +784,28 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
 
     if (dataHist) {
       const reqIds = dataHist.map(h => h.id).filter(Boolean);
-      const { data: pagosData, error: pagosError } = await supabase
-        .from('partidas_fondos')
-        .select('solicitud_id, pu_bs, pu_usd, cantidad, pago_realizado, status, requisicion_id, ticket_id, codigo_ticket, descripcion, requisiciones(id, items, status_compra, estado_aprobacion)')
-        .in('solicitud_id', reqIds);
+
+      // --- FIX CRÍTICO: Fetch por BATCHES con límite explícito ---
+      // PostgREST tiene un límite por defecto de ~1000 filas. Con muchas solicitudes
+      // y partidas, la consulta se trunca silenciosamente, dejando solicitudes nuevas
+      // sin partidas asociadas → mostrando $0.00 en la tabla principal.
+      // Solución: dividir reqIds en lotes y usar .limit() explícito por lote.
+      const BATCH_SIZE = 30; // Máximo IDs por consulta (evita URLs demasiado largas)
+      let pagosData = [];
+      let pagosError = null;
+      for (let i = 0; i < reqIds.length; i += BATCH_SIZE) {
+        const batch = reqIds.slice(i, i + BATCH_SIZE);
+        const { data: batchData, error: batchError } = await supabase
+          .from('partidas_fondos')
+          .select('solicitud_id, pu_bs, pu_usd, cantidad, pago_realizado, status, requisicion_id, ticket_id, codigo_ticket, descripcion, requisiciones(id, items, status_compra, estado_aprobacion)')
+          .in('solicitud_id', batch)
+          .limit(5000);
+        if (batchError) {
+          console.error("[ERRORES FONDOS] Error cargando partidas_fondos (batch):", batchError.message);
+          pagosError = batchError;
+        }
+        if (batchData) pagosData = pagosData.concat(batchData);
+      }
       if (pagosError) {
         console.error("[ERRORES FONDOS] Error cargando partidas_fondos:", pagosError.message);
       }
@@ -801,7 +824,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
           } else {
             query = query.in('codigo_control', ticketCodigos);
           }
-          const { data: tData } = await query;
+          const { data: tData } = await query.limit(5000);
           if (tData) ticketsInvolucrados = tData;
         } catch (e) {
           console.error("Error fetching tickets in fetchHistorial:", e);
@@ -809,10 +832,13 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       }
 
       setHistorial(dataHist.map(h => {
-        const misPartidas = (pagosData || []).filter(p =>
-          String(p.solicitud_id) === String(h.id) ||
-          (h.codigo_control && String(p.solicitud_id) === String(h.codigo_control))
-        );
+        const misPartidas = (pagosData || []).filter(p => {
+          if (!p.solicitud_id) return false;
+          const pSolId = String(p.solicitud_id).toLowerCase().trim();
+          const hId = h.id ? String(h.id).toLowerCase().trim() : '';
+          const hCode = h.codigo_control ? String(h.codigo_control).toLowerCase().trim() : '';
+          return pSolId === hId || pSolId === hCode;
+        });
 
         let calculatedTotalBs = parseFloat(h.total_bs || 0);
         let calculatedTotalUsd = parseFloat(h.total_usd || 0);
@@ -1016,6 +1042,10 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         padreId: s.clasificacion_id
       })));
     }
+
+    const { data: dataGer } = await supabase.from('cat_gerencias').select('*').order('nombre');
+    if (dataGer) setGerenciasBaseDatos(dataGer);
+
     setLoading(false);
   }, [currentUser]);
 
@@ -3523,9 +3553,17 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
             style={{ flex: 1, padding: '10px', borderRadius: '10px', border: '1px solid #e2e8f0', fontSize: '13px', backgroundColor: 'white' }}
           >
             <option value="Todos">Todas las Gerencias (Siglas)</option>
-            {Object.keys(mappingGerenciasDropdown).map(sigla => (
-              <option key={sigla} value={sigla}>{sigla} - {mappingGerenciasDropdown[sigla]}</option>
-            ))}
+            {(() => {
+              const totalMapeo = { ...mappingGerenciasDropdown };
+              gerenciasBaseDatos.forEach(g => {
+                if (g.abreviatura && g.nombre) {
+                  totalMapeo[g.abreviatura] = g.nombre;
+                }
+              });
+              return Object.entries(totalMapeo).map(([sigla, nombre]) => (
+                <option key={sigla} value={sigla}>{sigla} - {nombre}</option>
+              ));
+            })()}
           </select>
 
           <select

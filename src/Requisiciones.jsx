@@ -32,6 +32,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
   const [gerenteDirectoIdCreador, setGerenteDirectoIdCreador] = useState(null);
 
   const getRank = (rol) => {
+    const emailLower = (currentUser?.correo || '').toLowerCase();
+    if (emailLower === 'karincmm1@gmail.com') return 3;
     const r = (rol || '').toLowerCase();
     if (r.includes('analista')) return 1;
     if (r.includes('coordinador')) return 2;
@@ -277,6 +279,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
   const [centrosCosto, setCentrosCosto] = useState([]);
   const [todasClasificaciones, setTodasClasificaciones] = useState([]);
   const [todasCategorias, setTodasCategorias] = useState([]);
+  const [gerenciasBaseDatos, setGerenciasBaseDatos] = useState([]);
 
   // --- LÓGICA DE CARGA DE USUARIO ACTUAL ---
   const obtenerSesionUsuario = useCallback(async () => {
@@ -427,7 +430,10 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
         const subords = [...new Set(historialMapeado.map(h => h.solicitante))].sort();
         setListaSubordinados(subords);
 
-        const gerencias = [...new Set(historialMapeado.map(h => h.gerencia))].sort();
+        const gerencias = [...new Set([
+          ...historialMapeado.map(h => h.gerencia),
+          ...gerenciasBaseDatos.map(g => g.nombre)
+        ])].filter(Boolean).sort();
         setListaGerencias(gerencias);
 
         // Por defecto para Gerentes: mostrar lo que tienen pendiente
@@ -455,6 +461,9 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
 
     const { data: dataSub } = await supabase.from('maestros_sub_clasificaciones').select('id, nombre, clasificacion_id').eq('activo', true);
     if (dataSub) setTodasCategorias(dataSub.map(s => ({ id: s.id, nombre: s.nombre, padreId: s.clasificacion_id })));
+
+    const { data: dataGer } = await supabase.from('cat_gerencias').select('*').order('nombre');
+    if (dataGer) setGerenciasBaseDatos(dataGer);
   }, []);
 
   useEffect(() => { obtenerSesionUsuario(); }, [obtenerSesionUsuario]);
@@ -639,6 +648,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     if (norm.startsWith('estimac') || norm.startsWith('estimación')) {
       return 'EST';
     }
+    const matchDB = gerenciasBaseDatos.find(g => (g.nombre || '').trim().toLowerCase() === norm);
+    if (matchDB && matchDB.abreviatura) return matchDB.abreviatura;
     return mappingSiglasGerencia[depto] || 'GER';
   };
 
@@ -1038,7 +1049,9 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
   };
 
   const manejarRechazarGerenteArea = () => {
-    if (!editandoId || !currentUser?.rol?.toLowerCase()?.includes('gerente')) return;
+    const emailLower = (currentUser?.correo || '').toLowerCase();
+    const esGerenteArea = currentUser?.rol?.toLowerCase()?.includes('gerente') || emailLower === 'karincmm1@gmail.com';
+    if (!editandoId || !esGerenteArea) return;
     setMotivoRechazo('');
     setRechazoAction('area');
     setShowRechazoModal(true);
@@ -1155,7 +1168,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       const { data: usuariosCompras } = await supabase
         .from('perfiles')
         .select('id')
-        .or('departamento.ilike.%compras%,rol.ilike.%compras%');
+        .or('departamento.ilike.%compras%,rol.ilike.%compras%,correo.ilike.larazuleika9@gmail.com');
 
       if (usuariosCompras) {
         for (const u of usuariosCompras) {
@@ -1455,7 +1468,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
 
   const manejarAprobarGerenteArea = async () => {
     const reqActual = historial.find(h => String(h.id) === String(editandoId));
-    const esGerenteArea = currentUser?.rol?.toLowerCase()?.includes('gerente') && !currentUser?.rol?.toLowerCase()?.includes('general');
+    const esGerenteArea = (currentUser?.rol?.toLowerCase()?.includes('gerente') && !currentUser?.rol?.toLowerCase()?.includes('general')) || (currentUser?.correo || '').toLowerCase() === 'karincmm1@gmail.com';
     const esSuGerenteDirecto = gerenteDirectoIdCreador && currentUser?.id === gerenteDirectoIdCreador;
     const esFavio = (currentUser?.nombre || '').toUpperCase().includes('FAVIO') && (currentUser?.apellido || '').toUpperCase().includes('BAVUSO');
 
@@ -4602,7 +4615,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                                 </>
                               );
                             }
-                            const esGerenteArea = currentUser?.rol?.toLowerCase()?.includes('gerente') && !currentUser?.rol?.toLowerCase()?.includes('general');
+                            const esGerenteArea = (currentUser?.rol?.toLowerCase()?.includes('gerente') && !currentUser?.rol?.toLowerCase()?.includes('general')) || (currentUser?.correo || '').toLowerCase() === 'karincmm1@gmail.com';
                             const esSuGerenteDirecto = gerenteDirectoIdCreador && currentUser?.id === gerenteDirectoIdCreador;
                             const esFavio = (currentUser?.nombre || '').toUpperCase().includes('FAVIO') && (currentUser?.apellido || '').toUpperCase().includes('BAVUSO');
 

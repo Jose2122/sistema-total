@@ -46,7 +46,8 @@ import {
   FileDown,
   Diamond,
   X,
-  Camera
+  Camera,
+  Clock
 } from 'lucide-react';
 import { format, getWeek } from 'date-fns';
 import toast from 'react-hot-toast';
@@ -132,6 +133,9 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
   const [mostrarSoportes, setMostrarSoportes] = useState(false);
   const [filtroStatus, setFiltroStatus] = useState('Todos');
   const [filtroGerencia, setFiltroGerencia] = useState('Todos');
+  const [gerenciasBaseDatos, setGerenciasBaseDatos] = useState([]);
+  const [mostrarTimeline, setMostrarTimeline] = useState(false);
+  const [ticketOriginal, setTicketOriginal] = useState(null);
 
   // --- LÓGICA DE SIGLAS GERENCIA ---
   const obtenerSiglas = (nombreGerencia) => {
@@ -140,6 +144,9 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
     if (norm.startsWith('estimac') || norm.startsWith('estimación')) {
       return 'EST';
     }
+    const matchDB = gerenciasBaseDatos.find(g => (g.nombre || '').trim().toLowerCase() === norm);
+    if (matchDB && matchDB.abreviatura) return matchDB.abreviatura;
+
     const mapeo = {
       "Administración Maracaibo": "ADM-MCB",
       "Administración El Tigre": "ADM-TG",
@@ -297,6 +304,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
         if (datosPredefinidos.isExistingTicket) {
           setIsEditing(true);
           const t = datosPredefinidos.ticket;
+          setTicketOriginal(t);
           const factUrls = Array.isArray(t.factura_url) ? t.factura_url : (t.factura_url ? [t.factura_url] : []);
           setForm({
             id: t.id,
@@ -371,6 +379,8 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
     }
     if (!isOpen) {
       datosCargadosRef.current = false;
+      setMostrarTimeline(false);
+      setTicketOriginal(null);
     }
   }, [datosPredefinidos, isOpen]);
 
@@ -481,6 +491,9 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
 
     const { data: dataBancos } = await supabase.from('bancos').select('*').eq('activo', true).order('nombre');
     if (dataBancos) setBancosDisponibles(dataBancos);
+
+    const { data: dataGer } = await supabase.from('cat_gerencias').select('*').order('nombre');
+    if (dataGer) setGerenciasBaseDatos(dataGer);
   }, []);
 
   // --- CARGAR HISTORIAL ---
@@ -1736,8 +1749,27 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
                     )}
                   </div>
 
-                  {/* DERECHA: ID TICKET */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '20px', marginRight: '40px' }}>
+                  {/* DERECHA: BOTONES + ID TICKET */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '15px', marginRight: '40px' }}>
+                    {isEditing && (
+                      <button
+                        onClick={() => setMostrarTimeline(!mostrarTimeline)}
+                        style={{
+                          width: '32px', height: '32px', borderRadius: '50%',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          cursor: 'pointer', transition: 'all 0.2s',
+                          backgroundColor: mostrarTimeline ? '#0ea5e9' : 'white',
+                          color: mostrarTimeline ? 'white' : '#64748b',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
+                          border: '1px solid #e2e8f0',
+                          outline: 'none'
+                        }}
+                        title="Ver Línea de Trazabilidad"
+                        type="button"
+                      >
+                        <Clock size={16} />
+                      </button>
+                    )}
                     <div style={{ textAlign: 'right' }}>
                       <div style={{
                         fontSize: '1.8rem',
@@ -1765,6 +1797,102 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
 
               {/* --- CUERPO DESPLAZABLE --- */}
               <div style={{ flexGrow: 1, overflowY: 'auto', padding: '30px', backgroundColor: 'rgba(241, 245, 249, 0.4)' }}>
+                {mostrarTimeline && ticketOriginal && (() => {
+                  const safeFormatDate = (dateStr) => {
+                    if (!dateStr) return null;
+                    try {
+                      const d = new Date(dateStr);
+                      if (isNaN(d.getTime())) return dateStr;
+                      return d.toLocaleString('es-ES', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
+                    } catch (e) {
+                      return dateStr;
+                    }
+                  };
+
+                  const steps = [
+                    {
+                      label: 'EMITIDO',
+                      icon: '📝',
+                      name: ticketOriginal.gerente_nombre ? ticketOriginal.gerente_nombre.split(' ').slice(0, 2).join(' ') : 'Sistema',
+                      date: safeFormatDate(ticketOriginal.fecha_emision) || '—',
+                      done: true,
+                      color: '#6366f1'
+                    },
+                    {
+                      label: 'GERENTE ÁREA',
+                      icon: '✅',
+                      name: ticketOriginal.n_aprobacion_area || (ticketOriginal.aprobado_gerente_area ? 'Gerencia Área' : null),
+                      date: safeFormatDate(ticketOriginal.f_aprobacion_area),
+                      done: ticketOriginal.aprobado_gerente_area === true,
+                      color: '#10b981'
+                    },
+                    {
+                      label: 'GERENTE GENERAL',
+                      icon: '👑',
+                      name: ticketOriginal.n_aprobacion_general || (ticketOriginal.aprobado_gerente_general ? 'Carlos Vega' : null),
+                      date: safeFormatDate(ticketOriginal.f_aprobacion_general),
+                      done: ticketOriginal.aprobado_gerente_general === true,
+                      color: '#8b5cf6'
+                    },
+                    {
+                      label: 'PROCESADO / PAGADO',
+                      icon: '💳',
+                      name: ticketOriginal.pagado_por_nombre,
+                      date: safeFormatDate(ticketOriginal.fecha_pago),
+                      done: (ticketOriginal.status || ticketOriginal.estatus || '').toUpperCase() === 'PAGADO' || (ticketOriginal.status || ticketOriginal.estatus || '').toUpperCase() === 'COMPLETADO',
+                      color: '#0ea5e9'
+                    }
+                  ];
+                  return (
+                    <div style={{ marginBottom: '20px', backgroundColor: '#f8fafc', borderRadius: '12px', padding: '14px 18px', border: '1px solid #e2e8f0', boxShadow: '0 2px 4px rgba(0,0,0,0.02)' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        {steps.map((step, idx) => (
+                          <div key={idx} style={{ display: 'flex', alignItems: 'center', flex: idx < steps.length - 1 ? 1 : 'none' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '90px' }}>
+                              <div style={{
+                                width: '34px', height: '34px', borderRadius: '50%', fontSize: '15px',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                backgroundColor: step.done ? step.color : '#e2e8f0',
+                                color: step.done ? 'white' : '#94a3b8',
+                                boxShadow: step.done ? `0 2px 8px ${step.color}44` : 'none',
+                                border: step.done ? `2px solid ${step.color}` : '2px solid #e2e8f0',
+                                transition: 'all 0.3s',
+                              }}>
+                                {step.icon}
+                              </div>
+                              <span style={{ fontSize: '8px', fontWeight: '900', color: step.done ? step.color : '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px', marginTop: '5px', textAlign: 'center' }}>
+                                {step.label}
+                              </span>
+                              {step.name && (
+                                <span style={{ fontSize: '10px', fontWeight: '700', color: '#1e293b', marginTop: '2px', textAlign: 'center', maxWidth: '100px', wordBreak: 'break-word' }}>
+                                  {step.name}
+                                </span>
+                              )}
+                              {step.date && (
+                                <span style={{ fontSize: '9px', color: '#64748b', marginTop: '2px', textAlign: 'center' }}>
+                                  {step.date}
+                                </span>
+                              )}
+                              {!step.done && (
+                                <span style={{ fontSize: '9px', color: '#94a3b8', marginTop: '2px', fontStyle: 'italic' }}>
+                                  Pendiente
+                                </span>
+                              )}
+                            </div>
+                            {idx < steps.length - 1 && (
+                              <div style={{
+                                flex: 1, height: '2px', marginBottom: '28px',
+                                background: step.done && steps[idx + 1].done ? `linear-gradient(90deg, ${step.color}, ${steps[idx + 1].color})` : '#e2e8f0',
+                                transition: 'all 0.3s'
+                              }} />
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 <div style={{ display: 'grid', gridTemplateColumns: 'minmax(130px, 150px) 1.2fr 1fr 1fr 1.2fr', gap: '20px', marginBottom: '25px' }}>
                   <div>
                     <label className="te-label" style={{ color: '#1e293b', fontSize: '10px', fontWeight: '800', display: 'block', marginBottom: '5px' }}>FECHA EMISIÓN <span style={{ color: '#ef4444' }}>*</span></label>

@@ -121,6 +121,7 @@ const ReportesMaestro = () => {
     const [filtroMes, setFiltroMes] = useState('Todos');
     const [filtroAlmacen, setFiltroAlmacen] = useState('Todos');
     const [listaCentrosCostos, setListaCentrosCostos] = useState([]);
+    const [listaGerencias, setListaGerencias] = useState([]);
     const [showMoreFilters, setShowMoreFilters] = useState(false);
 
     // Filtros por Pestaña (Nuevos)
@@ -251,17 +252,19 @@ const ReportesMaestro = () => {
     const cargarDatos = useCallback(async () => {
         setLoading(true);
         try {
-            const [resReq, resTickets, resCC, resBancos, resSols, resParts] = await Promise.all([
+            const [resReq, resTickets, resCC, resBancos, resSols, resParts, resGer] = await Promise.all([
                 supabase.from('requisiciones').select('*').order('fecha_emision', { ascending: false }),
                 supabase.from('tickets_directos').select('*').order('fecha_emision', { ascending: false }),
                 supabase.from('maestros_centros_costo').select('id, nombre').eq('activo', true).order('nombre'),
                 supabase.from('bancos').select('*').eq('activo', true),
                 supabase.from('solicitudes_fondos').select('*').order('fecha_operativa', { ascending: false }),
-                supabase.from('partidas_fondos').select('*')
+                supabase.from('partidas_fondos').select('*'),
+                supabase.from('cat_gerencias').select('nombre').order('nombre')
             ]);
 
             if (resReq.error || resTickets.error) throw new Error("Error en la descarga de datos");
             if (resCC.data) setListaCentrosCostos(resCC.data);
+            if (resGer.data) setListaGerencias(resGer.data.map(g => g.nombre));
 
             setData({
                 tickets: resTickets.data || [],
@@ -1146,6 +1149,65 @@ const ReportesMaestro = () => {
 
         const buffer = await workbook.xlsx.writeBuffer();
         saveAs(new Blob([buffer]), `Relacion_Costos_Por_Proyecto_TC_${format(new Date(), 'yyyy-MM-dd')}.xlsx`);
+    };
+
+    const exportExcelFlujo = async () => {
+        const workbook = new ExcelJS.Workbook();
+        const worksheet = workbook.addWorksheet('Reporte Flujo');
+
+        const headerStyle = {
+            fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } },
+            font: { color: { argb: 'FFFFFFFF' }, bold: true, size: 11 },
+            alignment: { horizontal: 'center', vertical: 'middle' },
+            border: { bottom: { style: 'thin', color: { argb: 'FFCBD5E1' } } }
+        };
+
+        const columns = [
+            { header: 'Fecha', key: 'fecha', width: 15 },
+            { header: 'Semana', key: 'semana', width: 10 },
+            { header: 'Clasificación del Gasto', key: 'categoria', width: 25 },
+            { header: 'Descripción', key: 'descripcion', width: 45 },
+            { header: 'Monto', key: 'monto', width: 15 },
+            { header: 'Proyecto', key: 'proyecto', width: 25 },
+            { header: 'Gerencia', key: 'gerencia', width: 25 }
+        ];
+
+        worksheet.columns = columns;
+        worksheet.getRow(1).eachCell((cell) => { Object.assign(cell, headerStyle); });
+        worksheet.getRow(1).height = 25;
+
+        costosRows.forEach(r => {
+            const row = worksheet.addRow({
+                fecha: '',
+                semana: Number(r.semana) || '',
+                categoria: r.categoria || '',
+                descripcion: r.descripcion || '',
+                monto: Number(r.monto) || 0,
+                proyecto: r.cc ? r.cc.split('(')[0].trim() : '',
+                gerencia: r.gerencia || ''
+            });
+
+            if (r.fecha) {
+                try {
+                    const d = parseISO(r.fecha);
+                    if (!isNaN(d.getTime())) {
+                        row.getCell(1).value = new Date(r.fecha + 'T12:00:00');
+                        row.getCell(1).numFmt = 'dd/mm/yyyy';
+                    } else {
+                        row.getCell(1).value = r.fecha;
+                    }
+                } catch {
+                    row.getCell(1).value = r.fecha;
+                }
+            } else {
+                row.getCell(1).value = '';
+            }
+
+            row.getCell(5).numFmt = '#,##0.00';
+        });
+
+        const buffer = await workbook.xlsx.writeBuffer();
+        saveAs(new Blob([buffer]), `Reporte_Flujo_${format(new Date(), 'yyyy-MM-dd')}.xlsx`);
     };
 
     const exportExcelMatricial = async () => {
@@ -2049,6 +2111,7 @@ const ReportesMaestro = () => {
                             <button className="rm-btn rm-btn-outline" onClick={exportExcelResumenCC}><FileSpreadsheet size={18} /> EXCEL GLOBAL CC</button>
                             <button className="rm-btn rm-btn-outline" onClick={exportExcel}><FileSpreadsheet size={18} /> EXCEL</button>
                             <button className="rm-btn rm-btn-outline" onClick={exportExcelByProject}><FileSpreadsheet size={18} /> EXCEL POR PROYECTO</button>
+                            <button className="rm-btn rm-btn-outline" style={{ border: '1.5px solid #10b981', color: '#10b981' }} onClick={exportExcelFlujo}><FileSpreadsheet size={18} /> REPORTE FLUJO</button>
                         </>
                     )}
                     {activeTab === 'beneficiarios' && (
@@ -2157,7 +2220,7 @@ const ReportesMaestro = () => {
                                     disabled={activeTab === 'operaciones'}
                                 >
                                     <option value="Todos">Todas</option>
-                                    {["Administración Maracaibo", "Administración El Tigre", "Operaciones", "Mantenimiento", "Seguridad", "Recursos Humanos", "Gerencia General"].map(g => <option key={g} value={g}>{g}</option>)}
+                                    {listaGerencias.map(g => <option key={g} value={g}>{g}</option>)}
                                 </select>
                             </div>
 

@@ -30,6 +30,7 @@ const Proveedores = () => {
     correo: '',
     telefono: '',
     direccion: '',
+    localizacion: '',
     categoria: [], // Cambiado a array
     monto_limite_credito: 0,
     dias_credito: 0,
@@ -137,6 +138,7 @@ const Proveedores = () => {
         correo: formData.correo,
         telefono: formData.telefono,
         direccion: formData.direccion,
+        localizacion: formData.localizacion || '',
         categoria: Array.isArray(formData.categoria) ? formData.categoria.join(', ') : formData.categoria,
         monto_limite_credito: Number(formData.monto_limite_credito) || 0,
         dias_credito: Number(formData.dias_credito) || 0,
@@ -249,6 +251,7 @@ const Proveedores = () => {
       correo: '',
       telefono: '',
       direccion: '',
+      localizacion: '',
       categoria: [],
       monto_limite_credito: 0,
       dias_credito: 0,
@@ -671,6 +674,7 @@ const Proveedores = () => {
     setFormData({
       ...p,
       categoria: p.categoria ? p.categoria.split(', ').filter(c => c) : [],
+      localizacion: p.localizacion || '',
       monto_limite_credito: p.monto_limite_credito ?? 0,
       dias_credito: p.dias_credito ?? 0,
       calificacion_precio: p.calificacion_precio ?? 5,
@@ -681,6 +685,16 @@ const Proveedores = () => {
     setMostrarParametrosSrm(Boolean(p.monto_limite_credito > 0 || p.dias_credito > 0 || p.observaciones_negociacion || p.proveedor_preferencial));
     setShowModal(true);
   };
+
+  const obtenerOpcionesLocalizacion = useMemo(() => {
+    const locs = new Set(['Barcelona', 'Maracaibo']);
+    proveedores.forEach(p => {
+      if (p.localizacion) {
+        locs.add(p.localizacion.trim());
+      }
+    });
+    return Array.from(locs);
+  }, [proveedores]);
 
   const categoriasUnicas = useMemo(() => {
     const cats = new Set();
@@ -795,6 +809,7 @@ const Proveedores = () => {
                   <th style={{ width: '140px' }}>RIF</th>
                   <th>RAZÓN SOCIAL</th>
                   <th>CATEGORÍA</th>
+                  <th>LOCALIZACIÓN</th>
                   <th>CONTACTO</th>
                   <th>DIRECCIÓN</th>
                   <th style={{ textAlign: 'center', width: '100px' }}>ESTADO</th>
@@ -814,6 +829,24 @@ const Proveedores = () => {
                           </span>
                         )) : <span style={{ color: '#cbd5e1' }}>-</span>}
                       </div>
+                    </td>
+                    <td>
+                      {p.localizacion ? (
+                        <span style={{ 
+                          backgroundColor: '#e0f2fe', 
+                          color: '#0369a1',
+                          padding: '4px 8px', 
+                          borderRadius: '6px', 
+                          fontSize: '0.75rem', 
+                          fontWeight: '700',
+                          border: '1px solid #bae6fd',
+                          display: 'inline-block'
+                        }}>
+                          📍 {p.localizacion}
+                        </span>
+                      ) : (
+                        <span style={{ color: '#cbd5e1', fontStyle: 'italic', fontSize: '0.75rem' }}>No especificada</span>
+                      )}
                     </td>
                     <td>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
@@ -907,6 +940,19 @@ const Proveedores = () => {
                   {todasLasCompras.length} compras
                 </div>
                 <div className="prov-card-desc">Artículos individuales procesados</div>
+              </div>
+
+              <div className="prov-analytic-card" style={{ borderLeftColor: '#8b5cf6' }}>
+                <div className="prov-card-header">
+                  <span className="prov-card-title">Proveedores Registrados</span>
+                  <Users className="prov-card-icon" size={20} style={{ color: '#8b5cf6' }} />
+                </div>
+                <div className="prov-card-value">
+                  {proveedores.length}
+                </div>
+                <div className="prov-card-desc">
+                  {proveedores.filter(p => p.status !== false).length} activos en el directorio
+                </div>
               </div>
             </div>
 
@@ -1282,6 +1328,22 @@ const Proveedores = () => {
                       ))}
                     </div>
                   </div>
+                </div>
+
+                <div className="prov-field">
+                  <label className="prov-label">Localización (OPCIONAL)</label>
+                  <input 
+                    className="prov-input"
+                    list="localizaciones-list"
+                    placeholder="Ej: Maracaibo, Barcelona..."
+                    value={formData.localizacion || ''}
+                    onChange={e => setFormData({...formData, localizacion: e.target.value})}
+                  />
+                  <datalist id="localizaciones-list">
+                    {obtenerOpcionesLocalizacion.map((loc, idx) => (
+                      <option key={idx} value={loc} />
+                    ))}
+                  </datalist>
                 </div>
 
                   <div className="prov-field">

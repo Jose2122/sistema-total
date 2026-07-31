@@ -64,11 +64,7 @@ const Reportes = () => {
   // --- TABLAS DE REFERENCIA (Sincronizadas con Requisiciones.jsx) ---
   // Se cargarán dinámicamente
 
-  const listaGerencias = [
-    "Administración Maracaibo", "Administración El Tigre", "Dirección Corporativa", "Operaciones", "Mantenimiento",
-    "Seguridad", "Recursos Humanos", "Estimación", "Almacén", "Gerencia General",
-    "Servicios Generales", "Contabilidad"
-  ];
+  const [listaGerencias, setListaGerencias] = useState([]);
 
   const categoriasUnicas = useMemo(() => {
     const cats = new Set();
@@ -84,7 +80,7 @@ const Reportes = () => {
   const cargarDatos = useCallback(async () => {
     setLoading(true);
     try {
-      const [resReq, resTickets, resCC] = await Promise.all([
+      const [resReq, resTickets, resCC, resGer] = await Promise.all([
         supabase
           .from('requisiciones')
           .select('*')
@@ -98,12 +94,17 @@ const Reportes = () => {
           .from('maestros_centros_costo')
           .select('id, nombre')
           .eq('activo', true)
+          .order('nombre'),
+        supabase
+          .from('cat_gerencias')
+          .select('nombre')
           .order('nombre')
       ]);
 
       if (resReq.error) throw resReq.error;
       if (resTickets.error) throw resTickets.error;
       if (resCC.data) setListaCentrosCostos(resCC.data);
+      if (resGer.data) setListaGerencias(resGer.data.map(g => g.nombre));
 
       const combined = [
         ...(resReq.data || []).map(r => ({ ...r, _tipoDoc: 'requisicion' }))

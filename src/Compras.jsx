@@ -488,9 +488,9 @@ const Compras = () => {
     try {
       const { data, error } = await supabase
         .from('perfiles')
-        .select('id, nombre, apellido, rol, departamento')
+        .select('id, nombre, apellido, rol, departamento, correo')
         .eq('activo', true)
-        .eq('departamento', 'Compras');
+        .or('departamento.eq.Compras,correo.ilike.larazuleika9@gmail.com');
       if (error) throw error;
       setAnalistas(data || []);
     } catch (err) {

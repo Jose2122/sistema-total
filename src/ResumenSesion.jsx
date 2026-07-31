@@ -95,24 +95,47 @@ const ResumenSesion = ({ currentUser, setActiveSeccion }) => {
                 }
 
                 // 3. Aprobaciones pendientes
-                let queryPending = supabase.from('requisiciones').select('id, correlativo_req, solicitante, estado_aprobacion, justificacion');
+                let queryPending = supabase.from('requisiciones').select('id, correlativo_req, solicitante, estado_aprobacion, justificacion, gerencia, centro_costo');
                 
                 const rolUpper = (currentUser.rol || '').toUpperCase();
+                const deptoUpper = (currentUser.departamento || '').toUpperCase();
+                const emailLower = (currentUser.correo || '').toLowerCase();
                 
+                const esGG = rolUpper.includes('GENERAL') || rolUpper.includes('ADMIN') || emailLower === 'cvega@totalclean.com' || emailLower === 'cvega.totalclean@gmail.com';
+                const esGP = rolUpper.includes('PROYECTO');
+                const esGA = rolUpper.includes('ÁREA') || rolUpper.includes('AREA') || emailLower === 'karincmm1@gmail.com' || rolUpper.includes('CONTROL INTERNO') || deptoUpper.includes('ESTIMAC');
+
                 if (rolUpper.includes('ANALISTA')) {
                     queryPending = queryPending
                         .or(`solicitante.eq."${currentUser.nombre}",solicitante.eq."${currentUser.nombre} ${currentUser.apellido}"`)
                         .in('estado_aprobacion', ['pendiente_proyecto', 'pendiente_area', 'enviada_general']);
-                } else if (currentUser.rol === 'Gerente de Proyecto') {
+                } else if (esGP) {
                     queryPending = queryPending.eq('estado_aprobacion', 'pendiente_proyecto');
-                } else if (currentUser.rol === 'Gerente de Área') {
+                } else if (esGA) {
                     queryPending = queryPending.eq('estado_aprobacion', 'pendiente_area');
-                } else if (currentUser.rol === 'Gerente General') {
+                } else if (esGG) {
                     queryPending = queryPending.eq('estado_aprobacion', 'enviada_general');
                 } else {
                     queryPending = queryPending.eq('id', '00000000-0000-0000-0000-000000000000');
                 }
                 const { data: pendingData } = await queryPending;
+
+                // Filtrar aprobaciones pendientes en frontend según el rol y departamento para evitar ver las de otros departamentos
+                let filteredPending = pendingData || [];
+                if (esGP) {
+                    const misObras = currentUser.obras_asignadas || [];
+                    if (misObras.length > 0) {
+                        filteredPending = filteredPending.filter(r => misObras.includes(r.centro_costo));
+                    }
+                } else if (esGA) {
+                    const myDepto = (currentUser.departamento || '').toLowerCase().trim();
+                    if (myDepto) {
+                        filteredPending = filteredPending.filter(r => {
+                            const reqDepto = (r.gerencia || '').toLowerCase().trim();
+                            return reqDepto.includes(myDepto) || myDepto.includes(reqDepto);
+                        });
+                    }
+                }
 
                 // 4. Procesar estadísticas de categorías y gasto
                 const stats = {};
@@ -168,9 +191,9 @@ const ResumenSesion = ({ currentUser, setActiveSeccion }) => {
                 setData({
                     myReqs: myReqs || [],
                     subordinates: subs || [],
-                    pendingList: pendingData || [],
+                    pendingList: filteredPending,
                     otherReqs: otherReqs || [],
-                    pendingApprovals: pendingData?.length || 0,
+                    pendingApprovals: filteredPending.length,
                     totalSpent,
                     approvedSpent,
                     pendingSpent,
