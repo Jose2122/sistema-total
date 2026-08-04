@@ -327,10 +327,12 @@ function Dashboard() {
           const hCorta = date.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', hour12: true });
           return {
             id: n.id,
+            titulo: n.titulo || 'Notificación',
             msg: n.mensaje,
             hora: `${fCorta} - ${hCorta}`,
             nuevo: !n.leido,
-            requisicion_id: n.requisicion_id
+            requisicion_id: n.requisicion_id,
+            ticket_id: n.ticket_id
           };
         });
       }
@@ -429,10 +431,12 @@ function Dashboard() {
 
         setNotificacionesLog(prev => [{
           id: payload.new.id,
+          titulo: payload.new.titulo || 'Notificación',
           msg: payload.new.mensaje,
           hora: `${fCorta} - ${hCorta}`,
           nuevo: true,
-          requisicion_id: payload.new.requisicion_id
+          requisicion_id: payload.new.requisicion_id,
+          ticket_id: payload.new.ticket_id
         }, ...prev]);
       })
       .subscribe((status) => {
@@ -672,6 +676,15 @@ function Dashboard() {
         const event = new CustomEvent('abrirRequisicionDeepLink', { detail: notif.requisicion_id });
         window.dispatchEvent(event);
       }, 400); // Dar tiempo al componente para montar si no estaba activo
+    } else if (notif.ticket_id) {
+      setSeccionActiva('tickets');
+      setVerNotificaciones(false); // Cerrar panel
+
+      // Emitir evento global para que ModuloTicketsPago.jsx abra el modal
+      setTimeout(() => {
+        const event = new CustomEvent('abrirTicketDeepLink', { detail: notif.ticket_id });
+        window.dispatchEvent(event);
+      }, 400); // Dar tiempo al componente para montar si no estaba activo
     }
   };
 
@@ -789,6 +802,9 @@ function Dashboard() {
                           borderLeft: n.nuevo ? '3px solid #0ea5e9' : '3px solid transparent',
                           cursor: 'pointer' // Hover manejado por clase global
                         }}>
+                        <div style={{ fontSize: '0.65rem', fontWeight: '800', color: '#0ea5e9', textTransform: 'uppercase', marginBottom: '4px', letterSpacing: '0.5px', fontFamily: 'Inter, sans-serif' }}>
+                          {n.titulo || 'Notificación'}
+                        </div>
                         <div style={{ fontSize: '0.75rem', color: '#1e293b', fontWeight: n.nuevo ? '700' : '500', lineHeight: '1.4' }}>{n.msg}</div>
                         <div style={{ fontSize: '0.6rem', color: '#94a3b8', marginTop: '6px', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '5px' }}>
                           <i className="fa-regular fa-clock"></i> {n.hora}

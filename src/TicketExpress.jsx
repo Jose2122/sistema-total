@@ -319,15 +319,16 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
             id_control: t.codigo_control,
             solicitud_ref: t.solicitud_ref || '',
             clasificacion_admin: t.clasificacion_admin || '',
-            justificacion: t.justificacion || '',
-            justificacion_detallada: t.items?.[0]?.justificacion_detallada || '',
+            justificacion: t.observaciones || (t.items?.[0]?.justificacion_detallada ? t.justificacion : '') || '',
+            justificacion_detallada: t.items?.[0]?.justificacion_detallada || t.justificacion || '',
             centro_costo: t.centro_costo || t.items?.[0]?.cc || '',
             con_iva: t.con_iva !== false,
             prioridad: t.prioridad || 'Normal'
           });
           const hasSoportes = parsearFacturaUrls(factUrls).length > 0;
           setMostrarSoportes(hasSoportes);
-          const hasJustificacion = !!t.justificacion && t.justificacion.trim() !== '';
+          const obsValue = t.observaciones || (t.items?.[0]?.justificacion_detallada ? t.justificacion : '') || '';
+          const hasJustificacion = !!obsValue && obsValue.trim() !== '';
           setVerJustificacion(hasJustificacion);
         } else {
           setIsEditing(false);
@@ -430,7 +431,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
 
         const userInfo = {
           id: user.id,
-          nombre: perfil ? `${perfil.nombre} ${perfil.apellido}` : emailLower.split('@')[0],
+          nombre: perfil ? `${perfil.nombre || ''} ${perfil.apellido && String(perfil.apellido).toLowerCase() !== 'undefined' ? perfil.apellido : ''}`.trim() : emailLower.split('@')[0],
           correo: emailLower,
           departamento: perfil ? perfil.departamento : 'General',
           rol: perfil ? perfil.rol : 'Gerente',
@@ -874,7 +875,8 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
         status: initialStatus,
         solicitud_ref: form.solicitud_ref || null,
         clasificacion_admin: form.clasificacion_admin || null,
-        justificacion: form.justificacion || form.justificacion_detallada || null,
+        justificacion: form.justificacion_detallada || form.justificacion || null,
+        observaciones: form.justificacion || null,
         centro_costo: cc,
         con_iva: form.con_iva !== false,
         prioridad: form.prioridad || 'Normal',
@@ -992,7 +994,8 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
           factura_url: form.facturas_url || [],
           status: form.status,
           clasificacion_admin: form.clasificacion_admin,
-          justificacion: form.justificacion || form.justificacion_detallada || null,
+          justificacion: form.justificacion_detallada || form.justificacion || null,
+          observaciones: form.justificacion || null,
           con_iva: form.con_iva !== false,
           prioridad: form.prioridad || 'Normal',
           fecha_emision: form.fecha
@@ -1069,44 +1072,62 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
     
     // --- CUADRO DE METADATA ---
     const startY = 46;
+    const conceptoText = form.justificacion || form.justificacion_detallada || 'Sin asunto especificado';
+    const conceptoLines = doc.splitTextToSize(conceptoText, 140);
+    const boxHeight = 18 + (conceptoLines.length * 4);
+    
     doc.setDrawColor(226, 232, 240); // Borde gris claro
     doc.setFillColor(248, 250, 252); // Fondo gris muy claro
     doc.setLineWidth(0.3);
-    doc.roundedRect(15, startY, 180, 28, 2, 2, 'FD');
+    doc.roundedRect(15, startY, 180, boxHeight, 2, 2, 'FD');
     
     // Texto dentro de la Metadata
     doc.setFontSize(9.5);
     doc.setTextColor(15, 23, 42);
     
-    // Columna Izquierda
+    // Fila 1: Solicitante (left) y C. Costo (right)
     doc.setFont(fontPrimary, 'bold');
-    doc.text("Beneficiario: ", 20, startY + 8);
+    doc.text("Solicitante: ", 20, startY + 6);
     doc.setFont(fontPrimary, 'normal');
     doc.setTextColor(51, 65, 85);
-    doc.text(formatName(form.solicitante || form.gerente) || 'Varios', 42, startY + 8);
+    doc.text(formatName(form.solicitante || form.gerente) || 'Varios', 39, startY + 6);
     
-    doc.setFont(fontPrimary, 'bold');
-    doc.setTextColor(15, 23, 42);
-    doc.text("Concepto / Motivo: ", 20, startY + 16);
-    doc.setFont(fontPrimary, 'normal');
-    doc.setTextColor(51, 65, 85);
-    
-    const conceptoText = form.justificacion || form.justificacion_detallada || 'Sin asunto especificado';
-    const conceptoLines = doc.splitTextToSize(conceptoText, 140);
-    doc.text(conceptoLines, 50, startY + 16);
-    
-    // Columna Derecha
+    const ccValor = form.centro_costo || 'N/A';
     doc.setFont(fontPrimary, 'bold');
     doc.setTextColor(15, 23, 42);
-    doc.text("Estatus: ", 145, startY + 8);
+    doc.text("C. Costo: ", 120, startY + 6);
     doc.setFont(fontPrimary, 'normal');
     doc.setTextColor(51, 65, 85);
-    doc.text((form.status || 'EMITIDO').toUpperCase(), 160, startY + 8);
+    doc.text(ccValor, 136, startY + 6);
+    
+    // Fila 2: Estado (left)
+    doc.setFont(fontPrimary, 'bold');
+    doc.setTextColor(15, 23, 42);
+    doc.text("Estado: ", 20, startY + 12);
+    
+    const est = (form.status || 'EMITIDO').toUpperCase();
+    if (est === 'PAGADO' || est === 'COMPLETADO') {
+      doc.setTextColor(22, 163, 74); // Verde
+    } else if (est === 'ANULADO' || est === 'RECHAZADO') {
+      doc.setTextColor(220, 38, 38); // Rojo
+    } else {
+      doc.setTextColor(217, 119, 6); // Naranja/Ambar
+    }
+    doc.setFont(fontPrimary, 'normal');
+    doc.text(est, 33, startY + 12);
+    
+    // Fila 3: Concepto / Motivo
+    doc.setFont(fontPrimary, 'bold');
+    doc.setTextColor(15, 23, 42);
+    doc.text("Concepto / Motivo: ", 20, startY + 18);
+    doc.setFont(fontPrimary, 'normal');
+    doc.setTextColor(51, 65, 85);
+    doc.text(conceptoLines, 50, startY + 18);
     
     // --- TABLA DE ITEMS ---
-    const tableY = startY + 36;
+    const tableY = startY + boxHeight + 6;
     
-    const headers = [["DESCRIPCIÓN DEL ÍTEM", "CC", "CATEGORÍA", "CANTIDAD", "P.U. ($)", "TOTAL ($)"]];
+    const headers = [["DESCRIPCIÓN", "CC", "CATEGORÍA", "BENEFICIARIO", "CANTIDAD", "P.U. ($)", "TOTAL ($)"]];
     const data = (form.partidas || []).map(r => {
       const cant = r.cantidad || r.cantidad_pedida || r.cant || 0;
       const pu = r.pu || r.puUsd || 0;
@@ -1114,6 +1135,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
         r.desc || r.descripcion || '',
         r.cc || 'N/A',
         r.categoria || 'N/A',
+        r.beneficiario || '---',
         cant,
         `$ ${pu.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
         `$ ${(cant * pu).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -1128,12 +1150,13 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
       headStyles: { fillColor: [15, 23, 42], textColor: 255, fontStyle: 'bold' },
       styles: { fontSize: 8.5 },
       columnStyles: {
-        0: { cellWidth: 70 },
-        1: { cellWidth: 35 },
-        2: { cellWidth: 35 },
-        3: { cellWidth: 15, halign: 'center' },
-        4: { cellWidth: 20, halign: 'right' },
-        5: { cellWidth: 20, halign: 'right' }
+        0: { cellWidth: 50 },
+        1: { cellWidth: 25 },
+        2: { cellWidth: 25 },
+        3: { cellWidth: 35 }, // beneficiario
+        4: { cellWidth: 12, halign: 'center' },
+        5: { cellWidth: 18, halign: 'right' },
+        6: { cellWidth: 18, halign: 'right' }
       }
     });
     
@@ -1320,25 +1343,45 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
       
       // Notificaciones según el nuevo estado
       if (updatePayload.status === 'EMITIDO') {
-        // NOTIFICAR A ADMINISTRACIÓN Y CONTABILIDAD QUE EL TICKET FUE APROBADO COMPLETAMENTE
+        // NOTIFICAR A ADMINISTRACIÓN MARACAIBO QUE EL TICKET FUE APROBADO COMPLETAMENTE
         try {
-          const { data: perfiles } = await supabase
-            .from('perfiles')
-            .select('id, rol, departamento');
-          if (perfiles) {
-            const admins = perfiles.filter(p => {
-              const rol = (p.rol || '').toLowerCase();
-              const depto = (p.departamento || '').toLowerCase();
-              return rol.includes('administra') || rol.includes('contabil') || depto.includes('administra') || depto.includes('contabil');
-            });
-            for (const admin of admins) {
-              await supabase.from('notificaciones').insert([{
+          // Evitar duplicados consultando si ya existe una notificación de este tipo para este ticket (Idempotencia)
+          const { count, error: countErr } = await supabase
+            .from('notificaciones')
+            .select('id', { count: 'exact', head: true })
+            .eq('ticket_id', form.id)
+            .eq('tipo', 'Pago / Finanzas');
+
+          if (!countErr && (count || 0) === 0) {
+            const { data: perfiles } = await supabase
+              .from('perfiles')
+              .select('id, rol, departamento');
+            if (perfiles) {
+              const admins = perfiles.filter(p => {
+                const depto = (p.departamento || '').toLowerCase().trim();
+                const rol = (p.rol || '').toLowerCase().trim();
+                return depto.includes('administración maracaibo') || 
+                       depto.includes('administracion maracaibo') || 
+                       depto === 'adm-mcb' ||
+                       ((rol.includes('cajero') || rol.includes('pagador')) && (depto.includes('maracaibo') || depto.includes('mcb')));
+              });
+
+              const idControl = form.id_control || form.codigo_control || 'S/N';
+              const solicitanteNombre = form.solicitante || currentUser.nombre || 'Desconocido';
+
+              const notificationsToInsert = admins.map(admin => ({
                 usuario_id: admin.id,
-                mensaje: `Ticket de Pago ${form.id_control || form.codigo_control} aprobado y listo para procesar.`,
-                tipo: 'Ticket Aprobado',
+                titulo: 'Nuevo Ticket de Pago por Atender',
+                mensaje: `Ticket ${idControl} - Solicitante: ${solicitanteNombre}`,
+                tipo: 'Pago / Finanzas',
                 leido: false,
-                requisicion_id: null
-              }]);
+                requisicion_id: null,
+                ticket_id: form.id
+              }));
+
+              if (notificationsToInsert.length > 0) {
+                await supabase.from('notificaciones').insert(notificationsToInsert);
+              }
             }
           }
         } catch (err) {
@@ -1383,6 +1426,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
     try {
       const { data: updatedData, error } = await supabase.from('tickets_directos').update({
         status: 'Rechazado',
+        motivo_rechazo: motivo,
         observaciones: form.justificacion ? `${form.justificacion}\n\nRECHAZO: ${motivo}` : `RECHAZO: ${motivo}`
       }).eq('id', form.id).select('id');
 

@@ -38,8 +38,21 @@ const Proveedores = () => {
     calificacion_cumplimiento: 5,
     observaciones_negociacion: '',
     proveedor_preferencial: false,
-    status: true
+    status: true,
+    cuentas_bancarias: []
   });
+
+  const [bancosList, setBancosList] = useState([]);
+  const [nuevaCuentaForm, setNuevaCuentaForm] = useState({
+    banco: '',
+    moneda: 'USD',
+    nro_cuenta: '',
+    titular: '',
+    rif: ''
+  });
+
+  const [creandoNuevoBanco, setCreandoNuevoBanco] = useState(false);
+  const [nuevoBancoNombre, setNuevoBancoNombre] = useState('');
 
   const [historialCompras, setHistorialCompras] = useState([]);
   const [loadingHistorial, setLoadingHistorial] = useState(false);
@@ -58,7 +71,24 @@ const Proveedores = () => {
 
   useEffect(() => {
     obtenerProveedores();
+    obtenerBancosList();
   }, []);
+
+  const obtenerBancosList = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('bancos')
+        .select('nombre')
+        .eq('activo', true)
+        .order('nombre', { ascending: true });
+      if (!error && data) {
+        const uniqueNames = Array.from(new Set(data.map(b => b.nombre).filter(Boolean)));
+        setBancosList(uniqueNames);
+      }
+    } catch (err) {
+      console.error("Error loading banks:", err);
+    }
+  };
 
   const obtenerProveedores = async () => {
     setLoading(true);
@@ -146,7 +176,8 @@ const Proveedores = () => {
         calificacion_cumplimiento: Number(formData.calificacion_cumplimiento) || 5,
         observaciones_negociacion: formData.observaciones_negociacion || '',
         proveedor_preferencial: Boolean(formData.proveedor_preferencial),
-        status: formData.status
+        status: formData.status,
+        cuentas_bancarias: formData.cuentas_bancarias || []
       };
 
       // Filter payload if we already detected the columns
@@ -259,10 +290,20 @@ const Proveedores = () => {
       calificacion_cumplimiento: 5,
       observaciones_negociacion: '',
       proveedor_preferencial: false,
-      status: true
+      status: true,
+      cuentas_bancarias: []
     });
     setNuevaCategoriaText('');
     setMostrarParametrosSrm(false);
+    setNuevaCuentaForm({
+      banco: '',
+      moneda: 'USD',
+      nro_cuenta: '',
+      titular: '',
+      rif: ''
+    });
+    setCreandoNuevoBanco(false);
+    setNuevoBancoNombre('');
   };
 
   const agregarCategoriaSession = () => {
@@ -285,6 +326,86 @@ const Proveedores = () => {
     setFormData(prev => ({ ...prev, categoria: [...prev.categoria, trimmed] }));
     setNuevaCategoriaText('');
     toast.success(`Categoría "${trimmed}" agregada`);
+  };
+
+  const agregarCuentaBancaria = async () => {
+    let bancoSeleccionado = '';
+    
+    if (creandoNuevoBanco) {
+      if (!nuevoBancoNombre || !nuevoBancoNombre.trim()) {
+        return toast.error("Debe escribir el nombre del nuevo banco.");
+      }
+      const cleanName = nuevoBancoNombre.trim().toUpperCase();
+      
+      // Validar si ya existe en la lista de bancos
+      const yaExiste = bancosList.some(b => b.toUpperCase() === cleanName);
+      if (!yaExiste) {
+        // Insertar en la base de datos Supabase
+        try {
+          const { error } = await supabase
+            .from('bancos')
+            .insert([{ nombre: cleanName, moneda: nuevaCuentaForm.moneda, activo: true }]);
+          if (error) {
+            toast.error("Error al registrar banco en DB: " + error.message);
+            return;
+          }
+          // Añadir a la lista localmente
+          setBancosList(prev => [...prev, cleanName].sort());
+          toast.success(`Banco "${cleanName}" registrado con éxito.`);
+        } catch (err) {
+          toast.error("Error al registrar banco: " + err.message);
+          return;
+        }
+      }
+      bancoSeleccionado = cleanName;
+    } else {
+      if (!nuevaCuentaForm.banco) {
+        return toast.error("Debe seleccionar un banco.");
+      }
+      bancoSeleccionado = nuevaCuentaForm.banco;
+    }
+
+    if (!nuevaCuentaForm.nro_cuenta || !nuevaCuentaForm.nro_cuenta.trim()) {
+      return toast.error("Debe escribir el número de cuenta.");
+    }
+
+    const titularLimpio = nuevaCuentaForm.titular.trim() || formData.razon_social;
+    const rifLimpio = (nuevaCuentaForm.rif.trim() || formData.rif).toUpperCase();
+
+    const nueva = {
+      banco: bancoSeleccionado,
+      moneda: nuevaCuentaForm.moneda,
+      nro_cuenta: nuevaCuentaForm.nro_cuenta.trim(),
+      titular: titularLimpio,
+      rif: rifLimpio
+    };
+    const ctas = formData.cuentas_bancarias || [];
+    const duplicada = ctas.some(c => c.banco === nueva.banco && c.nro_cuenta === nueva.nro_cuenta);
+    if (duplicada) {
+      return toast.error("Esta cuenta ya está registrada.");
+    }
+    setFormData({
+      ...formData,
+      cuentas_bancarias: [...ctas, nueva]
+    });
+    setNuevaCuentaForm({
+      banco: '',
+      moneda: 'USD',
+      nro_cuenta: '',
+      titular: '',
+      rif: ''
+    });
+    setCreandoNuevoBanco(false);
+    setNuevoBancoNombre('');
+    toast.success("Cuenta agregada.");
+  };
+
+  const quitarCuentaBancaria = (index) => {
+    const ctas = formData.cuentas_bancarias || [];
+    setFormData({
+      ...formData,
+      cuentas_bancarias: ctas.filter((_, idx) => idx !== index)
+    });
   };
 
   const cargarHistorialCompras = async (p) => {
@@ -413,6 +534,295 @@ const Proveedores = () => {
     } catch (err) {
       console.error("Error cargando reportes:", err);
       toast.error("Error al cargar reportes: " + err.message);
+    } finally {
+      setLoadingReportes(false);
+    }
+  };
+
+  const exportarReporteDeudasExcel = async () => {
+    if (proveedores.length === 0) {
+      toast.error("No hay proveedores registrados.");
+      return;
+    }
+
+    setLoadingReportes(true);
+    try {
+      // 1. Obtener Requisiciones Aprobadas
+      const { data: reqs, error: reqError } = await supabase
+        .from('requisiciones')
+        .select('*')
+        .eq('estado_aprobacion', 'aprobado_final');
+      if (reqError) throw reqError;
+
+      // 2. Obtener Tickets de Pago Pendientes
+      const { data: tickets, error: ticketError } = await supabase
+        .from('tickets_directos')
+        .select('*');
+      if (ticketError) throw ticketError;
+
+      // Filtrar los tickets activos pendientes (no completados, rechazados ni anulados)
+      const ticketsPendientes = (tickets || []).filter(t => {
+        const statusUpper = (t.status || '').toUpperCase().trim();
+        return statusUpper !== 'PAGADO' && statusUpper !== 'RECHAZADO' && statusUpper !== 'ANULADO' && statusUpper !== 'COMPLETADO';
+      });
+
+      // 3. Inicializar agrupación por Proveedor
+      const deudasAgrupadas = {};
+      proveedores.forEach(p => {
+        deudasAgrupadas[p.id] = {
+          rif: p.rif || 'N/A',
+          razon_social: p.razon_social,
+          categoria: p.categoria || 'OTROS',
+          limite_credito: Number(p.monto_limite_credito) || 0,
+          dias_credito: Number(p.dias_credito) || 0,
+          total_compras: 0,
+          total_deuda: 0,
+          deudas_detalle: []
+        };
+      });
+
+      // 4. Procesar Requisiciones para acumular Compras y Deudas
+      (reqs || []).forEach(r => {
+        const items = Array.isArray(r.items) ? r.items : [];
+        items.forEach(it => {
+          const hist = Array.isArray(it.historial_compras) ? it.historial_compras : [];
+          hist.forEach(h => {
+            if (h.tipo === 'JUSTIFICACION' || h.tipo === 'ANULACION') return;
+            const provId = h.proveedor_id;
+            
+            // Encontrar proveedor por ID o por coincidencia de Razón Social
+            let provKey = provId;
+            if (!provKey && h.proveedor_nombre) {
+              const matched = proveedores.find(p => p.razon_social.trim().toUpperCase() === h.proveedor_nombre.trim().toUpperCase());
+              if (matched) provKey = matched.id;
+            }
+
+            if (provKey && deudasAgrupadas[provKey]) {
+              const totalTransaccion = (Number(h.cant) || 0) * (Number(h.pu) || 0);
+              deudasAgrupadas[provKey].total_compras += totalTransaccion;
+
+              // Es una deuda de crédito pendiente?
+              const esNC = h.doc_tipo === 'NC' || h.metodo_pago?.includes('CRÉDITO');
+              const esLiquidado = h.metodo_pago?.includes('PAGADO');
+              if (esNC && !esLiquidado) {
+                const totalConIva = totalTransaccion * (r.con_iva !== false ? 1.16 : 1.00);
+                deudasAgrupadas[provKey].total_deuda += totalConIva;
+                
+                const fechaDeuda = h.fecha ? h.fecha.split('T')[0] : (r.fecha_emision ? r.fecha_emision.split('T')[0] : r.created_at?.split('T')[0]);
+                deudasAgrupadas[provKey].deudas_detalle.push({
+                  fecha: fechaDeuda || new Date().toISOString().split('T')[0],
+                  monto: totalConIva,
+                  ref: r.correlativo_req || `REQ-${r.id}`
+                });
+              }
+            }
+          });
+        });
+      });
+
+      // 5. Procesar Tickets Directos Pendientes para acumular Deuda
+      ticketsPendientes.forEach(t => {
+        const partidas = Array.isArray(t.partidas) ? t.partidas : [];
+        partidas.forEach(r => {
+          const provId = r.proveedor_seleccionado_id;
+          if (provId && deudasAgrupadas[provId]) {
+            const montoPartida = Number(r.total) || (Number(r.cantidad_pedida || r.cant || 1) * Number(r.pu || r.puUsd || 0));
+            deudasAgrupadas[provId].total_deuda += montoPartida;
+
+            const fechaDeuda = t.fecha_emision ? t.fecha_emision.split('T')[0] : t.created_at?.split('T')[0];
+            deudasAgrupadas[provId].deudas_detalle.push({
+              fecha: fechaDeuda || new Date().toISOString().split('T')[0],
+              monto: montoPartida,
+              ref: t.codigo_control || `TCK-${t.id}`
+            });
+          }
+        });
+      });
+
+      // 6. Preparar datos finales calculando antigüedad y alertas
+      const hoy = new Date();
+      const reportRows = Object.values(deudasAgrupadas).map(data => {
+        let maxAntigüedad = 0;
+        let oldestFecha = '—';
+
+        if (data.total_deuda > 0 && data.deudas_detalle.length > 0) {
+          const fechasValidas = data.deudas_detalle
+            .map(d => new Date(d.fecha))
+            .filter(f => !isNaN(f.getTime()));
+          
+          if (fechasValidas.length > 0) {
+            const oldestDate = new Date(Math.min(...fechasValidas));
+            oldestFecha = oldestDate.toISOString().split('T')[0];
+            const diffTime = hoy - oldestDate;
+            maxAntigüedad = Math.max(0, Math.floor(diffTime / (1000 * 60 * 60 * 24)));
+          }
+        }
+
+        // Determinar Estado de Alerta
+        let alerta = 'AL DÍA';
+        if (data.total_deuda > 0) {
+          if (data.limite_credito > 0 && data.total_deuda > data.limite_credito) {
+            alerta = '🚨 CRÍTICA (LÍMITE EXCEDIDO)';
+          } else if (maxAntigüedad > data.dias_credito + 15) {
+            alerta = '🚨 CRÍTICA (>15 DÍAS VENCIDA)';
+          } else if (maxAntigüedad > data.dias_credito) {
+            alerta = '⚠️ VENCIDA';
+          } else {
+            alerta = '🟢 DENTRO DE PLAZO';
+          }
+        }
+
+        return {
+          rif: data.rif,
+          razon_social: data.razon_social,
+          categoria: data.categoria,
+          total_compras: data.total_compras,
+          limite_credito: data.limite_credito,
+          dias_credito: data.dias_credito,
+          total_deuda: data.total_deuda,
+          antiguedad_dias: maxAntigüedad,
+          fecha_deuda_vieja: oldestFecha,
+          alerta: alerta
+        };
+      });
+
+      // 7. Construir Archivo Excel
+      const workbook = new ExcelJS.Workbook();
+      const worksheet = workbook.addWorksheet('Reporte Deudas');
+
+      // Título Ejecutivo
+      worksheet.mergeCells('A1:J1');
+      const titleCell = worksheet.getCell('A1');
+      titleCell.value = 'TOTAL CLEAN C.A. - REPORTE DE DEUDAS Y ANTIGÜEDAD DE PROVEEDORES';
+      titleCell.font = { name: 'Arial Black', size: 12, color: { argb: 'FFFFFFFF' } };
+      titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD97706' } }; // Ámbar/Naranja
+      titleCell.alignment = { vertical: 'middle', horizontal: 'center' };
+      worksheet.getRow(1).height = 42;
+
+      // Encabezados de columnas
+      const headers = [
+        'RIF',
+        'RAZÓN SOCIAL',
+        'CATEGORÍA',
+        'TOTAL COMPRAS ($)',
+        'LÍMITE CRÉDITO ($)',
+        'PLAZO ACORDADO (DÍAS)',
+        'DEUDA PENDIENTE ($)',
+        'ANTIGÜEDAD (DÍAS)',
+        'FECHA DEUDA MÁS VIEJA',
+        'ESTADO ALERTA'
+      ];
+      worksheet.addRow(headers);
+      const headerRow = worksheet.getRow(2);
+      headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+      headerRow.alignment = { horizontal: 'center', vertical: 'middle' };
+      worksheet.getRow(2).height = 28;
+
+      // Rellenar filas
+      reportRows.forEach(r => {
+        const row = worksheet.addRow([
+          r.rif,
+          r.razon_social,
+          r.categoria,
+          r.total_compras,
+          r.limite_credito,
+          r.dias_credito,
+          r.total_deuda,
+          r.total_deuda > 0 ? r.antiguedad_dias : '—',
+          r.fecha_deuda_vieja,
+          r.alerta
+        ]);
+
+        row.getCell(1).alignment = { horizontal: 'center' };
+        row.getCell(4).alignment = { horizontal: 'right' };
+        row.getCell(5).alignment = { horizontal: 'right' };
+        row.getCell(6).alignment = { horizontal: 'center' };
+        row.getCell(7).alignment = { horizontal: 'right' };
+        row.getCell(8).alignment = { horizontal: 'center' };
+        row.getCell(9).alignment = { horizontal: 'center' };
+        row.getCell(10).alignment = { horizontal: 'center' };
+
+        // Formatos de número/moneda
+        row.getCell(4).numFmt = '"$"#,##0.00';
+        row.getCell(5).numFmt = '"$"#,##0.00';
+        row.getCell(6).numFmt = '#,##0';
+        row.getCell(7).numFmt = '"$"#,##0.00';
+
+        // Colores de alerta
+        const cellAlerta = row.getCell(10);
+        if (r.alerta.includes('CRÍTICA')) {
+          cellAlerta.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEE2E2' } };
+          cellAlerta.font = { color: { argb: 'FF991B1B' }, bold: true };
+        } else if (r.alerta.includes('VENCIDA')) {
+          cellAlerta.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEAF2F8' } };
+          cellAlerta.font = { color: { argb: 'FF92400E' }, bold: true };
+        } else if (r.alerta.includes('DENTRO')) {
+          cellAlerta.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'DCE7E1' } };
+          cellAlerta.font = { color: { argb: 'FF15803D' }, bold: true };
+        }
+
+        row.eachCell(cell => {
+          cell.border = {
+            top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+            left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+            bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+            right: { style: 'thin', color: { argb: 'FFE2E8F0' } }
+          };
+        });
+      });
+
+      // Anchos de columna
+      worksheet.columns = [
+        { width: 18 }, // RIF
+        { width: 35 }, // RAZÓN SOCIAL
+        { width: 22 }, // CATEGORÍA
+        { width: 22 }, // TOTAL COMPRAS ($)
+        { width: 22 }, // LÍMITE CRÉDITO ($)
+        { width: 24 }, // PLAZO ACORDADO (DÍAS)
+        { width: 24 }, // DEUDA PENDIENTE ($)
+        { width: 22 }, // ANTIGÜEDAD (DÍAS)
+        { width: 24 }, // FECHA DEUDA MÁS VIEJA
+        { width: 32 }  // ESTADO ALERTA
+      ];
+
+      // Fila de totales globales al final
+      const lastRowIdx = reportRows.length + 3;
+      worksheet.mergeCells(`A${lastRowIdx}:C${lastRowIdx}`);
+      const labelCell = worksheet.getCell(`A${lastRowIdx}`);
+      labelCell.value = 'TOTALES GENERALES';
+      labelCell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      labelCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF475569' } };
+      labelCell.alignment = { horizontal: 'center', vertical: 'middle' };
+
+      const totalComprasSum = reportRows.reduce((sum, r) => sum + r.total_compras, 0);
+      const totalDeudaSum = reportRows.reduce((sum, r) => sum + r.total_deuda, 0);
+
+      const cellTotalCompras = worksheet.getCell(`D${lastRowIdx}`);
+      cellTotalCompras.value = totalComprasSum;
+      cellTotalCompras.font = { bold: true };
+      cellTotalCompras.numFmt = '"$"#,##0.00';
+
+      const cellTotalDeuda = worksheet.getCell(`G${lastRowIdx}`);
+      cellTotalDeuda.value = totalDeudaSum;
+      cellTotalDeuda.font = { bold: true };
+      cellTotalDeuda.numFmt = '"$"#,##0.00';
+
+      const totalRow = worksheet.getRow(lastRowIdx);
+      totalRow.height = 26;
+      totalRow.eachCell(cell => {
+        cell.border = {
+          top: { style: 'thin', color: { argb: 'FF94A3B8' } },
+          bottom: { style: 'double', color: { argb: 'FF94A3B8' } }
+        };
+      });
+
+      const buffer = await workbook.xlsx.writeBuffer();
+      saveAs(new Blob([buffer]), `Reporte_Deudas_Proveedores_${hoy.toISOString().split('T')[0]}.xlsx`);
+      toast.success("Reporte de deudas exportado con éxito.");
+    } catch (err) {
+      console.error("Error al exportar reporte de deudas:", err);
+      toast.error("Error al exportar reporte de deudas: " + err.message);
     } finally {
       setLoadingReportes(false);
     }
@@ -680,7 +1090,8 @@ const Proveedores = () => {
       calificacion_precio: p.calificacion_precio ?? 5,
       calificacion_cumplimiento: p.calificacion_cumplimiento ?? 5,
       observaciones_negociacion: p.observaciones_negociacion || '',
-      proveedor_preferencial: Boolean(p.proveedor_preferencial)
+      proveedor_preferencial: Boolean(p.proveedor_preferencial),
+      cuentas_bancarias: Array.isArray(p.cuentas_bancarias) ? p.cuentas_bancarias : []
     });
     setMostrarParametrosSrm(Boolean(p.monto_limite_credito > 0 || p.dias_credito > 0 || p.observaciones_negociacion || p.proveedor_preferencial));
     setShowModal(true);
@@ -1042,29 +1453,54 @@ const Proveedores = () => {
                   <h3 className="prov-section-title">Ranking y Volumen de Compras por Proveedor</h3>
                   <p className="prov-section-subtitle">Consolidado general de transacciones, cantidades y montos totales por proveedor</p>
                 </div>
-                <button
-                  type="button"
-                  onClick={exportRankingToExcel}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    padding: '10px 18px',
-                    backgroundColor: '#16a34a',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '10px',
-                    fontWeight: '800',
-                    fontSize: '0.75rem',
-                    textTransform: 'uppercase',
-                    cursor: 'pointer',
-                    boxShadow: '0 4px 6px -1px rgba(22, 163, 74, 0.2)',
-                    transition: 'all 0.2s'
-                  }}
-                >
-                  <FileSpreadsheet size={15} />
-                  Exportar Ranking a Excel
-                </button>
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <button
+                    type="button"
+                    onClick={exportRankingToExcel}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      padding: '10px 18px',
+                      backgroundColor: '#16a34a',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '10px',
+                      fontWeight: '800',
+                      fontSize: '0.75rem',
+                      textTransform: 'uppercase',
+                      cursor: 'pointer',
+                      boxShadow: '0 4px 6px -1px rgba(22, 163, 74, 0.2)',
+                      transition: 'all 0.2s'
+                    }}
+                  >
+                    <FileSpreadsheet size={15} />
+                    Exportar Ranking a Excel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={exportarReporteDeudasExcel}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      padding: '10px 18px',
+                      backgroundColor: '#d97706',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '10px',
+                      fontWeight: '800',
+                      fontSize: '0.75rem',
+                      textTransform: 'uppercase',
+                      cursor: 'pointer',
+                      boxShadow: '0 4px 6px -1px rgba(217, 119, 6, 0.2)',
+                      transition: 'all 0.2s'
+                    }}
+                  >
+                    <DollarSign size={15} />
+                    Reporte Deudas (Aging)
+                  </button>
+                </div>
               </div>
 
               <div style={{ overflowX: 'auto', border: '1px solid #e2e8f0', borderRadius: '16px' }}>
@@ -1364,6 +1800,168 @@ const Proveedores = () => {
                       value={formData.telefono}
                       onChange={e => setFormData({...formData, telefono: e.target.value})}
                     />
+                  </div>
+
+                  <div className="prov-field prov-form-full" style={{ borderTop: '1px solid #cbd5e1', paddingTop: '15px', marginTop: '10px' }}>
+                    <label className="prov-label" style={{ fontSize: '11px', fontWeight: '900', color: '#1e293b', marginBottom: '10px', display: 'block' }}>
+                      🏦 CUENTAS DE PAGO (BANCOS)
+                    </label>
+
+                    {/* Formulario rápido para agregar cuenta */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', backgroundColor: '#f8fafc', padding: '12px', borderRadius: '12px', border: '1px solid #e2e8f0', marginBottom: '10px' }}>
+                      
+                      {/* Fila 1: Banco, Moneda, Cuenta */}
+                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'end' }}>
+                        <div style={{ flex: 2, minWidth: '150px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '5px' }}>
+                            <label style={{ display: 'block', fontSize: '9px', fontWeight: '800', color: '#64748b', textTransform: 'uppercase', margin: 0 }}>Banco</label>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setCreandoNuevoBanco(!creandoNuevoBanco);
+                                setNuevoBancoNombre('');
+                                setNuevaCuentaForm(prev => ({ ...prev, banco: '' }));
+                              }}
+                              style={{ background: 'none', border: 'none', color: '#3b82f6', fontSize: '9px', fontWeight: '800', cursor: 'pointer', padding: 0 }}
+                            >
+                              {creandoNuevoBanco ? "<- Seleccionar" : "+ Crear Nuevo"}
+                            </button>
+                          </div>
+                          {creandoNuevoBanco ? (
+                            <input
+                              type="text"
+                              className="prov-input"
+                              placeholder="NOMBRE DEL BANCO"
+                              value={nuevoBancoNombre}
+                              onChange={(e) => setNuevoBancoNombre(e.target.value.toUpperCase())}
+                              style={{ width: '100%', height: '38px', padding: '0 10px', fontSize: '12px' }}
+                            />
+                          ) : (
+                            <select
+                              className="prov-input"
+                              value={nuevaCuentaForm.banco}
+                              onChange={(e) => setNuevaCuentaForm({ ...nuevaCuentaForm, banco: e.target.value })}
+                              style={{ width: '100%', height: '38px', padding: '0 10px', fontSize: '12px', backgroundColor: 'white' }}
+                            >
+                              <option value="">-- Seleccionar Banco --</option>
+                              {bancosList.map(b => (
+                                <option key={b} value={b}>{b}</option>
+                              ))}
+                            </select>
+                          )}
+                        </div>
+
+                        <div style={{ flex: 1, minWidth: '90px' }}>
+                          <label style={{ display: 'block', fontSize: '9px', fontWeight: '800', color: '#64748b', marginBottom: '5px', textTransform: 'uppercase' }}>Moneda</label>
+                          <select
+                            className="prov-input"
+                            value={nuevaCuentaForm.moneda}
+                            onChange={(e) => setNuevaCuentaForm({ ...nuevaCuentaForm, moneda: e.target.value })}
+                            style={{ width: '100%', height: '38px', padding: '0 10px', fontSize: '12px', backgroundColor: 'white' }}
+                          >
+                            <option value="USD">USD</option>
+                            <option value="VES">VES</option>
+                          </select>
+                        </div>
+
+                        <div style={{ flex: 3, minWidth: '180px' }}>
+                          <label style={{ display: 'block', fontSize: '9px', fontWeight: '800', color: '#64748b', marginBottom: '5px', textTransform: 'uppercase' }}>Número de Cuenta</label>
+                          <input
+                            type="text"
+                            className="prov-input"
+                            placeholder="Ej: 0134-XXXX-XX-XXXXXXXXXX"
+                            value={nuevaCuentaForm.nro_cuenta}
+                            onChange={(e) => setNuevaCuentaForm({ ...nuevaCuentaForm, nro_cuenta: e.target.value.replace(/[^0-9-]/g, '') })}
+                            style={{ width: '100%', height: '38px', padding: '0 10px', fontSize: '12px', fontFamily: 'monospace' }}
+                          />
+                        </div>
+                      </div>
+
+                      {/* Fila 2: Titular de la Cuenta, RIF/Cédula, Botón Agregar */}
+                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'end' }}>
+                        <div style={{ flex: 3, minWidth: '220px' }}>
+                          <label style={{ display: 'block', fontSize: '9px', fontWeight: '800', color: '#64748b', marginBottom: '5px', textTransform: 'uppercase' }}>Titular / Persona de la Cuenta <span style={{ fontWeight: '400', textTransform: 'none', color: '#94a3b8' }}>(Opcional)</span></label>
+                          <input
+                            type="text"
+                            className="prov-input"
+                            placeholder="Nombre del Titular (Ej: Elizabeth Gutierrez)"
+                            value={nuevaCuentaForm.titular}
+                            onChange={(e) => setNuevaCuentaForm({ ...nuevaCuentaForm, titular: e.target.value })}
+                            style={{ width: '100%', height: '38px', padding: '0 10px', fontSize: '12px' }}
+                          />
+                        </div>
+
+                        <div style={{ flex: 2, minWidth: '140px' }}>
+                          <label style={{ display: 'block', fontSize: '9px', fontWeight: '800', color: '#64748b', marginBottom: '5px', textTransform: 'uppercase' }}>RIF / Cédula Titular <span style={{ fontWeight: '400', textTransform: 'none', color: '#94a3b8' }}>(Opcional)</span></label>
+                          <input
+                            type="text"
+                            className="prov-input"
+                            placeholder="Ej: V-12345678-0"
+                            value={nuevaCuentaForm.rif}
+                            onChange={(e) => setNuevaCuentaForm({ ...nuevaCuentaForm, rif: e.target.value })}
+                            style={{ width: '100%', height: '38px', padding: '0 10px', fontSize: '12px' }}
+                          />
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={agregarCuentaBancaria}
+                          style={{
+                            height: '38px',
+                            padding: '0 16px',
+                            backgroundColor: '#10b981',
+                            color: 'white',
+                            borderRadius: '10px',
+                            border: 'none',
+                            fontSize: '11px',
+                            fontWeight: '800',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            boxShadow: '0 2px 4px rgba(16, 185, 129, 0.2)',
+                            flexShrink: 0
+                          }}
+                        >
+                          <Plus size={14} /> AGREGAR
+                        </button>
+                      </div>
+
+                    </div>
+
+                    {/* Listado de cuentas agregadas */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '180px', overflowY: 'auto' }}>
+                      {(!formData.cuentas_bancarias || formData.cuentas_bancarias.length === 0) ? (
+                        <p style={{ margin: 0, fontSize: '0.75rem', color: '#94a3b8', fontStyle: 'italic', padding: '6px 8px' }}>
+                          No hay cuentas de pago registradas para este proveedor.
+                        </p>
+                      ) : (
+                        formData.cuentas_bancarias.map((cta, idx) => (
+                          <div key={idx} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', backgroundColor: '#f1f5f9', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                              <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#1e293b' }}>{cta.banco}</span>
+                              <span style={{ fontSize: '0.65rem', fontWeight: '900', padding: '1px 6px', borderRadius: '6px', backgroundColor: cta.moneda === 'USD' ? '#dcfce7' : '#eff6ff', color: cta.moneda === 'USD' ? '#15803d' : '#1d4ed8', border: `1px solid ${cta.moneda === 'USD' ? '#bbf7d0' : '#bfdbfe'}` }}>
+                                {cta.moneda}
+                              </span>
+                              <span style={{ fontSize: '0.75rem', fontFamily: 'monospace', color: '#475569' }}>{cta.nro_cuenta}</span>
+                              {(cta.titular || cta.rif) && (
+                                <span style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '600' }}>
+                                  ({cta.titular || '—'} | RIF: {cta.rif || '—'})
+                                </span>
+                              )}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => quitarCuentaBancaria(idx)}
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', padding: '2px', display: 'flex', alignItems: 'center' }}
+                              title="Quitar cuenta"
+                            >
+                              <XCircle size={15} />
+                            </button>
+                          </div>
+                        ))
+                      )}
+                    </div>
                   </div>
 
                 <div className="prov-field prov-form-full" style={{ marginTop: '4px' }}>
@@ -1698,6 +2296,37 @@ const Proveedores = () => {
                                 <div style={{ fontSize: '1.3rem', fontWeight: '900', color: '#0ea5e9', marginTop: '6px' }}>
                                   {dias} días
                                 </div>
+                              </div>
+                            </div>
+
+                            {/* SECCIÓN DE CUENTAS BANCARIAS */}
+                            <div style={{ backgroundColor: '#f8fafc', padding: '18px', borderRadius: '16px', border: '1px solid #cbd5e1', marginTop: '15px' }}>
+                              <div style={{ fontSize: '0.8rem', color: '#1e293b', fontWeight: '900', textTransform: 'uppercase', marginBottom: '12px', borderBottom: '1px solid #cbd5e1', paddingBottom: '6px' }}>
+                                🏦 Cuentas de Pago Registradas
+                              </div>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                {(!provSeleccionado.cuentas_bancarias || provSeleccionado.cuentas_bancarias.length === 0) ? (
+                                  <span style={{ fontSize: '0.75rem', color: '#94a3b8', fontStyle: 'italic', padding: '4px' }}>
+                                    No hay cuentas bancarias asociadas a este proveedor.
+                                  </span>
+                                ) : (
+                                  provSeleccionado.cuentas_bancarias.map((cta, idx) => (
+                                    <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: '5px', backgroundColor: 'white', padding: '10px 14px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                                        <span style={{ fontSize: '0.8rem', fontWeight: '800', color: '#1e293b' }}>{cta.banco}</span>
+                                        <span style={{ fontSize: '0.65rem', fontWeight: '900', padding: '2px 7px', borderRadius: '6px', backgroundColor: cta.moneda === 'USD' ? '#dcfce7' : '#eff6ff', color: cta.moneda === 'USD' ? '#15803d' : '#1d4ed8', border: `1px solid ${cta.moneda === 'USD' ? '#bbf7d0' : '#bfdbfe'}` }}>
+                                          {cta.moneda}
+                                        </span>
+                                        <span style={{ fontSize: '0.8rem', fontFamily: 'monospace', color: '#475569', fontWeight: '500' }}>{cta.nro_cuenta}</span>
+                                      </div>
+                                      {(cta.titular || cta.rif) && (
+                                        <div style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: '600' }}>
+                                          👤 Titular: <strong style={{ color: '#334155' }}>{cta.titular || '—'}</strong> | RIF: <strong style={{ color: '#334155' }}>{cta.rif || '—'}</strong>
+                                        </div>
+                                      )}
+                                    </div>
+                                  ))
+                                )}
                               </div>
                             </div>
                           </>

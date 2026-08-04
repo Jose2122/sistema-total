@@ -1179,7 +1179,16 @@ const Compras = () => {
     }];
   };
 
-  const generarRequisicionPDF = () => {
+  const cargarImagenLogo = () => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.src = '/logo.png';
+      img.onload = () => resolve(img);
+      img.onerror = () => resolve(null);
+    });
+  };
+
+  const generarRequisicionPDF = async () => {
     if (!requisicionActiva) {
       toast.error("No se encontraron datos para exportar.");
       return;
@@ -1189,48 +1198,82 @@ const Compras = () => {
     const pdf = new jsPDF('p', 'mm', 'a4');
     const fontPrimary = 'helvetica';
     
-    // --- CABECERA ---
-    pdf.setFont(fontPrimary, 'bold');
-    pdf.setFontSize(13);
-    pdf.setTextColor(15, 23, 42); // Slate-900
-    pdf.text("TOTAL CLEAN C.A.", 15, 20);
-    
-    pdf.setFont(fontPrimary, 'normal');
-    pdf.setFontSize(9);
-    pdf.setTextColor(71, 85, 105); // Slate-600
-    pdf.text("J-303658587-0", 15, 25);
-    
-    // Derecha: Fecha y Solicitud #
+    // --- CABECERA (DISEÑO CORPORATIVO REFORMADO) ---
+    const correlativoStr = requisicionActiva.correlativo || `REQ-${String(requisicionActiva.id).padStart(3, '0')}`;
     const fechaEmision = requisicionActiva.fecha 
       ? format(new Date(requisicionActiva.fecha + 'T12:00:00'), 'dd/MM/yyyy hh:mm a') 
       : format(new Date(), 'dd/MM/yyyy hh:mm a');
+
+    try {
+      const logoImg = await cargarImagenLogo();
+      if (logoImg) {
+        // Logo en la esquina superior izquierda (tamaño ampliado)
+        pdf.addImage(logoImg, 'PNG', 15, 11, 28, 21);
+        
+        // Información de la empresa (a la derecha del logo)
+        pdf.setFont(fontPrimary, 'bold');
+        pdf.setFontSize(12);
+        pdf.setTextColor(15, 23, 42); // Slate-900
+        pdf.text("TOTAL CLEAN C.A.", 46, 18);
+        
+        pdf.setFont(fontPrimary, 'normal');
+        pdf.setFontSize(8.5);
+        pdf.setTextColor(100, 116, 139); // Slate-500
+        pdf.text("J-303658587-0", 46, 23);
+      } else {
+        // Fallback si no hay logo
+        pdf.setFont(fontPrimary, 'bold');
+        pdf.setFontSize(12);
+        pdf.setTextColor(15, 23, 42);
+        pdf.text("TOTAL CLEAN C.A.", 15, 18);
+        
+        pdf.setFont(fontPrimary, 'normal');
+        pdf.setFontSize(8.5);
+        pdf.setTextColor(100, 116, 139);
+        pdf.text("J-303658587-0", 15, 23);
+      }
+    } catch (e) {
+      console.error("Error cargando logo en PDF:", e);
+      // Fallback
+      pdf.setFont(fontPrimary, 'bold');
+      pdf.setFontSize(12);
+      pdf.setTextColor(15, 23, 42);
+      pdf.text("TOTAL CLEAN C.A.", 15, 18);
+      
+      pdf.setFont(fontPrimary, 'normal');
+      pdf.setFontSize(8.5);
+      pdf.setTextColor(100, 116, 139);
+      pdf.text("J-303658587-0", 15, 23);
+    }
     
-    pdf.setFontSize(9);
-    pdf.setTextColor(71, 85, 105);
-    pdf.text(`Fecha : ${fechaEmision}`, 195, 20, { align: 'right' });
-    pdf.text("Solicitud 1 de 1", 195, 25, { align: 'right' });
-    
-    // --- TÍTULO CENTRAL ---
-    const correlativoStr = requisicionActiva.correlativo || `REQ-${String(requisicionActiva.id).padStart(3, '0')}`;
+    // Derecha: Título de documento y correlativo alineados a la derecha
     pdf.setFont(fontPrimary, 'bold');
-    pdf.setFontSize(12);
-    pdf.setTextColor(15, 23, 42);
-    const titulo = `REQUISICIÓN DE RECURSOS: ${correlativoStr}`;
-    const textWidth = pdf.getTextWidth(titulo);
-    const posX = (210 - textWidth) / 2;
-    pdf.text(titulo, posX, 38);
+    pdf.setFontSize(14);
+    pdf.setTextColor(15, 23, 42); // Slate-900
+    pdf.text("REQUISICIÓN DE RECURSOS", 195, 17, { align: 'right' });
     
-    // Línea subrayada del título
-    pdf.setDrawColor(15, 23, 42);
+    pdf.setFont(fontPrimary, 'bold');
+    pdf.setFontSize(10.5);
+    pdf.setTextColor(71, 85, 105); // Slate-600
+    pdf.text(`No: ${correlativoStr}`, 195, 22, { align: 'right' });
+    
+    pdf.setFont(fontPrimary, 'normal');
+    pdf.setFontSize(8.0);
+    pdf.setTextColor(100, 116, 139); // Slate-500
+    pdf.text(`Fecha: ${fechaEmision}`, 195, 26, { align: 'right' });
+    
+    // Línea horizontal divisora
+    pdf.setDrawColor(226, 232, 240); // Slate-200
     pdf.setLineWidth(0.4);
-    pdf.line(posX, 40, posX + textWidth, 40);
+    pdf.line(15, 31, 195, 31);
     
-    // --- CUADRO DE METADATA ---
-    const startY = 46;
+    // --- CUADRO DE METADATA (Gerencia, Responsable, etc.) ---
+    const startY = 36;
+    const metadataBoxHeight = 26;
     pdf.setDrawColor(226, 232, 240); // Borde gris claro
     pdf.setFillColor(248, 250, 252); // Fondo gris muy claro
     pdf.setLineWidth(0.3);
-    pdf.roundedRect(15, startY, 180, 22, 2, 2, 'FD');
+    pdf.roundedRect(15, startY, 180, metadataBoxHeight, 2, 2, 'FD');
     
     // Texto dentro de la Metadata
     pdf.setFontSize(9.5);
@@ -1238,17 +1281,29 @@ const Compras = () => {
     
     // Columna Izquierda
     pdf.setFont(fontPrimary, 'bold');
-    pdf.text("Gerencia: ", 20, startY + 8);
+    pdf.text("Gerencia: ", 20, startY + 7);
     pdf.setFont(fontPrimary, 'normal');
     pdf.setTextColor(51, 65, 85);
-    pdf.text(requisicionActiva.gerencia || 'N/A', 38, startY + 8);
+    pdf.text(requisicionActiva.gerencia || 'N/A', 38, startY + 7);
     
     pdf.setFont(fontPrimary, 'bold');
     pdf.setTextColor(15, 23, 42);
-    pdf.text("Responsable: ", 20, startY + 15);
+    pdf.text("Responsable: ", 20, startY + 14);
     pdf.setFont(fontPrimary, 'normal');
     pdf.setTextColor(51, 65, 85);
-    pdf.text(requisicionActiva.solicitante || 'N/A', 43, startY + 15);
+    pdf.text(requisicionActiva.solicitante || 'N/A', 43, startY + 14);
+
+    pdf.setFont(fontPrimary, 'bold');
+    pdf.setTextColor(15, 23, 42);
+    pdf.text("Prioridad: ", 20, startY + 21);
+    pdf.setFont(fontPrimary, 'normal');
+    const prioridadTexto = requisicionActiva.prioridad || 'Normal';
+    if (prioridadTexto === 'Emergencia' || prioridadTexto === 'Urgente') {
+      pdf.setTextColor(220, 38, 38); // Rojo
+    } else {
+      pdf.setTextColor(51, 65, 85);
+    }
+    pdf.text(prioridadTexto, 38, startY + 21);
     
     // Columna Derecha
     const fechaEmisionMeta = requisicionActiva.fecha 
@@ -1257,10 +1312,10 @@ const Compras = () => {
       
     pdf.setFont(fontPrimary, 'bold');
     pdf.setTextColor(15, 23, 42);
-    pdf.text("Fecha Emisión: ", 125, startY + 8);
+    pdf.text("Fecha Emisión: ", 125, startY + 7);
     pdf.setFont(fontPrimary, 'normal');
     pdf.setTextColor(51, 65, 85);
-    pdf.text(fechaEmisionMeta, 151, startY + 8);
+    pdf.text(fechaEmisionMeta, 151, startY + 7);
 
     // Estado de Aprobación
     let estadoTexto = 'PENDIENTE';
@@ -1280,7 +1335,7 @@ const Compras = () => {
 
     pdf.setFont(fontPrimary, 'bold');
     pdf.setTextColor(15, 23, 42);
-    pdf.text("Estado: ", 125, startY + 15);
+    pdf.text("Estado: ", 125, startY + 14);
     
     if (estadoTexto === 'APROBADA') {
       pdf.setTextColor(22, 163, 74); // Verde
@@ -1289,10 +1344,104 @@ const Compras = () => {
     } else {
       pdf.setTextColor(217, 119, 6); // Naranja
     }
-    pdf.text(estadoTexto, 140, startY + 15);
+    pdf.text(estadoTexto, 140, startY + 14);
     
+    // --- SECCIÓN DE OBSERVACIONES Y JUSTIFICACIÓN EN PARALELO ---
+    let nextY = startY + metadataBoxHeight + 4; // ~76
+    const textObs = obtenerTextoObservaciones(requisicionActiva.observaciones);
+    const hasObs = textObs && textObs !== "Sin observaciones.";
+    const hasJustif = requisicionActiva.justificacion && requisicionActiva.justificacion.trim();
+    const textJustif = hasJustif ? requisicionActiva.justificacion.trim() : "";
+
+    let upperContainerHeight = 0;
+
+    if (hasObs && hasJustif) {
+      const splitObs = pdf.splitTextToSize(textObs, 78);
+      const splitJustif = pdf.splitTextToSize(textJustif, 78);
+      
+      const hObs = 11 + splitObs.length * 4;
+      const hJustif = 11 + splitJustif.length * 4;
+      upperContainerHeight = Math.max(hObs, hJustif);
+      
+      // Dibujar tarjeta izquierda: Observaciones (Ancho 86, x = 15)
+      pdf.setDrawColor(226, 232, 240); // Slate-200
+      pdf.setFillColor(248, 250, 252); // Slate-50
+      pdf.setLineWidth(0.3);
+      pdf.roundedRect(15, nextY, 86, upperContainerHeight, 1.5, 1.5, 'FD');
+      
+      pdf.setFont(fontPrimary, 'bold');
+      pdf.setFontSize(8.0);
+      pdf.setTextColor(15, 23, 42); // Slate-900
+      pdf.text("OBSERVACIONES DE LA REQUISICIÓN:", 19, nextY + 5.5);
+      
+      pdf.setFont(fontPrimary, 'normal');
+      pdf.setFontSize(8.0);
+      pdf.setTextColor(51, 65, 85); // Slate-600
+      pdf.text(splitObs, 19, nextY + 11);
+      
+      // Dibujar tarjeta derecha: Justificación (Ancho 86, x = 109)
+      pdf.setDrawColor(226, 232, 240);
+      pdf.setFillColor(248, 250, 252);
+      pdf.setLineWidth(0.3);
+      pdf.roundedRect(109, nextY, 86, upperContainerHeight, 1.5, 1.5, 'FD');
+      
+      pdf.setFont(fontPrimary, 'bold');
+      pdf.setFontSize(8.0);
+      pdf.setTextColor(15, 23, 42);
+      pdf.text("JUSTIFICACIÓN OPERATIVA:", 113, nextY + 5.5);
+      
+      pdf.setFont(fontPrimary, 'normal');
+      pdf.setFontSize(8.0);
+      pdf.setTextColor(51, 65, 85);
+      pdf.text(splitJustif, 113, nextY + 11);
+      
+      nextY += upperContainerHeight + 4;
+    } else if (hasObs) {
+      // Solo observaciones, a ancho completo
+      const splitObs = pdf.splitTextToSize(textObs, 170);
+      upperContainerHeight = 11 + splitObs.length * 4;
+      
+      pdf.setDrawColor(226, 232, 240);
+      pdf.setFillColor(248, 250, 252);
+      pdf.setLineWidth(0.3);
+      pdf.roundedRect(15, nextY, 180, upperContainerHeight, 1.5, 1.5, 'FD');
+      
+      pdf.setFont(fontPrimary, 'bold');
+      pdf.setFontSize(8.5);
+      pdf.setTextColor(15, 23, 42);
+      pdf.text("OBSERVACIONES DE LA REQUISICIÓN:", 20, nextY + 5.5);
+      
+      pdf.setFont(fontPrimary, 'normal');
+      pdf.setFontSize(8);
+      pdf.setTextColor(51, 65, 85);
+      pdf.text(splitObs, 20, nextY + 11.5);
+      
+      nextY += upperContainerHeight + 4;
+    } else if (hasJustif) {
+      // Solo justificación, a ancho completo
+      const splitJustif = pdf.splitTextToSize(textJustif, 170);
+      upperContainerHeight = 11 + splitJustif.length * 4;
+      
+      pdf.setDrawColor(226, 232, 240);
+      pdf.setFillColor(248, 250, 252);
+      pdf.setLineWidth(0.3);
+      pdf.roundedRect(15, nextY, 180, upperContainerHeight, 1.5, 1.5, 'FD');
+      
+      pdf.setFont(fontPrimary, 'bold');
+      pdf.setFontSize(8.5);
+      pdf.setTextColor(15, 23, 42);
+      pdf.text("JUSTIFICACIÓN OPERATIVA:", 20, nextY + 5.5);
+      
+      pdf.setFont(fontPrimary, 'normal');
+      pdf.setFontSize(8.5);
+      pdf.setTextColor(51, 65, 85);
+      pdf.text(splitJustif, 20, nextY + 11.5);
+      
+      nextY += upperContainerHeight + 4;
+    }
+
     // --- TABLA DE ITEMS ---
-    const tableY = startY + 30;
+    const tableY = nextY;
     
     // Cabecera de la tabla
     pdf.setFont(fontPrimary, 'bold');
@@ -1319,11 +1468,9 @@ const Compras = () => {
     pdf.setTextColor(51, 65, 85);
     
     let currentY = tableY + 13;
-    
-    // Renglones de la requisición activa
     const items = renglones || [];
     
-    items.forEach((item, idx) => {
+    items.forEach((item) => {
       // Ajuste de descripción si es muy larga
       const descText = item.descripcion || 'N/A';
       const descLines = pdf.splitTextToSize(descText, 60);
@@ -1338,9 +1485,40 @@ const Compras = () => {
       
       // Altura requerida para este renglón
       const linesCount = Math.max(descLines.length, ccLines.length, clasifLines.length);
-      const rowHeight = linesCount * 4 + 4;
+      const rowHeight = linesCount * 4 + 7;
+      
+      // Control de salto de página antes de dibujar el renglón
+      if (currentY + rowHeight > 280) {
+        pdf.addPage();
+        // Encabezado de página
+        pdf.setFont(fontPrimary, 'bold');
+        pdf.setFontSize(8);
+        pdf.setTextColor(100, 116, 139);
+        pdf.text(`REQUISICIÓN DE RECURSOS: ${correlativoStr}`, 15, 12);
+        pdf.line(15, 14, 195, 14);
+        
+        currentY = 22;
+        
+        pdf.setFont(fontPrimary, 'bold');
+        pdf.setFontSize(9.5);
+        pdf.setTextColor(15, 23, 42);
+        pdf.line(15, currentY, 195, currentY);
+        
+        pdf.text("C.COSTO", 16, currentY + 5);
+        pdf.text("CLASIF.", 46, currentY + 5);
+        pdf.text("DESCRIPCIÓN", 76, currentY + 5);
+        pdf.text("CANT.", 145, currentY + 5, { align: 'right' });
+        pdf.text("PAGO Bs ($)", 170, currentY + 5, { align: 'right' });
+        pdf.text("PAGO USD ($)", 194, currentY + 5, { align: 'right' });
+        
+        pdf.line(15, currentY + 8, 195, currentY + 8);
+        currentY += 13;
+      }
       
       // Renderizar columnas de texto multilínea
+      pdf.setFont(fontPrimary, 'normal');
+      pdf.setFontSize(8.5);
+      pdf.setTextColor(51, 65, 85);
       pdf.text(ccLines, 16, currentY);
       pdf.text(clasifLines, 46, currentY);
       pdf.text(descLines, 76, currentY);
@@ -1384,16 +1562,28 @@ const Compras = () => {
         pdf.text("-", 194, currentY, { align: 'right' });
       }
       
-      // Beneficiario si existe
-      if (item.beneficiario) {
-        pdf.setFont(fontPrimary, 'italic');
-        pdf.setFontSize(7.5);
-        pdf.setTextColor(100, 116, 139); // Slate-500
-        pdf.text(`Benef: ${item.beneficiario}`, 76, currentY + (descLines.length * 4));
-        pdf.setFont(fontPrimary, 'normal');
-        pdf.setFontSize(8.5);
-        pdf.setTextColor(51, 65, 85);
+      // Estado de Almacén/Entrega del ítem
+      const statusAlmacen = item.estatus_almacen || (item.enviado_almacen ? 'Ubicado' : 'Pendiente_Compras');
+      const ubicacionVal = item.ubicacion_almacen || item.almacen_destino;
+      let statusTextText = 'Pendiente';
+      if (statusAlmacen === 'Ubicado' || statusAlmacen === 'asignado') {
+        statusTextText = `En Almacén${ubicacionVal ? ` (${ubicacionVal})` : ''}`;
+      } else if (statusAlmacen === 'entregado' || item.is_entregado === true || item.estado === 'entregado') {
+        statusTextText = 'Entregado';
       }
+
+      // Combinar Beneficiario y Estado de Almacén
+      let metaLineParts = [];
+      if (item.beneficiario) {
+        metaLineParts.push(`Benef: ${item.beneficiario}`);
+      }
+      metaLineParts.push(`Entrega: ${statusTextText}`);
+      const metaLineText = metaLineParts.join(' | ');
+
+      pdf.setFont(fontPrimary, 'italic');
+      pdf.setFontSize(7.5);
+      pdf.setTextColor(100, 116, 139); // Slate-500
+      pdf.text(metaLineText, 76, currentY + (descLines.length * 4));
       
       currentY += rowHeight;
       
@@ -1403,7 +1593,7 @@ const Compras = () => {
       pdf.line(15, currentY - 1, 195, currentY - 1);
     });
     
-    // --- CUADRO DE TOTALES ---
+    // --- CUADRO DE TOTALES (ALINEADO A LA DERECHA) ---
     let totalPagoBs = 0;
     let totalPagoUsd = 0;
     
@@ -1453,12 +1643,28 @@ const Compras = () => {
     
     const finalTotal = finalPagoBs + finalPagoUsd;
 
+    // Asegurarse de que haya espacio para el cuadro de totales (altura 20)
+    if (currentY + 25 > 280) {
+      pdf.addPage();
+      currentY = 20;
+    }
+
     currentY += 5;
     const boxWidth = 70;
-    const boxHeight = 18;
+    const boxHeight = 20;
     const boxX = 195 - boxWidth;
     
-    pdf.setDrawColor(15, 23, 42);
+    // Relleno Slate-100 para destacar la fila de TOTAL
+    pdf.setFillColor(241, 245, 249); // Slate-100
+    pdf.rect(boxX, currentY + 13, boxWidth, 7, 'F');
+    
+    // Línea divisora Slate-300
+    pdf.setDrawColor(203, 213, 225); // Slate-300
+    pdf.setLineWidth(0.2);
+    pdf.line(boxX, currentY + 13, 195, currentY + 13);
+    
+    // Borde exterior
+    pdf.setDrawColor(15, 23, 42); // Slate-900
     pdf.setLineWidth(0.4);
     pdf.rect(boxX, currentY, boxWidth, boxHeight);
     
@@ -1467,23 +1673,32 @@ const Compras = () => {
     pdf.setTextColor(15, 23, 42);
     
     // Fila 1: Pago Bs
-    pdf.text(`Pago Bs ${labelIva}`, boxX + 3, currentY + 5);
-    pdf.text(`$ ${finalPagoBs.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 192, currentY + 5, { align: 'right' });
+    pdf.text(`Pago Bs ${labelIva}`, boxX + 3, currentY + 4.5);
+    pdf.text(`$ ${finalPagoBs.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 192, currentY + 4.5, { align: 'right' });
     
     // Fila 2: Pago USD
-    pdf.text(`Pago USD ${labelIva}`, boxX + 3, currentY + 10);
-    pdf.text(`$ ${finalPagoUsd.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 192, currentY + 10, { align: 'right' });
+    pdf.text(`Pago USD ${labelIva}`, boxX + 3, currentY + 9.5);
+    pdf.text(`$ ${finalPagoUsd.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 192, currentY + 9.5, { align: 'right' });
     
-    // Línea divisoria interna
-    pdf.setDrawColor(226, 232, 240);
-    pdf.setLineWidth(0.2);
-    pdf.line(boxX, currentY + 12, 195, currentY + 12);
-    
-    // Fila 3: Total General
+    // Fila 3: Total General (Destacado)
     pdf.setFont(fontPrimary, 'bold');
-    pdf.text(`TOTAL ${labelIva}`, boxX + 3, currentY + 15);
-    pdf.text(`$ ${finalTotal.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 192, currentY + 15, { align: 'right' });
+    pdf.setFontSize(10);
+    pdf.setTextColor(15, 23, 42);
+    pdf.text(`TOTAL ${labelIva}`, boxX + 3, currentY + 17.5);
+    pdf.text(`$ ${finalTotal.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 192, currentY + 17.5, { align: 'right' });
     
+
+
+    // --- ENCABEZADOS Y NUMERACIÓN DE PÁGINAS ---
+    const totalPages = pdf.internal.getNumberOfPages();
+    for (let i = 1; i <= totalPages; i++) {
+      pdf.setPage(i);
+      pdf.setFont(fontPrimary, 'normal');
+      pdf.setFontSize(8);
+      pdf.setTextColor(148, 163, 184); // Slate-400
+      pdf.text(`Página ${i} de ${totalPages}`, 195, 287, { align: 'right' });
+    }
+
     // Guardar el PDF
     pdf.save(`REQ_${correlativoStr}.pdf`);
   };

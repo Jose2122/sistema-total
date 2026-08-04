@@ -699,6 +699,22 @@ const ModuloTicketsPago = () => {
     };
   }, [currentUser, cargarBancosDeOrigen]);
 
+  useEffect(() => {
+    const handleDeepLink = (e) => {
+      const targetId = e.detail;
+      if (targetId && historialTickets.length > 0) {
+        const targetTicket = historialTickets.find(h => h.id === targetId || String(h.id) === String(targetId));
+        if (targetTicket) {
+          abrirDetalleTicket(targetTicket);
+        }
+      }
+    };
+    window.addEventListener('abrirTicketDeepLink', handleDeepLink);
+    return () => {
+      window.removeEventListener('abrirTicketDeepLink', handleDeepLink);
+    };
+  }, [historialTickets]);
+
   const cargarInitialData = async () => {
     // 1. Cargar Usuario
     const { data: { user } } = await supabase.auth.getUser();
@@ -713,7 +729,7 @@ const ModuloTicketsPago = () => {
 
       const userInfo = {
         id: user.id,
-        nombre: perfil ? `${perfil.nombre} ${perfil.apellido}` : emailLower.split('@')[0],
+        nombre: perfil ? `${perfil.nombre || ''} ${perfil.apellido && String(perfil.apellido).toLowerCase() !== 'undefined' ? perfil.apellido : ''}`.trim() : emailLower.split('@')[0],
         correo: emailLower,
         departamento: perfil ? perfil.departamento : 'General',
         rol: perfil ? perfil.rol : 'Gerente',
@@ -727,7 +743,7 @@ const ModuloTicketsPago = () => {
       setCurrentUser(userInfo);
 
       if (perfil) {
-        setResponsableText(`${perfil.nombre} ${perfil.apellido} - ${perfil.departamento}`);
+        setResponsableText(`${perfil.nombre || ''} ${perfil.apellido && String(perfil.apellido).toLowerCase() !== 'undefined' ? perfil.apellido : ''}`.trim() + ` - ${perfil.departamento || ''}`);
       }
 
       // 2. Fetch de todas las solicitudes de fondo existentes
@@ -839,13 +855,32 @@ const ModuloTicketsPago = () => {
           activeUser.capacidades?.ver_tickets_global === true ||
           activeUser.capacidades?.ver_todos_tickets === true;
 
-        if (!tieneVisibilidadGlobal) {
-          const rawUserId = activeUser.id || '';
-          const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawUserId);
-          const userIdMatch = isUUID ? rawUserId : '00000000-0000-0000-0000-000000000000';
+        const esSuperAdminOGerenteGeneral = esAdminReal ||
+          emailLower === 'cvega@totalclean.com' ||
+          emailLower === 'cvega.totalclean@gmail.com' ||
+          rolUpper.includes('GERENTE GENERAL') ||
+          activeUser.esSuperAdmin === true;
 
+        const esAdminOrContabil = rolUpper.includes('ADMINISTRA') ||
+          rolUpper.includes('CONTABIL') ||
+          deptoUpper.includes('ADMINISTRA') ||
+          deptoUpper.includes('CONTABIL') ||
+          esZuleika ||
+          activeUser.capacidades?.ver_tickets_global === true ||
+          activeUser.capacidades?.ver_todos_tickets === true;
+
+        const rawUserId = activeUser.id || '';
+        const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawUserId);
+        const userIdMatch = isUUID ? rawUserId : '00000000-0000-0000-0000-000000000000';
+        const nombreMatch = (activeUser.nombre || '').split(' ')[0] || 'Unknown';
+
+        if (esSuperAdminOGerenteGeneral) {
+          // Super Admins y Gerente General ven todos los tickets sin restricción
+        } else if (esAdminOrContabil) {
+          // Cajeros / Ejecutores de Pago: Ven aprobados/parciales/pagados + propios + por aprobar asignados
+          query = query.or(`status.in.("EMITIDO","Parcial","Pagado"),usuario_id.eq.${userIdMatch},gerente_nombre.ilike.%${nombreMatch}%`);
+        } else if (!tieneVisibilidadGlobal) {
           const deptoMatch = activeUser.departamento || '';
-          const nombreMatch = (activeUser.nombre || '').split(' ')[0] || 'Unknown';
 
           // Recopilar obras asignadas / contrato
           const misObras = [];
@@ -1013,23 +1048,35 @@ const ModuloTicketsPago = () => {
     });
   };
 
-  const actualizarFila = (id, campo, valor) => {
+  const actualizarFila = (id, campoOrObj, valor) => {
     setRenglones(prev => prev.map(f => {
       if (f.id === id) {
-        let v = valor;
-        if (campo === 'compra_actual_pu') v = Math.max(0, Number(valor) || 0);
-        if (campo === 'compra_actual_cant') {
-          v = Math.max(0, Number(valor) || 0);
-          if (v > f.cantidad_pendiente) {
+        let act = { ...f };
+        if (campoOrObj && typeof campoOrObj === 'object') {
+          act = { ...act, ...campoOrObj };
+        } else {
+          act[campoOrObj] = valor;
+        }
+
+        // Aplicar validaciones de tipos y límites
+        if (act.compra_actual_pu !== undefined) {
+          act.compra_actual_pu = Math.max(0, Number(act.compra_actual_pu) || 0);
+        }
+        if (act.compra_actual_cant !== undefined) {
+          act.compra_actual_cant = Math.max(0, Number(act.compra_actual_cant) || 0);
+          if (act.compra_actual_cant > f.cantidad_pendiente) {
             toast.error(`No puede pagar más de la cantidad pendiente (${f.cantidad_pendiente})`);
-            v = f.cantidad_pendiente;
+            act.compra_actual_cant = f.cantidad_pendiente;
           }
         }
-        const act = { ...f, [campo]: v };
-        act.total = act.compra_actual_cant * (act.compra_actual_pu || 0);
-        const ref = preciosReferencia[f.descripcion.trim().toUpperCase()];
-        if (campo === 'compra_actual_pu' && v > 0 && ref) {
-          const variacion = ((v - ref) / ref) * 100;
+
+        act.total = (act.compra_actual_cant || 0) * (act.compra_actual_pu || act.pu || 0);
+        
+        const descRef = (act.desc || act.descripcion || '').trim().toUpperCase();
+        const ref = preciosReferencia[descRef];
+        const currentPu = act.compra_actual_pu !== undefined ? act.compra_actual_pu : (act.pu || 0);
+        if (currentPu > 0 && ref) {
+          const variacion = ((currentPu - ref) / ref) * 100;
           act.variacion_precio = variacion;
           act.precio_ref_encontrado = ref;
         }
@@ -1404,7 +1451,32 @@ const ModuloTicketsPago = () => {
     setImagenesUrlsPreview(prev => prev.filter((_, i) => i !== index));
     setImagenesNombres(prev => prev.filter((_, i) => i !== index));
   };
-  const generarTicketPDF = () => {
+  const obtenerTextoObservaciones = (obsRaw) => {
+    if (!obsRaw) return "Sin observaciones.";
+    const trimmed = obsRaw.trim();
+    if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+      try {
+        const arr = JSON.parse(trimmed);
+        if (Array.isArray(arr)) {
+          return arr.map(c => `[${c.author || c.autor || 'Usuario'} (${c.rol || 'Rol'})]: ${c.text || c.texto || ''}`).join('\n');
+        }
+      } catch (e) {
+        console.error("Error parsing observations JSON:", e);
+      }
+    }
+    return obsRaw;
+  };
+
+  const cargarImagenLogo = () => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.src = '/logo.png';
+      img.onload = () => resolve(img);
+      img.onerror = () => resolve(null);
+    });
+  };
+
+  const generarTicketPDF = async () => {
     if (!ticketSeleccionado) {
       toast.error("No se encontraron datos del ticket para exportar.");
       return;
@@ -1413,47 +1485,82 @@ const ModuloTicketsPago = () => {
     const pdf = new jsPDF('p', 'mm', 'a4');
     const fontPrimary = 'helvetica';
     
-    // --- CABECERA ---
-    pdf.setFont(fontPrimary, 'bold');
-    pdf.setFontSize(13);
-    pdf.setTextColor(15, 23, 42); // Slate-900
-    pdf.text("TOTAL CLEAN C.A.", 15, 20);
-    
-    pdf.setFont(fontPrimary, 'normal');
-    pdf.setFontSize(9);
-    pdf.setTextColor(71, 85, 105); // Slate-600
-    pdf.text("J-303658587-0", 15, 25);
-    
-    // Derecha: Fecha y Ticket ID
+    // --- CABECERA (DISEÑO CORPORATIVO REFORMADO) ---
+    const correlativoStr = t.codigo_control || String(t.id).padStart(3, '0');
     const fechaEmision = t.fecha_emision 
       ? format(new Date(t.fecha_emision), 'dd/MM/yyyy hh:mm a') 
       : format(new Date(), 'dd/MM/yyyy hh:mm a');
+
+    try {
+      const logoImg = await cargarImagenLogo();
+      if (logoImg) {
+        // Logo en la esquina superior izquierda (tamaño ampliado)
+        pdf.addImage(logoImg, 'PNG', 15, 11, 28, 21);
+        
+        // Información de la empresa (a la derecha del logo)
+        pdf.setFont(fontPrimary, 'bold');
+        pdf.setFontSize(12);
+        pdf.setTextColor(15, 23, 42); // Slate-900
+        pdf.text("TOTAL CLEAN C.A.", 46, 18);
+        
+        pdf.setFont(fontPrimary, 'normal');
+        pdf.setFontSize(8.5);
+        pdf.setTextColor(100, 116, 139); // Slate-500
+        pdf.text("J-303658587-0", 46, 23);
+      } else {
+        // Fallback si no hay logo
+        pdf.setFont(fontPrimary, 'bold');
+        pdf.setFontSize(12);
+        pdf.setTextColor(15, 23, 42);
+        pdf.text("TOTAL CLEAN C.A.", 15, 18);
+        
+        pdf.setFont(fontPrimary, 'normal');
+        pdf.setFontSize(8.5);
+        pdf.setTextColor(100, 116, 139);
+        pdf.text("J-303658587-0", 15, 23);
+      }
+    } catch (e) {
+      console.error("Error cargando logo en PDF:", e);
+      // Fallback
+      pdf.setFont(fontPrimary, 'bold');
+      pdf.setFontSize(12);
+      pdf.setTextColor(15, 23, 42);
+      pdf.text("TOTAL CLEAN C.A.", 15, 18);
+      
+      pdf.setFont(fontPrimary, 'normal');
+      pdf.setFontSize(8.5);
+      pdf.setTextColor(100, 116, 139);
+      pdf.text("J-303658587-0", 15, 23);
+    }
     
-    pdf.setFontSize(9);
-    pdf.setTextColor(71, 85, 105);
-    pdf.text(`Fecha Emisión: ${fechaEmision}`, 195, 20, { align: 'right' });
-    pdf.text(`Ticket ID: ${t.codigo_control || t.id}`, 195, 25, { align: 'right' });
-    
-    // --- TÍTULO CENTRAL ---
+    // Derecha: Título de documento y correlativo alineados a la derecha
     pdf.setFont(fontPrimary, 'bold');
-    pdf.setFontSize(12);
-    pdf.setTextColor(15, 23, 42);
-    const titulo = `TICKET DE PAGO / RECIBO: ${t.codigo_control || 'N/A'}`;
-    const textWidth = pdf.getTextWidth(titulo);
-    const posX = (210 - textWidth) / 2;
-    pdf.text(titulo, posX, 38);
+    pdf.setFontSize(14);
+    pdf.setTextColor(15, 23, 42); // Slate-900
+    pdf.text("TICKET DE PAGO / RECIBO", 195, 17, { align: 'right' });
     
-    // Línea subrayada del título
-    pdf.setDrawColor(15, 23, 42);
+    pdf.setFont(fontPrimary, 'bold');
+    pdf.setFontSize(10.5);
+    pdf.setTextColor(71, 85, 105); // Slate-600
+    pdf.text(`No: ${correlativoStr}`, 195, 22, { align: 'right' });
+    
+    pdf.setFont(fontPrimary, 'normal');
+    pdf.setFontSize(8.0);
+    pdf.setTextColor(100, 116, 139); // Slate-500
+    pdf.text(`Fecha: ${fechaEmision}`, 195, 26, { align: 'right' });
+    
+    // Línea horizontal divisora
+    pdf.setDrawColor(226, 232, 240); // Slate-200
     pdf.setLineWidth(0.4);
-    pdf.line(posX, 40, posX + textWidth, 40);
+    pdf.line(15, 31, 195, 31);
     
     // --- CUADRO DE METADATA ---
-    const startY = 46;
+    const startY = 36;
+    const metadataBoxHeight = 26;
     pdf.setDrawColor(226, 232, 240); // Borde gris claro
     pdf.setFillColor(248, 250, 252); // Fondo gris muy claro
     pdf.setLineWidth(0.3);
-    pdf.roundedRect(15, startY, 180, 26, 2, 2, 'FD');
+    pdf.roundedRect(15, startY, 180, metadataBoxHeight, 2, 2, 'FD');
     
     // Texto dentro de la Metadata
     pdf.setFontSize(9.5);
@@ -1461,46 +1568,162 @@ const ModuloTicketsPago = () => {
     
     // Columna Izquierda
     pdf.setFont(fontPrimary, 'bold');
-    pdf.text("Beneficiario: ", 20, startY + 8);
+    pdf.text("Gerencia: ", 20, startY + 7);
     pdf.setFont(fontPrimary, 'normal');
     pdf.setTextColor(51, 65, 85);
-    pdf.text(formatName(t.gerente_nombre) || 'Varios', 42, startY + 8);
+    pdf.text(t.departamento || 'N/A', 38, startY + 7);
     
     pdf.setFont(fontPrimary, 'bold');
     pdf.setTextColor(15, 23, 42);
-    pdf.text("Concepto / Motivo: ", 20, startY + 16);
+    pdf.text("Responsable: ", 20, startY + 14);
     pdf.setFont(fontPrimary, 'normal');
     pdf.setTextColor(51, 65, 85);
-    
-    const conceptoText = t.justificacion || (t.items && t.items[0]?.justificacion_detallada) || 'Sin asunto especificado';
-    const conceptoLines = pdf.splitTextToSize(conceptoText, 140);
-    pdf.text(conceptoLines, 50, startY + 16);
+    pdf.text(formatName(t.gerente_nombre) || 'Varios', 43, startY + 14);
+
+    pdf.setFont(fontPrimary, 'bold');
+    pdf.setTextColor(15, 23, 42);
+    pdf.text("Prioridad: ", 20, startY + 21);
+    pdf.setFont(fontPrimary, 'normal');
+    const prioridadTexto = t.prioridad || 'Normal';
+    if (prioridadTexto === 'Emergencia' || prioridadTexto === 'Urgente') {
+      pdf.setTextColor(220, 38, 38); // Rojo
+    } else {
+      pdf.setTextColor(51, 65, 85);
+    }
+    pdf.text(prioridadTexto, 38, startY + 21);
     
     // Columna Derecha
-    const ccValor = t.centro_costo || (t.items && t.items[0]?.cc) || 'N/A';
+    const fechaEmisionMeta = t.fecha_emision 
+      ? format(new Date(t.fecha_emision), 'dd/MM/yyyy') 
+      : 'N/A';
+      
     pdf.setFont(fontPrimary, 'bold');
     pdf.setTextColor(15, 23, 42);
-    pdf.text("C. Costo: ", 130, startY + 8);
+    pdf.text("Fecha Emisión: ", 125, startY + 7);
     pdf.setFont(fontPrimary, 'normal');
     pdf.setTextColor(51, 65, 85);
-    pdf.text(ccValor, 146, startY + 8);
-    
+    pdf.text(fechaEmisionMeta, 151, startY + 7);
+
+    // Estado
+    const est = (t.status || 'EMITIDO').toUpperCase();
     pdf.setFont(fontPrimary, 'bold');
     pdf.setTextColor(15, 23, 42);
-    pdf.text("Estado: ", 130, startY + 15);
+    pdf.text("Estado: ", 125, startY + 14);
     
-    const est = (t.status || 'EMITIDO').toUpperCase();
     if (est === 'PAGADO' || est === 'COMPLETADO') {
       pdf.setTextColor(22, 163, 74); // Verde
     } else if (est === 'ANULADO' || est === 'RECHAZADO') {
       pdf.setTextColor(220, 38, 38); // Rojo
     } else {
-      pdf.setTextColor(217, 119, 6); // Naranja/Ambar
+      pdf.setTextColor(217, 119, 6); // Naranja
     }
-    pdf.text(est, 144, startY + 15);
-    
+    pdf.text(est, 140, startY + 14);
+
+    // Centro Costo
+    const ccValor = t.centro_costo || (t.items && t.items[0]?.cc) || 'N/A';
+    pdf.setFont(fontPrimary, 'bold');
+    pdf.setTextColor(15, 23, 42);
+    pdf.text("C. Costo: ", 125, startY + 21);
+    pdf.setFont(fontPrimary, 'normal');
+    pdf.setTextColor(51, 65, 85);
+    pdf.text(ccValor, 141, startY + 21);
+
+    // --- SECCIÓN DE OBSERVACIONES Y JUSTIFICACIÓN EN PARALELO ---
+    let nextY = startY + metadataBoxHeight + 4; // ~66
+    const textObs = obtenerTextoObservaciones(t.observaciones);
+    const hasObs = textObs && textObs !== "Sin observaciones.";
+    const hasJustif = t.justificacion && t.justificacion.trim();
+    const textJustif = hasJustif ? t.justificacion.trim() : "";
+
+    let upperContainerHeight = 0;
+
+    if (hasObs && hasJustif) {
+      const splitObs = pdf.splitTextToSize(textObs, 78);
+      const splitJustif = pdf.splitTextToSize(textJustif, 78);
+      
+      const hObs = 11 + splitObs.length * 4;
+      const hJustif = 11 + splitJustif.length * 4;
+      upperContainerHeight = Math.max(hObs, hJustif);
+      
+      // Dibujar tarjeta izquierda: Observaciones (Ancho 86, x = 15)
+      pdf.setDrawColor(226, 232, 240); // Slate-200
+      pdf.setFillColor(248, 250, 252); // Slate-50
+      pdf.setLineWidth(0.3);
+      pdf.roundedRect(15, nextY, 86, upperContainerHeight, 1.5, 1.5, 'FD');
+      
+      pdf.setFont(fontPrimary, 'bold');
+      pdf.setFontSize(8.0);
+      pdf.setTextColor(15, 23, 42); // Slate-900
+      pdf.text("OBSERVACIONES:", 19, nextY + 5.5);
+      
+      pdf.setFont(fontPrimary, 'normal');
+      pdf.setFontSize(8.0);
+      pdf.setTextColor(51, 65, 85); // Slate-600
+      pdf.text(splitObs, 19, nextY + 11);
+      
+      // Dibujar tarjeta derecha: Justificación (Ancho 86, x = 109)
+      pdf.setDrawColor(226, 232, 240);
+      pdf.setFillColor(248, 250, 252);
+      pdf.setLineWidth(0.3);
+      pdf.roundedRect(109, nextY, 86, upperContainerHeight, 1.5, 1.5, 'FD');
+      
+      pdf.setFont(fontPrimary, 'bold');
+      pdf.setFontSize(8.0);
+      pdf.setTextColor(15, 23, 42);
+      pdf.text("JUSTIFICACIÓN OPERATIVA:", 113, nextY + 5.5);
+      
+      pdf.setFont(fontPrimary, 'normal');
+      pdf.setFontSize(8.0);
+      pdf.setTextColor(51, 65, 85);
+      pdf.text(splitJustif, 113, nextY + 11);
+      
+      nextY += upperContainerHeight + 4;
+    } else if (hasObs) {
+      // Solo observaciones, a ancho completo
+      const splitObs = pdf.splitTextToSize(textObs, 170);
+      upperContainerHeight = 11 + splitObs.length * 4;
+      
+      pdf.setDrawColor(226, 232, 240);
+      pdf.setFillColor(248, 250, 252);
+      pdf.setLineWidth(0.3);
+      pdf.roundedRect(15, nextY, 180, upperContainerHeight, 1.5, 1.5, 'FD');
+      
+      pdf.setFont(fontPrimary, 'bold');
+      pdf.setFontSize(8.5);
+      pdf.setTextColor(15, 23, 42);
+      pdf.text("OBSERVACIONES:", 20, nextY + 5.5);
+      
+      pdf.setFont(fontPrimary, 'normal');
+      pdf.setFontSize(8);
+      pdf.setTextColor(51, 65, 85);
+      pdf.text(splitObs, 20, nextY + 11.5);
+      
+      nextY += upperContainerHeight + 4;
+    } else if (hasJustif) {
+      // Solo justificación, a ancho completo
+      const splitJustif = pdf.splitTextToSize(textJustif, 170);
+      upperContainerHeight = 11 + splitJustif.length * 4;
+      
+      pdf.setDrawColor(226, 232, 240);
+      pdf.setFillColor(248, 250, 252);
+      pdf.setLineWidth(0.3);
+      pdf.roundedRect(15, nextY, 180, upperContainerHeight, 1.5, 1.5, 'FD');
+      
+      pdf.setFont(fontPrimary, 'bold');
+      pdf.setFontSize(8.5);
+      pdf.setTextColor(15, 23, 42);
+      pdf.text("JUSTIFICACIÓN OPERATIVA:", 20, nextY + 5.5);
+      
+      pdf.setFont(fontPrimary, 'normal');
+      pdf.setFontSize(8.5);
+      pdf.setTextColor(51, 65, 85);
+      pdf.text(splitJustif, 20, nextY + 11.5);
+      
+      nextY += upperContainerHeight + 4;
+    }
+
     // --- TABLA DE ITEMS DIBUJADA MANUALMENTE ---
-    const tableY = startY + 32;
+    const tableY = nextY;
     
     // Cabecera de la tabla
     pdf.setFont(fontPrimary, 'bold');
@@ -1513,10 +1736,11 @@ const ModuloTicketsPago = () => {
     pdf.line(15, tableY, 195, tableY);
     
     pdf.text("C.COSTO", 16, tableY + 5);
-    pdf.text("CATEGORÍA", 46, tableY + 5);
-    pdf.text("DESCRIPCIÓN DEL ÍTEM", 86, tableY + 5);
-    pdf.text("CANTIDAD", 150, tableY + 5, { align: 'right' });
-    pdf.text("P.U. ($)", 172, tableY + 5, { align: 'right' });
+    pdf.text("CATEGORÍA", 41, tableY + 5);
+    pdf.text("BENEFICIARIO", 68, tableY + 5);
+    pdf.text("DESCRIPCIÓN", 95, tableY + 5);
+    pdf.text("CANTIDAD", 148, tableY + 5, { align: 'right' });
+    pdf.text("P.U. ($)", 171, tableY + 5, { align: 'right' });
     pdf.text("TOTAL ($)", 194, tableY + 5, { align: 'right' });
     
     pdf.line(15, tableY + 8, 195, tableY + 8);
@@ -1530,29 +1754,33 @@ const ModuloTicketsPago = () => {
     
     (renglones || []).forEach((item) => {
       const ccText = item.cc || t.centro_costo || 'N/A';
-      const ccLines = pdf.splitTextToSize(ccText, 28);
+      const ccLines = pdf.splitTextToSize(ccText, 23);
       
       const catText = item.clasificacion || item.categoria || 'Sin categoría';
-      const catLines = pdf.splitTextToSize(catText, 38);
+      const catLines = pdf.splitTextToSize(catText, 25);
+
+      const benText = item.beneficiario || '---';
+      const benLines = pdf.splitTextToSize(benText, 25);
       
       const descText = item.desc || item.descripcion || '';
-      const descLines = pdf.splitTextToSize(descText, 56);
+      const descLines = pdf.splitTextToSize(descText, 43);
       
-      const linesCount = Math.max(descLines.length, ccLines.length, catLines.length);
+      const linesCount = Math.max(descLines.length, ccLines.length, catLines.length, benLines.length);
       const rowHeight = linesCount * 4 + 4;
       
       // Renderizar columnas de texto multilínea
       pdf.text(ccLines, 16, currentY);
-      pdf.text(catLines, 46, currentY);
-      pdf.text(descLines, 86, currentY);
+      pdf.text(catLines, 41, currentY);
+      pdf.text(benLines, 68, currentY);
+      pdf.text(descLines, 95, currentY);
       
       // Renderizar columnas numéricas
       const cantOriginal = Number(item.cantidad_pedida) || 0;
       const puOriginal = Number(item.pu || item.puUsd || 0);
       const totalOriginal = cantOriginal * puOriginal;
       
-      pdf.text(`${cantOriginal}`, 150, currentY, { align: 'right' });
-      pdf.text(`$ ${puOriginal.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 172, currentY, { align: 'right' });
+      pdf.text(`${cantOriginal}`, 148, currentY, { align: 'right' });
+      pdf.text(`$ ${puOriginal.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 171, currentY, { align: 'right' });
       pdf.text(`$ ${totalOriginal.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 194, currentY, { align: 'right' });
       
       currentY += rowHeight;
@@ -1563,17 +1791,27 @@ const ModuloTicketsPago = () => {
       pdf.line(15, currentY - 1, 195, currentY - 1);
     });
     
-    // --- CUADRO DE TOTALES ---
+    // --- CUADRO DE TOTALES (DESTACADO) ---
     const totalPresupuesto = (renglones || []).reduce((acc, r) => acc + ((Number(r.cantidad_pedida) || 0) * (r.pu || r.puUsd || 0)), 0);
     const totalEjecutado = (renglones || []).reduce((acc, r) => acc + (r.historial_compras || []).reduce((sum, h) => sum + (Number(h.cant) * Number(h.pu)), 0), 0);
     const saldoPendiente = (renglones || []).reduce((acc, r) => acc + ((Number(r.cantidad_pendiente) || 0) * (r.pu || r.puUsd || 0)), 0);
     
     currentY += 4;
     const boxWidth = 75;
-    const boxHeight = 18;
+    const boxHeight = 20;
     const boxX = 195 - boxWidth;
     
-    pdf.setDrawColor(15, 23, 42);
+    // Relleno Slate-100 para destacar la fila de Saldo Pendiente
+    pdf.setFillColor(241, 245, 249); // Slate-100
+    pdf.rect(boxX, currentY + 13, boxWidth, 7, 'F');
+    
+    // Línea divisora Slate-300
+    pdf.setDrawColor(203, 213, 225); // Slate-300
+    pdf.setLineWidth(0.2);
+    pdf.line(boxX, currentY + 13, 195, currentY + 13);
+    
+    // Borde exterior
+    pdf.setDrawColor(15, 23, 42); // Slate-900
     pdf.setLineWidth(0.4);
     pdf.rect(boxX, currentY, boxWidth, boxHeight);
     
@@ -1581,33 +1819,30 @@ const ModuloTicketsPago = () => {
     pdf.setFontSize(8.5);
     pdf.setTextColor(15, 23, 42);
     
-    pdf.text("Total Presupuestado:", boxX + 3, currentY + 5);
-    pdf.text(`$ ${totalPresupuesto.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 192, currentY + 5, { align: 'right' });
+    pdf.text("Total Presupuestado:", boxX + 3, currentY + 4.5);
+    pdf.text(`$ ${totalPresupuesto.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 192, currentY + 4.5, { align: 'right' });
     
-    pdf.text("Total Ejecutado / Pagado:", boxX + 3, currentY + 10);
-    pdf.text(`$ ${totalEjecutado.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 192, currentY + 10, { align: 'right' });
-    
-    pdf.setDrawColor(226, 232, 240);
-    pdf.setLineWidth(0.2);
-    pdf.line(boxX, currentY + 12, 195, currentY + 12);
+    pdf.text("Total Ejecutado / Pagado:", boxX + 3, currentY + 9.5);
+    pdf.text(`$ ${totalEjecutado.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 192, currentY + 9.5, { align: 'right' });
     
     pdf.setFont(fontPrimary, 'bold');
-    pdf.text("Saldo Pendiente:", boxX + 3, currentY + 15);
-    pdf.text(`$ ${saldoPendiente.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 192, currentY + 15, { align: 'right' });
+    pdf.setFontSize(10);
+    pdf.setTextColor(15, 23, 42);
+    pdf.text("Saldo Pendiente:", boxX + 3, currentY + 17.5);
+    pdf.text(`$ ${saldoPendiente.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 192, currentY + 17.5, { align: 'right' });
     
-    // --- FIRMAS Y APROBACIONES ---
-    currentY += 24;
-    if (currentY + 35 > 280) {
+    // --- FIRMAS Y APROBACIONES (ANCLADO AL FINAL DE LA HOJA) ---
+    let sigStart = 248;
+    if (currentY + boxHeight + 5 > 240) {
       pdf.addPage();
-      currentY = 20;
     }
     
     pdf.setFont(fontPrimary, 'bold');
     pdf.setFontSize(8.5);
     pdf.setTextColor(71, 85, 105);
-    pdf.text("FIRMAS Y APROBACIONES", 15, currentY);
+    pdf.text("FIRMAS Y APROBACIONES", 15, sigStart);
     
-    currentY += 4;
+    const sigCardY = sigStart + 4;
     const cardWidth = 56;
     const cardHeight = 25;
     const gap = 6;
@@ -1623,8 +1858,8 @@ const ModuloTicketsPago = () => {
       {
         title: "APROBADO POR",
         approved: t.status !== 'Pendiente Aprobación' && t.status !== 'Rechazado' && t.status !== 'ANULADO',
-        name: t.aprobado_por_nombre || t.aprobado_por || 'Gerencia',
-        date: t.fecha_aprobacion ? format(new Date(t.fecha_aprobacion), 'dd/MM/yyyy') : ''
+        name: formatName(t.n_aprobacion_general || t.n_aprobacion_area || t.aprobado_por_nombre || t.aprobado_por) || 'Gerencia',
+        date: (t.fecha_aprobacion || t.f_aprobacion_general || t.f_aprobacion_area) ? format(new Date(t.fecha_aprobacion || t.f_aprobacion_general || t.f_aprobacion_area), 'dd/MM/yyyy') : ''
       },
       {
         title: "PROCESADO / PAGADO",
@@ -1651,33 +1886,33 @@ const ModuloTicketsPago = () => {
       pdf.setDrawColor(203, 213, 225);
       pdf.setFillColor(248, 250, 252);
       pdf.setLineWidth(0.3);
-      pdf.roundedRect(x, currentY, cardWidth, cardHeight, 2, 2, 'FD');
+      pdf.roundedRect(x, sigCardY, cardWidth, cardHeight, 2, 2, 'FD');
       
       pdf.setFont(fontPrimary, 'bold');
       pdf.setFontSize(8);
       pdf.setTextColor(71, 85, 105);
-      pdf.text(app.title, x + cardWidth / 2, currentY + 6, { align: 'center' });
+      pdf.text(app.title, x + cardWidth / 2, sigCardY + 6, { align: 'center' });
       
       if (app.approved) {
         pdf.setFont(fontPrimary, 'bold');
         pdf.setFontSize(8);
         pdf.setTextColor(22, 163, 74); // Verde
-        pdf.text("Aprobado", x + cardWidth / 2, currentY + 12, { align: 'center' });
+        pdf.text("Aprobado", x + cardWidth / 2, sigCardY + 12, { align: 'center' });
         
         pdf.setFont(fontPrimary, 'bold');
         pdf.setFontSize(7.5);
         pdf.setTextColor(15, 23, 42);
-        pdf.text(app.name || 'Confirmado', x + cardWidth / 2, currentY + 17, { align: 'center' });
+        pdf.text(app.name || 'Confirmado', x + cardWidth / 2, sigCardY + 17, { align: 'center' });
         
         pdf.setFont(fontPrimary, 'normal');
         pdf.setFontSize(7);
         pdf.setTextColor(100, 116, 139);
-        pdf.text(app.date || '', x + cardWidth / 2, currentY + 21, { align: 'center' });
+        pdf.text(app.date || '', x + cardWidth / 2, sigCardY + 21, { align: 'center' });
       } else {
         pdf.setFont(fontPrimary, 'bold');
         pdf.setFontSize(8);
         pdf.setTextColor(217, 119, 6); // Amber
-        pdf.text("Pendiente", x + cardWidth / 2, currentY + 15, { align: 'center' });
+        pdf.text("Pendiente", x + cardWidth / 2, sigCardY + 15, { align: 'center' });
       }
     });
     
@@ -1767,7 +2002,11 @@ const ModuloTicketsPago = () => {
       // El estatus global del ticket depende de si hay compras y saldos pendientes
       const tieneCompras = renglonesListos.some(r => (r.cantidad_comprada || 0) > 0);
       const tienePendientes = renglonesListos.some(r => r.cantidad_pendiente > 0);
-      const estatusFinal = tienePendientes ? (tieneCompras ? 'Parcial' : 'Emitido') : 'Pagado';
+      
+      const esCreador = ticketSeleccionado?.usuario_id === currentUser?.id;
+      const esReenvio = esCreador && (ticketSeleccionado?.status === 'Edición Habilitada' || ticketSeleccionado?.status === 'Rechazado' || ticketSeleccionado?.status === 'Borrador');
+      
+      const estatusFinal = esReenvio ? 'Pendiente Aprobación' : (tienePendientes ? (tieneCompras ? 'Parcial' : 'Emitido') : 'Pagado');
 
       const totalDinamicoReal = renglonesListos.reduce((acc, r) => {
         const ejecutadoItem = (r.historial_compras || []).reduce((sum, t) => sum + ((Number(t.cant) || 0) * (Number(t.pu) || 0)), 0);
@@ -1783,6 +2022,16 @@ const ModuloTicketsPago = () => {
         items: renglonesListos,
         total_usd: totalDinamicoReal * (ticketSeleccionado?.con_iva !== false ? 1.16 : 1.00)
       };
+
+      if (esReenvio) {
+        updatePayload.aprobado_gerente_area = false;
+        updatePayload.aprobado_gerente_general = false;
+        updatePayload.n_aprobacion_area = null;
+        updatePayload.f_aprobacion_area = null;
+        updatePayload.n_aprobacion_general = null;
+        updatePayload.f_aprobacion_general = null;
+        updatePayload.motivo_rechazo = null;
+      }
 
       if (renglonesListos.length > 0) {
         updatePayload.justificacion = ticketSeleccionado.justificacion || renglonesListos[0].desc || renglonesListos[0].descripcion || '';
@@ -2058,25 +2307,45 @@ const ModuloTicketsPago = () => {
       
       // Notificaciones según el nuevo estado
       if (updatePayload.status === 'EMITIDO') {
-        // NOTIFICAR A ADMINISTRACIÓN Y CONTABILIDAD QUE EL TICKET FUE APROBADO COMPLETAMENTE
+        // NOTIFICAR A ADMINISTRACIÓN MARACAIBO QUE EL TICKET FUE APROBADO COMPLETAMENTE
         try {
-          const { data: perfiles } = await supabase
-            .from('perfiles')
-            .select('id, rol, departamento');
-          if (perfiles) {
-            const admins = perfiles.filter(p => {
-              const rol = (p.rol || '').toLowerCase();
-              const depto = (p.departamento || '').toLowerCase();
-              return rol.includes('administra') || rol.includes('contabil') || depto.includes('administra') || depto.includes('contabil');
-            });
-            for (const admin of admins) {
-              await supabase.from('notificaciones').insert([{
+          // Evitar duplicados consultando si ya existe una notificación de este tipo para este ticket (Idempotencia)
+          const { count, error: countErr } = await supabase
+            .from('notificaciones')
+            .select('id', { count: 'exact', head: true })
+            .eq('ticket_id', ticketSeleccionado.id)
+            .eq('tipo', 'Pago / Finanzas');
+
+          if (!countErr && (count || 0) === 0) {
+            const { data: perfiles } = await supabase
+              .from('perfiles')
+              .select('id, rol, departamento');
+            if (perfiles) {
+              const admins = perfiles.filter(p => {
+                const depto = (p.departamento || '').toLowerCase().trim();
+                const rol = (p.rol || '').toLowerCase().trim();
+                return depto.includes('administración maracaibo') || 
+                       depto.includes('administracion maracaibo') || 
+                       depto === 'adm-mcb' ||
+                       ((rol.includes('cajero') || rol.includes('pagador')) && (depto.includes('maracaibo') || depto.includes('mcb')));
+              });
+
+              const idControl = ticketSeleccionado.codigo_control || ticketSeleccionado.codigo_ticket || 'S/N';
+              const solicitanteNombre = ticketSeleccionado.solicitante || 'Desconocido';
+
+              const notificationsToInsert = admins.map(admin => ({
                 usuario_id: admin.id,
-                mensaje: `Ticket de Pago ${ticketSeleccionado.codigo_control} aprobado y listo para procesar.`,
-                tipo: 'Ticket Aprobado',
+                titulo: 'Nuevo Ticket de Pago por Atender',
+                mensaje: `Ticket ${idControl} - Solicitante: ${solicitanteNombre}`,
+                tipo: 'Pago / Finanzas',
                 leido: false,
-                requisicion_id: null
-              }]);
+                requisicion_id: null,
+                ticket_id: ticketSeleccionado.id
+              }));
+
+              if (notificationsToInsert.length > 0) {
+                await supabase.from('notificaciones').insert(notificationsToInsert);
+              }
             }
           }
         } catch (err) {
@@ -2118,6 +2387,7 @@ const ModuloTicketsPago = () => {
     try {
       const { data: updatedData, error } = await supabase.from('tickets_directos').update({
         status: 'Rechazado',
+        motivo_rechazo: motivo,
         observaciones: ticketSeleccionado.observaciones ? `${ticketSeleccionado.observaciones}\n\nRECHAZO: ${motivo}` : `RECHAZO: ${motivo}`
       }).eq('id', ticketSeleccionado.id).select('id');
 
@@ -2180,7 +2450,9 @@ const ModuloTicketsPago = () => {
   };
 
   const anularTicket = async (ticket) => {
-    const esAdmin = currentUser?.esSuperAdmin || currentUser?.esAdminReal || currentUser?.correo?.toLowerCase() === 'jcontreras.totalclean@gmail.com';
+    const emailLower = (currentUser?.correo || '').toLowerCase().trim();
+    const esGG = emailLower === 'cvega@totalclean.com' || emailLower === 'cvega.totalclean@gmail.com' || (currentUser?.rol || '').toUpperCase().includes('GERENTE GENERAL');
+    const esAdmin = currentUser?.esSuperAdmin || currentUser?.esAdminReal || emailLower === 'jcontreras.totalclean@gmail.com' || esGG;
     const esCreador = ticket.usuario_id === currentUser?.id || (ticket.gerente_nombre && ticket.gerente_nombre.toLowerCase().includes(currentUser?.nombre?.toLowerCase()));
     const esAsignado = ticket.asignado_a === currentUser?.id;
 
@@ -2388,7 +2660,7 @@ const ModuloTicketsPago = () => {
 
       // --- TABLA ---
       const tableHeaders = [
-        ['ID', 'FECHA EMISIÓN', 'BENEFICIARIO', 'DEPARTAMENTO', 'CONCEPTO / JUSTIFICACIÓN', 'CENTRO COSTO', 'STATUS', 'TOTAL ($)']
+        ['ID', 'FECHA EMISIÓN', 'SOLICITANTE', 'DEPARTAMENTO', 'CONCEPTO / JUSTIFICACIÓN', 'CENTRO COSTO', 'STATUS', 'TOTAL ($)']
       ];
 
       const tableData = pendientes.map(t => {
@@ -2938,7 +3210,7 @@ const ModuloTicketsPago = () => {
           <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
             <motion.button
               onClick={exportPendingToPDF}
-              whileHover={{ scale: 1.04, boxShadow: '0 6px 20px rgba(220, 38, 38, 0.25)' }}
+              whileHover={{ scale: 1.04, boxShadow: '0 6px 20px rgba(14, 165, 233, 0.25)' }}
               whileTap={{ scale: 0.96 }}
               transition={{ type: 'spring', stiffness: 400, damping: 15 }}
               style={{
@@ -2946,7 +3218,7 @@ const ModuloTicketsPago = () => {
                 alignItems: 'center',
                 gap: '8px',
                 padding: '10px 18px',
-                background: 'linear-gradient(135deg, #ef4444, #dc2626)',
+                background: 'linear-gradient(135deg, #0ea5e9, #0284c7)',
                 color: 'white',
                 border: 'none',
                 borderRadius: '10px',
@@ -2954,7 +3226,7 @@ const ModuloTicketsPago = () => {
                 fontSize: '12px',
                 fontWeight: '700',
                 fontFamily: 'Inter, sans-serif',
-                boxShadow: '0 4px 12px rgba(220, 38, 38, 0.15)'
+                boxShadow: '0 4px 12px rgba(14, 165, 233, 0.15)'
               }}
             >
               <FileText size={15} />
@@ -2963,7 +3235,7 @@ const ModuloTicketsPago = () => {
 
             <motion.button
               onClick={exportPendingToExcel}
-              whileHover={{ scale: 1.04, boxShadow: '0 6px 20px rgba(245, 158, 11, 0.25)' }}
+              whileHover={{ scale: 1.04, boxShadow: '0 6px 20px rgba(14, 165, 233, 0.25)' }}
               whileTap={{ scale: 0.96 }}
               transition={{ type: 'spring', stiffness: 400, damping: 15 }}
               style={{
@@ -2971,7 +3243,7 @@ const ModuloTicketsPago = () => {
                 alignItems: 'center',
                 gap: '8px',
                 padding: '10px 18px',
-                background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+                background: 'linear-gradient(135deg, #0ea5e9, #0284c7)',
                 color: 'white',
                 border: 'none',
                 borderRadius: '10px',
@@ -2979,7 +3251,7 @@ const ModuloTicketsPago = () => {
                 fontSize: '12px',
                 fontWeight: '700',
                 fontFamily: 'Inter, sans-serif',
-                boxShadow: '0 4px 12px rgba(245, 158, 11, 0.15)'
+                boxShadow: '0 4px 12px rgba(14, 165, 233, 0.15)'
               }}
             >
               <FileSpreadsheet size={15} />
@@ -2988,7 +3260,7 @@ const ModuloTicketsPago = () => {
 
             <motion.button
               onClick={exportProcessedToExcel}
-              whileHover={{ scale: 1.04, boxShadow: '0 6px 20px rgba(16, 185, 129, 0.25)' }}
+              whileHover={{ scale: 1.04, boxShadow: '0 6px 20px rgba(14, 165, 233, 0.25)' }}
               whileTap={{ scale: 0.96 }}
               transition={{ type: 'spring', stiffness: 400, damping: 15 }}
               style={{
@@ -2996,7 +3268,7 @@ const ModuloTicketsPago = () => {
                 alignItems: 'center',
                 gap: '8px',
                 padding: '10px 18px',
-                background: 'linear-gradient(135deg, #10b981, #059669)',
+                background: 'linear-gradient(135deg, #0ea5e9, #0284c7)',
                 color: 'white',
                 border: 'none',
                 borderRadius: '10px',
@@ -3004,7 +3276,7 @@ const ModuloTicketsPago = () => {
                 fontSize: '12px',
                 fontWeight: '700',
                 fontFamily: 'Inter, sans-serif',
-                boxShadow: '0 4px 12px rgba(16, 185, 129, 0.15)'
+                boxShadow: '0 4px 12px rgba(14, 165, 233, 0.15)'
               }}
             >
               <FileSpreadsheet size={15} />
@@ -3048,8 +3320,8 @@ const ModuloTicketsPago = () => {
           {[
             { label: 'Monto Total General', val: `$ ${totals.totalMonto.toLocaleString('de-DE', { minimumFractionDigits: 2 })}`, icon: <DollarSign size={20} />, col: '#0ea5e9', bg: '#e0f2fe', filtro: null },
             { label: 'Tickets Pagados', val: totals.pagados, icon: <CheckCircle2 size={20} />, col: '#10b981', bg: '#dcfce7', filtro: 'Pagado' },
-            { label: 'Pendientes por Procesar', val: totals.pendientes, icon: <Clock size={20} />, col: '#8b5cf6', bg: '#f3e8ff', filtro: 'pendiente' },
-            ...(esGerente ? [{ label: 'Por Aprobar Gerencia', val: totals.porAprobar, icon: <Activity size={20} />, col: '#f59e0b', bg: '#fffbeb', filtro: 'Pendiente Aprobación' }] : []),
+            { label: 'Por procesar', val: totals.pendientes, icon: <Clock size={20} />, col: '#8b5cf6', bg: '#f3e8ff', filtro: 'pendiente' },
+            ...(esGerente ? [{ label: 'Por aprobar', val: totals.porAprobar, icon: <Activity size={20} />, col: '#f59e0b', bg: '#fffbeb', filtro: 'Pendiente Aprobación' }] : []),
             { label: 'Anulados / Rechazados', val: totals.anuladosRechazados, icon: <Ban size={20} />, col: '#ef4444', bg: '#fef2f2', filtro: 'anulados_rechazados' },
             { label: 'Total de Tickets', val: totals.totalRegistros, icon: <Ticket size={20} />, col: '#6366f1', bg: '#e0e7ff', filtro: 'Todos' },
           ].map((x, i) => {
@@ -3907,6 +4179,27 @@ const ModuloTicketsPago = () => {
 
           {/* --- CUERPO DESPLAZABLE --- */}
           <div style={{ flexGrow: 1, overflowY: 'auto', padding: '20px 35px' }}>
+            {t.motivo_rechazo && (
+              <div style={{
+                backgroundColor: '#fef2f2',
+                border: '1px solid #fee2e2',
+                borderLeft: '4px solid #ef4444',
+                padding: '16px 20px',
+                borderRadius: '12px',
+                marginBottom: '20px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '6px'
+              }}>
+                <span style={{ fontSize: '11px', fontWeight: '900', color: '#ef4444', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'flex', alignItems: 'center', gap: '6px', fontFamily: 'Inter, sans-serif' }}>
+                  ⚠️ MOTIVO DE RECHAZO
+                </span>
+                <p style={{ margin: 0, fontSize: '0.88rem', fontWeight: '700', color: '#991b1b', lineHeight: '1.4', fontFamily: 'Inter, sans-serif' }}>
+                  {t.motivo_rechazo}
+                </p>
+              </div>
+            )}
+
             {/* --- TABLA DE RENGLONES --- */}
             <div style={{ marginBottom: '35px' }}>
               <label className="stat-label" style={{ marginBottom: '15px' }}>DESGLOSE Y CONTROL DE SALDOS</label>
@@ -3915,7 +4208,7 @@ const ModuloTicketsPago = () => {
                   <thead>
                     <tr>
                       <th style={{ width: '40px' }}></th>
-                      <th>DESCRIPCIÓN DEL ÍTEM</th>
+                      <th>DESCRIPCIÓN</th>
                       <th style={{ width: '150px' }}>BENEFICIARIO</th>
                       <th style={{ width: '80px', textAlign: 'center' }}>CANTIDAD</th>
                       <th style={{ width: '100px', textAlign: 'center' }}>P.U. ($)</th>
@@ -4042,9 +4335,7 @@ const ModuloTicketsPago = () => {
                                 value={r.pu || r.puUsd || ''}
                                 onChange={(e) => {
                                   const val = Math.max(0, Number(e.target.value) || 0);
-                                  actualizarFila(r.id, 'pu', val);
-                                  actualizarFila(r.id, 'puUsd', val);
-                                  actualizarFila(r.id, 'compra_actual_pu', val);
+                                  actualizarFila(r.id, { pu: val, puUsd: val, pu_estimado: val, compra_actual_pu: val });
                                 }}
                                 style={{ textAlign: 'center', width: '90px' }}
                               />
@@ -5023,7 +5314,34 @@ const ModuloTicketsPago = () => {
                     e.currentTarget.style.transform = 'scale(1)';
                     e.currentTarget.style.boxShadow = modoEdicion ? '0 4px 10px rgba(217, 119, 6, 0.35)' : '0 4px 10px rgba(37, 99, 235, 0.35)';
                   }}
-                  onClick={() => setModoEdicion(prev => !prev)}
+                  onClick={async () => {
+                    if (modoEdicion) {
+                      setModoEdicion(false);
+                    } else {
+                      const esCreador = ticketSeleccionado?.usuario_id === currentUser?.id;
+                      if (esCreador && (ticketSeleccionado?.status === 'Pendiente Aprobación' || ticketSeleccionado?.status === 'Rechazado')) {
+                        setLoading(true);
+                        try {
+                          const { error } = await supabase
+                            .from('tickets_directos')
+                            .update({ status: 'Edición Habilitada' })
+                            .eq('id', ticketSeleccionado.id);
+                          if (error) throw error;
+                          
+                          setTicketSeleccionado(prev => ({ ...prev, status: 'Edición Habilitada' }));
+                          setModoEdicion(true);
+                          await fetchHistorial();
+                          toast.success("Edición habilitada.");
+                        } catch (err) {
+                          toast.error("Error al habilitar edición: " + err.message);
+                        } finally {
+                          setLoading(false);
+                        }
+                      } else {
+                        setModoEdicion(true);
+                      }
+                    }
+                  }}
                 >
                   <Edit2 size={16} /> {modoEdicion ? 'EDICIÓN ACTIVA' : 'HABILITAR EDICIÓN'}
                 </button>
@@ -5062,7 +5380,7 @@ const ModuloTicketsPago = () => {
                 {loading
                   ? 'Procesando...'
                   : (modoEdicion
-                    ? 'Guardar Cambios de Edición'
+                    ? (ticketSeleccionado?.usuario_id === currentUser?.id && (ticketSeleccionado?.status === 'Edición Habilitada' || ticketSeleccionado?.status === 'Rechazado' || ticketSeleccionado?.status === 'Borrador') ? 'Volver a Enviar' : 'Guardar Cambios de Edición')
                     : (esPrivilegiado
                       ? 'Finalizar y Guardar Cambios'
                       : 'Solo lectura'))}
