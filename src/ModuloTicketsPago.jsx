@@ -994,9 +994,9 @@ const ModuloTicketsPago = () => {
 
       // Auto-open collapsible sections if they have content
       const hasSoportes = parsearFacturaUrls(ticket.factura_url).length > 0;
-      const hasObservaciones = !!ticket.observaciones && 
-                               ticket.observaciones.trim() !== '' && 
-                               ticket.observaciones.trim().toLowerCase() !== 'sin observaciones registradas.';
+      const hasObservaciones = !!ticket.justificacion && 
+                               ticket.justificacion.trim() !== '' && 
+                               ticket.justificacion.trim().toLowerCase() !== 'sin observaciones registradas.';
       setMostrarSoportes(hasSoportes);
       setMostrarObservaciones(hasObservaciones);
 
@@ -1630,8 +1630,8 @@ const ModuloTicketsPago = () => {
 
     // --- SECCIÓN DE OBSERVACIONES Y JUSTIFICACIÓN EN PARALELO ---
     let nextY = startY + metadataBoxHeight + 4; // ~66
-    const textObs = obtenerTextoObservaciones(t.observaciones);
-    const hasObs = textObs && textObs !== "Sin observaciones.";
+    const textObs = "";
+    const hasObs = false;
     const hasJustif = t.justificacion && t.justificacion.trim();
     const textJustif = hasJustif ? t.justificacion.trim() : "";
 
@@ -2136,14 +2136,14 @@ const ModuloTicketsPago = () => {
       const { error } = await supabase
         .from('tickets_directos')
         .update({
-          observaciones: obsTemporal
+          justificacion: obsTemporal
         })
         .eq('id', ticketSeleccionado.id);
 
       if (error) throw error;
       setTicketSeleccionado({
         ...ticketSeleccionado,
-        observaciones: obsTemporal
+        justificacion: obsTemporal
       });
       setEditandoObs(false);
       const hasObservaciones = !!obsTemporal && 
@@ -2388,7 +2388,7 @@ const ModuloTicketsPago = () => {
       const { data: updatedData, error } = await supabase.from('tickets_directos').update({
         status: 'Rechazado',
         motivo_rechazo: motivo,
-        observaciones: ticketSeleccionado.observaciones ? `${ticketSeleccionado.observaciones}\n\nRECHAZO: ${motivo}` : `RECHAZO: ${motivo}`
+        justificacion: ticketSeleccionado.justificacion ? `${ticketSeleccionado.justificacion}\n\nRECHAZO: ${motivo}` : `RECHAZO: ${motivo}`
       }).eq('id', ticketSeleccionado.id).select('id');
 
       if (error) throw error;
@@ -4013,7 +4013,7 @@ const ModuloTicketsPago = () => {
               </div>
 
               {/* Posee Observaciones Badge */}
-              {t.observaciones && (
+              {t.justificacion && (
                 <div style={{
                   display: 'inline-flex',
                   alignItems: 'center',
@@ -4115,7 +4115,7 @@ const ModuloTicketsPago = () => {
                     <button
                       onClick={() => {
                         setEditandoObs(!editandoObs);
-                        setObsTemporal(t.observaciones || '');
+                        setObsTemporal(t.justificacion || '');
                       }}
                       style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#d97706', padding: 0 }}
                       title="Editar observaciones"
@@ -4140,7 +4140,7 @@ const ModuloTicketsPago = () => {
                           setLoading(true);
                           const { data, error } = await supabase
                             .from('tickets_directos')
-                            .update({ observaciones: obsTemporal })
+                            .update({ justificacion: obsTemporal })
                             .eq('id', t.id)
                             .select('id');
                           if (error) throw error;
@@ -4148,7 +4148,7 @@ const ModuloTicketsPago = () => {
                             throw new Error("No se pudo actualizar el ticket. Es posible que no tengas permisos RLS.");
                           }
                           toast.success("Observaciones actualizadas.");
-                          setTicketSeleccionado(prev => ({ ...prev, observaciones: obsTemporal }));
+                          setTicketSeleccionado(prev => ({ ...prev, justificacion: obsTemporal }));
                           setEditandoObs(false);
                           await fetchHistorial();
                         } catch (err) {
@@ -4169,8 +4169,8 @@ const ModuloTicketsPago = () => {
                     </button>
                   </div>
                 ) : (
-                  <div style={{ color: '#b45309', fontWeight: '600', fontSize: '0.85rem', lineHeight: '1.4', fontStyle: t.observaciones ? 'normal' : 'italic' }}>
-                    {t.observaciones || 'Sin observaciones registradas'}
+                  <div style={{ color: '#b45309', fontWeight: '600', fontSize: '0.85rem', lineHeight: '1.4', fontStyle: t.justificacion ? 'normal' : 'italic' }}>
+                    {t.justificacion || 'Sin observaciones registradas'}
                   </div>
                 )}
               </div>
@@ -4247,11 +4247,11 @@ const ModuloTicketsPago = () => {
                             ) : (
                               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                 <div style={{ fontWeight: '600', fontSize: '0.85rem' }}>{r.desc || r.descripcion}</div>
-                                {ticketSeleccionado?.observaciones && (
+                                {ticketSeleccionado?.justificacion && (
                                   <MessageSquare
                                     size={14}
                                     style={{ color: '#8b5cf6', flexShrink: 0, cursor: 'pointer' }}
-                                    title={`Observaciones: ${ticketSeleccionado.observaciones}`}
+                                    title={`Observaciones: ${ticketSeleccionado.justificacion}`}
                                     onClick={() => setMostrarObservaciones(!mostrarObservaciones)}
                                   />
                                 )}

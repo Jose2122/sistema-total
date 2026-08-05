@@ -319,7 +319,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
             id_control: t.codigo_control,
             solicitud_ref: t.solicitud_ref || '',
             clasificacion_admin: t.clasificacion_admin || '',
-            justificacion: t.observaciones || (t.items?.[0]?.justificacion_detallada ? t.justificacion : '') || '',
+            justificacion: t.justificacion || '',
             justificacion_detallada: t.items?.[0]?.justificacion_detallada || t.justificacion || '',
             centro_costo: t.centro_costo || t.items?.[0]?.cc || '',
             con_iva: t.con_iva !== false,
@@ -327,7 +327,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
           });
           const hasSoportes = parsearFacturaUrls(factUrls).length > 0;
           setMostrarSoportes(hasSoportes);
-          const obsValue = t.observaciones || (t.items?.[0]?.justificacion_detallada ? t.justificacion : '') || '';
+          const obsValue = t.justificacion || '';
           const hasJustificacion = !!obsValue && obsValue.trim() !== '';
           setVerJustificacion(hasJustificacion);
         } else {
@@ -875,8 +875,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
         status: initialStatus,
         solicitud_ref: form.solicitud_ref || null,
         clasificacion_admin: form.clasificacion_admin || null,
-        justificacion: form.justificacion_detallada || form.justificacion || null,
-        observaciones: form.justificacion || null,
+        justificacion: form.justificacion || form.justificacion_detallada || null,
         centro_costo: cc,
         con_iva: form.con_iva !== false,
         prioridad: form.prioridad || 'Normal',
@@ -994,8 +993,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
           factura_url: form.facturas_url || [],
           status: form.status,
           clasificacion_admin: form.clasificacion_admin,
-          justificacion: form.justificacion_detallada || form.justificacion || null,
-          observaciones: form.justificacion || null,
+          justificacion: form.justificacion || form.justificacion_detallada || null,
           con_iva: form.con_iva !== false,
           prioridad: form.prioridad || 'Normal',
           fecha_emision: form.fecha
@@ -1427,7 +1425,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
       const { data: updatedData, error } = await supabase.from('tickets_directos').update({
         status: 'Rechazado',
         motivo_rechazo: motivo,
-        observaciones: form.justificacion ? `${form.justificacion}\n\nRECHAZO: ${motivo}` : `RECHAZO: ${motivo}`
+        justificacion: form.justificacion ? `${form.justificacion}\n\nRECHAZO: ${motivo}` : `RECHAZO: ${motivo}`
       }).eq('id', form.id).select('id');
 
       if (error) throw error;
