@@ -108,7 +108,7 @@ function App() {
         
         {/* Rutas protegidas: Si no hay sesión, te mandan al Login "/" */}
         <Route path="/dashboard" element={session ? <Dashboard /> : <Navigate to="/" />} />
-        <Route path="/SolicitudFondos" element={session ? <SolicitudFondos /> : <Navigate to="/" />} />
+        <Route path="/SolicitudFondos" element={session ? <SolicitudFondos session={session} /> : <Navigate to="/" />} />
         <Route path="/almacen" element={session ? <Almacen /> : <Navigate to="/" />} />
         <Route path="/admin/analytics" element={session ? <AdminAnalytics /> : <Navigate to="/" />} />
       </Routes>

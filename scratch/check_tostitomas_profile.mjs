@@ -22,20 +22,29 @@ envContent.split('\n').forEach(line => {
 
 const supabase = createClient(env.VITE_SUPABASE_URL, env.VITE_SUPABASE_ANON_KEY);
 
-async function list() {
-  console.log("Listing 20 most recent solicitudes...");
-  const { data, error } = await supabase
-    .from('solicitudes_fondos')
-    .select('id, codigo_control, estado')
-    .order('created_at', { ascending: false })
-    .limit(20);
+async function check() {
+  console.log("Signing in as tostitomas@gmail.com...");
+  const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+    email: 'tostitomas@gmail.com',
+    password: '123456'
+  });
 
-  if (error) {
-    console.error("Error:", error.message);
+  if (authError) {
+    console.error("Login failed:", authError.message);
+    return;
+  }
+
+  console.log("Login Success! User ID:", authData.user.id);
+  const { data: profile, error: pError } = await supabase
+    .from('perfiles')
+    .select('*')
+    .eq('id', authData.user.id)
+    .single();
+
+  if (pError) {
+    console.error("Profile fetch failed:", pError.message);
   } else {
-    data.forEach((s, idx) => {
-      console.log(`[${idx+1}] ID: ${s.id} | Codigo: ${s.codigo_control} | Estado: ${s.estado}`);
-    });
+    console.log("Profile Data:", JSON.stringify(profile, null, 2));
   }
 }
-list();
+check();

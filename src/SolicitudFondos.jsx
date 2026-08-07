@@ -180,19 +180,26 @@ const TextInputLocal = ({ value, onChange, onBlur, ...props }) => {
 
 const TextareaLocal = ({ value, onChange, onBlur, ...props }) => {
   const [localVal, setLocalVal] = useState(value || '');
+  const textareaRef = useRef(null);
 
   useEffect(() => {
     setLocalVal(value || '');
   }, [value]);
 
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
+    }
+  }, [localVal]);
+
   return (
     <textarea
       {...props}
+      ref={textareaRef}
       value={localVal}
       onChange={(e) => {
         setLocalVal(e.target.value);
-        e.target.style.height = 'auto';
-        e.target.style.height = `${e.target.scrollHeight}px`;
       }}
       onBlur={(e) => {
         if (localVal !== value) {
@@ -204,7 +211,8 @@ const TextareaLocal = ({ value, onChange, onBlur, ...props }) => {
   );
 };
 
-const StockSmartTotalClean = ({ currentUserProp }) => {
+const StockSmartTotalClean = ({ currentUserProp, session: sessionProp }) => {
+  console.log("[VISIBILIDAD FONDOS] StockSmartTotalClean component mounted!");
   const [showModal, setShowModal] = useState(false);
   const [historial, setHistorial] = useState([]);
   const [isEditing, setIsEditing] = useState(false);
@@ -680,14 +688,23 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
   }, [historial]);
 
   const cargarTodo = useCallback(async () => {
+    console.log("[VISIBILIDAD FONDOS] cargarTodo iniciado");
     setLoading(true);
 
     // Asegurar que tenemos al usuario antes de filtrar (con datos frescos)
     let userContext = currentUser;
+    console.log("[VISIBILIDAD FONDOS] userContext inicial:", userContext);
     if (!userContext) {
-      const { data: { session } } = await supabase.auth.getSession();
+      let session = sessionProp;
+      if (!session) {
+        console.log("[VISIBILIDAD FONDOS] No sessionProp, fetching session...");
+        const { data: { session: fetchedSession } } = await supabase.auth.getSession();
+        session = fetchedSession;
+      }
+      console.log("[VISIBILIDAD FONDOS] session used:", session);
       if (session?.user) {
-        const { data: perfil } = await supabase.from('perfiles').select('*').eq('id', session.user.id).single();
+        const { data: perfil, error: perfilError } = await supabase.from('perfiles').select('*').eq('id', session.user.id).single();
+        console.log("[VISIBILIDAD FONDOS] perfil fetched:", perfil, "error:", perfilError);
         if (perfil) {
           const emailLower = (session.user.email || '').toLowerCase();
           const esSuperAdmin = emailLower === 'jcontreras.totalclean@gmail.com';
@@ -712,7 +729,10 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       }
     }
 
+    console.log("[VISIBILIDAD FONDOS] userContext final:", userContext);
+
     if (!userContext) {
+      console.warn("[VISIBILIDAD FONDOS] cargarTodo cancelado: userContext es null");
       setLoading(false);
       return;
     }
@@ -780,10 +800,18 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
       }
     }
 
-    const { data: dataHist } = await query.order('created_at', { ascending: false });
+    const { data: dataHist, error: queryError } = await query.order('created_at', { ascending: false });
+
+    if (queryError) {
+      console.error("[ERRORES FONDOS] Error cargando solicitudes_fondos:", queryError.message);
+    }
 
     if (dataHist) {
-      const reqIds = dataHist.map(h => h.id).filter(Boolean);
+      const reqIds = [...new Set(dataHist.map(h => h.id).filter(Boolean))];
+      const invalidIds = reqIds.filter(id => !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id));
+      if (invalidIds.length > 0) {
+        console.error("[DEBUG UUID] ERROR: Solicitudes contain invalid UUIDs as primary keys:", invalidIds);
+      }
 
       // --- FIX CRÍTICO: Fetch por BATCHES con límite explícito ---
       // PostgREST tiene un límite por defecto de ~1000 filas. Con muchas solicitudes
@@ -810,9 +838,21 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         console.error("[ERRORES FONDOS] Error cargando partidas_fondos:", pagosError.message);
       }
 
+      console.log("[VISIBILIDAD FONDOS] cargarTodo debug:", {
+        email: userContext?.correo,
+        role: userContext?.rol,
+        solicitudesLoaded: dataHist.length,
+        partidasLoaded: pagosData?.length || 0,
+        error: pagosError?.message || null
+      });
+
       // Obtener Tickets directos involucrados en estas solicitudes
-      const ticketIds = (pagosData || []).map(p => p.ticket_id).filter(Boolean);
-      const ticketCodigos = (pagosData || []).map(p => p.codigo_ticket).filter(c => c && c.startsWith('TP-'));
+      const ticketIds = [...new Set((pagosData || []).map(p => p.ticket_id).filter(Boolean))];
+      const ticketCodigos = [...new Set((pagosData || []).map(p => p.codigo_ticket).filter(c => c && c.startsWith('TP-')))];
+      const invalidTicketIds = ticketIds.filter(id => !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id));
+      if (invalidTicketIds.length > 0) {
+        console.error("[DEBUG TICKET ID] ERROR: ticketIds contain invalid UUIDs:", invalidTicketIds);
+      }
       let ticketsInvolucrados = [];
       if (ticketIds.length > 0 || ticketCodigos.length > 0) {
         try {
@@ -831,13 +871,22 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         }
       }
 
-      setHistorial(dataHist.map(h => {
+      const historialMapeado = dataHist.map(h => {
         const misPartidas = (pagosData || []).filter(p => {
           if (!p.solicitud_id) return false;
           const pSolId = String(p.solicitud_id).toLowerCase().trim();
           const hId = h.id ? String(h.id).toLowerCase().trim() : '';
           const hCode = h.codigo_control ? String(h.codigo_control).toLowerCase().trim() : '';
           return pSolId === hId || pSolId === hCode;
+        }).map(p => {
+          const reqObj = p.requisiciones || null;
+          const isReqAnulada = reqObj?.estado_aprobacion === 'ANULADA' || reqObj?.estado_aprobacion === 'RECHAZADA';
+          const tieneReqValida = (p.requisicion_id || reqObj?.id) && !isReqAnulada;
+          const codigo_ref = (p.codigo_ticket?.startsWith('RR-') && !tieneReqValida) ? null : (isReqAnulada ? null : (p.codigo_ticket || reqObj?.correlativo_req || null));
+          return {
+            ...p,
+            codigo_ref
+          };
         });
 
         let calculatedTotalBs = parseFloat(h.total_bs || 0);
@@ -846,7 +895,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         const emailLower = (userContext?.correo || '').toLowerCase();
         const esTostitomas = emailLower.includes('tostitomas') || (userContext?.nombre || '').toLowerCase().includes('tostitomas');
 
-        if (misPartidas.length > 0 && !esTostitomas) {
+        if (misPartidas.length > 0) {
           const sumPartidasBs = misPartidas.reduce((acc, p) => acc + (p.status === 'ANULADO_POR_USUARIO' ? 0 : (parseFloat(p.pu_bs) || 0) * (p.cantidad || 1)), 0);
           const sumPartidasUsd = misPartidas.reduce((acc, p) => acc + (p.status === 'ANULADO_POR_USUARIO' ? 0 : (parseFloat(p.pu_usd) || 0) * (p.cantidad || 1)), 0);
           
@@ -860,7 +909,7 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         let pendingBs = 0;
         let pendingUsd = 0;
 
-        if (misPartidas.length > 0 && !esTostitomas) {
+        if (misPartidas.length > 0) {
           let totalMontoReal = 0;
           let totalPendingBs = 0;
           let totalPendingUsd = 0;
@@ -901,8 +950,8 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                 const cantPendiente = parseFloat(itemReq.cantidad_pendiente ?? itemReq.cant) || 0;
                 const puEst = parseFloat(itemReq.pu_estimado ?? itemReq.pu) || 0;
                 
-                if (mReal === 0 && isReqComp) {
-                  mReal = (parseFloat(p.pu_bs) || parseFloat(p.pu_usd) || 0) * (p.cantidad || 1);
+                if (isReqComp) {
+                  mReal = mReal === 0 ? ((parseFloat(p.pu_bs) || parseFloat(p.pu_usd) || 0) * (p.cantidad || 1)) : mReal;
                   mPendingBs = 0;
                   mPendingUsd = 0;
                 } else if (p.pu_bs > 0) {
@@ -923,7 +972,12 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                 (p.codigo_ticket && t.codigo_control === p.codigo_ticket)
               );
               if (ticketAsociado) {
-                if (ticketAsociado.items && ticketAsociado.items.length > 0) {
+                const isPaid = ticketAsociado.status === 'Pagado' || ticketAsociado.status === 'COMPLETADO';
+                if (isPaid) {
+                  mReal = (parseFloat(p.pu_bs) || parseFloat(p.pu_usd) || 0) * (p.cantidad || 1);
+                  mPendingBs = 0;
+                  mPendingUsd = 0;
+                } else if (ticketAsociado.items && ticketAsociado.items.length > 0) {
                   const normPDesc = (p.descripcion || '').trim().toLowerCase();
                   const itemTicket = ticketAsociado.items.find(it =>
                     (it.desc || it.descripcion || '').trim().toLowerCase() === normPDesc &&
@@ -937,28 +991,14 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                     const cantPendiente = parseFloat(itemTicket.cantidad_pendiente ?? itemTicket.cant) || 0;
                     const puEst = parseFloat(itemTicket.pu_estimado ?? itemTicket.pu) || 0;
                     
-                    if (mReal === 0 && (ticketAsociado.status === 'Pagado' || ticketAsociado.status === 'COMPLETADO')) {
-                      mReal = (parseFloat(p.pu_bs) || parseFloat(p.pu_usd) || 0) * (p.cantidad || 1);
-                      mPendingBs = 0;
-                      mPendingUsd = 0;
-                    } else if (p.pu_bs > 0) {
+                    if (p.pu_bs > 0) {
                       mPendingBs = cantPendiente * puEst;
                       mPendingUsd = 0;
                     } else {
                       mPendingBs = 0;
                       mPendingUsd = cantPendiente * puEst;
                     }
-                  } else {
-                    if (ticketAsociado.status === 'Pagado' || ticketAsociado.status === 'COMPLETADO') {
-                      mReal = (parseFloat(p.pu_bs) || parseFloat(p.pu_usd) || 0) * (p.cantidad || 1);
-                      mPendingBs = 0;
-                      mPendingUsd = 0;
-                    }
                   }
-                } else if (ticketAsociado.status === 'Pagado' || ticketAsociado.status === 'COMPLETADO') {
-                  mReal = (parseFloat(p.pu_bs) || parseFloat(p.pu_usd) || 0) * (p.cantidad || 1);
-                  mPendingBs = 0;
-                  mPendingUsd = 0;
                 }
               }
             }
@@ -1011,7 +1051,60 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
           estado: dynamicEstado,
           is_culminada: isCulminadaValue
         };
-      }));
+      });
+
+      // --- LOGS DE DIAGNÓSTICO PARA SOLICITUDES ---
+      const targetCodes = ['ADMMCBSEM2826', 'ADMMCBSEM2726', 'ADMMCBOSEM2826', 'ADMMCNOSEM2726'];
+      historialMapeado.forEach(h => {
+        const normCode = (h.codigo_control || '').replace(/[\s-]/g, '').toUpperCase();
+        if (targetCodes.includes(normCode)) {
+          console.log(`[DEBUG COMPLETADO] Solicitud: ${h.codigo_control}`);
+          console.log(`  - Estado Calculado: ${h.estado} | is_culminada: ${h.is_culminada}`);
+          console.log(`  - pending_bs: ${h.pending_bs} | pending_usd: ${h.pending_usd}`);
+          
+          const misPart = (pagosData || []).filter(p => {
+            if (!p.solicitud_id) return false;
+            const pSolId = String(p.solicitud_id).toLowerCase().trim();
+            const hId = h.id ? String(h.id).toLowerCase().trim() : '';
+            const hCode = h.codigo_control ? String(h.codigo_control).toLowerCase().trim() : '';
+            return pSolId === hId || pSolId === hCode;
+          }).map(p => {
+            const reqObj = p.requisiciones || null;
+            const isReqAnulada = reqObj?.estado_aprobacion === 'ANULADA' || reqObj?.estado_aprobacion === 'RECHAZADA';
+            const tieneReqValida = (p.requisicion_id || reqObj?.id) && !isReqAnulada;
+            const codigo_ref = (p.codigo_ticket?.startsWith('RR-') && !tieneReqValida) ? null : (isReqAnulada ? null : (p.codigo_ticket || reqObj?.correlativo_req || null));
+            return { ...p, codigo_ref };
+          });
+
+          console.log(`  - Partidas vinculadas (${misPart.length}):`);
+          misPart.forEach((p, idx) => {
+            const isReq = p.requisicion_id || p.codigo_ref?.startsWith('RR-');
+            const isTicket = p.ticket_id || p.codigo_ticket?.startsWith('TP-') || p.codigo_ref?.startsWith('TP-');
+            console.log(`    [Partida ${idx+1}] ID: ${p.id} | Desc: "${p.descripcion}"`);
+            console.log(`      * link: isReq=${isReq}, isTicket=${isTicket}, reqId=${p.requisicion_id}, tkId=${p.ticket_id}`);
+            console.log(`      * refs: codigo_ref=${p.codigo_ref}, codigo_ticket=${p.codigo_ticket}`);
+            console.log(`      * pago_realizado: ${p.pago_realizado}`);
+            if (isReq) {
+              console.log(`      * Requisicion:`, p.requisiciones ? {
+                id: p.requisiciones.id,
+                status_compra: p.requisiciones.status_compra,
+                estado_aprobacion: p.requisiciones.estado_aprobacion,
+                items_count: p.requisiciones.items?.length
+              } : "NULL!");
+            }
+            if (isTicket) {
+              const tk = ticketsInvolucrados.find(t => t.id === p.ticket_id || t.codigo_control === p.codigo_ticket || t.codigo_control === p.codigo_ref);
+              console.log(`      * Ticket:`, tk ? {
+                id: tk.id,
+                status: tk.status,
+                items_count: tk.items?.length
+              } : "NULL!");
+            }
+          });
+        }
+      });
+
+      setHistorial(historialMapeado);
     }
 
     const { data: dataCC } = await supabase.from('maestros_centros_costo').select('id, nombre').eq('activo', true).order('nombre');
@@ -1436,12 +1529,11 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
               if (h.tipo === 'JUSTIFICACION') return sum;
               return sum + ((parseFloat(h.cant) || 0) * (parseFloat(h.pu) || 0));
             }, 0);
-
             const cantPendiente = parseFloat(itemReq.cantidad_pendiente ?? itemReq.cant) || 0;
             const puEst = parseFloat(itemReq.pu_estimado ?? itemReq.pu) || 0;
             
-            if (montoReal === 0 && isReqComp) {
-              montoReal = (parseFloat(p.pu_bs) || parseFloat(p.pu_usd) || 0) * (p.cantidad || 1);
+            if (isReqComp) {
+              montoReal = montoReal === 0 ? ((parseFloat(p.pu_bs) || parseFloat(p.pu_usd) || 0) * (p.cantidad || 1)) : montoReal;
               montoPendiente = 0;
             } else {
               montoPendiente = cantPendiente * puEst;
@@ -1456,7 +1548,11 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
             (p.codigo_ticket && t.codigo_control === p.codigo_ticket)
           );
           if (ticketAsociado) {
-            if (ticketAsociado.items && ticketAsociado.items.length > 0) {
+            const isPaid = ticketAsociado.status === 'Pagado' || ticketAsociado.status === 'COMPLETADO';
+            if (isPaid) {
+              montoReal = (parseFloat(p.pu_bs) || parseFloat(p.pu_usd) || 0) * (p.cantidad || 1);
+              montoPendiente = 0;
+            } else if (ticketAsociado.items && ticketAsociado.items.length > 0) {
               const normPDesc = (p.descripcion || '').trim().toLowerCase();
               const itemTicket = ticketAsociado.items.find(it =>
                 (it.desc || it.descripcion || '').trim().toLowerCase() === normPDesc &&
@@ -1469,22 +1565,8 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
                 }, 0);
                 const cantPendiente = parseFloat(itemTicket.cantidad_pendiente ?? itemTicket.cant) || 0;
                 const puEst = parseFloat(itemTicket.pu_estimado ?? itemTicket.pu) || 0;
-                
-                if (montoReal === 0 && (ticketAsociado.status === 'Pagado' || ticketAsociado.status === 'COMPLETADO')) {
-                  montoReal = (parseFloat(p.pu_bs) || parseFloat(p.pu_usd) || 0) * (p.cantidad || 1);
-                  montoPendiente = 0;
-                } else {
-                  montoPendiente = cantPendiente * puEst;
-                }
-              } else {
-                if (ticketAsociado.status === 'Pagado' || ticketAsociado.status === 'COMPLETADO') {
-                  montoReal = (parseFloat(p.pu_bs) || parseFloat(p.pu_usd) || 0) * (p.cantidad || 1);
-                  montoPendiente = 0;
-                }
+                montoPendiente = cantPendiente * puEst;
               }
-            } else if (ticketAsociado.status === 'Pagado' || ticketAsociado.status === 'COMPLETADO') {
-              montoReal = (parseFloat(p.pu_bs) || parseFloat(p.pu_usd) || 0) * (p.cantidad || 1);
-              montoPendiente = 0;
             }
           }
         }
@@ -1502,7 +1584,10 @@ const StockSmartTotalClean = ({ currentUserProp }) => {
         if (p.ticket_id || p.codigo_ticket?.startsWith('TP-')) {
           const tk = ticketsInvolucrados.find(t => t.id === p.ticket_id || t.codigo_control === p.codigo_ticket);
           if (tk) {
-            if (tk.status === 'Pagado') return true;
+            const statusUpper = (tk.status || '').toUpperCase();
+            if (statusUpper === 'PAGADO' || statusUpper === 'COMPLETADO' || statusUpper === 'ANULADO' || statusUpper === 'RECHAZADO') {
+              return true;
+            }
             if (tk.items && tk.items.length > 0) {
               const it = tk.items.find(item =>
                 (item.desc || item.descripcion || '').trim().toUpperCase() === (p.descripcion || '').trim().toUpperCase() &&

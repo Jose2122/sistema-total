@@ -26,7 +26,23 @@ import { Menu, X as CloseIcon, Search, Cloud, Sun, ChevronDown, Power, LayoutDas
 
 function Dashboard() {
   const navigate = useNavigate();
-  const [seccionActiva, setSeccionActiva] = useState('dashboard');
+  const [seccionActiva, setSeccionActiva] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    const tabParam = params.get('tab');
+    if (tabParam) return tabParam;
+    const hash = window.location.hash.replace('#', '');
+    if (hash) return hash;
+    return 'dashboard';
+  });
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const tabParam = params.get('tab');
+    if (tabParam) {
+      setSeccionActiva(tabParam);
+    }
+  }, []);
+
   const [sidebarAbierto, setSidebarAbierto] = useState(window.innerWidth > 768);
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
   const [usuario, setUsuario] = useState({ nombre: '', apellido: '', rol: '', departamento: '', permisos: {} });

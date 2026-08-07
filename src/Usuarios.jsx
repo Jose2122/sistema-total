@@ -17,13 +17,43 @@ const Usuarios = ({ currentUser: currentUserProp, onUserUpdate }) => {
       if (token) {
         headers['Authorization'] = `Bearer ${token}`;
       }
-      return await supabase.functions.invoke(functionName, {
+      const result = await supabase.functions.invoke(functionName, {
         ...options,
         headers
       });
+      if (result.error && result.error.context) {
+        try {
+          const ctx = result.error.context;
+          const responseClone = typeof ctx.clone === 'function' ? ctx.clone() : ctx;
+          if (typeof responseClone.json === 'function') {
+            const errData = await responseClone.json();
+            if (errData && errData.error) {
+              result.error.message = errData.error;
+            }
+          }
+        } catch (e) {
+          console.error("Error parsing function error context:", e);
+        }
+      }
+      return result;
     } catch (err) {
       console.error("Error in invokeEdgeFunction:", err);
-      return await supabase.functions.invoke(functionName, options);
+      const result = await supabase.functions.invoke(functionName, options);
+      if (result.error && result.error.context) {
+        try {
+          const ctx = result.error.context;
+          const responseClone = typeof ctx.clone === 'function' ? ctx.clone() : ctx;
+          if (typeof responseClone.json === 'function') {
+            const errData = await responseClone.json();
+            if (errData && errData.error) {
+              result.error.message = errData.error;
+            }
+          }
+        } catch (e) {
+          console.error("Error parsing function error context in fallback:", e);
+        }
+      }
+      return result;
     }
   };
 
