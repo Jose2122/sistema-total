@@ -3,6 +3,7 @@ import { supabase } from './supabaseClient';
 import toast from 'react-hot-toast';
 import { AnimatePresence } from 'framer-motion';
 import { getSemanaInfo } from './utils/helpers';
+import { compressImage } from './utils/compressImage';
 import {
   Search,
   Eye,
@@ -511,9 +512,10 @@ const LiquidacionFacturas = ({ currentUser }) => {
         const fileExt = file.name.split('.').pop();
         const storageFileName = `abono_${abonoForm.factura_num.replace(/\s+/g, '_')}_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.${fileExt}`;
         
+        const compressedFile = await compressImage(file);
         const { error: uploadError } = await supabase.storage
           .from('facturas')
-          .upload(storageFileName, file);
+          .upload(storageFileName, compressedFile);
 
         if (uploadError) throw uploadError;
 

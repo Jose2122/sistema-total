@@ -101,7 +101,7 @@ const ResumenSesion = ({ currentUser, setActiveSeccion }) => {
                 const deptoUpper = (currentUser.departamento || '').toUpperCase();
                 const emailLower = (currentUser.correo || '').toLowerCase();
                 
-                const esGG = rolUpper.includes('GENERAL') || rolUpper.includes('ADMIN') || emailLower === 'cvega@totalclean.com' || emailLower === 'cvega.totalclean@gmail.com';
+                const esGG = rolUpper.includes('GENERAL') || rolUpper.includes('ADMIN') || emailLower === 'cvega@totalclean.com.ve';
                 const esGP = rolUpper.includes('PROYECTO');
                 const esGA = rolUpper.includes('ÁREA') || rolUpper.includes('AREA') || emailLower === 'karincmm1@gmail.com' || rolUpper.includes('CONTROL INTERNO') || deptoUpper.includes('ESTIMAC');
 

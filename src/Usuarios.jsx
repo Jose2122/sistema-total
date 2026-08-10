@@ -7,6 +7,7 @@ import {
 import toast from 'react-hot-toast';
 import { formatDistanceToNow } from 'date-fns';
 import { es } from 'date-fns/locale';
+import { compressImage } from './utils/compressImage';
 
 const Usuarios = ({ currentUser: currentUserProp, onUserUpdate }) => {
   const invokeEdgeFunction = async (functionName, options = {}) => {
@@ -179,8 +180,7 @@ const Usuarios = ({ currentUser: currentUserProp, onUserUpdate }) => {
       // José (System Admin), Carlos (Gerente General), Karin (Control Interno)
       const esJose = emailLower === 'jcontreras.totalclean@gmail.com';
       const esAdminReal = esJose || 
-                          emailLower === 'cvega.totalclean@gmail.com' || 
-                          emailLower === 'cvega@totalclean.com' || 
+                          emailLower === 'cvega@totalclean.com.ve' || 
                           emailLower === 'karincmm1@gmail.com';
       
       const rolUpper = (miPerfilLocal?.rol || '').trim().toUpperCase();
@@ -961,9 +961,10 @@ const Usuarios = ({ currentUser: currentUserProp, onUserUpdate }) => {
                               const fileName = `avatar-${Date.now()}.${fileExt}`;
                               const filePath = `avatars/${fileName}`;
                               
+                              const compressedFile = await compressImage(file);
                               const { error: uploadError } = await supabase.storage
                                 .from('facturas')
-                                .upload(filePath, file);
+                                .upload(filePath, compressedFile);
 
                               if (uploadError) throw uploadError;
 

@@ -12,6 +12,7 @@ import {
   Clock, User, Ban, Trash2, Camera, Plus, X, ArrowLeft, Edit2
 } from 'lucide-react';
 import './Requisiciones.css';
+import { compressImage } from './utils/compressImage';
 
 const compararNombres = (nombre1, nombre2) => {
   if (!nombre1 || !nombre2) return false;
@@ -314,12 +315,11 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       const emailLower = (currentUser?.correo || '').toLowerCase();
       const esJose = emailLower === 'jcontreras.totalclean@gmail.com';
       const esAdminReal = esJose ||
-        emailLower === 'cvega.totalclean@gmail.com' ||
-        emailLower === 'cvega@totalclean.com' ||
+        emailLower === 'cvega@totalclean.com.ve' ||
         emailLower === 'karincmm1@gmail.com';
 
       const emailActual = (currentUser?.correo || '').toLowerCase();
-      const esGG = rolUpper.includes('GERENTE') || rolUpper.includes('ADMIN') || emailActual === 'cvega@totalclean.com' || emailActual === 'cvega.totalclean@gmail.com';
+      const esGG = rolUpper.includes('GERENTE') || rolUpper.includes('ADMIN') || emailActual === 'cvega@totalclean.com.ve';
       // --- NUEVA LÓGICA DE SEGURIDAD JERÁRQUICA (SOLICITUD 24/04) ---
       const rolUserLower = (currentUser.rol || '').toLowerCase();
       const deptoUserLower = (currentUser.departamento || '').toLowerCase();
@@ -329,7 +329,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
         (currentUser.usuario || '').toLowerCase() === 'tostitomas';
 
       const esAdminRealOCarlos = esAdminReal ||
-        (currentUser.correo || '').toLowerCase() === 'cvega@totalclean.com' ||
+        (currentUser.correo || '').toLowerCase() === 'cvega@totalclean.com.ve' ||
         (currentUser.nombre || '').toLowerCase().includes('carlos') ||
         currentUser.capacidades?.ver_requisiciones_global === true ||
         currentUser.capacidades?.ver_requisiciones_todos_deptos === true ||
@@ -1017,8 +1017,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     const esAdmin = currentUser?.esAdminReal ||
       rolUser.includes('admin') ||
       rolUser.includes('general') ||
-      (currentUser?.correo || '').toLowerCase() === 'cvega@totalclean.com' ||
-      (currentUser?.correo || '').toLowerCase() === 'cvega.totalclean@gmail.com';
+      (currentUser?.correo || '').toLowerCase() === 'cvega@totalclean.com.ve';
 
     let puedeRechazar = false;
     if (esAdmin) {
@@ -1063,8 +1062,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     const esAdminPermitido = currentUser?.esAdminReal ||
       rolUpper.includes('GERENTE') ||
       rolUpper.includes('ADMIN') ||
-      emailLower === 'cvega@totalclean.com' ||
-      emailLower === 'cvega.totalclean@gmail.com';
+      emailLower === 'cvega@totalclean.com.ve';
 
     if (!editandoId || !esAdminPermitido) return;
     setMotivoRechazo('');
@@ -1281,7 +1279,13 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       setUploading(true);
       if (!files || files.length === 0) return;
 
+      const compressedFiles = [];
       for (const file of files) {
+        const compressed = await compressImage(file);
+        compressedFiles.push(compressed);
+      }
+
+      for (const file of compressedFiles) {
         if (file.size > 5 * 1024 * 1024) {
           toast.error(`El archivo "${file.name}" supera el límite de 5MB. Por favor, redúzcalo antes de subirlo.`);
           setUploading(false);
@@ -1289,7 +1293,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
         }
       }
 
-      const uploadPromises = files.map(async (file, index) => {
+      const uploadPromises = compressedFiles.map(async (file, index) => {
         const fileExt = file.name.split('.').pop();
         const prefix = editandoId ? editandoId : `nueva_${Date.now()}`;
         const fileName = `factura_${prefix}_${Date.now()}_${index}.${fileExt}`;
@@ -1399,8 +1403,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     const esAdmin = currentUser?.esAdminReal ||
       rolUser.includes('admin') ||
       rolUser.includes('general') ||
-      (currentUser?.correo || '').toLowerCase() === 'cvega@totalclean.com' ||
-      (currentUser?.correo || '').toLowerCase() === 'cvega.totalclean@gmail.com';
+      (currentUser?.correo || '').toLowerCase() === 'cvega@totalclean.com.ve';
 
     let puedeAprobar = false;
     if (esAdmin) {
@@ -4811,8 +4814,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                               const esAdmin = currentUser?.esAdminReal ||
                                 rolUser.includes('admin') ||
                                 rolUser.includes('general') ||
-                                (currentUser?.correo || '').toLowerCase() === 'cvega@totalclean.com' ||
-                                (currentUser?.correo || '').toLowerCase() === 'cvega.totalclean@gmail.com';
+                                (currentUser?.correo || '').toLowerCase() === 'cvega@totalclean.com.ve';
                               
                               if (esAdmin) {
                                 puedeVerBotonesProyecto = true;

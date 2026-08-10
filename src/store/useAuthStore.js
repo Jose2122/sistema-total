@@ -40,8 +40,7 @@ export const useAuthStore = create((set, get) => ({
       const emailLower = (session.user.email || '').toLowerCase();
       const esJose = emailLower === 'jcontreras.totalclean@gmail.com';
       const esAdminReal = esJose ||
-        emailLower === 'cvega.totalclean@gmail.com' ||
-        emailLower === 'cvega@totalclean.com' ||
+        emailLower === 'cvega@totalclean.com.ve' ||
         emailLower === 'karincmm1@gmail.com';
 
       const userData = {

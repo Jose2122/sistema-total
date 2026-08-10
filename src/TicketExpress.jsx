@@ -51,6 +51,7 @@ import {
 } from 'lucide-react';
 import { format, getWeek } from 'date-fns';
 import toast from 'react-hot-toast';
+import { compressImage } from './utils/compressImage';
 import './TicketExpress.css';
 
 const obtenerNombreDeUrl = (url) => {
@@ -194,7 +195,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
     const emailLower = (currentUser.correo || '').toLowerCase();
     const deptoUpper = (currentUser.departamento || '').toUpperCase();
     return emailLower === 'jcontreras.totalclean@gmail.com' ||
-      emailLower === 'cvega@totalclean.com' ||
+      emailLower === 'cvega@totalclean.com.ve' ||
       emailLower === 'karincmm1@gmail.com' ||
       deptoUpper.includes('ADMINISTRACIÓN') ||
       deptoUpper === 'RECURSOS HUMANOS' ||
@@ -425,8 +426,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
         const emailLower = (user.email || '').toLowerCase();
         const esSuperAdmin = emailLower === 'jcontreras.totalclean@gmail.com';
         const esAdminReal = esSuperAdmin ||
-          emailLower === 'cvega.totalclean@gmail.com' ||
-          emailLower === 'cvega@totalclean.com' ||
+          emailLower === 'cvega@totalclean.com.ve' ||
           emailLower === 'karincmm1@gmail.com';
 
         const userInfo = {
@@ -610,20 +610,22 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
 
   // --- ADJUNTAR SOPORTE ---
   const manejarSubidaSoporte = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    if (file.size > 5 * 1024 * 1024) {
-      toast.error("El archivo supera el límite de 5MB. Por favor, redúzcalo antes de subirlo.");
-      return;
-    }
+    const originalFile = e.target.files[0];
+    if (!originalFile) return;
 
     setLoading(true);
-    const fileExt = file.name.split('.').pop();
-    const fileName = `${Date.now()}.${fileExt}`;
-    const filePath = `tickets/${fileName}`;
-
     try {
+      const file = await compressImage(originalFile);
+      if (file.size > 5 * 1024 * 1024) {
+        toast.error("El archivo supera el límite de 5MB. Por favor, redúzcalo antes de subirlo.");
+        setLoading(false);
+        return;
+      }
+
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${Date.now()}.${fileExt}`;
+      const filePath = `tickets/${fileName}`;
+
       const { error: uploadError } = await supabase.storage
         .from('facturas') // Usamos el mismo bucket 'facturas' para todos los soportes
         .upload(filePath, file);
@@ -723,7 +725,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
         const { data: ggData } = await supabase
           .from('perfiles')
           .select('id')
-          .or('correo.ilike.cvega@totalclean.com,correo.ilike.cvega.totalclean@gmail.com')
+          .eq('correo', 'cvega@totalclean.com.ve')
           .limit(1);
         if (ggData && ggData.length > 0) {
           ggId = ggData[0].id;
@@ -816,47 +818,19 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
       }
 
       const emailLower = (currentUser?.correo || '').toLowerCase().trim();
-      const esGG = emailLower === 'cvega@totalclean.com' || emailLower === 'cvega.totalclean@gmail.com' || (currentUser?.rol || '').toUpperCase().includes('GERENTE GENERAL');
+      const esGG = emailLower === 'cvega@totalclean.com.ve' || (currentUser?.rol || '').toUpperCase().includes('GERENTE GENERAL');
 
-      let initialStatus = 'Pendiente Aprobación';
-      let apArea = false;
-      let apGeneral = false;
-      let nArea = null;
-      let fArea = null;
-      let nGeneral = null;
-      let fGeneral = null;
-      let finalAprobadorId = targetAprobadorId;
-      let finalAprobadoPor = null;
-      let finalFechaAprobacion = null;
-
-      if (esGG) {
-        initialStatus = 'EMITIDO';
-        apArea = true;
-        apGeneral = true;
-        nArea = currentUser.nombre;
-        fArea = new Date().toISOString();
-        nGeneral = currentUser.nombre;
-        fGeneral = new Date().toISOString();
-        finalAprobadorId = null;
-        finalAprobadoPor = currentUser.id;
-        finalFechaAprobacion = new Date().toISOString();
-      } else if (esGerenteOCorporativo) {
-        initialStatus = 'Pendiente Aprobación';
-        apArea = true;
-        nArea = currentUser.nombre;
-        fArea = new Date().toISOString();
-        apGeneral = false;
-        finalAprobadorId = ggId;
-        finalAprobadoPor = null;
-        finalFechaAprobacion = null;
-      } else {
-        initialStatus = 'Pendiente Aprobación';
-        apArea = false;
-        apGeneral = false;
-        finalAprobadorId = targetAprobadorId || ggId;
-        finalAprobadoPor = null;
-        finalFechaAprobacion = null;
-      }
+      // Tickets bypass approval levels completely and go straight to EMITIDO (ready to be paid)
+      let initialStatus = 'EMITIDO';
+      let apArea = true;
+      let apGeneral = true;
+      let nArea = 'Auto-Aprobado (Directo)';
+      let fArea = new Date().toISOString();
+      let nGeneral = 'Auto-Aprobado (Directo)';
+      let fGeneral = new Date().toISOString();
+      let finalAprobadorId = null;
+      let finalAprobadoPor = currentUser.id;
+      let finalFechaAprobacion = new Date().toISOString();
 
       const payload = {
         usuario_id: currentUser.id,
@@ -895,36 +869,26 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
       const { data: newTicket, error } = await supabase.from('tickets_directos').insert([payload]).select().single();
       if (error) throw error;
 
-      // NOTIFICAR A APROBADOR O ADMINISTRACIÓN
+      // NOTIFICAR A ADMINISTRACIÓN DIRECTAMENTE
       try {
-        if (targetAprobadorId && !esGerenteOCorporativo) {
-          await supabase.from('notificaciones').insert([{
-            usuario_id: targetAprobadorId,
-            mensaje: `El Ticket de Pago ${idControlAutomatico} creado por ${form.solicitante || currentUser.nombre} requiere su aprobación de Gerencia.`,
-            tipo: 'Aprobación Pendiente',
-            leido: false,
-            requisicion_id: null
-          }]);
-        } else {
-          const { data: perfiles } = await supabase
-            .from('perfiles')
-            .select('id, rol, departamento');
-          if (perfiles) {
-            const admins = perfiles.filter(p => {
-              const rol = (p.rol || '').toLowerCase();
-              const depto = (p.departamento || '').toLowerCase();
-              return rol.includes('administra') || rol.includes('contabil') || depto.includes('administra') || depto.includes('contabil');
-            });
-            for (const admin of admins) {
-              if (admin.id !== currentUser?.id) {
-                await supabase.from('notificaciones').insert([{
-                  usuario_id: admin.id,
-                  mensaje: `Nuevo Ticket de Pago ${newTicket.codigo_control} en cola creado por ${newTicket.gerente_nombre || 'un usuario'}.`,
-                  tipo: 'Ticket Nuevo',
-                  leido: false,
-                  requisicion_id: null
-                }]);
-              }
+        const { data: perfiles } = await supabase
+          .from('perfiles')
+          .select('id, rol, departamento');
+        if (perfiles) {
+          const admins = perfiles.filter(p => {
+            const rol = (p.rol || '').toLowerCase();
+            const depto = (p.departamento || '').toLowerCase();
+            return rol.includes('administra') || rol.includes('contabil') || depto.includes('administra') || depto.includes('contabil');
+          });
+          for (const admin of admins) {
+            if (admin.id !== currentUser?.id) {
+              await supabase.from('notificaciones').insert([{
+                usuario_id: admin.id,
+                mensaje: `Nuevo Ticket de Pago ${newTicket.codigo_control} en cola creado por ${newTicket.gerente_nombre || 'un usuario'}.`,
+                tipo: 'Ticket Nuevo',
+                leido: false,
+                requisicion_id: null
+              }]);
             }
           }
         }
@@ -1182,7 +1146,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
   const anularTicket = async (t) => {
     const esAdmin = currentUser?.esSuperAdmin === true ||
       currentUser?.esAdminReal === true ||
-      ['jcontreras.totalclean@gmail.com', 'karincmm1@gmail.com', 'cvega@totalclean.com', 'cvega.totalclean@gmail.com'].includes(currentUser?.correo?.toLowerCase());
+      ['jcontreras.totalclean@gmail.com', 'karincmm1@gmail.com', 'cvega@totalclean.com.ve'].includes(currentUser?.correo?.toLowerCase());
     const esCreador = t.usuario_id === currentUser?.id || (t.gerente_nombre && t.gerente_nombre.toLowerCase().includes(currentUser?.nombre?.toLowerCase()));
     const esAsignado = t.asignado_a === currentUser?.id;
 
@@ -1264,7 +1228,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
     setLoading(true);
     try {
       const emailLower = (currentUser?.correo || '').toLowerCase().trim();
-      const esGG = emailLower === 'cvega@totalclean.com' || emailLower === 'cvega.totalclean@gmail.com' || (currentUser?.rol || '').toUpperCase().includes('GERENTE GENERAL');
+      const esGG = emailLower === 'cvega@totalclean.com.ve' || (currentUser?.rol || '').toUpperCase().includes('GERENTE GENERAL');
 
       // Buscar ID del Gerente General
       let ggId = null;
@@ -1272,7 +1236,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
         const { data: ggData } = await supabase
           .from('perfiles')
           .select('id')
-          .or('correo.ilike.cvega@totalclean.com,correo.ilike.cvega.totalclean@gmail.com')
+          .eq('correo', 'cvega@totalclean.com.ve')
           .limit(1);
         if (ggData && ggData.length > 0) {
           ggId = ggData[0].id;

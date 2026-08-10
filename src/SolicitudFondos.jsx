@@ -87,6 +87,23 @@ const checkIsCulminada = (sol, partidas, tickets, pendingBs = 0, pendingUsd = 0)
   // Si aún queda saldo pendiente por comprar/pagar, NO puede estar completada
   if (pendingBs > 0.01 || pendingUsd > 0.01) return false;
 
+  // Si la semana de la solicitud no ha culminado, NO se debe dar por COMPLETADA.
+  // Esto permite al usuario seguir agregando renglones durante la semana activa.
+  const fechaStr = sol.fecha_operativa || sol.fecha;
+  if (fechaStr) {
+    const fechaOp = new Date(fechaStr + 'T12:00:00');
+    const day = fechaOp.getDay();
+    const daysToSunday = day === 0 ? 0 : 7 - day;
+    const domingoSemana = new Date(fechaOp);
+    domingoSemana.setDate(fechaOp.getDate() + daysToSunday);
+    domingoSemana.setHours(23, 59, 59, 999);
+    
+    const now = new Date();
+    if (now <= domingoSemana) {
+      return false; // Semana no terminada, mantener como ACTIVA
+    }
+  }
+
   const activePartidas = (partidas || []).filter(p => p.status !== 'ANULADO_POR_USUARIO');
   if (activePartidas.length === 0) return false;
 
@@ -241,8 +258,7 @@ const StockSmartTotalClean = ({ currentUserProp, session: sessionProp }) => {
     const emailLower = (currentUserProp.correo || currentUserProp.email || '').toLowerCase();
     const esSuperAdmin = emailLower === 'jcontreras.totalclean@gmail.com';
     const esAdminReal = esSuperAdmin ||
-      emailLower === 'cvega.totalclean@gmail.com' ||
-      emailLower === 'cvega@totalclean.com' ||
+      emailLower === 'cvega@totalclean.com.ve' ||
       emailLower === 'karincmm1@gmail.com';
     return {
       ...currentUserProp,
@@ -268,8 +284,7 @@ const StockSmartTotalClean = ({ currentUserProp, session: sessionProp }) => {
       const emailLower = (currentUserProp.correo || currentUserProp.email || '').toLowerCase();
       const esSuperAdmin = emailLower === 'jcontreras.totalclean@gmail.com';
       const esAdminReal = esSuperAdmin ||
-        emailLower === 'cvega.totalclean@gmail.com' ||
-        emailLower === 'cvega@totalclean.com' ||
+        emailLower === 'cvega@totalclean.com.ve' ||
         emailLower === 'karincmm1@gmail.com';
       setCurrentUser({
         ...currentUserProp,
@@ -644,8 +659,7 @@ const StockSmartTotalClean = ({ currentUserProp, session: sessionProp }) => {
         const esSuperAdmin = emailLower === 'jcontreras.totalclean@gmail.com';
         // Administradores reales (José, Carlos, Karin)
         const esAdminReal = esSuperAdmin ||
-          emailLower === 'cvega.totalclean@gmail.com' ||
-          emailLower === 'cvega@totalclean.com' ||
+          emailLower === 'cvega@totalclean.com.ve' ||
           emailLower === 'karincmm1@gmail.com';
 
         const esPerlaDelgado = (perfil.nombre || '').trim().toLowerCase() === 'perla' && (perfil.apellido || '').trim().toLowerCase() === 'delgado';
@@ -709,8 +723,7 @@ const StockSmartTotalClean = ({ currentUserProp, session: sessionProp }) => {
           const emailLower = (session.user.email || '').toLowerCase();
           const esSuperAdmin = emailLower === 'jcontreras.totalclean@gmail.com';
           const esAdminReal = esSuperAdmin ||
-            emailLower === 'cvega.totalclean@gmail.com' ||
-            emailLower === 'cvega@totalclean.com' ||
+            emailLower === 'cvega@totalclean.com.ve' ||
             emailLower === 'karincmm1@gmail.com';
 
           const esPerlaDelgado = (perfil.nombre || '').trim().toLowerCase() === 'perla' && (perfil.apellido || '').trim().toLowerCase() === 'delgado';

@@ -9,6 +9,7 @@ import { saveAs } from 'file-saver';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { getSemanaInfo } from './utils/helpers';
+import { compressImage } from './utils/compressImage';
 import {
   Plus,
   ChevronDown,
@@ -723,8 +724,7 @@ const ModuloTicketsPago = () => {
       const emailLower = (user.email || '').toLowerCase();
       const esSuperAdmin = emailLower === 'jcontreras.totalclean@gmail.com';
       const esAdminReal = esSuperAdmin ||
-        emailLower === 'cvega.totalclean@gmail.com' ||
-        emailLower === 'cvega@totalclean.com' ||
+        emailLower === 'cvega@totalclean.com.ve' ||
         emailLower === 'karincmm1@gmail.com';
 
       const userInfo = {
@@ -828,15 +828,14 @@ const ModuloTicketsPago = () => {
         const emailLower = (activeUser.correo || '').toLowerCase().trim();
 
         const esAdminReal = emailLower === 'jcontreras.totalclean@gmail.com' ||
-          emailLower === 'cvega.totalclean@gmail.com' ||
-          emailLower === 'cvega@totalclean.com' ||
+          emailLower === 'cvega@totalclean.com.ve' ||
           emailLower === 'karincmm1@gmail.com';
 
         const esZuleika = emailLower === 'larazuleika9@gmail.com';
 
         const tieneVisibilidadGlobal = esAdminReal ||
           esZuleika ||
-          emailLower === 'cvega@totalclean.com' ||
+          emailLower === 'cvega@totalclean.com.ve' ||
           (activeUser.nombre || '').toLowerCase().includes('carlos') ||
           rolUpper.includes('ADMIN') ||
           rolUpper.includes('GERENTE GENERAL') ||
@@ -856,8 +855,7 @@ const ModuloTicketsPago = () => {
           activeUser.capacidades?.ver_todos_tickets === true;
 
         const esSuperAdminOGerenteGeneral = esAdminReal ||
-          emailLower === 'cvega@totalclean.com' ||
-          emailLower === 'cvega.totalclean@gmail.com' ||
+          emailLower === 'cvega@totalclean.com.ve' ||
           rolUpper.includes('GERENTE GENERAL') ||
           activeUser.esSuperAdmin === true;
 
@@ -1126,9 +1124,10 @@ const ModuloTicketsPago = () => {
           const customName = fileObj.label || file.name.split('.')[0] || 'Factura';
           const fileName = `recibos/${Date.now()}_${sanitizeFileName(file.name)}`;
 
+          const compressedFile = await compressImage(file);
           const { error: uploadError } = await supabase.storage
             .from('tickets-evidencia')
-            .upload(fileName, file);
+            .upload(fileName, compressedFile);
 
           if (uploadError) {
             console.error("Error al subir archivo:", uploadError);
@@ -1939,9 +1938,10 @@ const ModuloTicketsPago = () => {
           const file = imagenesArchivos[i];
           const customName = imagenesNombres[i] || file.name.split('.')[0] || 'Soporte';
           const fileName = `recibos/${Date.now()}_${sanitizeFileName(file.name)}`;
+          const compressedFile = await compressImage(file);
           const { error: uploadError } = await supabase.storage
             .from('tickets-evidencia')
-            .upload(fileName, file);
+            .upload(fileName, compressedFile);
 
           if (uploadError) {
             console.error("Error al subir archivo:", uploadError);
@@ -2230,7 +2230,7 @@ const ModuloTicketsPago = () => {
     setLoading(true);
     try {
       const emailLower = (currentUser?.correo || '').toLowerCase().trim();
-      const esGG = emailLower === 'cvega@totalclean.com' || emailLower === 'cvega.totalclean@gmail.com' || (currentUser?.rol || '').toUpperCase().includes('GERENTE GENERAL');
+      const esGG = emailLower === 'cvega@totalclean.com.ve' || (currentUser?.rol || '').toUpperCase().includes('GERENTE GENERAL');
 
       // Buscar ID del Gerente General
       let ggId = null;
@@ -2238,7 +2238,7 @@ const ModuloTicketsPago = () => {
         const { data: ggData } = await supabase
           .from('perfiles')
           .select('id')
-          .or('correo.ilike.cvega@totalclean.com,correo.ilike.cvega.totalclean@gmail.com')
+          .eq('correo', 'cvega@totalclean.com.ve')
           .limit(1);
         if (ggData && ggData.length > 0) {
           ggId = ggData[0].id;
@@ -2451,7 +2451,7 @@ const ModuloTicketsPago = () => {
 
   const anularTicket = async (ticket) => {
     const emailLower = (currentUser?.correo || '').toLowerCase().trim();
-    const esGG = emailLower === 'cvega@totalclean.com' || emailLower === 'cvega.totalclean@gmail.com' || (currentUser?.rol || '').toUpperCase().includes('GERENTE GENERAL');
+    const esGG = emailLower === 'cvega@totalclean.com.ve' || (currentUser?.rol || '').toUpperCase().includes('GERENTE GENERAL');
     const esAdmin = currentUser?.esSuperAdmin || currentUser?.esAdminReal || emailLower === 'jcontreras.totalclean@gmail.com' || esGG;
     const esCreador = ticket.usuario_id === currentUser?.id || (ticket.gerente_nombre && ticket.gerente_nombre.toLowerCase().includes(currentUser?.nombre?.toLowerCase()));
     const esAsignado = ticket.asignado_a === currentUser?.id;

@@ -8,6 +8,7 @@ import { format } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Loader2, Upload, FileText, MessageSquare, Paperclip, Clock, CheckCircle2, AlertCircle, ShoppingBag, ChevronDown, X } from 'lucide-react';
 import { getSemanaInfo } from './utils/helpers';
+import { compressImage } from './utils/compressImage';
 import './Requisiciones.css';
 import './ReportesMaestro.css';
 
@@ -2185,9 +2186,10 @@ const Compras = () => {
         const fileName = `${cleanCorrelativo}_${cleanDoc}_${cleanDesc}.${fileExt}`;
         const filePath = `${fileName}`;
 
+        const compressedFile = await compressImage(file);
         const { error: uploadError } = await supabase.storage
           .from('facturas')
-          .upload(filePath, file);
+          .upload(filePath, compressedFile);
 
         if (uploadError) {
           console.error("Error al subir archivo:", uploadError);
@@ -2474,9 +2476,10 @@ const Compras = () => {
         const fileName = `${cleanCorrelativo}_${cleanDoc}_${cleanDesc}_${index}_${Date.now()}.${fileExt}`;
         const filePath = `${fileName}`; // Subir a la raíz para máxima compatibilidad publicUrl
 
+        const compressedFile = await compressImage(file);
         const { error: uploadError } = await supabase.storage
           .from('facturas')
-          .upload(filePath, file);
+          .upload(filePath, compressedFile);
 
         if (uploadError) throw uploadError;
 

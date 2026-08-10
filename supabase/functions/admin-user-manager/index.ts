@@ -66,7 +66,7 @@ serve(async (req) => {
     
     // Lista de correos maestros (SIEMPRE tienen acceso)
     const esMasterEmail = emailLower === 'jcontreras.totalclean@gmail.com' || 
-                          emailLower === 'cvega.totalclean@gmail.com' ||
+                          emailLower === 'cvega@totalclean.com.ve' ||
                           emailLower === 'karincmm1@gmail.com';
     
     const esAdmin = rol === 'admin' || rol === 'gerente general' || esMasterEmail;
@@ -87,7 +87,7 @@ serve(async (req) => {
       
       // REGLA DE VISIBILIDAD TOTAL
       const tieneAccesoTotal = emailLowerSolicitante === 'jcontreras.totalclean@gmail.com' || 
-                               emailLowerSolicitante === 'cvega.totalclean@gmail.com' || 
+                               emailLowerSolicitante === 'cvega@totalclean.com.ve' || 
                                emailLowerSolicitante === 'karincmm1@gmail.com' ||
                                deptoUpper.includes('ADMINISTRACIÓN');
 

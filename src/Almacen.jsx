@@ -246,8 +246,8 @@ const Almacen = () => {
     }
   };
 
-  const cargarDatos = useCallback(async () => {
-    setLoading(true);
+  const cargarDatos = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       // 1. Cargar Requisiciones Aprobadas con Ítems (donde reside la data de compra)
       const { data: reqs, error: errC } = await supabase
@@ -381,14 +381,14 @@ const Almacen = () => {
         schema: 'public',
         table: 'requisiciones'
       }, (payload) => {
-        cargarDatos();
+        cargarDatos(true);
       })
       .on('postgres_changes', {
         event: 'INSERT',
         schema: 'public',
         table: 'requisiciones'
       }, (payload) => {
-        cargarDatos();
+        cargarDatos(true);
       })
       .subscribe();
 
@@ -497,7 +497,6 @@ const Almacen = () => {
       return;
     }
 
-    setLoading(true);
     const recibirPromesa = new Promise(async (resolve, reject) => {
       try {
         const { data: req, error: fetchErr } = await supabase
@@ -610,16 +609,13 @@ const Almacen = () => {
         delete copy[compra.id];
         return copy;
       });
-      cargarDatos();
+      await cargarDatos(true);
     } catch (e) {
       console.error(e);
-    } finally {
-      setLoading(false);
     }
   };
 
   const handleEntregar = async (compra) => {
-    setLoading(true);
     const entregarPromesa = new Promise(async (resolve, reject) => {
       try {
         const { data: req, error: fetchErr } = await supabase
@@ -685,16 +681,13 @@ const Almacen = () => {
 
     try {
       await entregarPromesa;
-      cargarDatos();
+      await cargarDatos(true);
     } catch (e) {
       console.error(e);
-    } finally {
-      setLoading(false);
     }
   };
 
   const handleDeshacer = async (compra) => {
-    setLoading(true);
     const deshacerPromesa = new Promise(async (resolve, reject) => {
       try {
         const { data: req, error: fetchErr } = await supabase
@@ -766,16 +759,13 @@ const Almacen = () => {
 
     try {
       await deshacerPromesa;
-      cargarDatos();
+      await cargarDatos(true);
     } catch (e) {
       console.error(e);
-    } finally {
-      setLoading(false);
     }
   };
 
   const handleDeshacerEntrega = async (compra) => {
-    setLoading(true);
     const deshacerEntregaPromesa = new Promise(async (resolve, reject) => {
       try {
         const { data: req, error: fetchErr } = await supabase
@@ -835,11 +825,9 @@ const Almacen = () => {
 
     try {
       await deshacerEntregaPromesa;
-      cargarDatos();
+      await cargarDatos(true);
     } catch (e) {
       console.error(e);
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -1280,7 +1268,7 @@ const Almacen = () => {
               </tr>
             </thead>
             <tbody>
-              {loading ? (
+              {loading && filteredCompras.length === 0 ? (
                 <tr>
                   <td colSpan="12" style={{ padding: '50px', textAlign: 'center', color: '#64748b' }}>
                     <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px' }}>
@@ -1489,7 +1477,7 @@ const Almacen = () => {
               </tr>
             </thead>
             <tbody>
-              {loading ? (
+              {loading && entregadosCompras.length === 0 ? (
                 <tr>
                   <td colSpan="10" style={{ padding: '50px', textAlign: 'center', color: '#64748b' }}>
                     <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px' }}>

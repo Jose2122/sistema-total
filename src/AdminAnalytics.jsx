@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from './supabaseClient';
+import { compressImage } from './utils/compressImage';
 import { 
   Server, 
   Activity, 
@@ -77,6 +78,15 @@ export default function AdminAnalytics() {
   const [dbLatency, setDbLatency] = useState(0);
   const [testingLatency, setTestingLatency] = useState(false);
   const [largestFiles, setLargestFiles] = useState([]);
+  
+  // VPS status telemetry states
+  const [vpsStats, setVpsStats] = useState(null);
+  const [vpsLoading, setVpsLoading] = useState(false);
+  const [vpsError, setVpsError] = useState(null);
+
+  // Storage retroactive compression progress states
+  const [compressingHistory, setCompressingHistory] = useState(false);
+  const [compressionProgress, setCompressionProgress] = useState({ current: 0, total: 0, savedBytes: 0 });
   
   // Versions and Changelog state
   const [nuevaVersion, setNuevaVersion] = useState({ version: '', descripcion: '', notificar: false });
@@ -314,22 +324,38 @@ export default function AdminAnalytics() {
         .order('created_at', { ascending: false });
       setPerfiles(profiles || []);
 
-      // 8. Fetch largest files (Storage Bloat)
-      const { data: filesRpc, error: filesRpcError } = await supabase.rpc('get_largest_files');
-      if (!filesRpcError && filesRpc) {
-        setLargestFiles(filesRpc);
-      } else {
-        console.warn("get_largest_files RPC falló, calculando localmente:", filesRpcError);
-        const { data: list } = await supabase.storage.from('facturas').list('', { limit: 100 });
-        const mapped = (list || []).map(f => ({
-          name: f.name,
-          bucket_id: 'facturas',
-          size: f.metadata?.size || 0,
-          created_at: f.created_at,
-          owner_id: null
-        })).sort((a, b) => b.size - a.size).slice(0, 10);
-        setLargestFiles(mapped);
+      // 8. Fetch largest files recursively from all Storage buckets (fully client-side & complete)
+      let allStorageFiles = [];
+      try {
+        const listAllFiles = async (bucket, path = '') => {
+          const { data, error } = await supabase.storage.from(bucket).list(path, { limit: 1000 });
+          if (error || !data) return [];
+          let files = [];
+          for (const item of data) {
+            const fullPath = path ? `${path}/${item.name}` : item.name;
+            if (item.metadata) {
+              files.push({
+                name: fullPath,
+                bucket_id: bucket,
+                size: item.metadata.size || 0,
+                created_at: item.created_at,
+                owner_id: item.owner_id
+              });
+            } else {
+              const sub = await listAllFiles(bucket, fullPath);
+              files = files.concat(sub);
+            }
+          }
+          return files;
+        };
+
+        const facturasFiles = await listAllFiles('facturas');
+        const ticketsFiles = await listAllFiles('tickets-evidencia');
+        allStorageFiles = [...facturasFiles, ...ticketsFiles].sort((a, b) => b.size - a.size);
+      } catch (err) {
+        console.error("Error listing storage files recursively:", err);
       }
+      setLargestFiles(allStorageFiles);
 
       // 9. Fetch user auth logs
       const { data: authLogs } = await supabase
@@ -351,6 +377,9 @@ export default function AdminAnalytics() {
         .from('tickets_directos')
         .select('id, fecha_emision, departamento, total_usd');
       setTicketsDirectos(tkts || []);
+
+      // 12. Fetch VPS server status disk telemetry
+      await fetchVpsStatus();
 
     } catch (err) {
       console.error("Error cargando métricas de telemetría:", err);
@@ -415,6 +444,161 @@ export default function AdminAnalytics() {
       console.error("Error midiendo velocidad de Supabase:", e);
     } finally {
       setTestingLatency(false);
+    }
+  };
+
+  const fetchVpsStatus = async () => {
+    setVpsLoading(true);
+    setVpsError(null);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      const vpsUrl = import.meta.env.VITE_VPS_API_URL || 'http://localhost:3001';
+      
+      const res = await fetch(`${vpsUrl}/api/vps-status`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      if (!res.ok) {
+        throw new Error('Servicio de telemetría no disponible');
+      }
+      
+      const data = await res.json();
+      setVpsStats(data);
+    } catch (err) {
+      console.error('Error fetching VPS status:', err);
+      setVpsError('Servicio de telemetría no disponible');
+      setVpsStats(null);
+    } finally {
+      setVpsLoading(false);
+    }
+  };
+
+  // Resolve Requisition / Ticket correlation code from file path
+  const getAssociatedRefInfo = useCallback((file) => {
+    const path = file.name || '';
+    
+    // Extract UUID from path
+    const uuidRegex = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+    const match = path.match(uuidRegex);
+    
+    let reqId = null;
+    let ticketId = null;
+    
+    if (match) {
+      const extractedId = match[0];
+      if (path.includes('req-') || path.includes('facturas/') || path.includes('requisiciones/') || path.startsWith('factura_')) {
+        reqId = extractedId;
+      } else if (path.includes('tickets/') || path.includes('ticket-') || path.includes('comprobantes/') || path.includes('tickets-evidencia/')) {
+        ticketId = extractedId;
+      }
+    }
+    
+    // Fallback: extract from prefix like factura_[reqId]_...
+    if (!reqId && !ticketId) {
+      if (path.startsWith('factura_')) {
+        const parts = path.split('_');
+        if (parts[1] && parts[1].length > 10) {
+          reqId = parts[1];
+        }
+      }
+    }
+
+    if (reqId) {
+      const req = requisiciones.find(r => String(r.id) === String(reqId));
+      if (req) {
+        return {
+          tipo: 'Requisición',
+          codigo: req.correlativo_req || req.correlativo || 'Sin Código',
+          solicitante: req.solicitante || 'N/A'
+        };
+      }
+    }
+    
+    if (ticketId) {
+      const tk = ticketsDirectos.find(t => String(t.id) === String(ticketId));
+      if (tk) {
+        return {
+          tipo: 'Ticket',
+          codigo: tk.codigo_control || 'Sin Código',
+          solicitante: tk.departamento || 'N/A'
+        };
+      }
+    }
+    
+    return { tipo: 'N/A', codigo: 'Desconocido', solicitante: 'N/A' };
+  }, [requisiciones, ticketsDirectos]);
+
+  // Compress all image files in storage retroactively
+  const comprimirHistorialStorage = async () => {
+    if (largestFiles.length === 0) {
+      toast.error("No hay archivos para comprimir en este momento.");
+      return;
+    }
+    
+    // Filter image files larger than 150KB to avoid unnecessary double compression
+    const imageFiles = largestFiles.filter(file => {
+      const name = (file.name || '').toLowerCase();
+      const isImg = name.endsWith('.png') || name.endsWith('.jpg') || name.endsWith('.jpeg') || name.endsWith('.webp');
+      const isLarge = file.size > 150 * 1024;
+      return isImg && isLarge;
+    });
+    
+    if (imageFiles.length === 0) {
+      toast.success("Todas las imágenes ya se encuentran optimizadas en el storage.");
+      return;
+    }
+    
+    setCompressingHistory(true);
+    setCompressionProgress({ current: 0, total: imageFiles.length, savedBytes: 0 });
+    let totalSaved = 0;
+    
+    try {
+      for (let i = 0; i < imageFiles.length; i++) {
+        const fileObj = imageFiles[i];
+        setCompressionProgress(prev => ({ ...prev, current: i + 1 }));
+        
+        // Download image blob
+        const { data: fileBlob, error: downloadError } = await supabase.storage
+          .from(fileObj.bucket_id)
+          .download(fileObj.name);
+          
+        if (downloadError || !fileBlob) {
+          console.error(`[COMPRESS MIGRATION] Failed to download ${fileObj.name}:`, downloadError);
+          continue;
+        }
+        
+        // Compress Image Blob
+        const compressedBlob = await compressImage(fileBlob, { quality: 0.75 });
+        
+        // Replace in storage if smaller
+        if (compressedBlob && compressedBlob.size < fileObj.size) {
+          const { error: uploadError } = await supabase.storage
+            .from(fileObj.bucket_id)
+            .upload(fileObj.name, compressedBlob, {
+              upsert: true,
+              contentType: 'image/jpeg'
+            });
+            
+          if (uploadError) {
+            console.error(`[COMPRESS MIGRATION] Failed to overwrite ${fileObj.name}:`, uploadError);
+          } else {
+            totalSaved += (fileObj.size - compressedBlob.size);
+            setCompressionProgress(prev => ({ ...prev, savedBytes: totalSaved }));
+          }
+        }
+      }
+      
+      toast.success(`Compresión de historial finalizada con éxito. Ahorro de espacio: ${bytesToSize(totalSaved)}`);
+      // Reload page telemetry statistics
+      cargarDatos();
+    } catch (e) {
+      console.error("Error en comprimirHistorialStorage:", e);
+      toast.error("Ocurrió un error al procesar el historial.");
+    } finally {
+      setCompressingHistory(false);
     }
   };
 
@@ -1247,14 +1431,158 @@ export default function AdminAnalytics() {
                     ))}
                   </div>
                 </div>
+
+                {/* VPS Telemetry Card */}
+                <div className="chart-card">
+                  <div className="chart-card-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <Server size={20} color="#38bdf8" />
+                      <span>Telemetría de Servidor VPS (Disco)</span>
+                    </div>
+                    <button 
+                      onClick={fetchVpsStatus} 
+                      disabled={vpsLoading}
+                      style={{ 
+                        background: 'none', 
+                        border: 'none', 
+                        color: '#38bdf8', 
+                        cursor: 'pointer', 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        gap: '6px',
+                        fontSize: '0.85rem'
+                      }}
+                      title="Actualizar estado del VPS"
+                    >
+                      <RefreshCw size={14} className={vpsLoading ? 'animate-spin' : ''} />
+                      <span>Actualizar</span>
+                    </button>
+                  </div>
+
+                  {vpsLoading && !vpsStats ? (
+                    <div style={{ padding: '40px 0', textAlign: 'center' }}>
+                      <RefreshCw className="animate-spin" size={24} color="#38bdf8" style={{ margin: '0 auto 10px auto' }} />
+                      <p style={{ color: '#94a3b8', fontSize: '0.9rem' }}>Consultando telemetría del servidor...</p>
+                    </div>
+                  ) : vpsError ? (
+                    <div style={{ padding: '30px 15px', textAlign: 'center', background: 'rgba(239, 68, 68, 0.05)', border: '1px dashed rgba(239, 68, 68, 0.2)', borderRadius: '12px', margin: '10px 0' }}>
+                      <ShieldAlert size={28} color="#ef4444" style={{ margin: '0 auto 10px auto' }} />
+                      <p style={{ color: '#f87171', fontWeight: '600', fontSize: '0.9rem', marginBottom: '4px' }}>{vpsError}</p>
+                      <p style={{ color: '#94a3b8', fontSize: '0.75rem' }}>No se pudo establecer conexión con el endpoint del VPS</p>
+                    </div>
+                  ) : vpsStats ? (
+                    <div className="storage-progress-container" style={{ marginTop: '10px' }}>
+                      <div className="storage-labels" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '0.9rem' }}>
+                        <span style={{ fontWeight: '600', color: '#e2e8f0' }}>Uso de Disco Duro</span>
+                        <span 
+                          style={{ 
+                            fontWeight: 'bold',
+                            color: vpsStats.usagePercentage > 90 ? '#ef4444' : vpsStats.usagePercentage > 70 ? '#f59e0b' : '#10b981'
+                          }}
+                        >
+                          {vpsStats.usagePercentage}% Consumido
+                        </span>
+                      </div>
+                      <div className="storage-progress-bar-bg" style={{ height: '8px', backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: '4px', overflow: 'hidden', marginBottom: '16px' }}>
+                        <div 
+                          className="storage-progress-bar-fill" 
+                          style={{ 
+                            height: '100%',
+                            width: `${vpsStats.usagePercentage}%`,
+                            backgroundColor: vpsStats.usagePercentage > 90 ? '#ef4444' : vpsStats.usagePercentage > 70 ? '#f59e0b' : '#10b981',
+                            transition: 'width 0.4s ease-out'
+                          }}
+                        ></div>
+                      </div>
+
+                      <div className="storage-meta" style={{ display: 'flex', gap: '20px', marginTop: '15px', background: 'rgba(255,255,255,0.02)', padding: '12px 16px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.03)' }}>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ color: '#64748b', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Espacio Usado</div>
+                          <div style={{ fontSize: '1.2rem', fontWeight: 'bold', color: 'white', marginTop: '4px' }}>
+                            {vpsStats.usedDisk} GB
+                          </div>
+                        </div>
+                        <div style={{ borderLeft: '1px solid rgba(255,255,255,0.08)', paddingLeft: '20px', flex: 1 }}>
+                          <div style={{ color: '#64748b', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Espacio Libre</div>
+                          <div style={{ fontSize: '1.2rem', fontWeight: 'bold', color: '#10b981', marginTop: '4px' }}>
+                            {vpsStats.freeDisk} GB
+                          </div>
+                        </div>
+                        <div style={{ borderLeft: '1px solid rgba(255,255,255,0.08)', paddingLeft: '20px', flex: 1 }}>
+                          <div style={{ color: '#64748b', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Disco Total</div>
+                          <div style={{ fontSize: '1.2rem', fontWeight: 'bold', color: '#94a3b8', marginTop: '4px' }}>
+                            {vpsStats.totalDisk} GB
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ padding: '20px 0', textAlign: 'center', color: '#64748b', fontSize: '0.85rem' }}>
+                      Cargando telemetría...
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* STORAGE BLOAT AUDIT: LARGEST FILES */}
               <div className="chart-card" style={{ marginBottom: '30px', background: 'rgba(30, 41, 59, 0.2)' }}>
-                <div className="chart-card-title">
-                  <HardDrive size={20} color="#38bdf8" />
-                  <span>Auditoría de Almacenamiento (Top Archivos Más Pesados y Uploaders)</span>
+                <div className="chart-card-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <HardDrive size={20} color="#38bdf8" />
+                    <span>Auditoría de Almacenamiento (Top Archivos Más Pesados y Uploaders)</span>
+                  </div>
+                  <button
+                    onClick={comprimirHistorialStorage}
+                    disabled={compressingHistory || largestFiles.length === 0}
+                    style={{
+                      backgroundColor: '#10b981',
+                      border: 'none',
+                      color: 'white',
+                      padding: '8px 16px',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      fontSize: '0.85rem',
+                      fontWeight: '600',
+                      opacity: (compressingHistory || largestFiles.length === 0) ? 0.6 : 1,
+                      transition: 'opacity 0.2s'
+                    }}
+                  >
+                    {compressingHistory ? (
+                      <>
+                        <RefreshCw size={14} className="animate-spin" />
+                        <span>Comprimiendo ({compressionProgress.current}/{compressionProgress.total})...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Cpu size={14} />
+                        <span>Comprimir Historial de Storage</span>
+                      </>
+                    )}
+                  </button>
                 </div>
+
+                {compressingHistory && (
+                  <div style={{ margin: '15px 0', padding: '12px', background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.2)', borderRadius: '12px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', color: '#e2e8f0', marginBottom: '8px' }}>
+                      <span>Optimizando historial de imágenes...</span>
+                      <span>Ahorro estimado: {bytesToSize(compressionProgress.savedBytes)}</span>
+                    </div>
+                    <div style={{ height: '6px', backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: '3px', overflow: 'hidden' }}>
+                      <div 
+                        style={{ 
+                          height: '100%', 
+                          backgroundColor: '#10b981', 
+                          width: `${(compressionProgress.current / compressionProgress.total) * 100}%`,
+                          transition: 'width 0.2s ease-out'
+                        }}
+                      ></div>
+                    </div>
+                  </div>
+                )}
+
                 <div style={{ overflowX: 'auto' }}>
                   <table className="console-table" style={{ fontFamily: 'Inter' }}>
                     <thead>
@@ -1262,6 +1590,7 @@ export default function AdminAnalytics() {
                         <th>ARCHIVO / RUTA</th>
                         <th style={{ width: '120px' }}>CARPETA</th>
                         <th style={{ width: '120px' }}>TAMAÑO</th>
+                        <th style={{ width: '180px' }}>ASOCIADO A</th>
                         <th style={{ width: '180px' }}>SUBIDO POR (CREADOR)</th>
                         <th style={{ width: '180px' }}>DEPARTAMENTO</th>
                         <th style={{ width: '150px' }}>FECHA DE SUBIDA</th>
@@ -1270,13 +1599,14 @@ export default function AdminAnalytics() {
                     <tbody>
                       {largestFiles.length === 0 ? (
                         <tr>
-                          <td colSpan="6" style={{ textAlign: 'center', color: '#64748b', padding: '20px' }}>
+                          <td colSpan="7" style={{ textAlign: 'center', color: '#64748b', padding: '20px' }}>
                             No se detectan archivos subidos en el storage.
                           </td>
                         </tr>
                       ) : (
-                        largestFiles.map((file, idx) => {
+                        largestFiles.slice(0, 100).map((file, idx) => {
                           const uploader = getUploaderInfo(file.owner_id);
+                          const refInfo = getAssociatedRefInfo(file);
                           const fileUrl = `${supabase.storage.from(file.bucket_id).getPublicUrl(file.name).data.publicUrl}`;
                           return (
                             <tr key={idx}>
@@ -1293,6 +1623,19 @@ export default function AdminAnalytics() {
                               </td>
                               <td style={{ color: '#f59e0b', fontSize: '0.85rem' }}>{file.bucket_id}</td>
                               <td style={{ fontWeight: '600', color: '#ef4444' }}>{bytesToSize(file.size)}</td>
+                              <td style={{ fontSize: '0.85rem' }}>
+                                {refInfo.tipo === 'Requisición' ? (
+                                  <span style={{ color: '#38bdf8', fontWeight: 'bold' }} title={`Creado por: ${refInfo.solicitante}`}>
+                                    📝 {refInfo.codigo}
+                                  </span>
+                                ) : refInfo.tipo === 'Ticket' ? (
+                                  <span style={{ color: '#10b981', fontWeight: 'bold' }} title={`Departamento: ${refInfo.solicitante}`}>
+                                    🎟️ {refInfo.codigo}
+                                  </span>
+                                ) : (
+                                  <span style={{ color: '#64748b', fontStyle: 'italic' }}>Huérfano / Otro</span>
+                                )}
+                              </td>
                               <td style={{ color: '#e2e8f0', fontSize: '0.85rem' }}>{uploader.nombre}</td>
                               <td style={{ color: '#cbd5e1', fontSize: '0.85rem' }}>{uploader.depto}</td>
                               <td style={{ color: '#64748b', fontSize: '0.8rem' }}>

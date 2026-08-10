@@ -106,7 +106,7 @@ const ResumenEjecutivo = ({ currentUser }) => {
         (currentUser?.usuario || '').toLowerCase() === 'tostitomas';
 
     const esAdminGlobal = currentUser?.correo === 'jcontreras.totalclean@gmail.com' ||
-        currentUser?.correo === 'cvega.totalclean@gmail.com' ||
+        currentUser?.correo === 'cvega@totalclean.com.ve' ||
         currentUser?.esAdminReal ||
         userRole === 'Admin' ||
         userRole === 'Gerente General' ||

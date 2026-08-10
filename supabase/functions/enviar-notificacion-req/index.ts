@@ -53,9 +53,7 @@ serve(async (req) => {
     if (destinatarios.length === 0) {
       destinatarios = [
         'jcontreras.totalclean@gmail.com',
-        'jcontrerasbriceno@gmail.com',
-        'cvega.totalclean@gmail.com',
-        'cvega@totalclean.com'
+        'cvega@totalclean.com.ve'
       ];
     }
 
