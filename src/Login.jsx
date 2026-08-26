@@ -1,14 +1,34 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Warehouse, LogIn, Eye, EyeOff, Lock, Mail } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import toast from 'react-hot-toast';
 import './Auth.css';
 
+const MENSAJES_POSITIVOS = [
+  "Conectando con el servidor central...",
+  "Preparando tu panel personalizado...",
+  "¡Que tengas un excelente y productivo día!",
+  "Cargando módulos de seguridad...",
+  "Estableciendo conexión cifrada...",
+  "Sincronizando tus configuraciones...",
+  "Todo listo, iniciando tu espacio de trabajo..."
+];
+
 const Auth = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [mensajeIdx, setMensajeIdx] = useState(0);
   const navigate = useNavigate();
+
+  useEffect(() => {
+    if (!loading) return;
+    setMensajeIdx(0); // Reset index when loading starts
+    const interval = setInterval(() => {
+      setMensajeIdx((prev) => (prev + 1) % MENSAJES_POSITIVOS.length);
+    }, 1500);
+    return () => clearInterval(interval);
+  }, [loading]);
 
   const [loginData, setLoginData] = useState({
     email: '',
@@ -83,7 +103,16 @@ const Auth = () => {
   return (
     <div className="auth-wrapper">
       <div className="auth-background-shape"></div>
-      <div className="auth-card animate-fade-in">
+      <div className="auth-card animate-fade-in" style={{ position: 'relative' }}>
+        {loading && (
+          <div className="auth-loading-overlay">
+            <div className="auth-loading-content">
+              <div className="spinner-modern"></div>
+              <p className="loading-message-main">Iniciando sesión</p>
+              <p className="loading-message-sub">{MENSAJES_POSITIVOS[mensajeIdx]}</p>
+            </div>
+          </div>
+        )}
         
         <div className="auth-header">
           <div className="logo-container">
