@@ -2,17 +2,17 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from './supabaseClient';
 import { compressImage } from './utils/compressImage';
-import { 
-  Server, 
-  Activity, 
-  HardDrive, 
-  ShieldAlert, 
-  Clock, 
-  ArrowLeft, 
-  RefreshCw, 
-  Ban, 
-  TrendingUp, 
-  UserCheck, 
+import {
+  Server,
+  Activity,
+  HardDrive,
+  ShieldAlert,
+  Clock,
+  ArrowLeft,
+  RefreshCw,
+  Ban,
+  TrendingUp,
+  UserCheck,
   Cpu,
   Database,
   DollarSign,
@@ -33,16 +33,16 @@ import {
   Trash2
 } from 'lucide-react';
 import ModalNovedades from './components/ModalNovedades';
-import { 
-  ResponsiveContainer, 
-  AreaChart, 
-  Area, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip, 
-  BarChart, 
-  Bar, 
+import {
+  ResponsiveContainer,
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  BarChart,
+  Bar,
   Legend,
   LineChart,
   Line
@@ -52,7 +52,7 @@ import toast from 'react-hot-toast';
 
 export default function AdminAnalytics() {
   const navigate = useNavigate();
-  
+
   // Auth and authorization states
   const [currentUser, setCurrentUser] = useState(null);
   const [authorized, setAuthorized] = useState(null); // null = checking, false = denied, true = OK
@@ -78,7 +78,7 @@ export default function AdminAnalytics() {
   const [dbLatency, setDbLatency] = useState(0);
   const [testingLatency, setTestingLatency] = useState(false);
   const [largestFiles, setLargestFiles] = useState([]);
-  
+
   // VPS status telemetry states
   const [vpsStats, setVpsStats] = useState(null);
   const [vpsLoading, setVpsLoading] = useState(false);
@@ -87,7 +87,7 @@ export default function AdminAnalytics() {
   // Storage retroactive compression progress states
   const [compressingHistory, setCompressingHistory] = useState(false);
   const [compressionProgress, setCompressionProgress] = useState({ current: 0, total: 0, savedBytes: 0 });
-  
+
   // Versions and Changelog state
   const [nuevaVersion, setNuevaVersion] = useState({ version: '', descripcion: '', notificar: false });
   const [modalPreviewOpen, setModalPreviewOpen] = useState(false);
@@ -454,17 +454,17 @@ export default function AdminAnalytics() {
       const { data: { session } } = await supabase.auth.getSession();
       const token = session?.access_token;
       const vpsUrl = import.meta.env.VITE_VPS_API_URL || 'http://localhost:3001';
-      
+
       const res = await fetch(`${vpsUrl}/api/vps-status`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
       });
-      
+
       if (!res.ok) {
         throw new Error('Servicio de telemetría no disponible');
       }
-      
+
       const data = await res.json();
       setVpsStats(data);
     } catch (err) {
@@ -479,14 +479,14 @@ export default function AdminAnalytics() {
   // Resolve Requisition / Ticket correlation code from file path
   const getAssociatedRefInfo = useCallback((file) => {
     const path = file.name || '';
-    
+
     // Extract UUID from path
     const uuidRegex = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
     const match = path.match(uuidRegex);
-    
+
     let reqId = null;
     let ticketId = null;
-    
+
     if (match) {
       const extractedId = match[0];
       if (path.includes('req-') || path.includes('facturas/') || path.includes('requisiciones/') || path.startsWith('factura_')) {
@@ -495,7 +495,7 @@ export default function AdminAnalytics() {
         ticketId = extractedId;
       }
     }
-    
+
     // Fallback: extract from prefix like factura_[reqId]_...
     if (!reqId && !ticketId) {
       if (path.startsWith('factura_')) {
@@ -516,7 +516,7 @@ export default function AdminAnalytics() {
         };
       }
     }
-    
+
     if (ticketId) {
       const tk = ticketsDirectos.find(t => String(t.id) === String(ticketId));
       if (tk) {
@@ -527,7 +527,7 @@ export default function AdminAnalytics() {
         };
       }
     }
-    
+
     return { tipo: 'N/A', codigo: 'Desconocido', solicitante: 'N/A' };
   }, [requisiciones, ticketsDirectos]);
 
@@ -537,7 +537,7 @@ export default function AdminAnalytics() {
       toast.error("No hay archivos para comprimir en este momento.");
       return;
     }
-    
+
     // Filter image files larger than 150KB to avoid unnecessary double compression
     const imageFiles = largestFiles.filter(file => {
       const name = (file.name || '').toLowerCase();
@@ -545,34 +545,34 @@ export default function AdminAnalytics() {
       const isLarge = file.size > 150 * 1024;
       return isImg && isLarge;
     });
-    
+
     if (imageFiles.length === 0) {
       toast.success("Todas las imágenes ya se encuentran optimizadas en el storage.");
       return;
     }
-    
+
     setCompressingHistory(true);
     setCompressionProgress({ current: 0, total: imageFiles.length, savedBytes: 0 });
     let totalSaved = 0;
-    
+
     try {
       for (let i = 0; i < imageFiles.length; i++) {
         const fileObj = imageFiles[i];
         setCompressionProgress(prev => ({ ...prev, current: i + 1 }));
-        
+
         // Download image blob
         const { data: fileBlob, error: downloadError } = await supabase.storage
           .from(fileObj.bucket_id)
           .download(fileObj.name);
-          
+
         if (downloadError || !fileBlob) {
           console.error(`[COMPRESS MIGRATION] Failed to download ${fileObj.name}:`, downloadError);
           continue;
         }
-        
+
         // Compress Image Blob
         const compressedBlob = await compressImage(fileBlob, { quality: 0.75 });
-        
+
         // Replace in storage if smaller
         if (compressedBlob && compressedBlob.size < fileObj.size) {
           const { error: uploadError } = await supabase.storage
@@ -581,7 +581,7 @@ export default function AdminAnalytics() {
               upsert: true,
               contentType: 'image/jpeg'
             });
-            
+
           if (uploadError) {
             console.error(`[COMPRESS MIGRATION] Failed to overwrite ${fileObj.name}:`, uploadError);
           } else {
@@ -590,7 +590,7 @@ export default function AdminAnalytics() {
           }
         }
       }
-      
+
       toast.success(`Compresión de historial finalizada con éxito. Ahorro de espacio: ${bytesToSize(totalSaved)}`);
       // Reload page telemetry statistics
       cargarDatos();
@@ -791,18 +791,18 @@ export default function AdminAnalytics() {
     const start = new Date(startDate + 'T12:00:00');
     const end = new Date(endDate + 'T12:00:00');
     const dataList = [];
-    
+
     for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
       const dateString = d.toISOString().split('T')[0];
-      
+
       // Filter successful attempts on this specific day
       const dayLogs = filteredAuthAttempts.filter(log => {
         const logDate = new Date(log.created_at).toISOString().split('T')[0];
         return logDate === dateString && log.exitoso === true;
       });
-      
+
       const uniqueUsers = new Set(dayLogs.map(l => l.correo.toLowerCase().trim()));
-      
+
       dataList.push({
         fecha: dateString.substring(5), // format as MM-DD
         "Usuarios Activos": uniqueUsers.size
@@ -843,7 +843,7 @@ export default function AdminAnalytics() {
       const items = Array.isArray(r.items) ? r.items : [];
       let hasPurchases = false;
       let allReceived = true;
-      
+
       items.forEach(it => {
         const hist = Array.isArray(it.historial_compras) ? it.historial_compras : [];
         const compras = hist.filter(h => h.tipo !== 'JUSTIFICACION' && h.tipo !== 'ANULACION');
@@ -876,7 +876,7 @@ export default function AdminAnalytics() {
       'En Compras': 0,
       'En Almacén': 0
     };
-    
+
     filteredRequisiciones.forEach(r => {
       const status = getRequisitionLifecycleStatus(r);
       if (status && counts[status] !== undefined) {
@@ -977,11 +977,11 @@ export default function AdminAnalytics() {
 
     // 2. Rejection Rate by Department (logical: count rejections in period against active requisitions in period)
     const activeRequisitionsMap = {};
-    
+
     filteredRequisiciones.forEach(r => {
       activeRequisitionsMap[r.id] = r.gerencia || 'Desconocida';
     });
-    
+
     filteredRequisicionLogs.forEach(l => {
       const req = requisiciones.find(r => r.id === l.requisicion_id);
       if (req) {
@@ -991,7 +991,7 @@ export default function AdminAnalytics() {
 
     const deptoTotals = {};
     const deptoRejections = {};
-    
+
     Object.values(activeRequisitionsMap).forEach(d => {
       deptoTotals[d] = (deptoTotals[d] || 0) + 1;
     });
@@ -1152,35 +1152,35 @@ export default function AdminAnalytics() {
 
       {/* TABS SELECTOR */}
       <div className="analytics-tabs">
-        <button 
+        <button
           className={`tab-btn ${activeTab === 'telemetry' ? 'active' : ''}`}
           onClick={() => setActiveTab('telemetry')}
         >
           <Server size={18} />
           <span>Infraestructura y Telemetría</span>
         </button>
-        <button 
+        <button
           className={`tab-btn ${activeTab === 'management' ? 'active' : ''}`}
           onClick={() => setActiveTab('management')}
         >
           <TrendingUp size={18} />
           <span>SLA y Eficiencia Gerencial</span>
         </button>
-        <button 
+        <button
           className={`tab-btn ${activeTab === 'traceability' ? 'active' : ''}`}
           onClick={() => setActiveTab('traceability')}
         >
           <Activity size={18} />
           <span>Trazabilidad de Requisiciones y Tickets</span>
         </button>
-        <button 
+        <button
           className={`tab-btn ${activeTab === 'user_audit' ? 'active' : ''}`}
           onClick={() => setActiveTab('user_audit')}
         >
           <UserCheck size={18} />
           <span>Trazabilidad y Inicios de Sesión</span>
         </button>
-        <button 
+        <button
           className={`tab-btn ${activeTab === 'versions' ? 'active' : ''}`}
           onClick={() => setActiveTab('versions')}
         >
@@ -1190,15 +1190,15 @@ export default function AdminAnalytics() {
       </div>
 
       {/* GLOBAL DATE RANGE PICKER (APPLIES TO ALL TABS) */}
-      <div 
-        className="chart-card" 
-        style={{ 
-          marginBottom: '25px', 
-          display: 'flex', 
-          alignItems: 'center', 
-          gap: '20px', 
-          flexWrap: 'wrap', 
-          background: 'rgba(30, 41, 59, 0.6)', 
+      <div
+        className="chart-card"
+        style={{
+          marginBottom: '25px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '20px',
+          flexWrap: 'wrap',
+          background: 'rgba(30, 41, 59, 0.6)',
           border: '1px solid rgba(255, 255, 255, 0.05)',
           padding: '16px 24px',
           borderRadius: '16px'
@@ -1212,9 +1212,9 @@ export default function AdminAnalytics() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '15px', flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>Desde:</span>
-            <input 
-              type="date" 
-              value={startDate} 
+            <input
+              type="date"
+              value={startDate}
               onChange={(e) => setStartDate(e.target.value)}
               style={{
                 backgroundColor: '#0f172a',
@@ -1231,9 +1231,9 @@ export default function AdminAnalytics() {
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>Hasta:</span>
-            <input 
-              type="date" 
-              value={endDate} 
+            <input
+              type="date"
+              value={endDate}
               onChange={(e) => setEndDate(e.target.value)}
               style={{
                 backgroundColor: '#0f172a',
@@ -1247,8 +1247,8 @@ export default function AdminAnalytics() {
               }}
             />
           </div>
-          <button 
-            onClick={cargarDatos} 
+          <button
+            onClick={cargarDatos}
             disabled={loading}
             style={{
               display: 'flex',
@@ -1271,7 +1271,7 @@ export default function AdminAnalytics() {
             <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
             <span>Actualizar</span>
           </button>
-          
+
           <span style={{ fontSize: '0.8rem', color: '#64748b', fontStyle: 'italic' }}>
             * Todos los datos, gráficos e historiales del panel responden reactivamente a este rango de fechas.
           </span>
@@ -1298,8 +1298,8 @@ export default function AdminAnalytics() {
                     <h4>Velocidad Conexión</h4>
                     <div className="metric-value" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <span>{dbLatency} ms</span>
-                      <button 
-                        onClick={testLatency} 
+                      <button
+                        onClick={testLatency}
                         disabled={testingLatency}
                         style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', display: 'flex' }}
                         title="Re-testear latencia"
@@ -1357,18 +1357,18 @@ export default function AdminAnalytics() {
                       >
                         <defs>
                           <linearGradient id="colorReq" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#38bdf8" stopOpacity={0.4}/>
-                            <stop offset="95%" stopColor="#38bdf8" stopOpacity={0}/>
+                            <stop offset="5%" stopColor="#38bdf8" stopOpacity={0.4} />
+                            <stop offset="95%" stopColor="#38bdf8" stopOpacity={0} />
                           </linearGradient>
                           <linearGradient id="colorTickets" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#10b981" stopOpacity={0.4}/>
-                            <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                            <stop offset="5%" stopColor="#10b981" stopOpacity={0.4} />
+                            <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
                           </linearGradient>
                         </defs>
                         <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
                         <XAxis dataKey="hora" stroke="#64748b" style={{ fontSize: '11px' }} tickFormatter={(h) => `${h}:00`} />
                         <YAxis stroke="#64748b" style={{ fontSize: '11px' }} />
-                        <Tooltip 
+                        <Tooltip
                           contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '12px', color: 'white', fontFamily: 'Inter' }}
                           labelFormatter={(h) => `Hora: ${h}:00 (Local)`}
                         />
@@ -1386,16 +1386,16 @@ export default function AdminAnalytics() {
                     <Database size={20} color="#10b981" />
                     <span>Límite de Almacenamiento (Supabase Storage Bucket)</span>
                   </div>
-                  
+
                   <div className="storage-progress-container">
                     <div className="storage-labels">
                       <span style={{ fontWeight: '600' }}>Uso de Storage (Plan Gratuito)</span>
                       <span style={{ color: '#10b981', fontWeight: 'bold' }}>{storageTotalPercent}% Consumido</span>
                     </div>
                     <div className="storage-progress-bar-bg">
-                      <div 
-                        className="storage-progress-bar-fill" 
-                        style={{ 
+                      <div
+                        className="storage-progress-bar-fill"
+                        style={{
                           width: `${storageTotalPercent}%`,
                           backgroundColor: storageTotalPercent > 80 ? '#ef4444' : storageTotalPercent > 50 ? '#f59e0b' : '#10b981'
                         }}
@@ -1439,16 +1439,16 @@ export default function AdminAnalytics() {
                       <Server size={20} color="#38bdf8" />
                       <span>Telemetría de Servidor VPS (Disco)</span>
                     </div>
-                    <button 
-                      onClick={fetchVpsStatus} 
+                    <button
+                      onClick={fetchVpsStatus}
                       disabled={vpsLoading}
-                      style={{ 
-                        background: 'none', 
-                        border: 'none', 
-                        color: '#38bdf8', 
-                        cursor: 'pointer', 
-                        display: 'flex', 
-                        alignItems: 'center', 
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        color: '#38bdf8',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
                         gap: '6px',
                         fontSize: '0.85rem'
                       }}
@@ -1474,8 +1474,8 @@ export default function AdminAnalytics() {
                     <div className="storage-progress-container" style={{ marginTop: '10px' }}>
                       <div className="storage-labels" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '0.9rem' }}>
                         <span style={{ fontWeight: '600', color: '#e2e8f0' }}>Uso de Disco Duro</span>
-                        <span 
-                          style={{ 
+                        <span
+                          style={{
                             fontWeight: 'bold',
                             color: vpsStats.usagePercentage > 90 ? '#ef4444' : vpsStats.usagePercentage > 70 ? '#f59e0b' : '#10b981'
                           }}
@@ -1484,9 +1484,9 @@ export default function AdminAnalytics() {
                         </span>
                       </div>
                       <div className="storage-progress-bar-bg" style={{ height: '8px', backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: '4px', overflow: 'hidden', marginBottom: '16px' }}>
-                        <div 
-                          className="storage-progress-bar-fill" 
-                          style={{ 
+                        <div
+                          className="storage-progress-bar-fill"
+                          style={{
                             height: '100%',
                             width: `${vpsStats.usagePercentage}%`,
                             backgroundColor: vpsStats.usagePercentage > 90 ? '#ef4444' : vpsStats.usagePercentage > 70 ? '#f59e0b' : '#10b981',
@@ -1571,10 +1571,10 @@ export default function AdminAnalytics() {
                       <span>Ahorro estimado: {bytesToSize(compressionProgress.savedBytes)}</span>
                     </div>
                     <div style={{ height: '6px', backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: '3px', overflow: 'hidden' }}>
-                      <div 
-                        style={{ 
-                          height: '100%', 
-                          backgroundColor: '#10b981', 
+                      <div
+                        style={{
+                          height: '100%',
+                          backgroundColor: '#10b981',
                           width: `${(compressionProgress.current / compressionProgress.total) * 100}%`,
                           transition: 'width 0.2s ease-out'
                         }}
@@ -1611,10 +1611,10 @@ export default function AdminAnalytics() {
                           return (
                             <tr key={idx}>
                               <td>
-                                <a 
-                                  href={fileUrl} 
-                                  target="_blank" 
-                                  rel="noopener noreferrer" 
+                                <a
+                                  href={fileUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
                                   style={{ color: '#38bdf8', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '6px' }}
                                 >
                                   <span style={{ wordBreak: 'break-all' }}>{file.name}</span>
@@ -1720,12 +1720,12 @@ export default function AdminAnalytics() {
                     {onlineUsers.map(user => {
                       const initials = ((user.nombre?.[0] || '') + (user.apellido?.[0] || '')).toUpperCase();
                       return (
-                        <div 
-                          key={user.presence_ref} 
-                          style={{ 
-                            padding: '12px 16px', 
-                            background: 'rgba(15, 23, 42, 0.4)', 
-                            borderRadius: '12px', 
+                        <div
+                          key={user.presence_ref}
+                          style={{
+                            padding: '12px 16px',
+                            background: 'rgba(15, 23, 42, 0.4)',
+                            borderRadius: '12px',
                             border: '1px solid rgba(255,255,255,0.06)',
                             display: 'flex',
                             alignItems: 'center',
@@ -1767,25 +1767,25 @@ export default function AdminAnalytics() {
                     <Sparkles size={20} color="#10b981" />
                     <span>Registro de Versiones (Changelog)</span>
                   </div>
-                  
+
                   <form onSubmit={registrarVersion} style={{ marginTop: '20px', display: 'flex', flexDirection: 'column', gap: '15px' }}>
                     <div>
                       <label style={{ display: 'block', fontSize: '0.8rem', color: '#94a3b8', marginBottom: '6px', textTransform: 'uppercase', fontWeight: 'bold' }}>Número de Versión</label>
-                      <input 
-                        type="text" 
-                        placeholder="Ej: 1.0.2" 
+                      <input
+                        type="text"
+                        placeholder="Ej: 1.0.2"
                         value={nuevaVersion.version}
-                        onChange={(e) => setNuevaVersion({...nuevaVersion, version: e.target.value})}
+                        onChange={(e) => setNuevaVersion({ ...nuevaVersion, version: e.target.value })}
                         style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', backgroundColor: 'rgba(15, 23, 42, 0.6)', border: '1px solid rgba(255,255,255,0.08)', color: 'white', outline: 'none' }}
                       />
                     </div>
-                    
+
                     <div>
                       <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: '600', color: '#cbd5e1' }}>
-                        <input 
+                        <input
                           type="checkbox"
                           checked={nuevaVersion.notificar}
-                          onChange={(e) => setNuevaVersion({...nuevaVersion, notificar: e.target.checked})}
+                          onChange={(e) => setNuevaVersion({ ...nuevaVersion, notificar: e.target.checked })}
                           style={{ width: '18px', height: '18px', cursor: 'pointer', accentColor: '#38bdf8' }}
                         />
                         Notificar a los usuarios al iniciar sesión
@@ -1799,27 +1799,27 @@ export default function AdminAnalytics() {
                       <div style={{ fontSize: '0.72rem', color: '#38bdf8', marginBottom: '8px', fontWeight: '600', backgroundColor: 'rgba(56, 189, 248, 0.08)', padding: '6px 10px', borderRadius: '6px', border: '1px solid rgba(56, 189, 248, 0.2)' }}>
                         💡 Formato sugerido: <code>[Módulo] Título: Explicación detallada</code>
                       </div>
-                      <textarea 
-                        placeholder="[Cuentas por Pagar] Asignación de Fondos: Ahora finanzas asigna fondos directos.&#10;[Proveedores] Ficha SRM: Control de límite de crédito, días de pago y calificación." 
+                      <textarea
+                        placeholder="[Cuentas por Pagar] Asignación de Fondos: Ahora finanzas asigna fondos directos.&#10;[Proveedores] Ficha SRM: Control de límite de crédito, días de pago y calificación."
                         value={nuevaVersion.descripcion}
-                        onChange={(e) => setNuevaVersion({...nuevaVersion, descripcion: e.target.value})}
+                        onChange={(e) => setNuevaVersion({ ...nuevaVersion, descripcion: e.target.value })}
                         style={{ width: '100%', minHeight: '120px', padding: '10px 12px', borderRadius: '10px', backgroundColor: 'rgba(15, 23, 42, 0.6)', border: '1px solid rgba(255,255,255,0.08)', color: 'white', outline: 'none', resize: 'vertical', fontFamily: 'inherit' }}
                       />
                     </div>
 
                     <div style={{ display: 'flex', gap: '15px', marginTop: '5px' }}>
-                      <button 
-                        type="button" 
+                      <button
+                        type="button"
                         onClick={() => {
                           if (!nuevaVersion.version) return toast.error('Ingresa una versión para previsualizar');
                           setModalPreviewOpen(true);
-                        }} 
+                        }}
                         style={{ padding: '10px 20px', borderRadius: '10px', backgroundColor: 'rgba(255,255,255,0.05)', color: '#e2e8f0', border: '1px solid rgba(255,255,255,0.1)', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 'bold' }}
                       >
                         Previsualizar Popup
                       </button>
-                      <button 
-                        type="submit" 
+                      <button
+                        type="submit"
                         disabled={guardandoVersion}
                         style={{ flexGrow: 1, padding: '10px 20px', borderRadius: '10px', backgroundColor: '#38bdf8', color: '#0f172a', border: 'none', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 'bold' }}
                       >
@@ -1835,14 +1835,14 @@ export default function AdminAnalytics() {
                     <Sparkles size={20} color="#facc15" />
                     <span>Vista Previa del Modal (Inicio de Sesión)</span>
                   </div>
-                  
+
                   {/* Mockup interactivo 1:1 con la experiencia real del usuario */}
-                  <ModalNovedades 
-                    isOpen={true} 
+                  <ModalNovedades
+                    isOpen={true}
                     isInline={true}
-                    version={nuevaVersion.version || '2.5'} 
-                    descripcion={nuevaVersion.descripcion} 
-                    onClose={() => {}} 
+                    version={nuevaVersion.version || '2.5'}
+                    descripcion={nuevaVersion.descripcion}
+                    onClose={() => { }}
                   />
                 </div>
               </div>
@@ -2016,11 +2016,11 @@ export default function AdminAnalytics() {
                 )}
               </div>
 
-              <ModalNovedades 
-                isOpen={modalPreviewOpen} 
-                version={nuevaVersion.version} 
-                descripcion={nuevaVersion.descripcion || '- Sin cambios registrados.'} 
-                onClose={() => setModalPreviewOpen(false)} 
+              <ModalNovedades
+                isOpen={modalPreviewOpen}
+                version={nuevaVersion.version}
+                descripcion={nuevaVersion.descripcion || '- Sin cambios registrados.'}
+                onClose={() => setModalPreviewOpen(false)}
               />
             </div>
           ) : activeTab === 'management' ? (
@@ -2028,13 +2028,13 @@ export default function AdminAnalytics() {
             <div>
               {/* METRIC CARDS */}
               <div className="metrics-grid">
-                <div 
-                  className="metric-card" 
-                  style={{ 
-                    cursor: 'pointer', 
+                <div
+                  className="metric-card"
+                  style={{
+                    cursor: 'pointer',
                     border: showSlaDetails ? '1.5px solid #6366f1' : '1px solid rgba(255, 255, 255, 0.05)',
                     boxShadow: showSlaDetails ? '0 0 15px rgba(99, 102, 241, 0.15)' : ''
-                  }} 
+                  }}
                   onClick={() => { setShowSlaDetails(!showSlaDetails); setShowRejectionDetails(false); }}
                 >
                   <div className="metric-icon-wrapper" style={{ backgroundColor: 'rgba(99, 102, 241, 0.15)', color: '#6366f1' }}>
@@ -2049,13 +2049,13 @@ export default function AdminAnalytics() {
                   </div>
                 </div>
 
-                <div 
-                  className="metric-card" 
-                  style={{ 
-                    cursor: 'pointer', 
+                <div
+                  className="metric-card"
+                  style={{
+                    cursor: 'pointer',
                     border: showRejectionDetails ? '1.5px solid #ef4444' : '1px solid rgba(255, 255, 255, 0.05)',
                     boxShadow: showRejectionDetails ? '0 0 15px rgba(239, 68, 68, 0.15)' : ''
-                  }} 
+                  }}
                   onClick={() => { setShowRejectionDetails(!showRejectionDetails); setShowSlaDetails(false); }}
                 >
                   <div className="metric-icon-wrapper" style={{ backgroundColor: 'rgba(239, 68, 68, 0.15)', color: '#ef4444' }}>
@@ -2162,8 +2162,8 @@ export default function AdminAnalytics() {
 
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                       <span style={{ fontSize: '0.85rem', color: '#94a3b8' }}>Filtrar Departamento:</span>
-                      <select 
-                        value={selectedDeptoFilter} 
+                      <select
+                        value={selectedDeptoFilter}
                         onChange={(e) => setSelectedDeptoFilter(e.target.value)}
                         style={{
                           backgroundColor: '#0f172a',
@@ -2243,7 +2243,7 @@ export default function AdminAnalytics() {
                           <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
                           <XAxis dataKey="name" stroke="#64748b" style={{ fontSize: '9px' }} />
                           <YAxis stroke="#64748b" style={{ fontSize: '11px' }} />
-                          <Tooltip 
+                          <Tooltip
                             contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '12px', color: 'white', fontFamily: 'Inter' }}
                           />
                           <Bar dataKey="cantidad" name="Requisiciones" fill="#6366f1" radius={[6, 6, 0, 0]} />
@@ -2269,7 +2269,7 @@ export default function AdminAnalytics() {
                         <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
                         <XAxis type="number" stroke="#64748b" style={{ fontSize: '10px' }} />
                         <YAxis type="category" dataKey="name" stroke="#64748b" style={{ fontSize: '10px' }} width={120} />
-                        <Tooltip 
+                        <Tooltip
                           contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '12px', color: 'white', fontFamily: 'Inter' }}
                         />
                         <Bar dataKey="cantidad" name="Requisiciones" radius={[0, 6, 6, 0]} />
@@ -2298,15 +2298,15 @@ export default function AdminAnalytics() {
                           <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
                           <XAxis dataKey="departamento" stroke="#64748b" style={{ fontSize: '10px' }} />
                           <YAxis stroke="#64748b" style={{ fontSize: '11px' }} unit="%" />
-                          <Tooltip 
+                          <Tooltip
                             contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '12px', color: 'white', fontFamily: 'Inter' }}
                             formatter={(value, name, props) => [`${value}% (${props.payload.rechazos} rechazos de ${props.payload.creadas})`, 'Tasa de Rechazo']}
                           />
-                          <Bar 
-                            dataKey="tasa_rechazo" 
-                            name="Tasa de Rechazo" 
-                            fill="#ef4444" 
-                            radius={[6, 6, 0, 0]} 
+                          <Bar
+                            dataKey="tasa_rechazo"
+                            name="Tasa de Rechazo"
+                            fill="#ef4444"
+                            radius={[6, 6, 0, 0]}
                             style={{ cursor: 'pointer' }}
                             onClick={(data) => {
                               setSelectedDeptoFilter(data.departamento);
@@ -2327,7 +2327,7 @@ export default function AdminAnalytics() {
                   <AlertTriangle size={20} color="#ef4444" />
                   <span>Alertas de Reincidencia: Replicas de Rechazo (Rechazada 2 o más veces)</span>
                 </div>
-                
+
                 {reincidenciaAlerts.length === 0 ? (
                   <div style={{ padding: '20px', borderRadius: '12px', background: 'rgba(16, 185, 129, 0.05)', color: '#34d399', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '10px', border: '1px solid rgba(16, 185, 129, 0.15)' }}>
                     <span>✓</span>
@@ -2340,8 +2340,8 @@ export default function AdminAnalytics() {
                     </p>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '15px' }}>
                       {reincidenciaAlerts.map(alert => (
-                        <div 
-                          key={alert.requisicion_id} 
+                        <div
+                          key={alert.requisicion_id}
                           style={{
                             padding: '16px',
                             borderRadius: '12px',
@@ -2356,14 +2356,14 @@ export default function AdminAnalytics() {
                             <span style={{ fontFamily: 'monospace', fontSize: '1rem', fontWeight: 'bold', color: '#ef4444' }}>
                               {alert.correlativo}
                             </span>
-                            <span 
-                              style={{ 
-                                fontSize: '0.75rem', 
-                                fontWeight: 'bold', 
-                                padding: '4px 8px', 
+                            <span
+                              style={{
+                                fontSize: '0.75rem',
+                                fontWeight: 'bold',
+                                padding: '4px 8px',
                                 borderRadius: '6px',
                                 color: 'white',
-                                backgroundColor: alert.rejectionCount >= 3 ? '#ef4444' : '#f59e0b' 
+                                backgroundColor: alert.rejectionCount >= 3 ? '#ef4444' : '#f59e0b'
                               }}
                             >
                               {alert.rejectionCount} Rechazos
@@ -2400,7 +2400,7 @@ export default function AdminAnalytics() {
                   <UserCheck size={20} color="#f59e0b" />
                   <span>Historial Reciente de Auditoría y Flujos (Requisiciones)</span>
                 </div>
-                
+
                 <div style={{ overflowX: 'auto' }}>
                   <table className="console-table" style={{ fontFamily: 'Inter' }}>
                     <thead>
@@ -2431,8 +2431,8 @@ export default function AdminAnalytics() {
                               <td>
                                 <span className={
                                   log.accion === 'RECHAZADA' ? 'badge-error' :
-                                  log.accion === 'CREACION' ? 'badge-warning' :
-                                  'badge-warning'
+                                    log.accion === 'CREACION' ? 'badge-warning' :
+                                      'badge-warning'
                                 } style={{
                                   backgroundColor: log.accion === 'APROBADA_FINAL' ? 'rgba(16, 185, 129, 0.15)' : '',
                                   borderColor: log.accion === 'APROBADA_FINAL' ? 'rgba(16, 185, 129, 0.3)' : '',
@@ -2458,12 +2458,12 @@ export default function AdminAnalytics() {
             /* TRAZABILIDAD DE REQUISICIONES Y TICKETS */
             <div className="animate-fade">
               {/* FILTRO DE DEPARTAMENTO ESPECÍFICO */}
-              <div 
-                className="chart-card animate-fade" 
-                style={{ 
-                  marginBottom: '25px', 
-                  display: 'flex', 
-                  alignItems: 'center', 
+              <div
+                className="chart-card animate-fade"
+                style={{
+                  marginBottom: '25px',
+                  display: 'flex',
+                  alignItems: 'center',
                   gap: '15px',
                   background: 'rgba(30, 41, 59, 0.4)',
                   padding: '16px 24px',
@@ -2473,8 +2473,8 @@ export default function AdminAnalytics() {
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
                   <span style={{ fontSize: '0.9rem', color: '#94a3b8', fontWeight: '600' }}>Filtrar por Gerencia:</span>
-                  <select 
-                    value={traceabilityDeptoFilter} 
+                  <select
+                    value={traceabilityDeptoFilter}
                     onChange={(e) => setTraceabilityDeptoFilter(e.target.value)}
                     style={{
                       backgroundColor: '#0f172a',
@@ -2565,7 +2565,7 @@ export default function AdminAnalytics() {
                           <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
                           <XAxis dataKey="label" stroke="#64748b" style={{ fontSize: '10px' }} />
                           <YAxis stroke="#64748b" style={{ fontSize: '11px' }} allowDecimals={false} />
-                          <Tooltip 
+                          <Tooltip
                             contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '12px', color: 'white', fontFamily: 'Inter' }}
                           />
                           <Legend wrapperStyle={{ fontSize: '12px', marginTop: '10px' }} />
@@ -2597,18 +2597,18 @@ export default function AdminAnalytics() {
                         >
                           <defs>
                             <linearGradient id="colorReqs" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="5%" stopColor="#6366f1" stopOpacity={0.4}/>
-                              <stop offset="95%" stopColor="#6366f1" stopOpacity={0.0}/>
+                              <stop offset="5%" stopColor="#6366f1" stopOpacity={0.4} />
+                              <stop offset="95%" stopColor="#6366f1" stopOpacity={0.0} />
                             </linearGradient>
                             <linearGradient id="colorTickets" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="5%" stopColor="#fbbf24" stopOpacity={0.4}/>
-                              <stop offset="95%" stopColor="#fbbf24" stopOpacity={0.0}/>
+                              <stop offset="5%" stopColor="#fbbf24" stopOpacity={0.4} />
+                              <stop offset="95%" stopColor="#fbbf24" stopOpacity={0.0} />
                             </linearGradient>
                           </defs>
                           <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
                           <XAxis dataKey="label" stroke="#64748b" style={{ fontSize: '10px' }} />
                           <YAxis stroke="#64748b" style={{ fontSize: '11px' }} allowDecimals={false} />
-                          <Tooltip 
+                          <Tooltip
                             contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '12px', color: 'white', fontFamily: 'Inter' }}
                           />
                           <Legend wrapperStyle={{ fontSize: '12px', marginTop: '10px' }} />
@@ -2657,7 +2657,7 @@ export default function AdminAnalytics() {
                   <div className="metric-info">
                     <h4>D.A.U. Promedio (Período)</h4>
                     <div className="metric-value">
-                      {dauTimelineData.length > 0 
+                      {dauTimelineData.length > 0
                         ? (dauTimelineData.reduce((acc, d) => acc + d["Usuarios Activos"], 0) / dauTimelineData.length).toFixed(1)
                         : 0
                       }
@@ -2700,7 +2700,7 @@ export default function AdminAnalytics() {
                           <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
                           <XAxis dataKey="fecha" stroke="#64748b" style={{ fontSize: '10px' }} />
                           <YAxis stroke="#64748b" style={{ fontSize: '11px' }} allowDecimals={false} />
-                          <Tooltip 
+                          <Tooltip
                             contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '12px', color: 'white', fontFamily: 'Inter' }}
                           />
                           <Line type="monotone" dataKey="Usuarios Activos" stroke="#38bdf8" strokeWidth={3} dot={{ r: 4, strokeWidth: 2 }} activeDot={{ r: 6 }} />
@@ -2725,7 +2725,7 @@ export default function AdminAnalytics() {
                         <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
                         <XAxis dataKey="hora" stroke="#64748b" style={{ fontSize: '9px' }} />
                         <YAxis stroke="#64748b" style={{ fontSize: '11px' }} />
-                        <Tooltip 
+                        <Tooltip
                           contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '12px', color: 'white', fontFamily: 'Inter' }}
                         />
                         <Legend style={{ fontSize: '12px' }} />

@@ -1,8 +1,11 @@
 import { create } from 'zustand';
 import { supabase } from '../supabaseClient';
 
+import { estaEnVacaciones } from '../utils/delegationUtils';
+
 export const useAuthStore = create((set, get) => ({
   currentUser: null,
+  session: null,
   loading: false,
   error: null,
 
@@ -25,7 +28,7 @@ export const useAuthStore = create((set, get) => ({
       if (sessionError) throw sessionError;
 
       if (!session?.user) {
-        set({ currentUser: null, loading: false });
+        set({ currentUser: null, session: null, loading: false });
         return null;
       }
 
@@ -43,15 +46,18 @@ export const useAuthStore = create((set, get) => ({
         emailLower === 'cvega@totalclean.com.ve' ||
         emailLower === 'karincmm1@gmail.com';
 
+      const vacacionesActivas = estaEnVacaciones(perfil);
+
       const userData = {
         ...perfil,
         esAdminReal,
+        enVacacionesBloqueado: vacacionesActivas && !esAdminReal,
         correo: emailLower,
         departamento: (perfil.departamento || '').trim(),
         rol: (perfil.rol || '').trim()
       };
 
-      set({ currentUser: userData, loading: false });
+      set({ currentUser: userData, session, loading: false });
       return userData;
     } catch (err) {
       console.error("[AUTH STORE] Error:", err.message);

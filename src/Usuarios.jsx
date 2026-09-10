@@ -88,6 +88,7 @@ const Usuarios = ({ currentUser: currentUserProp, onUserUpdate }) => {
     delegado_id: '',
     delegacion_desde: '',
     delegacion_hasta: '',
+    en_vacaciones: false,
     obras_asignadas: [],
     gerente_directo_id: '',
     gerente_directo_nombre: ''
@@ -371,7 +372,10 @@ const Usuarios = ({ currentUser: currentUserProp, onUserUpdate }) => {
         foto_url: datosForm.foto_url,
         activo: datosForm.activo !== false,
         permisos_modulos: datosForm.permisos_modulos,
-        capacidades: datosForm.capacidades,
+        capacidades: {
+          ...(datosForm.capacidades || {}),
+          en_vacaciones: datosForm.en_vacaciones === true
+        },
         delegado_id: datosForm.delegado_id || null,
         delegacion_desde: datosForm.delegacion_desde || null,
         delegacion_hasta: datosForm.delegacion_hasta || null,
@@ -405,7 +409,7 @@ const Usuarios = ({ currentUser: currentUserProp, onUserUpdate }) => {
           if (error) {
               // Manejo de error de columna inexistente (fallback)
               if (error.code === '42703') {
-                  const { gerencia_id: _gerencia_id, gerente_directo_id: _gerente_directo_id, gerente_directo_nombre: _gerente_directo_nombre, ...payloadSafe } = payloadPerfil;
+                  const { gerencia_id: _gerencia_id, gerente_directo_id: _gerente_directo_id, gerente_directo_nombre: _gerente_directo_nombre, en_vacaciones: _en_vacaciones, ...payloadSafe } = payloadPerfil;
                   const { error: retryError } = await supabase.from('perfiles').update(payloadSafe).eq('id', formData.id);
                   if (retryError) throw retryError;
               } else throw error;
@@ -449,7 +453,7 @@ const Usuarios = ({ currentUser: currentUserProp, onUserUpdate }) => {
 
         if (profileError) {
              if (profileError.code === '42703') {
-                const { gerencia_id: _gerencia_id, gerente_directo_id: _gerente_directo_id, gerente_directo_nombre: _gerente_directo_nombre, ...payloadSafe } = payloadPerfil;
+                const { gerencia_id: _gerencia_id, gerente_directo_id: _gerente_directo_id, gerente_directo_nombre: _gerente_directo_nombre, en_vacaciones: _en_vacaciones, ...payloadSafe } = payloadPerfil;
                 const { error: retryError } = await supabase.from('perfiles').insert([{ ...payloadSafe, id: fnData.user.id }]);
                 if (retryError) throw retryError;
              } else throw profileError;
@@ -466,9 +470,10 @@ const Usuarios = ({ currentUser: currentUserProp, onUserUpdate }) => {
         foto_url: '', contrato: '', activo: true, password: '', 
         permisos_modulos: ["requisiciones", "fondos", "tickets", "usuarios"],
         capacidades: {},
-        delegado_id: '',
+        delegated_id: '',
         delegacion_desde: '',
         delegacion_hasta: '',
+        en_vacaciones: false,
         obras_asignadas: [],
         gerente_directo_id: '',
         gerente_directo_nombre: '',
@@ -718,6 +723,7 @@ const Usuarios = ({ currentUser: currentUserProp, onUserUpdate }) => {
                             delegado_id: u.delegado_id || '',
                             delegacion_desde: u.delegacion_desde || '',
                             delegacion_hasta: u.delegacion_hasta || '',
+                            en_vacaciones: u.en_vacaciones || u.capacidades?.en_vacaciones || false,
                             gerente_directo_id: u.gerente_directo_id || '',
                             gerente_directo_nombre: u.gerente_directo_nombre || ''
                           });
@@ -1045,21 +1051,48 @@ const Usuarios = ({ currentUser: currentUserProp, onUserUpdate }) => {
                     {/* Delegación */}
                     <div style={{ backgroundColor: 'white', padding: '25px', borderRadius: '24px', border: '1px solid #f1f5f9' }}>
                       <h4 style={{ margin: '0 0 15px 0', display: 'flex', alignItems: 'center', gap: '10px', color: '#1e293b' }}>
-                        <UserCircle size={20} color="#3b82f6" /> Delegación Temporal
+                        <UserCircle size={20} color="#3b82f6" /> Delegación y Receso Vacacional
                       </h4>
-                      <p style={{ fontSize: '0.75rem', color: '#64748b', marginBottom: '20px' }}>
-                        Selecciona a un colaborador del departamento para que quede como encargado.
+                      <p style={{ fontSize: '0.75rem', color: '#64748b', marginBottom: '15px' }}>
+                        Gestiona el estado de vacaciones e inhabilitación temporal con escalación al cargo superior.
                       </p>
+
+                      <div style={{ 
+                        backgroundColor: '#f8fafc', 
+                        padding: '12px 16px', 
+                        borderRadius: '16px', 
+                        border: '1px solid #e2e8f0', 
+                        marginBottom: '18px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justify: 'space-between'
+                      }}>
+                        <div>
+                          <span style={{ fontSize: '0.8rem', fontWeight: 'bold', color: '#0f172a', display: 'block' }}>
+                            🌴 Usuario en Receso Vacacional
+                          </span>
+                          <span style={{ fontSize: '0.68rem', color: '#64748b' }}>
+                            Inhabilita login temporalmente y deriva aprobaciones al cargo superior
+                          </span>
+                        </div>
+                        <input 
+                          type="checkbox" 
+                          style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+                          checked={formData.en_vacaciones === true}
+                          disabled={!esAdminCompleto}
+                          onChange={e => setFormData({...formData, en_vacaciones: e.target.checked})}
+                        />
+                      </div>
                       
-                      <label style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#94a3b8', display: 'block', marginBottom: '8px' }}>ENCARGADO (Mismo Depto.)</label>
+                      <label style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#94a3b8', display: 'block', marginBottom: '8px' }}>ENCARGADO (Delegado en Mismo Depto. - Opcional)</label>
                       <select 
                         className="input-style" 
-                        style={{ width: '100%', marginBottom: '20px' }}
+                        style={{ width: '100%', marginBottom: '15px' }}
                         value={formData.delegado_id}
                         disabled={!esAdminCompleto}
                         onChange={e => setFormData({...formData, delegado_id: e.target.value})}
                       >
-                        <option value="">Ninguno</option>
+                        <option value="">Ninguno (Escalar directamente a Gerente Directo / General)</option>
                         {usuarios
                           .filter(u => u.departamento === formData.departamento && u.id !== formData.id)
                           .map(u => (
@@ -1068,15 +1101,20 @@ const Usuarios = ({ currentUser: currentUserProp, onUserUpdate }) => {
                         }
                       </select>
 
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginBottom: '15px' }}>
                         <div>
-                          <label style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#94a3b8', display: 'block', marginBottom: '8px' }}>DESDE</label>
+                          <label style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#94a3b8', display: 'block', marginBottom: '8px' }}>FECHA DESDE</label>
                           <input type="date" className="input-style" style={{ width: '100%' }} value={formData.delegacion_desde} disabled={!esAdminCompleto} onChange={e => setFormData({...formData, delegacion_desde: e.target.value})} />
                         </div>
                         <div>
-                          <label style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#94a3b8', display: 'block', marginBottom: '8px' }}>HASTA</label>
+                          <label style={{ fontSize: '0.7rem', fontWeight: 'bold', color: '#94a3b8', display: 'block', marginBottom: '8px' }}>FECHA HASTA</label>
                           <input type="date" className="input-style" style={{ width: '100%' }} value={formData.delegacion_hasta} disabled={!esAdminCompleto} onChange={e => setFormData({...formData, delegacion_hasta: e.target.value})} />
                         </div>
+                      </div>
+
+                      <div style={{ backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', padding: '10px 14px', borderRadius: '12px', fontSize: '0.7rem', color: '#1e40af', lineHeight: '1.4' }}>
+                        ⚡ <strong>Bypass de Aprobación por Vacaciones:</strong><br/>
+                        Mientras este usuario esté en vacaciones, las requisiciones, tickets y fondos emitidos por sus analistas pasarán automáticamente a la bandeja de aprobación del <strong>Cargo Superior (Gerente Directo / General)</strong>.
                       </div>
                     </div>
 

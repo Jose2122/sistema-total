@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from './supabaseClient';
+import { estaEnVacaciones } from './utils/delegationUtils';
 import toast from 'react-hot-toast';
 import { motion, AnimatePresence } from 'framer-motion';
 import Requisiciones from './Requisiciones';
@@ -730,6 +731,84 @@ function Dashboard() {
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
+
+  const emailLower = (usuario?.correo || usuario?.email || '').toLowerCase().trim();
+  const esAdminReal = emailLower === 'jcontreras.totalclean@gmail.com' ||
+    emailLower === 'cvega@totalclean.com.ve' ||
+    emailLower === 'karincmm1@gmail.com' ||
+    usuario?.esAdminReal;
+
+  if (usuario && estaEnVacaciones(usuario) && !esAdminReal) {
+    return (
+      <div style={{
+        display: 'flex',
+        flexDirection: 'column',
+        justify: 'center',
+        alignItems: 'center',
+        minHeight: '100vh',
+        backgroundColor: '#0f172a',
+        color: '#f8fafc',
+        fontFamily: "'Inter', sans-serif",
+        padding: '24px',
+        textAlign: 'center'
+      }}>
+        <div style={{
+          backgroundColor: '#1e293b',
+          border: '1px solid rgba(56, 189, 248, 0.3)',
+          borderRadius: '28px',
+          padding: '44px 36px',
+          maxWidth: '540px',
+          boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.6)',
+          position: 'relative',
+          overflow: 'hidden'
+        }}>
+          <div style={{ fontSize: '3.5rem', marginBottom: '16px' }}>🌴☀️🏖️</div>
+          
+          <h2 style={{ fontSize: '1.5rem', fontWeight: '800', margin: '0 0 12px 0', color: '#38bdf8' }}>
+            ¡Sabemos que estás de vacaciones!
+          </h2>
+          
+          <p style={{ fontSize: '0.95rem', color: '#e2e8f0', lineHeight: '1.6', marginBottom: '24px' }}>
+            Hola, <strong>{usuario.nombre} {usuario.apellido}</strong>.<br/>
+            Disfruta mucho tu descanso hasta tu llegada. Por el momento tu cuenta se encuentra temporalmente en receso vacacional y el acceso al sistema está inhabilitado.
+          </p>
+
+          <div style={{
+            backgroundColor: '#0f172a',
+            padding: '18px',
+            borderRadius: '20px',
+            border: '1px dashed #38bdf8',
+            fontSize: '0.82rem',
+            color: '#94a3b8',
+            textAlign: 'left',
+            marginBottom: '28px',
+            lineHeight: '1.5'
+          }}>
+            ℹ️ <strong> No te preocupes por la operación:</strong><br/>
+            Tus requisiciones, tickets y solicitudes de fondos pendientes han sido derivadas automáticamente a tu cargo superior para su aprobación. Tu cuenta se reactivará automáticamente al finalizar tus vacaciones.
+          </div>
+
+          <button 
+            onClick={cerrarSesion}
+            style={{
+              backgroundColor: '#ef4444',
+              color: 'white',
+              border: 'none',
+              borderRadius: '14px',
+              padding: '14px 28px',
+              fontWeight: '700',
+              fontSize: '0.9rem',
+              cursor: 'pointer',
+              boxShadow: '0 10px 15px -3px rgba(239, 68, 68, 0.4)',
+              transition: 'all 0.2s ease'
+            }}
+          >
+            Cerrar Sesión
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', overflow: 'hidden', backgroundColor: '#f1f5f9', fontFamily: '"Inter", sans-serif' }}>

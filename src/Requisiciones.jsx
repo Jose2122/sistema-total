@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { supabase } from './supabaseClient';
+import { obtenerAprobadorEfectivo } from './utils/delegationUtils';
 import { motion, AnimatePresence } from 'framer-motion';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
@@ -114,6 +115,15 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
             .single();
           if (perfilCreador?.gerente_directo_id) {
             gerenteDirectoId = perfilCreador.gerente_directo_id;
+            try {
+              const { data: todosPerfiles } = await supabase.from('perfiles').select('*');
+              const resEfectivo = obtenerAprobadorEfectivo(gerenteDirectoId, todosPerfiles || []);
+              if (resEfectivo && resEfectivo.id) {
+                gerenteDirectoId = resEfectivo.id;
+              }
+            } catch (errVac) {
+              console.error("Error al resolver aprobador por vacaciones:", errVac);
+            }
           }
         }
 
@@ -348,31 +358,31 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
         const misObras = currentUser.obras_asignadas || [];
         const obrasFiltro = misObras.length > 0 ? `centro_costo.in.(${misObras.map(o => `"${o}"`).join(',')})` : '';
 
-        if (rolUserLower.includes('analista')) {
-          // 1. ANALISTAS: Ven sus PROPIAS requisiciones + Obras Asignadas
-          let orQ = `user_id.eq.${userIdMatch},solicitante.ilike.%${nombreMatch}%`;
-          if (obrasFiltro) orQ += `,${obrasFiltro}`;
-          query = query.or(orQ);
+        // Permite visibilidad completa del departamento + requisiciones propias + obras asignadas para cualquier usuario no admin
+        let orConditions = [
+          `user_id.eq.${userIdMatch}`,
+          `solicitante.ilike.%${nombreMatch}%`
+        ];
 
-        } else if (rolUserLower.includes('gerente') || rolUserLower.includes('coordinador')) {
-          // 2. GERENTES DE ÁREA/PROYECTO: Ven su DEPARTAMENTO O sus OBRAS ASIGNADAS (OR, no AND)
-          // También ven las requisiciones donde son el gerente directo del creador.
-          let orConditions = [];
-          if (deptoMatch) {
-            orConditions.push(`gerencia.ilike.%${deptoMatch}%`);
-          }
-          if (misObras.length > 0) {
-            const obrasFiltro = `centro_costo.in.(${misObras.map(o => `"${o}"`).join(',')})`;
-            orConditions.push(obrasFiltro);
-          }
-          orConditions.push(`user_id.eq.${userIdMatch}`);
-
-          if (orConditions.length > 0) {
-            query = query.or(orConditions.join(','));
+        if (deptoMatch && deptoMatch.trim()) {
+          const normD = deptoMatch.trim().toLowerCase();
+          if (normD.includes('seguridad') || normD.includes('siaho') || normD.includes('sha')) {
+            orConditions.push(`gerencia.ilike.%Seguridad%`, `gerencia.ilike.%SIAHO%`, `gerencia.ilike.%SHA%`);
+          } else if (normD.includes('estimac') || normD.includes('eci')) {
+            orConditions.push(`gerencia.ilike.%Estimac%`, `gerencia.ilike.%ECI%`);
+          } else if (normD.includes('mantenimiento') || normD.includes('mtt')) {
+            orConditions.push(`gerencia.ilike.%Mantenimiento%`, `gerencia.ilike.%MTT%`);
           } else {
-            // Seguridad de respaldo
-            query = query.or(`user_id.eq.${userIdMatch},solicitante.ilike.%${nombreMatch}%`);
+            orConditions.push(`gerencia.ilike.%${deptoMatch.trim()}%`);
           }
+        }
+
+        if (misObras.length > 0) {
+          orConditions.push(`centro_costo.in.(${misObras.map(o => `"${o}"`).join(',')})`);
+        }
+
+        if (orConditions.length > 0) {
+          query = query.or(orConditions.join(','));
         }
       }
 

@@ -672,9 +672,11 @@ const Compras = () => {
         esGerenteDeCompras || // El gerente ve todo
         req.asignado_a === currentUser?.id;
 
-      // Filtro por Semana Operativa
+      // Filtro por Semana Operativa (Las pendientes 'En espera' siempre se muestran salvo filtro manual estricto)
       const matchSemana = (() => {
         if (filtroSemana === 'Todas') return true;
+        const statusActual = (req.status_compra || req.status || 'En espera').toLowerCase();
+        if (statusActual === 'en espera' || statusActual === 'pendiente') return true;
         if (filtroSemana === 'Actual') {
           if (!req.semanaInfo || !semanaActualObj) return false;
           return req.semanaInfo.weekNum === semanaActualObj.weekNum && req.semanaInfo.year === semanaActualObj.year;

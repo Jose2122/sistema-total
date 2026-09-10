@@ -518,14 +518,17 @@ const StockSmartTotalClean = ({ currentUserProp, session: sessionProp }) => {
   };
 
   const intentarCerrarModal = () => {
-    if (hasChanges) {
+    if (isReadOnly || !hasChanges) {
+      setHasChanges(false);
+      setShowModal(false);
+    } else {
       toast((t) => (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
           <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: 'bold', color: '#1e293b' }}>⚠️ Tienes datos sin guardar</p>
           <p style={{ margin: 0, fontSize: '0.8rem', color: '#64748b' }}>¿Estás seguro de que deseas cerrar? Se perderán los renglones añadidos.</p>
           <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '5px' }}>
             <button
-              onClick={() => { toast.dismiss(t.id); setShowModal(false); }}
+              onClick={() => { toast.dismiss(t.id); setHasChanges(false); setShowModal(false); }}
               style={{ padding: '6px 12px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 'bold' }}
             >CERRAR SIN GUARDAR</button>
             <button
@@ -535,8 +538,6 @@ const StockSmartTotalClean = ({ currentUserProp, session: sessionProp }) => {
           </div>
         </div>
       ), { duration: 6000, position: 'top-center' });
-    } else {
-      setShowModal(false);
     }
   };
 
@@ -884,13 +885,27 @@ const StockSmartTotalClean = ({ currentUserProp, session: sessionProp }) => {
         }
       }
 
+      let requisicionesPorOrigen = [];
+      try {
+        const { data: reqsData } = await supabase
+          .from('requisiciones')
+          .select('id, correlativo_req, origen, estado_aprobacion, status_compra, total_bs, items')
+          .ilike('origen', 'REF:%')
+          .limit(5000);
+        if (reqsData) requisicionesPorOrigen = reqsData;
+      } catch (e) {
+        console.error("Error fetching requisiciones por origen:", e);
+      }
+
       const historialMapeado = dataHist.map(h => {
         const misPartidas = (pagosData || []).filter(p => {
           if (!p.solicitud_id) return false;
           const pSolId = String(p.solicitud_id).toLowerCase().trim();
           const hId = h.id ? String(h.id).toLowerCase().trim() : '';
           const hCode = h.codigo_control ? String(h.codigo_control).toLowerCase().trim() : '';
-          return pSolId === hId || pSolId === hCode;
+          const hCodeAlt1 = hCode.replace('mtto-', 'mtt-');
+          const hCodeAlt2 = hCode.replace('mtt-', 'mtto-');
+          return pSolId === hId || pSolId === hCode || pSolId === hCodeAlt1 || pSolId === hCodeAlt2;
         }).map(p => {
           const reqObj = p.requisiciones || null;
           const isReqAnulada = reqObj?.estado_aprobacion === 'ANULADA' || reqObj?.estado_aprobacion === 'RECHAZADA';
@@ -915,6 +930,34 @@ const StockSmartTotalClean = ({ currentUserProp, session: sessionProp }) => {
           if (sumPartidasBs > 0 || sumPartidasUsd > 0) {
             calculatedTotalBs = sumPartidasBs;
             calculatedTotalUsd = sumPartidasUsd;
+          }
+        } else if (h.codigo_control) {
+          const cleanCode = h.codigo_control.replace('REF:', '').trim();
+          const altCode1 = cleanCode.replace(/MTTO-/i, 'MTT-');
+          const altCode2 = cleanCode.replace(/MTT-/i, 'MTTO-');
+
+          const reqsMatching = requisicionesPorOrigen.filter(r => {
+            if (r.estado_aprobacion === 'ANULADA' || r.estado_aprobacion === 'RECHAZADA') return false;
+            const orig = (r.origen || '').trim();
+            return orig.includes(cleanCode) || orig.includes(altCode1) || orig.includes(altCode2);
+          });
+
+          if (reqsMatching.length > 0) {
+            let sumUsdFromReqs = 0;
+            let sumBsFromReqs = 0;
+
+            reqsMatching.forEach(r => {
+              const itemsArr = Array.isArray(r.items) ? r.items : [];
+              itemsArr.forEach(it => {
+                const cant = Number(it.cantidad_pedida ?? it.cant ?? it.cantidad) || 1;
+                const pu = parseFloat(it.pu_estimado ?? it.pu) || 0;
+                sumUsdFromReqs += pu * cant;
+              });
+              sumBsFromReqs += parseFloat(r.total_bs || 0);
+            });
+
+            if (sumUsdFromReqs > 0) calculatedTotalUsd = sumUsdFromReqs;
+            if (sumBsFromReqs > 0) calculatedTotalBs = sumBsFromReqs;
           }
         }
 
@@ -1444,13 +1487,85 @@ const StockSmartTotalClean = ({ currentUserProp, session: sessionProp }) => {
   // --- FUNCIONES DE LÓGICA ---
   const cargarDetallesYEditar = async (solicitud) => {
     try {
-      const targetId = solicitud.id_db || solicitud.id;
+      const isUUID = (val) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(val || '').trim());
 
-      // 1. Obtener Partidas
-      const { data: partidasRaw } = await supabase
-        .from('partidas_fondos')
-        .select('*, requisiciones(id, correlativo_req, items, status_compra, estado_aprobacion)')
-        .eq('solicitud_id', targetId);
+      let targetId = solicitud.id_db || solicitud.id;
+
+      // Si targetId no es UUID (ej. vino como código de control string), resolvemos su UUID real en solicitudes_fondos
+      if (!isUUID(targetId)) {
+        const targetCodigo = String(solicitud.codigo_control || solicitud.id_control || solicitud.id || '').trim();
+        if (targetCodigo) {
+          const { data: sfMatch } = await supabase
+            .from('solicitudes_fondos')
+            .select('id')
+            .ilike('codigo_control', targetCodigo)
+            .limit(1);
+          if (sfMatch && sfMatch.length > 0 && isUUID(sfMatch[0].id)) {
+            targetId = sfMatch[0].id;
+          }
+        }
+      }
+
+      // 1. Obtener Partidas (Utilizando únicamente el UUID primario verificado)
+      let partidasRaw = [];
+      if (isUUID(targetId)) {
+        const { data: partidasData, error: pErr } = await supabase
+          .from('partidas_fondos')
+          .select('*, requisiciones(id, correlativo_req, items, status_compra, estado_aprobacion)')
+          .eq('solicitud_id', targetId);
+        
+        if (pErr) {
+          console.error("[ERRORES FONDOS] Error al cargar partidas por UUID:", pErr.message);
+        } else if (partidasData) {
+          partidasRaw = partidasData;
+        }
+      }
+
+      // Si no hay renglones directos en partidas_fondos, buscar requisiciones generadas desde esta solicitud por su origen
+      const targetCodigo = String(solicitud.codigo_control || solicitud.id_control || solicitud.id || '').trim();
+      if (partidasRaw.length === 0 && targetCodigo) {
+        const cleanCode = targetCodigo.replace('REF:', '').trim();
+        const codeAlt1 = cleanCode.replace(/MTTO-/i, 'MTT-');
+        const codeAlt2 = cleanCode.replace(/MTT-/i, 'MTTO-');
+
+        const { data: reqsOrig } = await supabase
+          .from('requisiciones')
+          .select('*, items')
+          .or(`origen.ilike.%${cleanCode}%,origen.ilike.%${codeAlt1}%,origen.ilike.%${codeAlt2}%`);
+
+        if (reqsOrig && reqsOrig.length > 0) {
+          const reqsValidas = reqsOrig.filter(r => r.estado_aprobacion !== 'ANULADA' && r.estado_aprobacion !== 'RECHAZADA');
+          let genPartidas = [];
+          reqsValidas.forEach(req => {
+            const itemsArr = safeArray(req.items);
+            itemsArr.forEach((it, idx) => {
+              const cantVal = Number(it.cantidad_pedida ?? it.cant ?? it.cantidad) || 1;
+              const puVal = parseFloat(it.pu_estimado ?? it.pu) || 0;
+              genPartidas.push({
+                id: it.id || `gen_${req.id}_${idx}`,
+                solicitud_id: targetId,
+                centro_costo: it.centro_costo || req.centro_costo || '',
+                clasificacion: it.clasificacion || 'Equipos Propios',
+                categoria: it.categoria || '',
+                cantidad: cantVal,
+                unidad: it.uni || it.unidad || 'UNID',
+                descripcion: it.descripcion || it.desc || '',
+                beneficiario: it.beneficiario || req.solicitante || '',
+                pu_bs: puVal * (req.total_bs ? (parseFloat(req.total_bs) / (it.total || 1)) : 1),
+                pu_usd: puVal,
+                pago_realizado: req.status_compra?.toUpperCase() === 'COMPLETADO',
+                status: req.status_compra?.toUpperCase() === 'COMPLETADO' ? 'Completado' : 'En Espera',
+                requisicion_id: req.id,
+                codigo_ticket: req.correlativo_req,
+                requisiciones: req
+              });
+            });
+          });
+          if (genPartidas.length > 0) {
+            partidasRaw = genPartidas;
+          }
+        }
+      }
 
       // 1.1 Obtener Requisiciones vinculadas por correlativo o ID para verificar estado (en caso de desvinculación previa o join directo)
       const rrCodigos = (partidasRaw || []).map(p => p.codigo_ticket).filter(c => c && c.startsWith('RR-'));
@@ -1708,6 +1823,7 @@ const StockSmartTotalClean = ({ currentUserProp, session: sessionProp }) => {
       const esPropioDepto = (solicitud.gerencia || solicitud.gerencia_nombre || '').toLowerCase() === (currentUser?.departamento || '').toLowerCase();
       setIsReadOnly((estActual === 'COMPLETADA' && !esRrHhOAdm) || (!esAdmin && !esPropioDepto && !esRrHhOAdm));
       setShowModal(true);
+      setHasChanges(false);
     } catch (err) { toast.error("Error cargando detalles."); }
   };
 

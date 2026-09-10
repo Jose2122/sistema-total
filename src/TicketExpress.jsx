@@ -24,6 +24,7 @@ class TicketErrorBoundary extends Component {
   }
 }
 import { supabase } from './supabaseClient';
+import { obtenerAprobadorEfectivo } from './utils/delegationUtils';
 import {
   Plus,
   Trash2,
@@ -814,6 +815,19 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
           if (!targetAprobadorId) {
             targetAprobadorId = ggId;
           }
+        }
+      }
+
+      // Escalación automática si el gerente asignado se encuentra de vacaciones
+      if (targetAprobadorId) {
+        try {
+          const { data: todosPerfiles } = await supabase.from('perfiles').select('*');
+          const resEfectivo = obtenerAprobadorEfectivo(targetAprobadorId, todosPerfiles || []);
+          if (resEfectivo && resEfectivo.id) {
+            targetAprobadorId = resEfectivo.id;
+          }
+        } catch (errVac) {
+          console.error("Error al resolver aprobador efectivo por vacaciones:", errVac);
         }
       }
 

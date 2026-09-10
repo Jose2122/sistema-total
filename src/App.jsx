@@ -8,6 +8,7 @@ import SolicitudFondos from './SolicitudFondos';
 import Almacen from './Almacen';
 
 import AdminAnalytics from './AdminAnalytics';
+import ProtectedRoute from './ProtectedRoute';
 
 function App() {
   const [session, setSession] = useState(null);
@@ -95,11 +96,11 @@ function App() {
         {/* Si hay sesión, al entrar a "/" te manda al Dashboard automáticamente */}
         <Route path="/" element={!session ? <Auth /> : <Navigate to="/dashboard" />} />
 
-        {/* Rutas protegidas: Si no hay sesión, te mandan al Login "/" */}
-        <Route path="/dashboard" element={session ? <Dashboard /> : <Navigate to="/" />} />
-        <Route path="/SolicitudFondos" element={session ? <SolicitudFondos session={session} /> : <Navigate to="/" />} />
-        <Route path="/almacen" element={session ? <Almacen /> : <Navigate to="/" />} />
-        <Route path="/admin/analytics" element={session ? <AdminAnalytics /> : <Navigate to="/" />} />
+        {/* Rutas protegidas */}
+        <Route path="/dashboard" element={<ProtectedRoute session={session}><Dashboard /></ProtectedRoute>} />
+        <Route path="/SolicitudFondos" element={<ProtectedRoute session={session}><SolicitudFondos session={session} /></ProtectedRoute>} />
+        <Route path="/almacen" element={<ProtectedRoute session={session}><Almacen /></ProtectedRoute>} />
+        <Route path="/admin/analytics" element={<ProtectedRoute session={session}><AdminAnalytics /></ProtectedRoute>} />
       </Routes>
     </Router>
   );

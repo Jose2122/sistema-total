@@ -24,36 +24,36 @@ const supabase = createClient(env.VITE_SUPABASE_URL, env.VITE_SUPABASE_ANON_KEY)
 async function run() {
   try {
     const codigos = ['EST-SEM 28-26', 'EST-SEM 27-26'];
-    
+
     // 1. Fetch the solicitudes
     const { data: sols, error: errSols } = await supabase
       .from('solicitudes_fondos')
       .select('*')
       .in('codigo_control', codigos);
-      
+
     if (errSols) throw errSols;
-    
+
     console.log('=== SOLICITUDES ===');
     console.dir(sols, { depth: null });
-    
+
     if (sols && sols.length > 0) {
       const solIds = sols.map(s => s.id);
-      
+
       // 2. Fetch the partidas_fondos for these solicitudes
       const { data: partidas, error: errPartidas } = await supabase
         .from('partidas_fondos')
         .select('*')
         .in('solicitud_id', solIds);
-        
+
       if (errPartidas) throw errPartidas;
-      
+
       console.log('\n=== PARTIDAS FONDOS ===');
       console.dir(partidas, { depth: null });
-      
+
       // 3. For any tickets linked, fetch their details
       const ticketIds = partidas.map(p => p.ticket_id).filter(Boolean);
       const ticketCodes = partidas.map(p => p.codigo_ticket).filter(Boolean);
-      
+
       if (ticketIds.length > 0 || ticketCodes.length > 0) {
         let q = supabase.from('tickets_directos').select('*');
         if (ticketIds.length > 0 && ticketCodes.length > 0) {
@@ -63,10 +63,10 @@ async function run() {
         } else {
           q = q.in('codigo_control', ticketCodes);
         }
-        
+
         const { data: tickets, error: errTickets } = await q;
         if (errTickets) throw errTickets;
-        
+
         console.log('\n=== INVOLVED TICKETS ===');
         console.dir(tickets, { depth: null });
       }
