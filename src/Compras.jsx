@@ -7,7 +7,7 @@ import toast from 'react-hot-toast';
 import { format } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Loader2, Upload, FileText, MessageSquare, Paperclip, Clock, CheckCircle2, AlertCircle, ShoppingBag, ChevronDown, X } from 'lucide-react';
-import { getSemanaInfo } from './utils/helpers';
+import { getSemanaInfo, getSemanaInfoForWeek } from './utils/helpers';
 import { compressImage } from './utils/compressImage';
 import './Requisiciones.css';
 import './ReportesMaestro.css';
@@ -307,16 +307,29 @@ const Compras = () => {
 
   const semanasDisponibles = useMemo(() => {
     const map = new Map();
-    historial.forEach(req => {
-      if (req.semanaInfo) {
-        map.set(req.semanaInfo.key, req.semanaInfo);
-      }
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentWeekNum = semanaActualObj?.weekNum || 38;
+
+    // 1. Generar todas las semanas del año actual desde la semana 1 hasta la semana actual (e.g. SEM 38 a SEM 1)
+    // Garantiza que SEM 28, SEM 27 y todas las semanas del año estén SIEMPRE disponibles en el selector
+    for (let w = currentWeekNum; w >= 1; w--) {
+      const sObj = getSemanaInfoForWeek(w, currentYear);
+      if (sObj) map.set(sObj.key, sObj);
+    }
+
+    // 2. Agregar cualquier semana de años anteriores o extra presente en el historial
+    (historial || []).forEach(req => {
+      if (req.semanaInfo) map.set(req.semanaInfo.key, req.semanaInfo);
+      if (req.semanaEmisionInfo) map.set(req.semanaEmisionInfo.key, req.semanaEmisionInfo);
+      if (req.semanaAprobacionInfo) map.set(req.semanaAprobacionInfo.key, req.semanaAprobacionInfo);
     });
+
     return Array.from(map.values()).sort((a, b) => {
       if (b.year !== a.year) return b.year - a.year;
       return b.weekNum - a.weekNum;
     });
-  }, [historial]);
+  }, [historial, semanaActualObj]);
 
   const categoriasProveedores = useMemo(() => {
     const cats = new Set();
@@ -376,6 +389,267 @@ const Compras = () => {
   const [verSoloMisAsignadas, setVerSoloMisAsignadas] = useState(true);
   const [loadingAsignacion, setLoadingAsignacion] = useState(false);
   const [zuleikaPerfil, setZuleikaPerfil] = useState(null);
+
+  // --- ESTADOS PARA ÓRDENES DE COMPRA (ODC) ---
+  const [showOdcModal, setShowOdcModal] = useState(false);
+  const [destinosDespacho, setDestinosDespacho] = useState([]);
+  const [showNuevoDestinoModal, setShowNuevoDestinoModal] = useState(false);
+  const [nuevoDestinoForm, setNuevoDestinoForm] = useState({ nombre: '', direccion: '', contacto_nombre: '', contacto_telefono: '' });
+  const [guardandoOdc, setGuardandoOdc] = useState(false);
+  const [odcForm, setOdcForm] = useState({
+    proveedor_id: '',
+    tipo_pago: 'CONTADO',
+    dias_credito: 0,
+    cotizacion_ref: '',
+    fecha_cotizacion: new Date().toISOString().split('T')[0],
+    fecha_despacho: new Date().toISOString().split('T')[0],
+    despachar_a_id: '',
+    despachar_a_direccion: '',
+    observaciones: '',
+    moneda: 'USD',
+    tasa_bcv: 1,
+    aplica_iva: true,
+    items: []
+  });
+
+  const cargarDestinosDespacho = useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from('destinos_despacho_predeterminados')
+        .select('*')
+        .order('es_predeterminado', { ascending: false });
+      if (!error && data) {
+        setDestinosDespacho(data);
+      }
+    } catch (err) {
+      console.warn("Tabla destinos_despacho_predeterminados no disponible:", err.message);
+    }
+  }, []);
+
+  const abrirModalOdc = () => {
+    const seleccionados = renglones.filter(r => r.selectedForOdc && !r.anulado);
+    const aProcesar = seleccionados.length > 0
+      ? seleccionados
+      : renglones.filter(r => !r.anulado && (r.cantidad_pendiente > 0 || r.compra_actual_cant > 0));
+
+    if (aProcesar.length === 0) {
+      toast.error("Seleccione al menos un renglón pendiente para generar la Órden de Compra.");
+      return;
+    }
+
+    const provIdItem = aProcesar.find(r => r.proveedor_seleccionado_id)?.proveedor_seleccionado_id;
+    const provMatch = proveedores.find(p => p.id === provIdItem || String(p.id) === String(provIdItem));
+    const defaultDestino = destinosDespacho.find(d => d.es_predeterminado) || destinosDespacho[0];
+
+    const odcItemsInic = aProcesar.map(r => ({
+      id: r.id,
+      descripcion: r.descripcion,
+      uni: r.uni || r.unidad || 'UND',
+      cant_pedida: r.cantidad_pedida,
+      cant_pendiente: r.cantidad_pendiente,
+      cant_odc: r.compra_actual_cant > 0 ? r.compra_actual_cant : r.cantidad_pendiente,
+      pu_odc: r.compra_actual_pu > 0 ? r.compra_actual_pu : (r.pu || 0),
+      total_odc: (r.compra_actual_cant > 0 ? r.compra_actual_cant : r.cantidad_pendiente) * (r.compra_actual_pu > 0 ? r.compra_actual_pu : (r.pu || 0)),
+      incluido: true
+    }));
+
+    setOdcForm({
+      proveedor_id: provMatch ? provMatch.id : '',
+      tipo_pago: provMatch?.condicion_pago_defecto || 'CONTADO',
+      dias_credito: provMatch?.dias_credito_habituales || provMatch?.dias_credito || 0,
+      cotizacion_ref: '',
+      fecha_cotizacion: new Date().toISOString().split('T')[0],
+      despachar_a_id: defaultDestino ? defaultDestino.id : '',
+      despachar_a_direccion: defaultDestino ? `${defaultDestino.nombre} - ${defaultDestino.direccion}` : '',
+      observaciones: '',
+      moneda: 'USD',
+      moneda_custom: '',
+      tasa_bcv: 1,
+      aplica_iva: true,
+      items: odcItemsInic
+    });
+
+    setShowOdcModal(true);
+  };
+
+  const guardarNuevoDestino = async () => {
+    if (!nuevoDestinoForm.nombre || !nuevoDestinoForm.direccion) {
+      return toast.error("Ingrese el nombre y la dirección del destino.");
+    }
+    try {
+      const { data, error } = await supabase.from('destinos_despacho_predeterminados').insert([{
+        nombre: nuevoDestinoForm.nombre.trim(),
+        direccion: nuevoDestinoForm.direccion.trim(),
+        contacto_nombre: nuevoDestinoForm.contacto_nombre?.trim() || null,
+        contacto_telefono: nuevoDestinoForm.contacto_telefono?.trim() || null
+      }]).select().single();
+      if (error) throw error;
+      toast.success("Nuevo destino guardado.");
+      setDestinosDespacho(prev => [...prev, data]);
+      setOdcForm(prev => ({
+        ...prev,
+        despachar_a_id: data.id,
+        despachar_a_direccion: `${data.nombre} - ${data.direccion}`
+      }));
+      setShowNuevoDestinoModal(false);
+      setNuevoDestinoForm({ nombre: '', direccion: '', contacto_nombre: '', contacto_telefono: '' });
+    } catch (err) {
+      toast.error("Error al guardar destino: " + err.message);
+    }
+  };
+
+  const guardarOrdenCompra = async () => {
+    if (!odcForm.proveedor_id) {
+      toast.error("Seleccione un proveedor para la Órden de Compra.");
+      return;
+    }
+    if (!odcForm.items || odcForm.items.length === 0) {
+      toast.error("No hay renglones incluidos en la Órden de Compra.");
+      return;
+    }
+
+    setGuardandoOdc(true);
+    try {
+      const currentYear = new Date().getFullYear();
+      const prefix = `ODC-${currentYear}-`;
+      const { data: odcExistentes } = await supabase
+        .from('ordenes_compra')
+        .select('numero_odc')
+        .like('numero_odc', `${prefix}%`)
+        .order('numero_odc', { ascending: false })
+        .limit(1);
+
+      let nextNum = 1;
+      if (odcExistentes && odcExistentes.length > 0 && odcExistentes[0].numero_odc) {
+        const parts = odcExistentes[0].numero_odc.split('-');
+        if (parts.length === 3) {
+          const lastNum = parseInt(parts[2], 10);
+          if (!isNaN(lastNum)) nextNum = lastNum + 1;
+        }
+      }
+      const numero_odc = `${prefix}${String(nextNum).padStart(6, '0')}`;
+
+      const itemsIncluidos = odcForm.items.filter(it => it.incluido !== false && parseFloat(it.cant_odc) > 0);
+      if (itemsIncluidos.length === 0) {
+        toast.error("Debe seleccionar e incluir al menos un producto con cantidad mayor a 0.");
+        setGuardandoOdc(false);
+        return;
+      }
+
+      const subtotalVal = itemsIncluidos.reduce((acc, it) => acc + ((parseFloat(it.cant_odc) || 0) * (parseFloat(it.pu_odc) || 0)), 0);
+      const ivaVal = odcForm.aplica_iva ? subtotalVal * 0.16 : 0;
+      const totalVal = subtotalVal + ivaVal;
+
+      let fechaVenc = null;
+      if (odcForm.tipo_pago === 'CREDITO') {
+        const d = new Date();
+        d.setDate(d.getDate() + (parseInt(odcForm.dias_credito) || 0));
+        fechaVenc = d.toISOString().split('T')[0];
+      }
+
+      const prov = proveedores.find(p => String(p.id) === String(odcForm.proveedor_id));
+
+      const { data: odcCreada, error: errOdc } = await supabase
+        .from('ordenes_compra')
+        .insert([{
+          numero_odc,
+          requisicion_id: requisicionActiva.id,
+          proveedor_id: odcForm.proveedor_id,
+          proveedor_nombre: prov?.razon_social || prov?.nombre || null,
+          proveedor_rif: prov?.rif || prov?.rif_nit || null,
+          proveedor_contacto: prov?.persona_contacto || prov?.contacto_nombre || null,
+          proveedor_ciudad: prov?.ciudad || prov?.localizacion || null,
+          proveedor_direccion: prov?.direccion || null,
+          cotizacion_ref: odcForm.cotizacion_ref || null,
+          fecha_cotizacion: odcForm.fecha_cotizacion || null,
+          fecha_despacho: odcForm.fecha_despacho || odcForm.fecha_cotizacion || new Date().toISOString().split('T')[0],
+          tipo_pago: odcForm.tipo_pago,
+          dias_credito: odcForm.tipo_pago === 'CREDITO' ? (parseInt(odcForm.dias_credito) || 0) : 0,
+          fecha_vencimiento_credito: fechaVenc,
+          despachar_a_id: odcForm.despachar_a_id || null,
+          despachar_a_direccion: odcForm.despachar_a_direccion || 'Galpones Riese - Av. Los Haticos',
+          destino_despacho: odcForm.despachar_a_direccion || 'Galpones Riese - Av. Los Haticos',
+          observaciones: odcForm.observaciones || null,
+          subtotal: subtotalVal,
+          iva_porcentaje: odcForm.aplica_iva ? 16 : 0,
+          iva_monto: ivaVal,
+          total: totalVal,
+          total_general: totalVal,
+          moneda: odcForm.moneda === 'OTRA' ? (odcForm.moneda_custom?.trim().toUpperCase() || 'OTRA') : (odcForm.moneda || 'USD'),
+          tasa_bcv: odcForm.moneda === 'USD' ? 1 : (parseFloat(odcForm.tasa_bcv) || 1),
+          elaborado_por_id: currentUser?.id || null,
+          elaborado_por_nombre: `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim() || 'Comprador',
+          revisado_por_nombre: 'Ricardo Herrera',
+          aprobado_por_nombre: 'Carlos Vega',
+          carlos_firma_digital_activa: false,
+          status_pago: 'PENDIENTE'
+        }])
+        .select()
+        .single();
+
+      if (errOdc) throw errOdc;
+
+      const itemsPayload = itemsIncluidos.map(it => {
+        const montoFila = (parseFloat(it.cant_odc) || 0) * (parseFloat(it.pu_odc) || 0);
+        return {
+          orden_compra_id: odcCreada.id,
+          requisicion_item_id: String(it.id),
+          descripcion: it.descripcion,
+          unidad: it.uni || 'UND',
+          cantidad: parseFloat(it.cant_odc) || 0,
+          precio_unitario: parseFloat(it.pu_odc) || 0,
+          subtotal: montoFila,
+          total_fila: montoFila
+        };
+      });
+
+      const { error: errItems } = await supabase
+        .from('ordenes_compra_items')
+        .insert(itemsPayload);
+
+      if (errItems) throw errItems;
+
+      const renglonesActualizados = renglones.map(r => {
+        const itemOdc = odcForm.items.find(it => String(it.id) === String(r.id));
+        if (itemOdc) {
+          const nuevaOdcTraza = {
+            fecha: new Date().toISOString(),
+            tipo: 'ODC',
+            odc_numero: numero_odc,
+            odc_id: odcCreada.id,
+            proveedor_id: odcForm.proveedor_id,
+            proveedor_nombre: prov?.razon_social || 'Proveedor',
+            cant: itemOdc.cant_odc,
+            pu: itemOdc.pu_odc,
+            doc_tipo: 'ODC',
+            doc_numero: numero_odc,
+            metodo_pago: odcForm.tipo_pago,
+            usuario_nombre: `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim()
+          };
+          return {
+            ...r,
+            selectedForOdc: false,
+            historial_compras: [...(r.historial_compras || []), nuevaOdcTraza]
+          };
+        }
+        return r;
+      });
+
+      await supabase.from('requisiciones')
+        .update({ items: renglonesActualizados })
+        .eq('id', requisicionActiva.id);
+
+      setRenglones(renglonesActualizados);
+      setShowOdcModal(false);
+
+      toast.success(`🎉 Órden de Compra ${numero_odc} emitida con éxito.`);
+    } catch (err) {
+      console.error("Error al generar ODC:", err);
+      toast.error("Error al guardar la Órden de Compra: " + err.message);
+    } finally {
+      setGuardandoOdc(false);
+    }
+  };
 
   const proveedoresFiltradosPorFila = (f) => {
     if (!f.categoria_proveedor) return proveedores;
@@ -443,18 +717,39 @@ const Compras = () => {
         }
       }
 
-      const { data, error } = await supabase
-        .from('requisiciones')
-        .select('*')
-        .eq('estado_aprobacion', 'aprobado_final')
-        .order('fecha_emision', { ascending: false });
+      let data = [];
+      let page = 0;
+      const pageSize = 1000;
+      let hasMore = true;
 
-      if (error) throw error;
+      while (hasMore) {
+        const { data: chunk, error } = await supabase
+          .from('requisiciones')
+          .select('*')
+          .eq('estado_aprobacion', 'aprobado_final')
+          .order('fecha_emision', { ascending: false })
+          .range(page * pageSize, (page + 1) * pageSize - 1);
+
+        if (error) throw error;
+        if (chunk && chunk.length > 0) {
+          data = data.concat(chunk);
+          if (chunk.length < pageSize) {
+            hasMore = false;
+          } else {
+            page++;
+          }
+        } else {
+          hasMore = false;
+        }
+      }
       setHistorial((data || []).map(db => {
         const itemsArr = safeArray(db.items);
         const esCcTigre = (db.centro_costo || '').toLowerCase().includes('tigre');
-        const fechaRef = db.f_aprobacion_general || db.fecha_aprobacion_general || db.f_aprobacion_area || db.fecha_emision || db.created_at;
-        const semanaInfo = getSemanaInfo(fechaRef);
+        const fechaEmisionRef = db.fecha_emision || db.created_at;
+        const fechaAprobRef = db.f_aprobacion_general || db.fecha_aprobacion_general || db.f_aprobacion_area;
+        const semanaEmisionInfo = fechaEmisionRef ? getSemanaInfo(fechaEmisionRef) : null;
+        const semanaAprobacionInfo = fechaAprobRef ? getSemanaInfo(fechaAprobRef) : null;
+        const semanaInfo = semanaEmisionInfo || semanaAprobacionInfo || getSemanaInfo(fechaAprobRef || fechaEmisionRef);
         return {
           ...db,
           correlativo: db.correlativo_req || `REQ-${db.id}`,
@@ -463,6 +758,8 @@ const Compras = () => {
           detalles: itemsArr,
           fecha: db.fecha_emision ? String(db.fecha_emision).split('T')[0] : '',
           semanaInfo,
+          semanaEmisionInfo,
+          semanaAprobacionInfo,
           ...(esCcTigre && zProfile ? {
             asignado_a: zProfile.id,
             asignado_nombre: `${zProfile.nombre} ${zProfile.apellido}`
@@ -601,6 +898,7 @@ const Compras = () => {
     cargarProveedores();
     cargarAnalistasCompras();
     cargarPresupuesto();
+    cargarDestinosDespacho();
 
     const channel = supabase
       .channel('compras_realtime')
@@ -608,8 +906,11 @@ const Compras = () => {
         setHistorial(prev => (prev || []).map(req => {
           if (req.id === payload.new.id) {
             const itemsArr = safeArray(payload.new.items);
-            const fechaRef = payload.new.f_aprobacion_general || payload.new.fecha_aprobacion_general || payload.new.f_aprobacion_area || payload.new.fecha_emision || payload.new.created_at;
-            const semanaInfo = getSemanaInfo(fechaRef);
+            const fechaEmisionRef = payload.new.fecha_emision || payload.new.created_at;
+            const fechaAprobRef = payload.new.f_aprobacion_general || payload.new.fecha_aprobacion_general || payload.new.f_aprobacion_area;
+            const semanaEmisionInfo = fechaEmisionRef ? getSemanaInfo(fechaEmisionRef) : null;
+            const semanaAprobacionInfo = fechaAprobRef ? getSemanaInfo(fechaAprobRef) : null;
+            const semanaInfo = semanaEmisionInfo || semanaAprobacionInfo || getSemanaInfo(fechaAprobRef || fechaEmisionRef);
             return {
               ...req,
               ...payload.new,
@@ -619,6 +920,8 @@ const Compras = () => {
               detalles: itemsArr,
               fecha: payload.new.fecha_emision ? String(payload.new.fecha_emision).split('T')[0] : req.fecha,
               semanaInfo,
+              semanaEmisionInfo,
+              semanaAprobacionInfo,
               observaciones: payload.new.observaciones || '',
               observaciones_direccion: payload.new.observaciones_direccion || '',
               facturas_url: safeArray(payload.new.facturas_url)
@@ -672,16 +975,22 @@ const Compras = () => {
         esGerenteDeCompras || // El gerente ve todo
         req.asignado_a === currentUser?.id;
 
-      // Filtro por Semana Operativa (Las pendientes 'En espera' siempre se muestran salvo filtro manual estricto)
+      // Filtro por Semana Operativa
       const matchSemana = (() => {
         if (filtroSemana === 'Todas') return true;
-        const statusActual = (req.status_compra || req.status || 'En espera').toLowerCase();
-        if (statusActual === 'en espera' || statusActual === 'pendiente') return true;
         if (filtroSemana === 'Actual') {
-          if (!req.semanaInfo || !semanaActualObj) return false;
-          return req.semanaInfo.weekNum === semanaActualObj.weekNum && req.semanaInfo.year === semanaActualObj.year;
+          if (!semanaActualObj) return false;
+          return (
+            (req.semanaInfo && req.semanaInfo.weekNum === semanaActualObj.weekNum && req.semanaInfo.year === semanaActualObj.year) ||
+            (req.semanaEmisionInfo && req.semanaEmisionInfo.weekNum === semanaActualObj.weekNum && req.semanaEmisionInfo.year === semanaActualObj.year) ||
+            (req.semanaAprobacionInfo && req.semanaAprobacionInfo.weekNum === semanaActualObj.weekNum && req.semanaAprobacionInfo.year === semanaActualObj.year)
+          );
         }
-        return req.semanaInfo?.key === filtroSemana;
+        return (
+          (req.semanaInfo && req.semanaInfo.key === filtroSemana) ||
+          (req.semanaEmisionInfo && req.semanaEmisionInfo.key === filtroSemana) ||
+          (req.semanaAprobacionInfo && req.semanaAprobacionInfo.key === filtroSemana)
+        );
       })();
 
       return matchTexto && matchGerencia && matchStatus && matchCC && matchCat && matchAnalista && matchMisAsignadas && matchSemana;
@@ -3086,8 +3395,24 @@ const Compras = () => {
         usuario_nombre: `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim() || 'Finanzas'
       };
 
-      const { error } = await supabase.from('presupuesto_compras').insert([payload]);
-      if (error) throw error;
+      let currentPayload = { ...payload };
+      let resError = null;
+      for (let i = 0; i < 5; i++) {
+        const res = await supabase.from('presupuesto_compras').insert([currentPayload]);
+        if (!res.error) {
+          resError = null;
+          break;
+        }
+        resError = res.error;
+        console.warn(`Intento ${i + 1} de guardar fondo falló:`, res.error.message);
+        const matchCol = res.error.message.match(/column ["']?(.*?)["']?/i);
+        if (matchCol && matchCol[1] && currentPayload[matchCol[1]] !== undefined) {
+          delete currentPayload[matchCol[1]];
+        } else {
+          break;
+        }
+      }
+      if (resError) throw resError;
 
       toast.success(`Fondo de $ ${monto.toLocaleString('de-DE', { minimumFractionDigits: 2 })} asignado con éxito.`);
       setNuevoMontoFondo('');
@@ -4194,6 +4519,7 @@ const Compras = () => {
               <table className="tc-table" style={{ fontSize: '0.85rem' }}>
                 <thead>
                   <tr style={{ backgroundColor: '#f8fafc' }}>
+                    <th style={{ width: '35px', textAlign: 'center' }} title="Seleccionar para Órden de Compra">ODC</th>
                     <th style={{ width: '40px' }}>N°</th>
                     <th style={{ width: '120px' }}>PRODUCTO</th>
                     <th style={{ textAlign: 'center', width: '60px' }}>PED.</th>
@@ -4216,6 +4542,19 @@ const Compras = () => {
                         opacity: f.anulado ? 0.75 : 1,
                         transition: 'all 0.3s ease'
                       }}>
+                        <td style={{ textAlign: 'center' }}>
+                          <input
+                            type="checkbox"
+                            checked={f.selectedForOdc || false}
+                            disabled={f.anulado}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              setRenglones(prev => prev.map(r => r.id === f.id ? { ...r, selectedForOdc: checked } : r));
+                            }}
+                            style={{ cursor: 'pointer', width: '16px', height: '16px', accentColor: '#0ea5e9' }}
+                            title="Seleccionar para Órden de Compra (ODC)"
+                          />
+                        </td>
                         <td style={{ fontWeight: 'bold' }}>{i + 1}</td>
                         <td style={{ verticalAlign: 'middle' }}>
                           <div style={{ fontWeight: 'bold', color: '#1e293b', fontSize: '0.9rem', textDecoration: f.anulado ? 'line-through' : 'none' }}>{f.descripcion}</div>
@@ -4502,7 +4841,7 @@ const Compras = () => {
                       </tr>
                       {expandirHistorial[f.id] && f.historial_compras?.length > 0 && (
                         <tr>
-                          <td colSpan="11" style={{ padding: '0 0 15px 50px' }}>
+                          <td colSpan="12" style={{ padding: '0 0 15px 50px' }}>
                             <div style={{ backgroundColor: 'white', borderRadius: '12px', border: '1px solid #e2e8f0', overflow: 'hidden', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)' }}>
                               <div style={{ padding: '10px 15px', backgroundColor: '#f8fafc', fontSize: '0.75rem', fontWeight: '900', color: '#334155', display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #e2e8f0' }}>
                                 <span style={{ letterSpacing: '0.05em' }}>TRAZABILIDAD Y REGISTROS DE COMPRA</span>
@@ -4849,6 +5188,26 @@ const Compras = () => {
               </button>
 
               <div style={{ display: 'flex', gap: '12px' }}>
+                <button
+                  className="btn-tc"
+                  onClick={abrirModalOdc}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '10px 18px',
+                    backgroundColor: '#0ea5e9',
+                    color: 'white',
+                    fontWeight: '900',
+                    borderRadius: '10px',
+                    border: 'none',
+                    cursor: 'pointer',
+                    boxShadow: '0 4px 12px rgba(14, 165, 233, 0.3)'
+                  }}
+                  title="Generar e Imprimir Órden de Compra (F-ADM-01-2)"
+                >
+                  🛍️ GENERAR ODC
+                </button>
                 <button
                   className="btn-tc btn-tc-secondary"
                   onClick={generarGuiaChoferPDF}
@@ -5230,6 +5589,395 @@ const Compras = () => {
               <button onClick={() => setShowComparativaModal(false)} style={{ padding: '8px 20px', borderRadius: '10px', border: '1px solid #cbd5e1', background: '#f1f5f9', color: '#475569', fontWeight: '700', fontSize: '0.85rem', cursor: 'pointer' }}>
                 Cerrar
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {showOdcModal && (
+        <div className="modal-overlay" style={{ zIndex: 3500 }}>
+          <div className="modal-card animate-modal" style={{ maxWidth: '950px', maxHeight: '90vh', overflowY: 'auto', padding: '30px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: '2px solid #e2e8f0', paddingBottom: '15px' }}>
+              <div>
+                <span style={{ backgroundColor: '#0ea5e9', color: 'white', padding: '4px 10px', borderRadius: '6px', fontSize: '0.7rem', fontWeight: '900' }}>EMISIÓN DE ODC</span>
+                <h2 style={{ margin: '6px 0 0 0', color: '#0f172a', fontSize: '1.4rem', fontWeight: '900' }}>
+                  Generar Órden de Compra - {requisicionActiva?.correlativo}
+                </h2>
+              </div>
+              <button onClick={() => setShowOdcModal(false)} style={{ border: 'none', background: '#f1f5f9', borderRadius: '50%', width: '32px', height: '32px', cursor: 'pointer', fontWeight: 'bold' }}>✕</button>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '20px' }}>
+              {/* Proveedor */}
+              <div>
+                <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '6px' }}>PROVEEDOR *</label>
+                <select
+                  className="input-tc"
+                  style={{ width: '100%', padding: '10px', fontWeight: '700', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+                  value={odcForm.proveedor_id}
+                  onChange={(e) => {
+                    const provId = e.target.value;
+                    const prov = proveedores.find(p => String(p.id) === String(provId));
+                    setOdcForm(prev => ({
+                      ...prev,
+                      proveedor_id: provId,
+                      tipo_pago: prov?.condicion_pago_defecto || prev.tipo_pago,
+                      dias_credito: prov?.dias_credito_habituales || prov?.dias_credito || 0
+                    }));
+                  }}
+                >
+                  <option value="">Seleccione Proveedor...</option>
+                  {proveedores.map(p => (
+                    <option key={p.id} value={p.id}>{p.razon_social} {p.rif ? `(${p.rif})` : ''}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Tipo de Pago y Días Crédito */}
+              <div style={{ display: 'flex', gap: '15px' }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '6px' }}>CONDICIÓN DE PAGO *</label>
+                  <select
+                    className="input-tc"
+                    style={{ width: '100%', padding: '10px', fontWeight: '700', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+                    value={odcForm.tipo_pago}
+                    onChange={(e) => setOdcForm(prev => ({ ...prev, tipo_pago: e.target.value }))}
+                  >
+                    <option value="CONTADO">CONTADO</option>
+                    <option value="CREDITO">CRÉDITO</option>
+                  </select>
+                </div>
+                {odcForm.tipo_pago === 'CREDITO' && (
+                  <div style={{ width: '120px' }}>
+                    <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '6px' }}>DÍAS CRÉDITO</label>
+                    <input
+                      type="number"
+                      className="input-tc"
+                      style={{ width: '100%', padding: '10px', fontWeight: '700', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+                      value={odcForm.dias_credito}
+                      onChange={(e) => setOdcForm(prev => ({ ...prev, dias_credito: e.target.value }))}
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '20px' }}>
+              {/* Despachar a */}
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                  <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569' }}>DESPACHAR A *</label>
+                  <button
+                    type="button"
+                    onClick={() => setShowNuevoDestinoModal(true)}
+                    style={{ background: 'none', border: 'none', color: '#0ea5e9', fontSize: '0.75rem', fontWeight: '800', cursor: 'pointer' }}
+                  >
+                    + Nuevo Destino
+                  </button>
+                </div>
+                <select
+                  className="input-tc"
+                  style={{ width: '100%', padding: '10px', fontWeight: '700', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+                  value={odcForm.despachar_a_id}
+                  onChange={(e) => {
+                    const destId = e.target.value;
+                    const dest = destinosDespacho.find(d => String(d.id) === String(destId));
+                    setOdcForm(prev => ({
+                      ...prev,
+                      despachar_a_id: destId,
+                      despachar_a_direccion: dest ? `${dest.nombre} - ${dest.direccion}` : ''
+                    }));
+                  }}
+                >
+                  <option value="">Seleccione Destino de Entrega...</option>
+                  {destinosDespacho.map(d => (
+                    <option key={d.id} value={d.id}>{d.nombre} ({d.direccion})</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Cotización Ref, Fecha Cotización y Fecha Despacho */}
+              <div style={{ display: 'flex', gap: '15px' }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '6px' }}>COTIZACIÓN REF.</label>
+                  <input
+                    type="text"
+                    className="input-tc"
+                    placeholder="Ej: COT-2026-99"
+                    style={{ width: '100%', padding: '10px', fontWeight: '700', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+                    value={odcForm.cotizacion_ref}
+                    onChange={(e) => setOdcForm(prev => ({ ...prev, cotizacion_ref: e.target.value }))}
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '6px' }}>FECHA COTIZACIÓN</label>
+                  <input
+                    type="date"
+                    className="input-tc"
+                    style={{ width: '100%', padding: '10px', fontWeight: '700', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+                    value={odcForm.fecha_cotizacion}
+                    onChange={(e) => setOdcForm(prev => ({ ...prev, fecha_cotizacion: e.target.value }))}
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '6px' }}>FECHA DESPACHO</label>
+                  <input
+                    type="date"
+                    className="input-tc"
+                    style={{ width: '100%', padding: '10px', fontWeight: '700', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+                    value={odcForm.fecha_despacho}
+                    onChange={(e) => setOdcForm(prev => ({ ...prev, fecha_despacho: e.target.value }))}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Moneda & IVA */}
+            <div style={{ display: 'flex', gap: '15px', marginBottom: '20px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <div style={{ width: '160px' }}>
+                <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '6px' }}>MONEDA</label>
+                <select
+                  className="input-tc"
+                  style={{ width: '100%', padding: '8px', fontWeight: '800', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+                  value={['USD', 'BS'].includes(odcForm.moneda) ? odcForm.moneda : 'OTRA'}
+                  onChange={(e) => {
+                    const mon = e.target.value;
+                    setOdcForm(prev => ({
+                      ...prev,
+                      moneda: mon === 'OTRA' ? (prev.moneda_custom || 'OTRA') : mon,
+                      tasa_bcv: mon === 'USD' ? 1 : prev.tasa_bcv
+                    }));
+                  }}
+                >
+                  <option value="USD">USD ($)</option>
+                  <option value="BS">VES (Bs)</option>
+                  <option value="OTRA">+ Nuevo / Otra moneda...</option>
+                </select>
+              </div>
+
+              {(!['USD', 'BS'].includes(odcForm.moneda) || odcForm.moneda === 'OTRA') && (
+                <div style={{ width: '160px' }}>
+                  <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#0284c7', display: 'block', marginBottom: '6px' }}>NOMBRE DE MONEDA *</label>
+                  <input
+                    type="text"
+                    className="input-tc"
+                    placeholder="Ej: EUR, COP, BRL..."
+                    style={{ width: '100%', padding: '8px', fontWeight: '800', borderRadius: '8px', border: '1px solid #0284c7', backgroundColor: '#f0f9ff' }}
+                    value={odcForm.moneda_custom || (['USD', 'BS'].includes(odcForm.moneda) ? '' : odcForm.moneda)}
+                    onChange={(e) => {
+                      const val = e.target.value.toUpperCase();
+                      setOdcForm(prev => ({ ...prev, moneda_custom: val, moneda: val || 'OTRA' }));
+                    }}
+                  />
+                </div>
+              )}
+
+              {odcForm.moneda !== 'USD' && (
+                <div style={{ width: '160px' }}>
+                  <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '6px' }}>
+                    {odcForm.moneda === 'BS' ? 'TASA BCV (Bs/$)' : `TASA CAMBIO (${odcForm.moneda || 'MONEDA'}/$)`}
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    className="input-tc"
+                    placeholder="Tasa de cambio respecto al $"
+                    style={{ width: '100%', padding: '8px', fontWeight: '800', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+                    value={odcForm.tasa_bcv}
+                    onChange={(e) => setOdcForm(prev => ({ ...prev, tasa_bcv: e.target.value }))}
+                  />
+                </div>
+              )}
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '20px' }}>
+                <input
+                  type="checkbox"
+                  id="aplica_iva_cb"
+                  checked={odcForm.aplica_iva}
+                  onChange={(e) => setOdcForm(prev => ({ ...prev, aplica_iva: e.target.checked }))}
+                  style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+                />
+                <label htmlFor="aplica_iva_cb" style={{ fontSize: '0.85rem', fontWeight: '800', color: '#1e293b', cursor: 'pointer' }}>
+                  APLICA IVA (16%)
+                </label>
+              </div>
+            </div>
+
+            {/* Ítems incluidos */}
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '8px' }}>PRODUCTOS A INCLUIR EN LA ODC</label>
+              <table className="tc-table" style={{ fontSize: '0.8rem' }}>
+                <thead>
+                  <tr style={{ backgroundColor: '#f8fafc' }}>
+                    <th style={{ textAlign: 'center', width: '60px' }}>INCLUIR</th>
+                    <th>DESCRIPCIÓN</th>
+                    <th style={{ textAlign: 'center', width: '90px' }}>CANT.</th>
+                    <th style={{ textAlign: 'right', width: '110px' }}>P.U. ({odcForm.moneda === 'BS' ? 'Bs' : '$'})</th>
+                    <th style={{ textAlign: 'right', width: '120px' }}>SUBTOTAL ({odcForm.moneda === 'BS' ? 'Bs' : '$'})</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {odcForm.items.map((it, idx) => {
+                    const isInc = it.incluido !== false;
+                    const subFila = isInc ? ((parseFloat(it.cant_odc) || 0) * (parseFloat(it.pu_odc) || 0)) : 0;
+                    return (
+                      <tr key={it.id || idx} style={{ opacity: isInc ? 1 : 0.45, backgroundColor: isInc ? 'transparent' : '#f8fafc' }}>
+                        <td style={{ textAlign: 'center' }}>
+                          <input
+                            type="checkbox"
+                            checked={isInc}
+                            style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              setOdcForm(prev => ({
+                                ...prev,
+                                items: prev.items.map(item => item.id === it.id ? { 
+                                  ...item, 
+                                  incluido: checked,
+                                  total_odc: checked ? ((parseFloat(item.cant_odc) || 0) * (parseFloat(item.pu_odc) || 0)) : 0
+                                } : item)
+                              }));
+                            }}
+                          />
+                        </td>
+                        <td style={{ fontWeight: '700' }}>{it.descripcion}</td>
+                        <td>
+                          <input
+                            type="number"
+                            className="input-tc"
+                            style={{ width: '100%', textAlign: 'center', fontWeight: '700', padding: '4px' }}
+                            disabled={!isInc}
+                            value={it.cant_odc}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setOdcForm(prev => ({
+                                ...prev,
+                                items: prev.items.map(item => item.id === it.id ? { ...item, cant_odc: val, total_odc: (parseFloat(val) || 0) * (parseFloat(item.pu_odc) || 0) } : item)
+                              }));
+                            }}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="number"
+                            className="input-tc"
+                            style={{ width: '100%', textAlign: 'right', fontWeight: '700', padding: '4px' }}
+                            disabled={!isInc}
+                            value={it.pu_odc}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setOdcForm(prev => ({
+                                ...prev,
+                                items: prev.items.map(item => item.id === it.id ? { ...item, pu_odc: val, total_odc: (parseFloat(item.cant_odc) || 0) * (parseFloat(val) || 0) } : item)
+                              }));
+                            }}
+                          />
+                        </td>
+                        <td style={{ textAlign: 'right', fontWeight: '900', color: isInc ? '#0ea5e9' : '#94a3b8' }}>
+                          {odcForm.moneda === 'BS' ? 'Bs' : '$'} {subFila.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Resumen de Montos */}
+            {(() => {
+              const sub = odcForm.items.reduce((acc, it) => {
+                if (it.incluido === false) return acc;
+                return acc + ((parseFloat(it.cant_odc) || 0) * (parseFloat(it.pu_odc) || 0));
+              }, 0);
+              const iva = odcForm.aplica_iva ? sub * 0.16 : 0;
+              const tot = sub + iva;
+              const sym = odcForm.moneda === 'BS' ? 'Bs' : '$';
+              return (
+                <div style={{ backgroundColor: '#f8fafc', padding: '15px 20px', borderRadius: '12px', marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: '1px solid #e2e8f0' }}>
+                  <div style={{ fontSize: '0.8rem', color: '#64748b' }}>
+                    <strong>Subtotal:</strong> {sym} {sub.toLocaleString('de-DE', { minimumFractionDigits: 2 })} | <strong>IVA (16%):</strong> {sym} {iva.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                  </div>
+                  <div style={{ fontSize: '1.2rem', fontWeight: '900', color: '#0ea5e9' }}>
+                    TOTAL ODC: {sym} {tot.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                  </div>
+                </div>
+              );
+            })()}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+              <button
+                className="btn-tc btn-tc-secondary"
+                onClick={() => setShowOdcModal(false)}
+                disabled={guardandoOdc}
+              >
+                CANCELAR
+              </button>
+              <button
+                className="btn-tc btn-tc-success"
+                onClick={guardarOrdenCompra}
+                disabled={guardandoOdc}
+                style={{ padding: '10px 24px', fontWeight: '900', backgroundColor: '#0ea5e9' }}
+              >
+                {guardandoOdc ? <Loader2 className="animate-spin" size={16} /> : '✓ EMITIR ÓRDEN DE COMPRA'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showNuevoDestinoModal && (
+        <div className="modal-overlay" style={{ zIndex: 4000 }}>
+          <div className="modal-card animate-modal" style={{ maxWidth: '500px', padding: '25px' }}>
+            <h3 style={{ margin: '0 0 15px 0', color: '#0f172a' }}>Agregar Nuevo Destino de Despacho</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '20px' }}>
+              <div>
+                <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '4px' }}>NOMBRE DEL LUGAR / SEDE *</label>
+                <input
+                  type="text"
+                  className="input-tc"
+                  placeholder="Ej: Planta Sur, Galpón Principal..."
+                  style={{ width: '100%', padding: '8px', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+                  value={nuevoDestinoForm.nombre}
+                  onChange={(e) => setNuevoDestinoForm(prev => ({ ...prev, nombre: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '4px' }}>DIRECCIÓN COMPLETA *</label>
+                <textarea
+                  className="input-tc"
+                  placeholder="Ej: Av 61 entre calle 147..."
+                  style={{ width: '100%', padding: '8px', borderRadius: '8px', border: '1px solid #cbd5e1', minHeight: '60px' }}
+                  value={nuevoDestinoForm.direccion}
+                  onChange={(e) => setNuevoDestinoForm(prev => ({ ...prev, direccion: e.target.value }))}
+                />
+              </div>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '4px' }}>CONTACTO</label>
+                  <input
+                    type="text"
+                    className="input-tc"
+                    placeholder="Nombre del receptor"
+                    style={{ width: '100%', padding: '8px', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+                    value={nuevoDestinoForm.contacto_nombre}
+                    onChange={(e) => setNuevoDestinoForm(prev => ({ ...prev, contacto_nombre: e.target.value }))}
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '4px' }}>TELÉFONO</label>
+                  <input
+                    type="text"
+                    className="input-tc"
+                    placeholder="0414-XXXXXXX"
+                    style={{ width: '100%', padding: '8px', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+                    value={nuevoDestinoForm.contacto_telefono}
+                    onChange={(e) => setNuevoDestinoForm(prev => ({ ...prev, contacto_telefono: e.target.value }))}
+                  />
+                </div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+              <button className="btn-tc btn-tc-secondary" onClick={() => setShowNuevoDestinoModal(false)}>CANCELAR</button>
+              <button className="btn-tc btn-tc-success" onClick={guardarNuevoDestino} style={{ backgroundColor: '#0ea5e9' }}>GUARDAR DESTINO</button>
             </div>
           </div>
         </div>

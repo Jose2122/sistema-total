@@ -62,6 +62,39 @@ export const getSemanaInfo = (dateInput) => {
 };
 
 /**
+ * Obtiene objeto de información de semana dado un número de semana y año.
+ */
+export const getSemanaInfoForWeek = (weekNum, year) => {
+  try {
+    const jan4 = new Date(year, 0, 4);
+    const dayOfWeek = jan4.getDay() || 7;
+    const mondayWeek1 = new Date(jan4);
+    mondayWeek1.setDate(jan4.getDate() - (dayOfWeek - 1));
+    
+    const start = new Date(mondayWeek1);
+    start.setDate(mondayWeek1.getDate() + (weekNum - 1) * 7);
+    
+    const end = new Date(start);
+    end.setDate(start.getDate() + 6);
+
+    const startStr = format(start, 'dd/MM');
+    const endStr = format(end, 'dd/MM');
+
+    return {
+      weekNum,
+      year,
+      label: `SEM ${weekNum}`,
+      rango: `${startStr} al ${endStr}`,
+      fullLabel: `SEM ${weekNum} (${startStr} al ${endStr})`,
+      key: `SEM-${weekNum}-${year}`
+    };
+  } catch (err) {
+    console.error("Error en getSemanaInfoForWeek:", err);
+    return null;
+  }
+};
+
+/**
  * Formatea un número como moneda ($).
  */
 export const formatCurrency = (value) => {

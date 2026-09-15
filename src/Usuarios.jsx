@@ -121,6 +121,7 @@ const Usuarios = ({ currentUser: currentUserProp, onUserUpdate }) => {
     { id: 'tickets', label: 'Ticket de Pago' },
     { id: 'almacen', label: 'Almacén' },
     { id: 'compras', label: 'Compras' },
+    { id: 'ordenes_compra', label: 'Órdenes de Compra (ODC)' },
     { id: 'reportesmaestro', label: 'Reportes Maestro' },
     { id: 'reporte_operaciones', label: 'Reporte de Operaciones' },
     { id: 'reportes', label: 'Reporte de Compras' },

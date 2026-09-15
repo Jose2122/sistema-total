@@ -641,14 +641,34 @@ const ModuloTicketsPago = () => {
         monto_asignado: monto,
         monto_usado: 0,
         semana_key: semanaCalculada,
-        fecha_asignacion: fechaRef,
         observaciones: observacionesFondoInput || `Asignación de Fondo desde Cuentas por Pagar (${semanaCalculada})`,
         usuario_id: currentUser?.id || null,
         usuario_nombre: `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim() || 'Finanzas CxP'
       };
 
-      const { error } = await supabase.from('presupuesto_compras').insert([payload]);
-      if (error) throw error;
+      // Inserción segura adaptable al esquema de la DB
+      let currentPayload = { ...payload };
+      let resError = null;
+      for (let i = 0; i < 5; i++) {
+        const res = await supabase.from('presupuesto_compras').insert([currentPayload]);
+        if (!res.error) {
+          resError = null;
+          break;
+        }
+        resError = res.error;
+        console.warn(`Intento ${i + 1} de guardar fondo falló:`, res.error.message);
+        const matchCol = res.error.message.match(/column ["']?(.*?)["']?/i);
+        if (matchCol && matchCol[1] && currentPayload[matchCol[1]] !== undefined) {
+          delete currentPayload[matchCol[1]];
+        } else if (currentPayload.fecha_asignacion) {
+          delete currentPayload.fecha_asignacion;
+        } else if (currentPayload.semana_key) {
+          delete currentPayload.semana_key;
+        } else {
+          break;
+        }
+      }
+      if (resError) throw resError;
 
       toast.success(`Fondo de $ ${monto.toLocaleString('de-DE', { minimumFractionDigits: 2 })} asignado con éxito a Compras.`);
       setMontoFondoInput('');
@@ -2051,6 +2071,26 @@ const ModuloTicketsPago = () => {
       if (estatusFinal === 'Pagado') {
         updatePayload.pagado_por_nombre = currentUser?.nombre || currentUser?.correo || 'Usuario';
         updatePayload.fecha_pago = new Date().toISOString();
+
+        // Sincronizar estado PAGADO en Órdenes de Compra vinculadas
+        try {
+          const reqId = ticketSeleccionado.requisicion_id;
+          const codTicket = ticketSeleccionado.codigo_control || ticketSeleccionado.codigo_ticket;
+          if (reqId) {
+            await supabase
+              .from('ordenes_compra')
+              .update({ estatus_pago: 'PAGADO', status_pago: 'PAGADO', estatus_recepcion: 'RECIBIDO' })
+              .or(`requisicion_id.eq.${reqId},requisicion_correlativo.eq.${reqId}`);
+          }
+          if (codTicket) {
+            await supabase
+              .from('ordenes_compra')
+              .update({ estatus_pago: 'PAGADO', status_pago: 'PAGADO', estatus_recepcion: 'RECIBIDO' })
+              .or(`numero_odc.eq.${codTicket},numero_req.eq.${codTicket}`);
+          }
+        } catch (syncErr) {
+          console.warn("Aviso al sincronizar pago en ODC desde CxP:", syncErr);
+        }
       }
 
       const { error } = await supabase.from('tickets_directos').update(updatePayload).eq('id', ticketSeleccionado.id);

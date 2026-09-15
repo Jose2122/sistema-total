@@ -44,14 +44,16 @@ export const estaEnVacaciones = (perfil) => {
 export const obtenerGerenteGeneral = (usuariosList = []) => {
   if (!Array.isArray(usuariosList)) return null;
   return usuariosList.find(u => {
-    if (!u.activo) return false;
+    if (u.activo === false) return false;
     const rol = (u.rol || '').toLowerCase();
     const dept = (u.departamento || '').toLowerCase();
     const correo = (u.correo || '').toLowerCase();
+    const nombre = `${u.nombre || ''} ${u.apellido || ''}`.toLowerCase();
     return (
       rol.includes('gerente general') ||
       dept.includes('gerencia general') ||
-      correo === 'cvega@totalclean.com.ve' ||
+      correo.includes('cvega') ||
+      nombre.includes('carlos vega') ||
       correo === 'karincmm1@gmail.com'
     );
   }) || null;

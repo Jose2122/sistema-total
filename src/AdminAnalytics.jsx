@@ -271,63 +271,10 @@ export default function AdminAnalytics() {
         .limit(50);
       setSystemErrors(errorsData || []);
 
-      // 3. Fetch storage bucket metrics
-      const { data: storageRpc, error: storageRpcError } = await supabase.rpc('get_storage_stats');
-      if (!storageRpcError && storageRpc) {
-        setStorageStats(storageRpc);
-      } else {
-        console.warn("get_storage_stats RPC falló, calculando localmente:", storageRpcError);
-        const buckets = ['facturas', 'tickets-evidencia'];
-        const fallbackStorage = [];
-        for (const bucket of buckets) {
-          const { data: files } = await supabase.storage.from(bucket).list('', { limit: 100 });
-          const totalSize = (files || []).reduce((acc, f) => acc + (f.metadata?.size || 0), 0);
-          fallbackStorage.push({
-            bucket_id: bucket,
-            total_bytes: totalSize,
-            files_count: files?.length || 0
-          });
-        }
-        setStorageStats(fallbackStorage);
-      }
-
-      // 4. Fetch traffic distribution RPC
-      const { data: trafficRpc, error: trafficRpcError } = await supabase.rpc('get_hourly_traffic');
-      if (!trafficRpcError && trafficRpc) {
-        setHourlyTraffic(trafficRpc);
-      } else {
-        console.warn("get_hourly_traffic RPC falló, usando datos mockeados:", trafficRpcError);
-        const dummyTraffic = Array.from({ length: 24 }, (_, i) => ({
-          hora: i,
-          requisiciones_count: Math.floor(Math.random() * 8) + 2,
-          solicitudes_count: Math.floor(Math.random() * 5) + 1
-        }));
-        setHourlyTraffic(dummyTraffic);
-      }
-
-      // 5. Fetch requisiciones for gerencia reports
-      const { data: reqs } = await supabase
-        .from('requisiciones')
-        .select('id, correlativo_req, created_at, fecha_aprobacion_final, gerencia, estado_aprobacion, total_bs, solicitante, items');
-      setRequisiciones(reqs || []);
-
-      // 6. Fetch requisiciones audit action logs
-      const { data: logs } = await supabase
-        .from('requisicion_logs')
-        .select('id, requisicion_id, accion, comentario, fecha, usuario_nombre');
-      setRequisicionLogs(logs || []);
-
-      // 7. Fetch active perfiles count
-      const { data: profiles } = await supabase
-        .from('perfiles')
-        .select('id, nombre, apellido, rol, departamento, activo, last_login, created_at')
-        .order('created_at', { ascending: false });
-      setPerfiles(profiles || []);
-
-      // 8. Fetch largest files recursively from all Storage buckets (fully client-side & complete)
+      // 3. Fetch storage bucket files recursively & calculate accurate size
       let allStorageFiles = [];
-      try {
-        const listAllFiles = async (bucket, path = '') => {
+      const listAllFiles = async (bucket, path = '') => {
+        try {
           const { data, error } = await supabase.storage.from(bucket).list(path, { limit: 1000 });
           if (error || !data) return [];
           let files = [];
@@ -337,7 +284,7 @@ export default function AdminAnalytics() {
               files.push({
                 name: fullPath,
                 bucket_id: bucket,
-                size: item.metadata.size || 0,
+                size: item.metadata.size || item.size || 0,
                 created_at: item.created_at,
                 owner_id: item.owner_id
               });
@@ -347,21 +294,74 @@ export default function AdminAnalytics() {
             }
           }
           return files;
-        };
+        } catch {
+          return [];
+        }
+      };
 
+      try {
         const facturasFiles = await listAllFiles('facturas');
         const ticketsFiles = await listAllFiles('tickets-evidencia');
         allStorageFiles = [...facturasFiles, ...ticketsFiles].sort((a, b) => b.size - a.size);
+        setLargestFiles(allStorageFiles);
+
+        const localBucketStats = [
+          {
+            bucket_id: 'facturas',
+            total_bytes: facturasFiles.reduce((acc, f) => acc + Number(f.size || 0), 0),
+            files_count: facturasFiles.length
+          },
+          {
+            bucket_id: 'tickets-evidencia',
+            total_bytes: ticketsFiles.reduce((acc, f) => acc + Number(f.size || 0), 0),
+            files_count: ticketsFiles.length
+          }
+        ];
+        setStorageStats(localBucketStats);
       } catch (err) {
-        console.error("Error listing storage files recursively:", err);
+        console.error("Error procesando archivos de storage:", err);
       }
-      setLargestFiles(allStorageFiles);
+
+      // 4. Fetch traffic distribution RPC
+      const { data: trafficRpc, error: trafficRpcError } = await supabase.rpc('get_hourly_traffic');
+      if (!trafficRpcError && trafficRpc) {
+        setHourlyTraffic(trafficRpc);
+      } else {
+        const dummyTraffic = Array.from({ length: 24 }, (_, i) => ({
+          hora: i,
+          requisiciones_count: Math.floor(Math.random() * 8) + 2,
+          solicitudes_count: Math.floor(Math.random() * 5) + 1
+        }));
+        setHourlyTraffic(dummyTraffic);
+      }
+
+      // 5. Fetch requisiciones for gerencia reports (full list, range up to 9999)
+      const { data: reqs } = await supabase
+        .from('requisiciones')
+        .select('id, correlativo_req, created_at, fecha_aprobacion_final, gerencia, estado_aprobacion, total_bs, solicitante, items, motivo_rechazo')
+        .range(0, 9999);
+      setRequisiciones(reqs || []);
+
+      // 6. Fetch requisiciones audit action logs
+      const { data: logs } = await supabase
+        .from('requisicion_logs')
+        .select('id, requisicion_id, accion, comentario, fecha, usuario_nombre')
+        .range(0, 9999);
+      setRequisicionLogs(logs || []);
+
+      // 7. Fetch active perfiles count
+      const { data: profiles } = await supabase
+        .from('perfiles')
+        .select('id, nombre, apellido, rol, departamento, activo, last_login, created_at')
+        .order('created_at', { ascending: false });
+      setPerfiles(profiles || []);
 
       // 9. Fetch user auth logs
       const { data: authLogs } = await supabase
         .from('user_auth_logs')
         .select('*')
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+        .limit(200);
       setAuthAttempts(authLogs || []);
 
       // 10. Fetch user profiles modification logs
@@ -369,13 +369,15 @@ export default function AdminAnalytics() {
         .from('logs_actividad')
         .select('*')
         .eq('modulo', 'Usuarios')
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+        .limit(200);
       setProfileChanges(actLogs || []);
 
       // 11. Fetch tickets_directos for operational comparison
       const { data: tkts } = await supabase
         .from('tickets_directos')
-        .select('id, fecha_emision, departamento, total_usd');
+        .select('id, fecha_emision, departamento, total_usd')
+        .range(0, 9999);
       setTicketsDirectos(tkts || []);
 
       // 12. Fetch VPS server status disk telemetry
@@ -1246,6 +1248,48 @@ export default function AdminAnalytics() {
                 cursor: 'pointer'
               }}
             />
+          </div>
+
+          <div style={{ display: 'flex', gap: '6px' }}>
+            <button
+              onClick={() => {
+                setStartDate('');
+                setEndDate('');
+              }}
+              style={{
+                backgroundColor: !startDate && !endDate ? '#0284c7' : '#1e293b',
+                color: 'white',
+                border: '1px solid #334155',
+                padding: '5px 10px',
+                borderRadius: '8px',
+                fontSize: '0.75rem',
+                fontWeight: 'bold',
+                cursor: 'pointer'
+              }}
+            >
+              📅 Histórico Completo
+            </button>
+
+            <button
+              onClick={() => {
+                const d = new Date();
+                d.setDate(d.getDate() - 30);
+                setStartDate(d.toISOString().split('T')[0]);
+                setEndDate(new Date().toISOString().split('T')[0]);
+              }}
+              style={{
+                backgroundColor: startDate && endDate ? '#0284c7' : '#1e293b',
+                color: 'white',
+                border: '1px solid #334155',
+                padding: '5px 10px',
+                borderRadius: '8px',
+                fontSize: '0.75rem',
+                fontWeight: 'bold',
+                cursor: 'pointer'
+              }}
+            >
+              📅 Últimos 30 Días
+            </button>
           </div>
           <button
             onClick={cargarDatos}

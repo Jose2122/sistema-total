@@ -67,6 +67,7 @@ const parsearFacturaUrls = (facturaUrlField) => {
 
 const LiquidacionFacturas = ({ currentUser }) => {
   const [requisiciones, setRequisiciones] = useState([]);
+  const [ordenesCompra, setOrdenesCompra] = useState([]);
   const [bancos, setBancos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [subiendoAbono, setSubiendoAbono] = useState(false);
@@ -75,9 +76,65 @@ const LiquidacionFacturas = ({ currentUser }) => {
   const [proveedores, setProveedores] = useState([]);
   const [filtroTipoProveedor, setFiltroTipoProveedor] = useState('Todos');
   const [filtroProveedor, setFiltroProveedor] = useState('Todos');
+  const [subtabCxp, setSubtabCxp] = useState('todas'); // 'todas', 'facturas', 'odc_credito'
 
   // Modal detailed view
   const [invoiceSeleccionada, setInvoiceSeleccionada] = useState(null);
+
+  // Modal ODC preview view
+  const [showOdcPreviewModal, setShowOdcPreviewModal] = useState(false);
+  const [odcPreviewSeleccionada, setOdcPreviewSeleccionada] = useState(null);
+  const [odcItemsPreview, setOdcItemsPreview] = useState([]);
+  const [loadingOdcItemsPreview, setLoadingOdcItemsPreview] = useState(false);
+  const [provDetallePreview, setProvDetallePreview] = useState(null);
+
+  const abrirDetalleOdcPreview = async (odc) => {
+    setOdcPreviewSeleccionada(odc);
+    setShowOdcPreviewModal(true);
+    setLoadingOdcItemsPreview(true);
+    setProvDetallePreview(null);
+    try {
+      const { data, error } = await supabase
+        .from('ordenes_compra_items')
+        .select('*')
+        .eq('orden_compra_id', odc.id)
+        .order('item_numero', { ascending: true });
+
+      if (!error && data) {
+        setOdcItemsPreview(data);
+      } else {
+        setOdcItemsPreview([]);
+      }
+
+      // Fetch provider contact & payment details
+      let provFound = null;
+      if (odc.proveedor_id) {
+        const { data: pData } = await supabase
+          .from('proveedores')
+          .select('*')
+          .eq('id', odc.proveedor_id)
+          .maybeSingle();
+        provFound = pData;
+      }
+      if (!provFound && odc.proveedor_nombre) {
+        const { data: pList } = await supabase
+          .from('proveedores')
+          .select('*')
+          .ilike('razon_social', `%${odc.proveedor_nombre.trim()}%`)
+          .limit(1);
+        if (pList && pList.length > 0) {
+          provFound = pList[0];
+        }
+      }
+      setProvDetallePreview(provFound);
+    } catch (err) {
+      console.error("Error al cargar renglones/proveedor de la ODC:", err);
+      setOdcItemsPreview([]);
+      setProvDetallePreview(null);
+    } finally {
+      setLoadingOdcItemsPreview(false);
+    }
+  };
 
   // Modal abono registration
   const [showAbonoModal, setShowAbonoModal] = useState(false);
@@ -146,6 +203,15 @@ const LiquidacionFacturas = ({ currentUser }) => {
       if (!provError) {
         setProveedores(provData || []);
       }
+
+      // 4. Fetch Órdenes de Compra (ODC) para sincronización con Cuentas por Pagar
+      const { data: odcData, error: odcError } = await supabase
+        .from('ordenes_compra')
+        .select('*')
+        .order('fecha_emision', { ascending: false });
+      if (!odcError && odcData) {
+        setOrdenesCompra(odcData);
+      }
     } catch (err) {
       console.error('Error al cargar datos:', err.message);
       toast.error('Error al cargar información: ' + err.message);
@@ -184,14 +250,34 @@ const LiquidacionFacturas = ({ currentUser }) => {
         monto_asignado: monto,
         monto_usado: 0,
         semana_key: semanaCalculada,
-        fecha_asignacion: fechaRef,
         observaciones: observacionesFondoInput || `Asignación de Fondo desde Cuentas por Pagar (${semanaCalculada})`,
         usuario_id: currentUser?.id || null,
         usuario_nombre: `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim() || 'Finanzas CxP'
       };
 
-      const { error } = await supabase.from('presupuesto_compras').insert([payload]);
-      if (error) throw error;
+      // Inserción segura adaptable al esquema de la DB
+      let currentPayload = { ...payload };
+      let resError = null;
+      for (let i = 0; i < 5; i++) {
+        const res = await supabase.from('presupuesto_compras').insert([currentPayload]);
+        if (!res.error) {
+          resError = null;
+          break;
+        }
+        resError = res.error;
+        console.warn(`Intento ${i + 1} de guardar fondo falló:`, res.error.message);
+        const matchCol = res.error.message.match(/column ["']?(.*?)["']?/i);
+        if (matchCol && matchCol[1] && currentPayload[matchCol[1]] !== undefined) {
+          delete currentPayload[matchCol[1]];
+        } else if (currentPayload.fecha_asignacion) {
+          delete currentPayload.fecha_asignacion;
+        } else if (currentPayload.semana_key) {
+          delete currentPayload.semana_key;
+        } else {
+          break;
+        }
+      }
+      if (resError) throw resError;
 
       toast.success(`Fondo de $ ${monto.toLocaleString('de-DE', { minimumFractionDigits: 2 })} asignado con éxito a Compras.`);
       setMontoFondoInput('');
@@ -210,7 +296,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
   useEffect(() => {
     fetchData();
 
-    const channel = supabase
+    const channelReq = supabase
       .channel('liquidacion_realtime')
       .on('postgres_changes', {
         event: '*',
@@ -222,8 +308,21 @@ const LiquidacionFacturas = ({ currentUser }) => {
       })
       .subscribe();
 
+    const channelOdc = supabase
+      .channel('liquidacion_odc_realtime')
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'ordenes_compra'
+      }, () => {
+        console.log('[REALTIME] Cambio detectado en ordenes_compra, recargando...');
+        fetchData();
+      })
+      .subscribe();
+
     return () => {
-      supabase.removeChannel(channel);
+      supabase.removeChannel(channelReq);
+      supabase.removeChannel(channelOdc);
     };
   }, [fetchData]);
 
@@ -240,6 +339,22 @@ const LiquidacionFacturas = ({ currentUser }) => {
     });
     return Array.from(listMap.values());
   }, [requisiciones]);
+
+  // Órdenes de Compra a Crédito y sus balances para CxP
+  const odcsCredito = useMemo(() => {
+    return ordenesCompra.filter(o => o.tipo_pago === 'CREDITO');
+  }, [ordenesCompra]);
+
+  const odcsCreditoPendientes = useMemo(() => {
+    return odcsCredito.filter(o => {
+      const st = (o.estatus_pago || o.status_pago || 'PENDIENTE').toUpperCase();
+      return st !== 'PAGADO';
+    });
+  }, [odcsCredito]);
+
+  const totalOdcCreditoMonto = useMemo(() => {
+    return odcsCreditoPendientes.reduce((sum, o) => sum + (Number(o.total_general ?? o.total) || 0), 0);
+  }, [odcsCreditoPendientes]);
 
   // Group purchased items by Invoice and Provider
   const facturasAgrupadas = useMemo(() => {
@@ -419,15 +534,22 @@ const LiquidacionFacturas = ({ currentUser }) => {
         provs.add(fac.proveedor_nombre.trim());
       }
     });
+    odcsCredito.forEach(odc => {
+      if (odc.proveedor_nombre) {
+        provs.add(odc.proveedor_nombre.trim());
+      }
+    });
     return Array.from(provs).sort((a, b) => a.localeCompare(b));
-  }, [facturasAgrupadas]);
+  }, [facturasAgrupadas, odcsCredito]);
 
   // Filtered invoices for display
   const facturasFiltradas = useMemo(() => {
+    const q = filtroBusqueda.toLowerCase().trim();
     return facturasAgrupadas.filter(fac => {
-      const matchesSearch =
-        fac.doc_numero.toLowerCase().includes(filtroBusqueda.toLowerCase()) ||
-        fac.proveedor_nombre.toLowerCase().includes(filtroBusqueda.toLowerCase());
+      const matchesSearch = !q ||
+        (fac.doc_numero || '').toLowerCase().includes(q) ||
+        (fac.proveedor_nombre || '').toLowerCase().includes(q) ||
+        (fac.orden_pago_ref || '').toLowerCase().includes(q);
 
       const matchesStatus =
         filtroEstatus === 'Todos' ||
@@ -449,6 +571,52 @@ const LiquidacionFacturas = ({ currentUser }) => {
     });
   }, [facturasAgrupadas, filtroBusqueda, filtroEstatus, filtroTipoProveedor, filtroProveedor, getProveedorCategorias]);
 
+  // Órdenes de Compra a Crédito Filtradas para la vista CxP
+  const odcsFiltradas = useMemo(() => {
+    const q = filtroBusqueda.toLowerCase().trim();
+    return odcsCredito.filter(odc => {
+      const matchesSearch = !q ||
+        (odc.numero_odc || '').toLowerCase().includes(q) ||
+        (odc.proveedor_nombre || '').toLowerCase().includes(q) ||
+        (odc.cotizacion_ref || '').toLowerCase().includes(q) ||
+        (odc.orden_pago_ref || '').toLowerCase().includes(q) ||
+        (odc.destino_despacho || '').toLowerCase().includes(q);
+
+      const st = (odc.estatus_pago || odc.status_pago || 'PENDIENTE').toUpperCase();
+      const matchesStatus =
+        filtroEstatus === 'Todos' ||
+        (filtroEstatus === 'EMITIDO' && st === 'PENDIENTE') ||
+        (filtroEstatus === 'PAGADO' && st === 'PAGADO') ||
+        (filtroEstatus === 'PAGADO PARCIAL' && st === 'PENDIENTE');
+
+      const matchesProv =
+        filtroProveedor === 'Todos' ||
+        (odc.proveedor_nombre || '').trim().toUpperCase() === filtroProveedor.trim().toUpperCase();
+
+      return matchesSearch && matchesStatus && matchesProv;
+    });
+  }, [odcsCredito, filtroBusqueda, filtroEstatus, filtroProveedor]);
+
+  // Actualizar estatus de pago de una ODC directamente desde CxP
+  const cambiarEstatusPagoOdc = async (odcId, nuevoEstatus) => {
+    try {
+      const { error } = await supabase
+        .from('ordenes_compra')
+        .update({ 
+          estatus_pago: nuevoEstatus, 
+          status_pago: nuevoEstatus 
+        })
+        .eq('id', odcId);
+
+      if (error) throw error;
+
+      toast.success(`Estatus de pago ODC actualizado a: ${nuevoEstatus}`);
+      setOrdenesCompra(prev => prev.map(o => String(o.id) === String(odcId) ? { ...o, estatus_pago: nuevoEstatus, status_pago: nuevoEstatus } : o));
+    } catch (err) {
+      toast.error('Error al actualizar estatus de ODC: ' + err.message);
+    }
+  };
+
   // KPI calculations
   const kpis = useMemo(() => {
     let totalFacturas = 0;
@@ -468,8 +636,20 @@ const LiquidacionFacturas = ({ currentUser }) => {
       else if (f.estatus === 'PAGADO') pagados++;
     });
 
-    return { totalFacturas, totalAbonado, totalPendiente, emitidos, parciales, pagados };
-  }, [facturasAgrupadas]);
+    const totalPendienteGlobal = totalPendiente + totalOdcCreditoMonto;
+
+    return { 
+      totalFacturas, 
+      totalAbonado, 
+      totalPendiente, 
+      totalOdcCreditoMonto,
+      totalPendienteGlobal,
+      emitidos, 
+      parciales, 
+      pagados,
+      odcsPendientesCount: odcsCreditoPendientes.length
+    };
+  }, [facturasAgrupadas, totalOdcCreditoMonto, odcsCreditoPendientes]);
 
   // Prepare and open abono registration modal
   const abrirRegistrarAbono = (invoice) => {
@@ -779,14 +959,24 @@ const LiquidacionFacturas = ({ currentUser }) => {
       </div>
 
       {/* FINANCIAL KPIS */}
-      <div className="liquidacion-kpi-grid">
+      <div className="liquidacion-kpi-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
         <div className="liquidacion-kpi-card" style={{ borderLeft: '6px solid #2563eb' }}>
           <div>
-            <span className="liquidacion-kpi-label">Total en Facturas</span>
+            <span className="liquidacion-kpi-label">Total Facturas Procura</span>
             <h3 className="liquidacion-kpi-value">$ {kpis.totalFacturas.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</h3>
           </div>
           <div className="liquidacion-kpi-icon" style={{ backgroundColor: '#eff6ff', color: '#2563eb' }}>
             <FileText size={24} />
+          </div>
+        </div>
+
+        <div className="liquidacion-kpi-card" style={{ borderLeft: '6px solid #d97706' }}>
+          <div>
+            <span className="liquidacion-kpi-label">Total Crédito ODC por Pagar</span>
+            <h3 className="liquidacion-kpi-value" style={{ color: '#d97706' }}>$ {kpis.totalOdcCreditoMonto.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</h3>
+          </div>
+          <div className="liquidacion-kpi-icon" style={{ backgroundColor: '#fffbeb', color: '#d97706' }}>
+            <CreditCard size={24} />
           </div>
         </div>
 
@@ -800,25 +990,37 @@ const LiquidacionFacturas = ({ currentUser }) => {
           </div>
         </div>
 
-        <div className="liquidacion-kpi-card" style={{ borderLeft: '6px solid #f59e0b' }}>
+        <div className="liquidacion-kpi-card" style={{ borderLeft: '6px solid #dc2626' }}>
           <div>
-            <span className="liquidacion-kpi-label">Saldo Pendiente</span>
-            <h3 className="liquidacion-kpi-value" style={{ color: '#f59e0b' }}>$ {kpis.totalPendiente.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</h3>
+            <span className="liquidacion-kpi-label">Saldo Pendiente CxP Total</span>
+            <h3 className="liquidacion-kpi-value" style={{ color: '#dc2626' }}>$ {kpis.totalPendienteGlobal.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</h3>
           </div>
-          <div className="liquidacion-kpi-icon" style={{ backgroundColor: '#fffbeb', color: '#f59e0b' }}>
+          <div className="liquidacion-kpi-icon" style={{ backgroundColor: '#fef2f2', color: '#dc2626' }}>
             <Clock size={24} />
           </div>
         </div>
+      </div>
 
-        <div className="liquidacion-kpi-card" style={{ borderLeft: '6px solid #64748b' }}>
-          <div>
-            <span className="liquidacion-kpi-label">Facturas / Pagadas</span>
-            <h3 className="liquidacion-kpi-value">{facturasAgrupadas.length} / <span style={{ color: '#10b981' }}>{kpis.pagados}</span></h3>
-          </div>
-          <div className="liquidacion-kpi-icon" style={{ backgroundColor: '#f8fafc', color: '#64748b' }}>
-            <CheckCircle2 size={24} />
-          </div>
-        </div>
+      {/* SUBTAB NAVIGATION BAR */}
+      <div style={{ display: 'flex', gap: '10px', marginBottom: '16px', flexWrap: 'wrap' }}>
+        <button
+          style={{ fontWeight: '800', backgroundColor: subtabCxp === 'todas' ? '#0f172a' : '#ffffff', color: subtabCxp === 'todas' ? 'white' : '#475569', border: '1px solid #cbd5e1', borderRadius: '10px', padding: '10px 18px', cursor: 'pointer', fontSize: '0.85rem' }}
+          onClick={() => setSubtabCxp('todas')}
+        >
+          🔍 Cuentas por Pagar Consolidadas ({facturasFiltradas.length + odcsFiltradas.length})
+        </button>
+        <button
+          style={{ fontWeight: '800', backgroundColor: subtabCxp === 'facturas' ? '#0284c7' : '#ffffff', color: subtabCxp === 'facturas' ? 'white' : '#475569', border: '1px solid #cbd5e1', borderRadius: '10px', padding: '10px 18px', cursor: 'pointer', fontSize: '0.85rem' }}
+          onClick={() => setSubtabCxp('facturas')}
+        >
+          📜 Facturas de Procura ({facturasFiltradas.length})
+        </button>
+        <button
+          style={{ fontWeight: '800', backgroundColor: subtabCxp === 'odc_credito' ? '#d97706' : '#ffffff', color: subtabCxp === 'odc_credito' ? 'white' : '#475569', border: '1px solid #cbd5e1', borderRadius: '10px', padding: '10px 18px', cursor: 'pointer', fontSize: '0.85rem' }}
+          onClick={() => setSubtabCxp('odc_credito')}
+        >
+          💳 Órdenes de Compra a Crédito ({odcsFiltradas.length})
+        </button>
       </div>
 
       {/* FILTER CONTROLS */}
@@ -828,7 +1030,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
           <input
             type="text"
             className="liquidacion-search-input"
-            placeholder="Buscar por N° Factura o Proveedor..."
+            placeholder="Buscar por N° ODC, Factura, Orden de Pago, Ref. Cotización o Proveedor..."
             value={filtroBusqueda}
             onChange={(e) => setFiltroBusqueda(e.target.value)}
           />
@@ -873,29 +1075,135 @@ const LiquidacionFacturas = ({ currentUser }) => {
         </div>
       </div>
 
-      {/* MAIN DATA TABLE */}
-      <div className="liquidacion-table-wrapper">
-        {loading && requisiciones.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '50px', fontWeight: 'bold' }}>Cargando facturas...</div>
-        ) : facturasFiltradas.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '50px', color: '#94a3b8', fontSize: '0.9rem', fontWeight: 'bold' }}>
-            No se encontraron facturas con los filtros aplicados.
+      {/* MAIN DATA TABLES */}
+      {(subtabCxp === 'todas' || subtabCxp === 'odc_credito') && (
+        <div className="liquidacion-table-wrapper" style={{ marginBottom: '25px' }}>
+          <div style={{ padding: '16px 20px', backgroundColor: '#fffbeb', borderBottom: '1px solid #fde68a', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontWeight: '900', color: '#92400e', fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <CreditCard size={18} /> Órdenes de Compra a Crédito por Pagar ({odcsFiltradas.length})
+            </span>
+            <span style={{ fontWeight: '900', color: '#b45309', fontSize: '0.9rem' }}>
+              Total Crédito ODC: $ {totalOdcCreditoMonto.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+            </span>
           </div>
-        ) : (
-          <table className="liquidacion-table">
-            <thead>
-              <tr>
-                <th>Proveedor</th>
-                <th>N° Factura / Control</th>
-                <th>Fecha Consolidación</th>
-                <th>Total Factura</th>
-                <th>Total Abonado</th>
-                <th>Saldo Pendiente</th>
-                <th>Estatus</th>
-                <th style={{ textAlign: 'center' }}>Acciones</th>
-              </tr>
-            </thead>
-            <tbody>
+
+          {odcsFiltradas.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '30px', color: '#94a3b8', fontSize: '0.85rem', fontWeight: '700' }}>
+              No hay Órdenes de Compra a crédito pendientes registradas.
+            </div>
+          ) : (
+            <table className="liquidacion-table">
+              <thead>
+                <tr>
+                  <th>Correlativo ODC</th>
+                  <th>Proveedor</th>
+                  <th>Plazo / Vencimiento Crédito</th>
+                  <th>Total ODC</th>
+                  <th>Estatus Pago</th>
+                  <th style={{ textAlign: 'center' }}>Gestión de Pago</th>
+                </tr>
+              </thead>
+              <tbody>
+                {odcsFiltradas.map(odc => {
+                  const statusActual = (odc.estatus_pago || odc.status_pago || 'PENDIENTE').toUpperCase();
+                  const isPagado = statusActual === 'PAGADO';
+                  return (
+                    <tr key={odc.id} style={{ backgroundColor: isPagado ? '#f0fdf4' : 'transparent' }}>
+                      <td>
+                        <button
+                          type="button"
+                          onClick={() => abrirDetalleOdcPreview(odc)}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            color: '#0ea5e9',
+                            fontWeight: '900',
+                            fontSize: '0.85rem',
+                            cursor: 'pointer',
+                            padding: 0,
+                            textDecoration: 'underline'
+                          }}
+                          title="Haga clic para abrir vista previa y renglones de la ODC"
+                        >
+                          {odc.numero_odc}
+                        </button>
+                      </td>
+                      <td style={{ fontWeight: '700' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <Building2 size={16} color="#64748b" />
+                          {odc.proveedor_nombre || 'N/A'}
+                        </div>
+                      </td>
+                      <td style={{ color: '#64748b', fontSize: '0.8rem' }}>
+                        <strong>{odc.dias_credito || 0} Días</strong> ({odc.fecha_vencimiento_credito || odc.fecha_emision || 'N/A'})
+                      </td>
+                      <td style={{ fontWeight: '900', color: '#0f172a' }}>
+                        $ {Number(odc.total_general ?? odc.total ?? 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                      </td>
+                      <td>
+                        <span style={{
+                          padding: '4px 10px',
+                          borderRadius: '8px',
+                          fontSize: '0.75rem',
+                          fontWeight: '900',
+                          backgroundColor: isPagado ? '#dcfce7' : '#fef3c7',
+                          color: isPagado ? '#166534' : '#92400e'
+                        }}>
+                          {isPagado ? '✅ PAGADO' : '⏳ PENDIENTE'}
+                        </span>
+                      </td>
+                      <td style={{ textAlign: 'center' }}>
+                        <select
+                          style={{ padding: '6px 10px', fontSize: '0.75rem', fontWeight: '800', borderRadius: '8px', border: '1px solid #cbd5e1', cursor: 'pointer', backgroundColor: '#f8fafc' }}
+                          value={statusActual}
+                          onChange={(e) => cambiarEstatusPagoOdc(odc.id, e.target.value)}
+                        >
+                          <option value="PENDIENTE">⏳ PENDIENTE</option>
+                          <option value="PAGADO">✅ PAGADO</option>
+                          <option value="VENCIDO">🔴 VENCIDO</option>
+                        </select>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {(subtabCxp === 'todas' || subtabCxp === 'facturas') && (
+        <div className="liquidacion-table-wrapper">
+          <div style={{ padding: '16px 20px', backgroundColor: '#f0f9ff', borderBottom: '1px solid #bae6fd', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontWeight: '900', color: '#0369a1', fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <FileText size={18} /> Facturas de Procura ({facturasFiltradas.length})
+            </span>
+            <span style={{ fontWeight: '900', color: '#0284c7', fontSize: '0.9rem' }}>
+              Pendiente Facturas: $ {kpis.totalPendiente.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+            </span>
+          </div>
+
+          {loading && requisiciones.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '50px', fontWeight: 'bold' }}>Cargando facturas...</div>
+          ) : facturasFiltradas.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '50px', color: '#94a3b8', fontSize: '0.9rem', fontWeight: 'bold' }}>
+              No se encontraron facturas con los filtros aplicados.
+            </div>
+          ) : (
+            <table className="liquidacion-table">
+              <thead>
+                <tr>
+                  <th>Proveedor</th>
+                  <th>N° Factura / Control</th>
+                  <th>Fecha Consolidación</th>
+                  <th>Total Factura</th>
+                  <th>Total Abonado</th>
+                  <th>Saldo Pendiente</th>
+                  <th>Estatus</th>
+                  <th style={{ textAlign: 'center' }}>Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
               {facturasFiltradas.map(fac => (
                 <tr key={fac.key}>
                   <td style={{ fontWeight: '700' }}>
@@ -953,6 +1261,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
           </table>
         )}
       </div>
+      )}
 
       {/* MODAL DETALLES DE FACTURA */}
       {invoiceSeleccionada && (
@@ -1150,6 +1459,270 @@ const LiquidacionFacturas = ({ currentUser }) => {
           </div>
         </div>
       )}
+
+      {/* MODAL VISTA PREVIA ODC - ESTILO REFERENCIA IMAGEN 2 */}
+      {showOdcPreviewModal && odcPreviewSeleccionada && (() => {
+        // Parse provider bank accounts
+        let ctasBancariasProv = [];
+        if (provDetallePreview && provDetallePreview.cuentas_bancarias) {
+          const c = provDetallePreview.cuentas_bancarias;
+          if (Array.isArray(c)) ctasBancariasProv = c;
+          else if (typeof c === 'string') {
+            try { ctasBancariasProv = JSON.parse(c); } catch { ctasBancariasProv = []; }
+          }
+        }
+
+        const contactoNombre = provDetallePreview?.persona_contacto || provDetallePreview?.contacto_nombre || odcPreviewSeleccionada.contacto_proveedor || '—';
+        const contactoTelefono = provDetallePreview?.telefono || odcPreviewSeleccionada.telefono_proveedor || '—';
+        const contactoCorreo = provDetallePreview?.correo || provDetallePreview?.email || odcPreviewSeleccionada.correo_proveedor || '—';
+        const ciudadProv = provDetallePreview?.ciudad || odcPreviewSeleccionada.ciudad_proveedor || '';
+        const direccionProv = provDetallePreview?.direccion || odcPreviewSeleccionada.direccion_proveedor || '—';
+        const rifProv = provDetallePreview?.rif || odcPreviewSeleccionada.rif_proveedor || '—';
+
+        return (
+          <div className="liquidacion-modal-overlay" style={{ zIndex: 9999 }}>
+            <div className="liquidacion-modal-card" style={{ maxWidth: '940px', width: '94%', maxHeight: '90vh', overflowY: 'auto', borderRadius: '24px', padding: '28px', backgroundColor: 'white' }}>
+              
+              {/* CABECERA DE MODAL */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', borderBottom: '1px solid #e2e8f0', paddingBottom: '16px' }}>
+                <div>
+                  <span style={{ fontSize: '0.7rem', fontWeight: '900', color: '#0ea5e9', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    EXPEDIENTES Y DETALLES DE COMPRA
+                  </span>
+                  <h2 style={{ margin: '4px 0 0 0', fontSize: '1.35rem', fontWeight: '950', color: '#0f172a' }}>
+                    Orden de Compra: {odcPreviewSeleccionada.numero_odc} — {odcPreviewSeleccionada.proveedor_nombre || 'PROVEEDOR'}
+                  </h2>
+                </div>
+                <button
+                  className="liquidacion-modal-close"
+                  onClick={() => setShowOdcPreviewModal(false)}
+                  style={{ background: '#f1f5f9', border: 'none', borderRadius: '50%', width: '36px', height: '36px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                >
+                  <X size={20} color="#64748b" />
+                </button>
+              </div>
+
+              {/* CUERPO DEL MODAL (COLUMNAS IZQ / DER) */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: '24px', alignItems: 'start' }}>
+                
+                {/* COLUMNA IZQUIERDA: ITEMS & CUENTAS DE PAGO */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                  
+                  {/* TABLA DE RENGLONES / ITEMS */}
+                  <div>
+                    <h4 style={{ margin: '0 0 10px 0', fontSize: '11px', fontWeight: '900', textTransform: 'uppercase', color: '#64748b', letterSpacing: '0.5px' }}>
+                      ITEMS COMPRADOS EN ESTA ÓRDEN DE COMPRA
+                    </h4>
+
+                    <div style={{ border: '1px solid #e2e8f0', borderRadius: '16px', overflow: 'hidden', backgroundColor: 'white' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+                        <thead>
+                          <tr style={{ backgroundColor: '#1e293b', color: 'white', textTransform: 'uppercase', fontSize: '11px' }}>
+                            <th style={{ padding: '12px 14px', textAlign: 'left' }}>DESCRIPCIÓN Y CUENTA</th>
+                            <th style={{ padding: '12px 10px', textAlign: 'center', width: '60px' }}>CANT</th>
+                            <th style={{ padding: '12px 12px', textAlign: 'right', width: '95px' }}>P.U ($)</th>
+                            <th style={{ padding: '12px 14px', textAlign: 'right', width: '105px' }}>TOTAL ($)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {loadingOdcItemsPreview ? (
+                            <tr>
+                              <td colSpan="4" style={{ padding: '30px', textAlign: 'center', color: '#64748b', fontWeight: '600' }}>
+                                Cargando ítems de la Órden de Compra...
+                              </td>
+                            </tr>
+                          ) : odcItemsPreview.length === 0 ? (
+                            <tr>
+                              <td colSpan="4" style={{ padding: '30px', textAlign: 'center', color: '#94a3b8', fontStyle: 'italic' }}>
+                                No se encontraron renglones detallados registrados para esta ODC.
+                              </td>
+                            </tr>
+                          ) : (
+                            odcItemsPreview.map((it, idx) => (
+                              <tr key={it.id || idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                <td style={{ padding: '12px 14px', fontWeight: '600', color: '#1e293b' }}>
+                                  <div>{it.descripcion}</div>
+                                  {(it.cuenta || it.departamento || odcPreviewSeleccionada.departamento) && (
+                                    <span style={{ display: 'inline-block', marginTop: '3px', fontSize: '0.7rem', color: '#0284c7', backgroundColor: '#e0f2fe', padding: '1px 6px', borderRadius: '4px', fontWeight: '700' }}>
+                                      🏛️ {it.cuenta || it.departamento || odcPreviewSeleccionada.departamento}
+                                    </span>
+                                  )}
+                                </td>
+                                <td style={{ padding: '12px 10px', textAlign: 'center', fontWeight: '800', color: '#475569' }}>
+                                  {Number(it.cantidad || 0).toLocaleString('de-DE')}
+                                </td>
+                                <td style={{ padding: '12px 12px', textAlign: 'right', color: '#475569' }}>
+                                  $ {Number(it.precio_unitario || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                                </td>
+                                <td style={{ padding: '12px 14px', textAlign: 'right', fontWeight: '900', color: '#0f172a' }}>
+                                  $ {Number(it.total_fila || (it.cantidad * it.precio_unitario) || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {/* FORMAS DE PAGO Y CUENTAS BANCARIAS DISPONIBLES */}
+                  <div>
+                    <h4 style={{ margin: '0 0 10px 0', fontSize: '11px', fontWeight: '900', textTransform: 'uppercase', color: '#64748b', letterSpacing: '0.5px' }}>
+                      FORMAS Y CUENTAS DE PAGO DISPONIBLES DEL PROVEEDOR
+                    </h4>
+
+                    <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '16px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                      {ctasBancariasProv.length === 0 ? (
+                        <div style={{ fontSize: '0.78rem', color: '#64748b', fontStyle: 'italic', padding: '8px 0', textAlign: 'center' }}>
+                          No hay cuentas bancarias o de pago registradas en la ficha de este proveedor.
+                        </div>
+                      ) : (
+                        ctasBancariasProv.map((cta, idx) => (
+                          <div key={idx} style={{ padding: '10px 14px', backgroundColor: 'white', border: '1px solid #cbd5e1', borderRadius: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
+                            <div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span style={{ fontSize: '0.85rem', fontWeight: '900', color: '#0f172a' }}>{cta.banco || 'BANCO / METODO'}</span>
+                                <span style={{ fontSize: '0.65rem', fontWeight: '900', padding: '2px 6px', borderRadius: '6px', backgroundColor: (cta.moneda || 'USD').includes('USD') || (cta.moneda || '').includes('$') ? '#dcfce7' : '#eff6ff', color: (cta.moneda || 'USD').includes('USD') || (cta.moneda || '').includes('$') ? '#15803d' : '#1d4ed8', border: `1px solid ${(cta.moneda || 'USD').includes('USD') || (cta.moneda || '').includes('$') ? '#bbf7d0' : '#bfdbfe'}` }}>
+                                  {cta.moneda || 'VES/USD'}
+                                </span>
+                              </div>
+                              <div style={{ fontSize: '0.78rem', fontFamily: 'monospace', fontWeight: '700', color: '#334155', marginTop: '2px' }}>
+                                {cta.nro_cuenta || cta.cuenta || 'Sin número de cuenta'}
+                              </div>
+                            </div>
+                            {(cta.titular || cta.rif) && (
+                              <div style={{ textAlign: 'right', fontSize: '0.72rem', color: '#64748b' }}>
+                                <div style={{ fontWeight: '800', color: '#475569' }}>{cta.titular || ''}</div>
+                                <div>RIF/CI: {cta.rif || '—'}</div>
+                              </div>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                </div>
+
+                {/* COLUMNA DERECHA: RESUMEN FINANCIERO Y CONTACTO */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                  
+                  {/* RESUMEN FINANCIERO */}
+                  <div>
+                    <h4 style={{ margin: '0 0 10px 0', fontSize: '11px', fontWeight: '900', textTransform: 'uppercase', color: '#64748b', letterSpacing: '0.5px' }}>
+                      RESUMEN FINANCIERO
+                    </h4>
+
+                    <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '16px', padding: '18px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px' }}>
+                        <span style={{ fontWeight: '600', color: '#64748b' }}>Total ODC:</span>
+                        <span style={{ fontWeight: '900', fontSize: '1.25rem', color: '#0f172a' }}>
+                          $ {Number(odcPreviewSeleccionada.total_general ?? odcPreviewSeleccionada.total ?? 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                        </span>
+                      </div>
+
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px' }}>
+                        <span style={{ fontWeight: '600', color: '#64748b' }}>Moneda / Tasa:</span>
+                        <span style={{ fontWeight: '800', color: '#0f172a' }}>
+                          {odcPreviewSeleccionada.moneda || 'USD'} {odcPreviewSeleccionada.tasa_cambio ? `(Bs. ${Number(odcPreviewSeleccionada.tasa_cambio).toLocaleString('de-DE', { minimumFractionDigits: 2 })})` : ''}
+                        </span>
+                      </div>
+
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px' }}>
+                        <span style={{ fontWeight: '600', color: '#64748b' }}>Condición de Pago:</span>
+                        <span style={{ fontWeight: '800', color: '#1d4ed8', backgroundColor: '#eff6ff', padding: '3px 8px', borderRadius: '6px', border: '1px solid #bfdbfe' }}>
+                          {odcPreviewSeleccionada.tipo_pago || 'CRÉDITO'} ({odcPreviewSeleccionada.dias_credito || 0} Días)
+                        </span>
+                      </div>
+
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px' }}>
+                        <span style={{ fontWeight: '600', color: '#64748b' }}>Estatus Recepción:</span>
+                        <span style={{ fontWeight: '800', color: odcPreviewSeleccionada.estatus_recepcion === 'RECIBIDO' ? '#15803d' : '#b45309', backgroundColor: odcPreviewSeleccionada.estatus_recepcion === 'RECIBIDO' ? '#dcfce7' : '#fef3c7', padding: '3px 8px', borderRadius: '6px' }}>
+                          {odcPreviewSeleccionada.estatus_recepcion === 'RECIBIDO' ? '📦 RECIBIDO' : '🚚 EN TRÁNSITO'}
+                        </span>
+                      </div>
+
+                      <div style={{ height: '1px', backgroundColor: '#e2e8f0' }}></div>
+
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px' }}>
+                        <span style={{ fontWeight: '800', color: '#475569' }}>Estatus de Pago:</span>
+                        <span style={{
+                          padding: '4px 12px',
+                          borderRadius: '8px',
+                          fontSize: '0.75rem',
+                          fontWeight: '900',
+                          backgroundColor: (odcPreviewSeleccionada.estatus_pago || odcPreviewSeleccionada.status_pago) === 'PAGADO' ? '#dcfce7' : '#fef3c7',
+                          color: (odcPreviewSeleccionada.estatus_pago || odcPreviewSeleccionada.status_pago) === 'PAGADO' ? '#166534' : '#92400e'
+                        }}>
+                          {(odcPreviewSeleccionada.estatus_pago || odcPreviewSeleccionada.status_pago) === 'PAGADO' ? '✅ PAGADO' : '⏳ PENDIENTE'}
+                        </span>
+                      </div>
+
+                      {odcPreviewSeleccionada.fecha_vencimiento_credito && (
+                        <div style={{ fontSize: '11px', color: '#64748b', textAlign: 'right', fontWeight: '700' }}>
+                          Vencimiento Crédito: {odcPreviewSeleccionada.fecha_vencimiento_credito}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* CONTACTO DE PAGO Y PROVEEDOR */}
+                  <div>
+                    <h4 style={{ margin: '0 0 10px 0', fontSize: '11px', fontWeight: '900', textTransform: 'uppercase', color: '#64748b', letterSpacing: '0.5px' }}>
+                      CONTACTO DE PAGO Y PROVEEDOR
+                    </h4>
+
+                    <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '16px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '0.78rem' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: '#64748b', fontWeight: '600' }}>Contacto:</span>
+                        <span style={{ fontWeight: '800', color: '#0f172a' }}>{contactoNombre}</span>
+                      </div>
+
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: '#64748b', fontWeight: '600' }}>Teléfono:</span>
+                        <span style={{ fontWeight: '800', color: '#0f172a' }}>{contactoTelefono}</span>
+                      </div>
+
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: '#64748b', fontWeight: '600' }}>Correo:</span>
+                        <span style={{ fontWeight: '800', color: '#0284c7' }}>{contactoCorreo}</span>
+                      </div>
+
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: '#64748b', fontWeight: '600' }}>RIF:</span>
+                        <span style={{ fontWeight: '800', color: '#0f172a' }}>{rifProv}</span>
+                      </div>
+
+                      <div style={{ height: '1px', backgroundColor: '#e2e8f0', margin: '2px 0' }}></div>
+
+                      <div>
+                        <span style={{ color: '#64748b', fontWeight: '600', display: 'block', marginBottom: '2px' }}>Dirección / Ciudad:</span>
+                        <span style={{ fontWeight: '700', color: '#334155' }}>
+                          {direccionProv} {ciudadProv ? `(${ciudadProv})` : ''}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                </div>
+
+              </div>
+
+              {/* PIE DE PAGINA MODAL */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '24px', borderTop: '1px solid #e2e8f0', paddingTop: '16px' }}>
+                <button
+                  className="liquidacion-btn liquidacion-btn-secondary"
+                  onClick={() => setShowOdcPreviewModal(false)}
+                  style={{ padding: '10px 22px', borderRadius: '10px', fontSize: '0.85rem', fontWeight: '800' }}
+                >
+                  Cerrar Detalle
+                </button>
+              </div>
+
+            </div>
+          </div>
+        );
+      })()}
 
       {/* MODAL REGISTRO DE ABONO */}
       {showAbonoModal && (

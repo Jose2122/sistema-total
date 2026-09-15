@@ -21,12 +21,92 @@ const Proveedores = () => {
   const [saving, setSaving] = useState(false);
   const [sessionCategories, setSessionCategories] = useState([]);
   const [nuevaCategoriaText, setNuevaCategoriaText] = useState('');
-  const [columnasDisponibles, setColumnasDisponibles] = useState(null);
+  const [tabActiva, setTabActiva] = useState('directorio');
+  const [loadingReportes, setLoadingReportes] = useState(false);
+  const [rankingProveedores, setRankingProveedores] = useState([]);
+  const [todasLasCompras, setTodasLasCompras] = useState([]);
+  const [busquedaProducto, setBusquedaProducto] = useState('');
+  const [sortConfig, setSortConfig] = useState({ key: 'totalGastado', direction: 'descending' });
+
+  const parseCuentasBancarias = (ctas) => {
+    if (!ctas) return [];
+    if (Array.isArray(ctas)) return ctas;
+    if (typeof ctas === 'string') {
+      try {
+        const parsed = JSON.parse(ctas);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    }
+    return [];
+  };
+
+  const ejecutarOperacionSegura = async (esEdicion, idProveedor, payloadInicial) => {
+    let currentPayload = { ...payloadInicial };
+    let iteraciones = 0;
+    const maxIteraciones = 12;
+
+    while (iteraciones < maxIteraciones) {
+      iteraciones++;
+      let res;
+      if (esEdicion) {
+        res = await supabase.from('proveedores').update(currentPayload).eq('id', idProveedor);
+      } else {
+        res = await supabase.from('proveedores').insert([currentPayload]);
+      }
+
+      if (!res.error) return true;
+
+      const err = res.error;
+      console.warn(`Intento ${iteraciones} de guardar proveedor falló:`, err.message);
+
+      if (err.code === '23505' || err.message?.includes('proveedores_rif_key') || err.message?.includes('duplicate key')) {
+        throw err;
+      }
+
+      let colEliminada = false;
+      const matchCache = err.message.match(/Could not find the ['"](.*?)['"] column/i);
+      const matchRelation = err.message.match(/column ["'](.*?)["']/i);
+      const matchGeneric = err.message.match(/['"](.*?)['"] column/i);
+
+      let colProblema = null;
+      if (matchCache) colProblema = matchCache[1];
+      else if (matchRelation) colProblema = matchRelation[1];
+      else if (matchGeneric) colProblema = matchGeneric[1];
+
+      if (colProblema && Object.prototype.hasOwnProperty.call(currentPayload, colProblema)) {
+        delete currentPayload[colProblema];
+        colEliminada = true;
+      } else {
+        if (currentPayload.contacto_nombre && currentPayload.persona_contacto) {
+          delete currentPayload.contacto_nombre;
+          colEliminada = true;
+        } else if (currentPayload.localizacion && currentPayload.ciudad) {
+          delete currentPayload.localizacion;
+          colEliminada = true;
+        } else if (currentPayload.limite_credito && currentPayload.monto_limite_credito) {
+          delete currentPayload.limite_credito;
+          colEliminada = true;
+        } else if (currentPayload.dias_credito_habituales && currentPayload.dias_credito) {
+          delete currentPayload.dias_credito_habituales;
+          colEliminada = true;
+        }
+      }
+
+      if (!colEliminada) {
+        throw err;
+      }
+    }
+  };
 
   const [formData, setFormData] = useState({
     id: null,
     rif: '',
     razon_social: '',
+    persona_contacto: '',
+    contacto_administrativo: '',
+    ciudad: '',
     correo: '',
     telefono: '',
     direccion: '',
@@ -34,6 +114,8 @@ const Proveedores = () => {
     categoria: [], // Cambiado a array
     monto_limite_credito: 0,
     dias_credito: 0,
+    condicion_pago_defecto: 'CONTADO',
+    dias_credito_habituales: 0,
     calificacion_precio: 5,
     calificacion_cumplimiento: 5,
     observaciones_negociacion: '',
@@ -58,36 +140,61 @@ const Proveedores = () => {
   const [loadingHistorial, setLoadingHistorial] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [provSeleccionado, setProvSeleccionado] = useState(null);
-  const [mostrarParametrosSrm, setMostrarParametrosSrm] = useState(false);
+  const [mostrarParametrosSrm, setMostrarParametrosSrm] = useState(true);
   const [subTabFicha, setSubTabFicha] = useState('credito'); // 'credito' | 'historial' | 'evaluacion'
   const [guardandoSrmProv, setGuardandoSrmProv] = useState(false);
 
-  const [tabActiva, setTabActiva] = useState('directorio');
-  const [todasLasCompras, setTodasLasCompras] = useState([]);
-  const [rankingProveedores, setRankingProveedores] = useState([]);
-  const [loadingReportes, setLoadingReportes] = useState(false);
-  const [busquedaProducto, setBusquedaProducto] = useState('');
-  const [sortConfig, setSortConfig] = useState({ key: 'totalGastado', direction: 'descending' });
-
-  useEffect(() => {
-    obtenerProveedores();
-    obtenerBancosList();
-  }, []);
-
-  const obtenerBancosList = async () => {
+  const getStoredSrm = (provId, provRif) => {
     try {
-      const { data, error } = await supabase
-        .from('bancos')
-        .select('nombre')
-        .eq('activo', true)
-        .order('nombre', { ascending: true });
-      if (!error && data) {
-        const uniqueNames = Array.from(new Set(data.map(b => b.nombre).filter(Boolean)));
-        setBancosList(uniqueNames);
-      }
-    } catch (err) {
-      console.error("Error loading banks:", err);
+      const key = `prov_srm_${provId || provRif}`;
+      const raw = localStorage.getItem(key);
+      if (raw) return JSON.parse(raw);
+    } catch {
+      return null;
     }
+    return null;
+  };
+
+  const saveStoredSrm = (provId, provRif, data) => {
+    try {
+      const key = `prov_srm_${provId || provRif}`;
+      localStorage.setItem(key, JSON.stringify(data));
+    } catch {
+      // ignore
+    }
+  };
+
+  const normalizarProveedor = (p) => {
+    if (!p) return null;
+    const localSrm = getStoredSrm(p.id, p.rif) || {};
+    const ctas = parseCuentasBancarias(p.cuentas_bancarias || localSrm.cuentas_bancarias);
+    const limite = Number(p.monto_limite_credito || p.limite_credito || localSrm.monto_limite_credito || 0);
+    const dias = Number(p.dias_credito || p.dias_credito_habituales || localSrm.dias_credito || 0);
+    const contacto = p.persona_contacto || p.contacto_nombre || localSrm.persona_contacto || '';
+    const contactoAdmin = p.contacto_administrativo || p.persona_contacto_admin || localSrm.contacto_administrativo || '';
+    const ciudad = p.ciudad || p.localizacion || localSrm.ciudad || '';
+    const observaciones = p.observaciones_negociacion || localSrm.observaciones_negociacion || '';
+    const califPrecio = p.calificacion_precio ?? localSrm.calificacion_precio ?? 5;
+    const califCumplimiento = p.calificacion_cumplimiento ?? localSrm.calificacion_cumplimiento ?? 5;
+    const preferencial = Boolean(p.proveedor_preferencial ?? localSrm.proveedor_preferencial);
+
+    return {
+      ...p,
+      monto_limite_credito: limite,
+      limite_credito: limite,
+      dias_credito: dias,
+      dias_credito_habituales: dias,
+      persona_contacto: contacto,
+      contacto_nombre: contacto,
+      contacto_administrativo: contactoAdmin,
+      ciudad: ciudad,
+      localizacion: ciudad,
+      cuentas_bancarias: ctas,
+      observaciones_negociacion: observaciones,
+      calificacion_precio: califPrecio,
+      calificacion_cumplimiento: califCumplimiento,
+      proveedor_preferencial: preferencial
+    };
   };
 
   const obtenerProveedores = async () => {
@@ -99,17 +206,44 @@ const Proveedores = () => {
         .order('razon_social', { ascending: true });
 
       if (error) throw error;
-      setProveedores(data || []);
-      if (data && data.length > 0) {
-        setColumnasDisponibles(Object.keys(data[0]));
-      }
+      const normalizados = (data || []).map(p => normalizarProveedor(p));
+      setProveedores(normalizados);
     } catch (error) {
       console.error('Error fetching suppliers:', error.message);
-      toast.error('Error al cargar proveedores. Asegúrate de haber ejecutado el SQL de la tabla.');
+      toast.error('Error al cargar proveedores.');
     } finally {
       setLoading(false);
     }
   };
+  const obtenerBancos = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('bancos')
+        .select('nombre')
+        .eq('activo', true);
+
+      if (!error && data && data.length > 0) {
+        setBancosList(data.map(b => b.nombre).sort());
+      } else {
+        setBancosList([
+          "BANAMIGA", "BANCO DE VENEZUELA", "BANCO MERCANTIL", 
+          "BANCO PROVINCIAL (BBVA)", "BANCO PLAZA", "BANCO EXTERIOR",
+          "BANESCO", "BNC (BANCO NACIONAL DE CRÉDITO)", "ZELLE", "OFAC / OTRO"
+        ].sort());
+      }
+    } catch {
+      setBancosList([
+        "BANAMIGA", "BANCO DE VENEZUELA", "BANCO MERCANTIL", 
+        "BANCO PROVINCIAL (BBVA)", "BANCO PLAZA", "BANCO EXTERIOR",
+        "BANESCO", "BNC (BANCO NACIONAL DE CRÉDITO)", "ZELLE", "OFAC / OTRO"
+      ].sort());
+    }
+  };
+
+  useEffect(() => {
+    obtenerProveedores();
+    obtenerBancos();
+  }, []);
 
   const handleRifChange = (e) => {
     const input = e.target.value.toUpperCase();
@@ -156,91 +290,115 @@ const Proveedores = () => {
       return toast.error('Formatos válidos: J-12345678-0 o V-12345678 (8 dígitos mínimos)');
     }
 
-    if (!formData.razon_social) {
-      return toast.error('La Razón Social es obligatoria');
+    if (!formData.razon_social || !formData.razon_social.trim()) {
+      return toast.error('La Razón Social es obligatoria.');
+    }
+
+    if (!formData.persona_contacto || !formData.persona_contacto.trim()) {
+      return toast.error('La Persona de Contacto es obligatoria.');
+    }
+
+    const ciudadVal = (formData.ciudad || formData.localizacion || '').trim();
+    if (!ciudadVal) {
+      return toast.error('La Ciudad / Localización es obligatoria.');
+    }
+
+    if (!formData.telefono || !formData.telefono.trim()) {
+      return toast.error('El Teléfono es obligatorio.');
+    }
+
+    if (!formData.direccion || !formData.direccion.trim()) {
+      return toast.error('La Dirección es obligatoria.');
     }
 
     setSaving(true);
     try {
-      let payload = {
-        rif: formData.rif,
+      const rifLimpio = formData.rif.trim().toUpperCase();
+
+      // Validación previa de duplicidad de RIF
+      if (!formData.id) {
+        const { data: existente } = await supabase
+          .from('proveedores')
+          .select('id, razon_social, rif')
+          .ilike('rif', rifLimpio)
+          .maybeSingle();
+
+        if (existente) {
+          setSaving(false);
+          return toast.error(`⚠️ El RIF ${rifLimpio} ya está registrado para "${existente.razon_social}". Verifique o edite el proveedor existente.`);
+        }
+      } else {
+        const { data: otroConMismoRif } = await supabase
+          .from('proveedores')
+          .select('id, razon_social')
+          .ilike('rif', rifLimpio)
+          .neq('id', formData.id)
+          .maybeSingle();
+
+        if (otroConMismoRif) {
+          setSaving(false);
+          return toast.error(`⚠️ El RIF ${rifLimpio} ya está registrado a otro proveedor ("${otroConMismoRif.razon_social}").`);
+        }
+      }
+
+      const payload = {
+        rif: rifLimpio,
         razon_social: formData.razon_social,
-        correo: formData.correo,
-        telefono: formData.telefono,
-        direccion: formData.direccion,
-        localizacion: formData.localizacion || '',
+        persona_contacto: formData.persona_contacto || '',
+        contacto_nombre: formData.persona_contacto || '',
+        contacto_administrativo: formData.contacto_administrativo || '',
+        ciudad: formData.ciudad || formData.localizacion || '',
+        localizacion: formData.ciudad || formData.localizacion || '',
+        correo: formData.correo || '',
+        telefono: formData.telefono || '',
+        direccion: formData.direccion || '',
         categoria: Array.isArray(formData.categoria) ? formData.categoria.join(', ') : formData.categoria,
         monto_limite_credito: Number(formData.monto_limite_credito) || 0,
+        limite_credito: Number(formData.monto_limite_credito) || 0,
         dias_credito: Number(formData.dias_credito) || 0,
+        dias_credito_habituales: Number(formData.dias_credito) || 0,
+        condicion_pago_defecto: Number(formData.dias_credito) > 0 ? 'CREDITO' : 'CONTADO',
         calificacion_precio: Number(formData.calificacion_precio) || 5,
         calificacion_cumplimiento: Number(formData.calificacion_cumplimiento) || 5,
         observaciones_negociacion: formData.observaciones_negociacion || '',
         proveedor_preferencial: Boolean(formData.proveedor_preferencial),
-        status: formData.status,
+        status: formData.status !== undefined ? formData.status : true,
         cuentas_bancarias: formData.cuentas_bancarias || []
       };
 
-      // Filter payload if we already detected the columns
-      if (columnasDisponibles) {
-        payload = Object.keys(payload)
-          .filter(key => columnasDisponibles.includes(key))
-          .reduce((obj, key) => {
-            obj[key] = payload[key];
-            return obj;
-          }, {});
-      }
+      saveStoredSrm(formData.id || rifLimpio, rifLimpio, {
+        monto_limite_credito: Number(formData.monto_limite_credito) || 0,
+        limite_credito: Number(formData.monto_limite_credito) || 0,
+        dias_credito: Number(formData.dias_credito) || 0,
+        dias_credito_habituales: Number(formData.dias_credito) || 0,
+        persona_contacto: formData.persona_contacto || '',
+        contacto_administrativo: formData.contacto_administrativo || '',
+        ciudad: formData.ciudad || formData.localizacion || '',
+        observaciones_negociacion: formData.observaciones_negociacion || '',
+        calificacion_precio: Number(formData.calificacion_precio) || 5,
+        calificacion_cumplimiento: Number(formData.calificacion_cumplimiento) || 5,
+        proveedor_preferencial: Boolean(formData.proveedor_preferencial),
+        cuentas_bancarias: formData.cuentas_bancarias || []
+      });
 
       if (formData.id) {
-        const { error } = await supabase
-          .from('proveedores')
-          .update(payload)
-          .eq('id', formData.id);
-        
-        if (error) {
-          // If columns were not detected (e.g. empty table on load) and schema cache missing column error occurs
-          if (error.message.includes('calificacion_cumplimiento') || error.message.includes('column') || error.message.includes('cache')) {
-            const srmKeys = ['calificacion_precio', 'calificacion_cumplimiento', 'observaciones_negociacion', 'proveedor_preferencial'];
-            const fallbackPayload = { ...payload };
-            srmKeys.forEach(k => delete fallbackPayload[k]);
-            
-            const { error: retryError } = await supabase
-              .from('proveedores')
-              .update(fallbackPayload)
-              .eq('id', formData.id);
-            if (retryError) throw retryError;
-            setColumnasDisponibles(Object.keys(fallbackPayload));
-          } else {
-            throw error;
-          }
-        }
+        await ejecutarOperacionSegura(true, formData.id, payload);
         toast.success('Proveedor actualizado con éxito');
       } else {
-        const { error } = await supabase
-          .from('proveedores')
-          .insert([payload]);
-        
-        if (error) {
-          if (error.message.includes('calificacion_cumplimiento') || error.message.includes('column') || error.message.includes('cache')) {
-            const srmKeys = ['calificacion_precio', 'calificacion_cumplimiento', 'observaciones_negociacion', 'proveedor_preferencial'];
-            const fallbackPayload = { ...payload };
-            srmKeys.forEach(k => delete fallbackPayload[k]);
-            
-            const { error: retryError } = await supabase
-              .from('proveedores')
-              .insert([fallbackPayload]);
-            if (retryError) throw retryError;
-            setColumnasDisponibles(Object.keys(fallbackPayload));
-          } else {
-            throw error;
-          }
-        }
+        await ejecutarOperacionSegura(false, null, payload);
         toast.success('Proveedor registrado con éxito');
       }
+
       setShowModal(false);
       resetForm();
-      obtenerProveedores();
+      await obtenerProveedores();
     } catch (error) {
-      toast.error('Error al guardar: ' + error.message);
+      console.error("Error al guardar proveedor:", error);
+      if (error.code === '23505' || error.message?.includes('proveedores_rif_key') || error.message?.includes('duplicate key')) {
+        toast.error(`⚠️ El RIF "${formData.rif}" ya se encuentra registrado. Verifique la lista de proveedores.`);
+      } else {
+        toast.error('Error al guardar: ' + (error.message || 'Verifique la conexión con la base de datos'));
+      }
     } finally {
       setSaving(false);
     }
@@ -279,6 +437,8 @@ const Proveedores = () => {
       id: null,
       rif: '',
       razon_social: '',
+      persona_contacto: '',
+      ciudad: '',
       correo: '',
       telefono: '',
       direccion: '',
@@ -294,7 +454,7 @@ const Proveedores = () => {
       cuentas_bancarias: []
     });
     setNuevaCategoriaText('');
-    setMostrarParametrosSrm(false);
+    setMostrarParametrosSrm(true);
     setNuevaCuentaForm({
       banco: '',
       moneda: 'USD',
@@ -409,7 +569,8 @@ const Proveedores = () => {
   };
 
   const cargarHistorialCompras = async (p) => {
-    setProvSeleccionado(p);
+    const pNormalizado = normalizarProveedor(p);
+    setProvSeleccionado(pNormalizado);
     setLoadingHistorial(true);
     setShowHistoryModal(true);
     try {
@@ -1081,19 +1242,12 @@ const Proveedores = () => {
   };
 
   const handleEdit = (p) => {
+    const pNorm = normalizarProveedor(p);
     setFormData({
-      ...p,
-      categoria: p.categoria ? p.categoria.split(', ').filter(c => c) : [],
-      localizacion: p.localizacion || '',
-      monto_limite_credito: p.monto_limite_credito ?? 0,
-      dias_credito: p.dias_credito ?? 0,
-      calificacion_precio: p.calificacion_precio ?? 5,
-      calificacion_cumplimiento: p.calificacion_cumplimiento ?? 5,
-      observaciones_negociacion: p.observaciones_negociacion || '',
-      proveedor_preferencial: Boolean(p.proveedor_preferencial),
-      cuentas_bancarias: Array.isArray(p.cuentas_bancarias) ? p.cuentas_bancarias : []
+      ...pNorm,
+      categoria: pNorm.categoria ? (Array.isArray(pNorm.categoria) ? pNorm.categoria : pNorm.categoria.split(', ').filter(c => c)) : []
     });
-    setMostrarParametrosSrm(Boolean(p.monto_limite_credito > 0 || p.dias_credito > 0 || p.observaciones_negociacion || p.proveedor_preferencial));
+    setMostrarParametrosSrm(true);
     setShowModal(true);
   };
 
@@ -1767,13 +1921,33 @@ const Proveedores = () => {
                 </div>
 
                 <div className="prov-field">
-                  <label className="prov-label">Localización (OPCIONAL)</label>
+                  <label className="prov-label">Persona de Contacto Comercial / Operativo <span style={{ color: '#ef4444' }}>*</span></label>
+                  <input 
+                    className="prov-input"
+                    placeholder="Nombre del contacto comercial"
+                    value={formData.persona_contacto || ''}
+                    onChange={e => setFormData({...formData, persona_contacto: e.target.value})}
+                  />
+                </div>
+
+                <div className="prov-field">
+                  <label className="prov-label">Persona de Contacto Administrativo / Pagos</label>
+                  <input 
+                    className="prov-input"
+                    placeholder="Nombre del contacto de cobranza/pagos"
+                    value={formData.contacto_administrativo || ''}
+                    onChange={e => setFormData({...formData, contacto_administrativo: e.target.value})}
+                  />
+                </div>
+
+                <div className="prov-field">
+                  <label className="prov-label">Ciudad / Localización <span style={{ color: '#ef4444' }}>*</span></label>
                   <input 
                     className="prov-input"
                     list="localizaciones-list"
                     placeholder="Ej: Maracaibo, Barcelona..."
-                    value={formData.localizacion || ''}
-                    onChange={e => setFormData({...formData, localizacion: e.target.value})}
+                    value={formData.ciudad || formData.localizacion || ''}
+                    onChange={e => setFormData({...formData, ciudad: e.target.value, localizacion: e.target.value})}
                   />
                   <datalist id="localizaciones-list">
                     {obtenerOpcionesLocalizacion.map((loc, idx) => (
@@ -1783,7 +1957,7 @@ const Proveedores = () => {
                 </div>
 
                   <div className="prov-field">
-                    <label className="prov-label">Correo  (OPCIONAL)</label>
+                    <label className="prov-label">Correo (OPCIONAL)</label>
                     <input 
                       type="email"
                       className="prov-input"
@@ -1793,7 +1967,7 @@ const Proveedores = () => {
                     />
                   </div>
                   <div className="prov-field">
-                    <label className="prov-label">Teléfono (OPCIONAL)</label>
+                    <label className="prov-label">Teléfono <span style={{ color: '#ef4444' }}>*</span></label>
                     <input 
                       className="prov-input"
                       placeholder="0414-XXXXXXX"
@@ -2092,7 +2266,7 @@ const Proveedores = () => {
                 </div>
 
                 <div className="prov-field prov-form-full">
-                  <label className="prov-label">Dirección</label>
+                  <label className="prov-label">Dirección <span style={{ color: '#ef4444' }}>*</span></label>
                   <textarea 
                     rows={2}
                     className="prov-input prov-textarea"
@@ -2129,32 +2303,66 @@ const Proveedores = () => {
           <div className="prov-modal-overlay" style={{ zIndex: 1000 }}>
             <div className="prov-modal" style={{ maxWidth: '980px', width: '92%', borderRadius: '24px', padding: '25px', backgroundColor: 'white' }}>
               
-              {/* Header Ficha SRM */}
-              <div style={{ borderBottom: '2px solid #e2e8f0', paddingBottom: '15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-                  <div style={{ width: '48px', height: '48px', borderRadius: '14px', backgroundColor: '#e0f2fe', color: '#0284c7', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px', fontWeight: '900' }}>
-                    🏢
-                  </div>
-                  <div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      <h2 style={{ margin: 0, fontSize: '1.4rem', fontWeight: '900', color: '#0f172a' }}>
-                        {provSeleccionado.razon_social}
-                      </h2>
-                      {provSeleccionado.proveedor_preferencial && (
-                        <span style={{ backgroundColor: '#fef3c7', color: '#b45309', fontSize: '10px', fontWeight: '900', padding: '3px 8px', borderRadius: '20px', border: '1px solid #fde68a', textTransform: 'uppercase' }}>
-                          ⭐ Preferencial
-                        </span>
-                      )}
+              {/* Header Ficha SRM - Estructura Espaciosa Desglosada */}
+              <div style={{ borderBottom: '2px solid #e2e8f0', paddingBottom: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {/* Fila 1: Título de Empresa, Badges y Botón de Cerrar */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <div style={{ width: '44px', height: '44px', borderRadius: '12px', backgroundColor: '#e0f2fe', color: '#0284c7', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '22px', flexShrink: 0 }}>
+                      🏢
                     </div>
-                    <p style={{ margin: '4px 0 0 0', fontSize: '0.85rem', color: '#64748b', fontWeight: '600' }}>
-                      RIF: <strong>{provSeleccionado.rif}</strong> | Categoría: {provSeleccionado.categoria || 'Sin Categoría'}
-                    </p>
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                        <h2 style={{ margin: 0, fontSize: '1.35rem', fontWeight: '950', color: '#0f172a', letterSpacing: '-0.02em' }}>
+                          {provSeleccionado.razon_social}
+                        </h2>
+                        <span style={{ backgroundColor: '#eff6ff', color: '#1d4ed8', fontSize: '11px', fontWeight: '900', padding: '2px 9px', borderRadius: '12px', border: '1px solid #bfdbfe' }}>
+                          RIF: {provSeleccionado.rif}
+                        </span>
+                        {provSeleccionado.categoria && (
+                          <span style={{ backgroundColor: '#f1f5f9', color: '#475569', fontSize: '11px', fontWeight: '800', padding: '2px 9px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+                            {provSeleccionado.categoria}
+                          </span>
+                        )}
+                        {provSeleccionado.proveedor_preferencial && (
+                          <span style={{ backgroundColor: '#fef3c7', color: '#b45309', fontSize: '10px', fontWeight: '900', padding: '3px 8px', borderRadius: '20px', border: '1px solid #fde68a', textTransform: 'uppercase' }}>
+                            ⭐ PREFERENCIAL
+                          </span>
+                        )}
+                      </div>
+                    </div>
                   </div>
+
+                  <button onClick={() => setShowHistoryModal(false)} className="prov-modal-close" style={{ background: '#f1f5f9', border: 'none', borderRadius: '12px', width: '36px', height: '36px', cursor: 'pointer', color: '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <XCircle size={20} />
+                  </button>
                 </div>
 
-                <button onClick={() => setShowHistoryModal(false)} className="prov-modal-close" style={{ background: '#f1f5f9', border: 'none', borderRadius: '12px', width: '36px', height: '36px', cursor: 'pointer', color: '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <XCircle size={20} />
-                </button>
+                {/* Fila 2: Tarjetas de Contacto y Ubicación (Evita texto encimado) */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '8px', backgroundColor: '#f8fafc', padding: '10px 14px', borderRadius: '12px', border: '1px solid #e2e8f0', fontSize: '0.8rem', color: '#334155' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span style={{ fontSize: '14px' }}>👤</span>
+                    <span><strong>Contacto Comercial:</strong> {provSeleccionado.persona_contacto || provSeleccionado.contacto_nombre || 'N/A'}</span>
+                  </div>
+                  {provSeleccionado.contacto_administrativo && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <span style={{ fontSize: '14px' }}>💼</span>
+                      <span><strong>Contacto Admin:</strong> {provSeleccionado.contacto_administrativo}</span>
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span style={{ fontSize: '14px' }}>📞</span>
+                    <span><strong>Teléfono:</strong> {provSeleccionado.telefono || 'N/A'}</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span style={{ fontSize: '14px' }}>📍</span>
+                    <span><strong>Ciudad:</strong> {provSeleccionado.ciudad || provSeleccionado.localizacion || 'N/A'}</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', gridColumn: 'span 1' }}>
+                    <span style={{ fontSize: '14px' }}>🏠</span>
+                    <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}><strong>Dirección:</strong> {provSeleccionado.direccion || 'N/A'}</span>
+                  </div>
+                </div>
               </div>
 
               {/* Sub-Pestañas SRM */}
@@ -2224,20 +2432,26 @@ const Proveedores = () => {
                 <div>
                   {/* PESTAÑA 1: DATOS FINANCIEROS Y CRÉDITO */}
                   {subTabFicha === 'credito' && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
                       {(() => {
-                        const limite = Number(provSeleccionado.monto_limite_credito) || 0;
-                        const dias = Number(provSeleccionado.dias_credito) || 0;
+                        const limite = Number(provSeleccionado.monto_limite_credito ?? provSeleccionado.limite_credito) || 0;
+                        const dias = Number(provSeleccionado.dias_credito ?? provSeleccionado.dias_credito_habituales) || 0;
+                        const ctasModal = parseCuentasBancarias(provSeleccionado.cuentas_bancarias);
                         const gastado = historialCompras.reduce((sum, c) => sum + c.total, 0);
-                        const disponible = limite - gastado;
+                        const disponible = limite > 0 ? (limite - gastado) : 0;
                         const pctDisp = limite > 0 ? (disponible / limite) * 100 : 0;
 
                         let semaforoBg = '#f0fdf4';
                         let semaforoBorder = '#86efac';
                         let semaforoColor = '#166534';
-                        let semaforoTexto = '🟢 CRÉDITO SALUDABLE';
+                        let semaforoTexto = '🟢 CRÉDITO SALUDABLE Y DISPONIBLE';
 
-                        if (limite <= 0) {
+                        if (limite <= 0 && dias > 0) {
+                          semaforoBg = '#f0f9ff';
+                          semaforoBorder = '#bae6fd';
+                          semaforoColor = '#0369a1';
+                          semaforoTexto = `🔵 LÍNEA DE CRÉDITO ABIERTA (PLAZO: ${dias} DÍAS - SIN MONTO LÍMITE FIJO)`;
+                        } else if (limite <= 0 && dias <= 0) {
                           semaforoBg = '#f8fafc';
                           semaforoBorder = '#cbd5e1';
                           semaforoColor = '#475569';
@@ -2257,7 +2471,7 @@ const Proveedores = () => {
                         return (
                           <>
                             {/* BANNER DE SEMÁFORO DE CRÉDITO */}
-                            <div style={{ backgroundColor: semaforoBg, border: `2px solid ${semaforoBorder}`, borderRadius: '16px', padding: '16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <div style={{ backgroundColor: semaforoBg, border: `2px solid ${semaforoBorder}`, borderRadius: '16px', padding: '16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
                               <div>
                                 <div style={{ fontSize: '11px', fontWeight: '900', color: semaforoColor, letterSpacing: '0.05em' }}>
                                   {semaforoTexto}
@@ -2269,8 +2483,8 @@ const Proveedores = () => {
 
                               <div style={{ textAlign: 'right' }}>
                                 <div style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: '700' }}>Crédito Disponible</div>
-                                <div style={{ fontSize: '1.5rem', fontWeight: '950', color: disponible < 0 ? '#dc2626' : '#0f172a' }}>
-                                  $ {disponible.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                                <div style={{ fontSize: '1.5rem', fontWeight: '950', color: (limite > 0 && disponible < 0) ? '#dc2626' : '#0f172a' }}>
+                                  {limite > 0 ? `$ ${disponible.toLocaleString('de-DE', { minimumFractionDigits: 2 })}` : (dias > 0 ? 'Sin límite fijo' : '$ 0,00')}
                                 </div>
                               </div>
                             </div>
@@ -2280,7 +2494,7 @@ const Proveedores = () => {
                               <div style={{ backgroundColor: '#f8fafc', padding: '16px', borderRadius: '14px', border: '1px solid #e2e8f0' }}>
                                 <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '800', textTransform: 'uppercase' }}>Límite de Crédito Aprobado</div>
                                 <div style={{ fontSize: '1.3rem', fontWeight: '900', color: '#0f172a', marginTop: '6px' }}>
-                                  $ {limite.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                                  {limite > 0 ? `$ ${limite.toLocaleString('de-DE', { minimumFractionDigits: 2 })}` : (dias > 0 ? 'Sin límite fijo' : '$ 0,00')}
                                 </div>
                               </div>
 
@@ -2292,25 +2506,41 @@ const Proveedores = () => {
                               </div>
 
                               <div style={{ backgroundColor: '#f8fafc', padding: '16px', borderRadius: '14px', border: '1px solid #e2e8f0' }}>
-                                <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '800', textTransform: 'uppercase' }}>Días de Crédito</div>
+                                <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '800', textTransform: 'uppercase' }}>Días de Crédito (Plazo)</div>
                                 <div style={{ fontSize: '1.3rem', fontWeight: '900', color: '#0ea5e9', marginTop: '6px' }}>
                                   {dias} días
                                 </div>
                               </div>
                             </div>
 
+                            {/* EVALUACIÓN DE RENDIMIENTO SRM */}
+                            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                              <div style={{ flex: 1, minWidth: '180px', backgroundColor: '#f8fafc', padding: '12px 16px', borderRadius: '12px', border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569', textTransform: 'uppercase' }}>Calificación Precio</span>
+                                <span style={{ fontSize: '0.9rem', fontWeight: '900', color: '#f59e0b' }}>
+                                  {'★'.repeat(provSeleccionado.calificacion_precio || 5)} ({provSeleccionado.calificacion_precio || 5}/5)
+                                </span>
+                              </div>
+                              <div style={{ flex: 1, minWidth: '180px', backgroundColor: '#f8fafc', padding: '12px 16px', borderRadius: '12px', border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569', textTransform: 'uppercase' }}>Calificación Cumplimiento</span>
+                                <span style={{ fontSize: '0.9rem', fontWeight: '900', color: '#f59e0b' }}>
+                                  {'★'.repeat(provSeleccionado.calificacion_cumplimiento || 5)} ({provSeleccionado.calificacion_cumplimiento || 5}/5)
+                                </span>
+                              </div>
+                            </div>
+
                             {/* SECCIÓN DE CUENTAS BANCARIAS */}
-                            <div style={{ backgroundColor: '#f8fafc', padding: '18px', borderRadius: '16px', border: '1px solid #cbd5e1', marginTop: '15px' }}>
+                            <div style={{ backgroundColor: '#f8fafc', padding: '18px', borderRadius: '16px', border: '1px solid #cbd5e1', marginTop: '2px' }}>
                               <div style={{ fontSize: '0.8rem', color: '#1e293b', fontWeight: '900', textTransform: 'uppercase', marginBottom: '12px', borderBottom: '1px solid #cbd5e1', paddingBottom: '6px' }}>
                                 🏦 Cuentas de Pago Registradas
                               </div>
                               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                {(!provSeleccionado.cuentas_bancarias || provSeleccionado.cuentas_bancarias.length === 0) ? (
+                                {(!ctasModal || ctasModal.length === 0) ? (
                                   <span style={{ fontSize: '0.75rem', color: '#94a3b8', fontStyle: 'italic', padding: '4px' }}>
                                     No hay cuentas bancarias asociadas a este proveedor.
                                   </span>
                                 ) : (
-                                  provSeleccionado.cuentas_bancarias.map((cta, idx) => (
+                                  ctasModal.map((cta, idx) => (
                                     <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: '5px', backgroundColor: 'white', padding: '10px 14px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
                                       <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
                                         <span style={{ fontSize: '0.8rem', fontWeight: '800', color: '#1e293b' }}>{cta.banco}</span>
@@ -2327,6 +2557,16 @@ const Proveedores = () => {
                                     </div>
                                   ))
                                 )}
+                              </div>
+                            </div>
+
+                            {/* SECCIÓN DE OBSERVACIONES DE NEGOCIACIÓN */}
+                            <div style={{ backgroundColor: provSeleccionado.observaciones_negociacion ? '#fffbeb' : '#f8fafc', padding: '16px', borderRadius: '14px', border: `1px solid ${provSeleccionado.observaciones_negociacion ? '#fde68a' : '#e2e8f0'}` }}>
+                              <div style={{ fontSize: '0.75rem', color: provSeleccionado.observaciones_negociacion ? '#92400e' : '#64748b', fontWeight: '900', textTransform: 'uppercase', marginBottom: '4px' }}>
+                                📝 Observaciones de Negociación & Acuerdos Comerciales
+                              </div>
+                              <div style={{ fontSize: '0.85rem', color: provSeleccionado.observaciones_negociacion ? '#451a03' : '#94a3b8', fontWeight: '500', whiteSpace: 'pre-wrap', fontStyle: provSeleccionado.observaciones_negociacion ? 'normal' : 'italic' }}>
+                                {provSeleccionado.observaciones_negociacion || 'No hay notas de negociación ni acuerdos comerciales registrados para este proveedor.'}
                               </div>
                             </div>
                           </>
@@ -2508,28 +2748,21 @@ const Proveedores = () => {
                           onClick={async () => {
                             setGuardandoSrmProv(true);
                             try {
-                              if (columnasDisponibles && !columnasDisponibles.includes('calificacion_cumplimiento')) {
-                                throw new Error("El módulo SRM no está habilitado en la base de datos (faltan las columnas de calificación).");
-                              }
-                              const { error } = await supabase
-                                .from('proveedores')
-                                .update({
-                                  calificacion_precio: provSeleccionado.calificacion_precio,
-                                  calificacion_cumplimiento: provSeleccionado.calificacion_cumplimiento,
-                                  observaciones_negociacion: provSeleccionado.observaciones_negociacion,
-                                  proveedor_preferencial: provSeleccionado.proveedor_preferencial
-                                })
-                                .eq('id', provSeleccionado.id);
-                              if (error) {
-                                if (error.message.includes('calificacion_cumplimiento') || error.message.includes('column') || error.message.includes('cache')) {
-                                  throw new Error("El módulo SRM no está habilitado en la base de datos (faltan las columnas de calificación).");
-                                }
-                                throw error;
-                              }
+                              const srmPayload = {
+                                calificacion_precio: provSeleccionado.calificacion_precio || 5,
+                                calificacion_cumplimiento: provSeleccionado.calificacion_cumplimiento || 5,
+                                observaciones_negociacion: provSeleccionado.observaciones_negociacion || '',
+                                proveedor_preferencial: Boolean(provSeleccionado.proveedor_preferencial),
+                                monto_limite_credito: Number(provSeleccionado.monto_limite_credito || provSeleccionado.limite_credito || 0),
+                                limite_credito: Number(provSeleccionado.monto_limite_credito || provSeleccionado.limite_credito || 0),
+                                dias_credito: Number(provSeleccionado.dias_credito || provSeleccionado.dias_credito_habituales || 0),
+                                dias_credito_habituales: Number(provSeleccionado.dias_credito || provSeleccionado.dias_credito_habituales || 0)
+                              };
+                              await ejecutarOperacionSegura(true, provSeleccionado.id, srmPayload);
                               toast.success("Evaluación SRM y Acuerdos guardados con éxito.");
                               await obtenerProveedores();
                             } catch (err) {
-                              toast.error(err.message);
+                              toast.error(err.message || "Error al guardar evaluación SRM.");
                             } finally {
                               setGuardandoSrmProv(false);
                             }

@@ -9,6 +9,7 @@ import Usuarios from './Usuarios';
 import SolicitudFondos from './SolicitudFondos';
 import ModuloTicketsPago from './ModuloTicketsPago';
 import Compras from './Compras';
+import OrdenesCompra from './OrdenesCompra';
 import Reportes from './Reportes';
 import ReportesMaestro from './ReportesMaestro';
 import ReporteOperaciones from './ReporteOperaciones';
@@ -109,7 +110,7 @@ function Dashboard() {
   };
 
   useEffect(() => {
-    if (['compras', 'reportesmaestro', 'reporte_operaciones', 'reportes', 'proveedores', 'analytics_compras'].includes(seccionActiva)) {
+    if (['compras', 'ordenes_compra', 'reportesmaestro', 'reporte_operaciones', 'reportes', 'proveedores', 'analytics_compras'].includes(seccionActiva)) {
       setDropdowns(prev => ({ ...prev, compras: true }));
     } else if (['ejecutivo', 'control_precios'].includes(seccionActiva)) {
       setDropdowns(prev => ({ ...prev, control: true }));
@@ -136,12 +137,15 @@ function Dashboard() {
     const modulos = perfil.permisos_modulos || [];
     const todosModulos = [
       'dashboard', 'requisiciones', 'fondos', 'tickets', 'almacen',
-      'compras', 'reportesmaestro', 'reporte_operaciones', 'reportes', 'proveedores',
+      'compras', 'ordenes_compra', 'reportesmaestro', 'reporte_operaciones', 'reportes', 'proveedores',
       'analytics_compras', 'ejecutivo', 'control_precios', 'usuarios', 'atributos', 'administracion', 'liquidacion', 'admin_analytics'
     ];
     todosModulos.forEach(modId => {
       permisos[modId] = modulos.includes(modId);
     });
+    if (permisos['compras'] || perfil.esAdminReal || (perfil.departamento || '').toLowerCase().includes('compra')) {
+      permisos['ordenes_compra'] = true;
+    }
     return { ...perfil, permisos };
   };
 
@@ -586,6 +590,7 @@ function Dashboard() {
     if (seccionActiva === 'tickets') return <ModuloTicketsPago currentUser={usuario} />;
     if (seccionActiva === 'liquidacion') return <LiquidacionFacturas currentUser={usuario} />;
     if (seccionActiva === 'compras') return <Compras currentUser={usuario} />;
+    if (seccionActiva === 'ordenes_compra') return <OrdenesCompra currentUser={usuario} />;
     if (seccionActiva === 'reportes') return <Reportes />;
     if (seccionActiva === 'reportesmaestro') return <ReportesMaestro />;
     if (seccionActiva === 'reporte_operaciones') return <ReporteOperaciones currentUser={usuario} />;
@@ -1089,6 +1094,7 @@ function Dashboard() {
                 iconCategory: 'fa-cart-flatbed-suitcases',
                 items: [
                   { id: 'compras', icon: 'fa-cart-plus', label: 'Compras' },
+                  { id: 'ordenes_compra', icon: 'fa-file-invoice', label: 'Órdenes de Compra' },
                   { id: 'reportesmaestro', icon: 'fa-chart-line', label: 'Reportes Maestro' },
                   { id: 'reporte_operaciones', icon: 'fa-chart-bar', label: 'Reporte Operaciones' },
                   { id: 'reportes', icon: 'fa-file-contract', label: 'Reporte de Compras' },
@@ -1129,6 +1135,9 @@ function Dashboard() {
               }
             ].map(group => {
               const tienePermiso = (id) => {
+                if (id === 'ordenes_compra') {
+                  return !!usuario?.permisos?.['ordenes_compra'] || !!usuario?.permisos?.['compras'] || !!usuario?.esAdminReal || (usuario?.departamento || '').toLowerCase().includes('compra') || (usuario?.rol || '').toLowerCase().includes('admin');
+                }
                 return !!usuario?.permisos?.[id];
               };
 

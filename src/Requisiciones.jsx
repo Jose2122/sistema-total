@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { supabase } from './supabaseClient';
-import { obtenerAprobadorEfectivo } from './utils/delegationUtils';
+import { obtenerAprobadorEfectivo, estaEnVacaciones, obtenerGerenteGeneral } from './utils/delegationUtils';
 import { motion, AnimatePresence } from 'framer-motion';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
@@ -182,9 +182,22 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
           }
         }
 
+        // Resolver aprobadores efectivos en caso de vacaciones
+        const { data: todosPerfiles } = await supabase.from('perfiles').select('*');
+        const destinatariosEfectivos = [];
         for (const g of targets) {
+          const resEfectivo = obtenerAprobadorEfectivo(g.id, todosPerfiles || []);
+          if (resEfectivo && resEfectivo.id) {
+            destinatariosEfectivos.push(resEfectivo.id);
+          } else {
+            destinatariosEfectivos.push(g.id);
+          }
+        }
+
+        const idsUnicos = [...new Set(destinatariosEfectivos)];
+        for (const targetId of idsUnicos) {
           await enviarNotificacion(
-            g.id,
+            targetId,
             `Nueva Requisición ${correlativo} de ${creadorNombre} requiere su aprobación de Área.`,
             'Aprobación Pendiente',
             reqId
@@ -386,9 +399,28 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
         }
       }
 
-      const { data, error } = await query.order('fecha_emision', { ascending: false });
+      let data = [];
+      let page = 0;
+      const pageSize = 1000;
+      let hasMore = true;
 
-      if (error) throw error;
+      while (hasMore) {
+        const { data: chunk, error } = await query
+          .order('fecha_emision', { ascending: false })
+          .range(page * pageSize, (page + 1) * pageSize - 1);
+
+        if (error) throw error;
+        if (chunk && chunk.length > 0) {
+          data = data.concat(chunk);
+          if (chunk.length < pageSize) {
+            hasMore = false;
+          } else {
+            page++;
+          }
+        } else {
+          hasMore = false;
+        }
+      }
       if (data) {
         let finalData = data;
         const myRank = getRank(currentUser.rol);
@@ -1058,8 +1090,9 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
   };
 
   const manejarRechazarGerenteArea = () => {
+    const rolUpper = (currentUser?.rol || '').toUpperCase();
     const emailLower = (currentUser?.correo || '').toLowerCase();
-    const esGerenteArea = currentUser?.rol?.toLowerCase()?.includes('gerente') || emailLower === 'karincmm1@gmail.com';
+    const esGerenteArea = currentUser?.rol?.toLowerCase()?.includes('gerente') || emailLower === 'karincmm1@gmail.com' || rolUpper.includes('ADMIN') || emailLower.includes('cvega') || currentUser?.esAdminReal;
     if (!editandoId || !esGerenteArea) return;
     setMotivoRechazo('');
     setRechazoAction('area');
@@ -1481,15 +1514,18 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
 
   const manejarAprobarGerenteArea = async () => {
     const reqActual = historial.find(h => String(h.id) === String(editandoId));
-    const esGerenteArea = (currentUser?.rol?.toLowerCase()?.includes('gerente') && !currentUser?.rol?.toLowerCase()?.includes('general')) || (currentUser?.correo || '').toLowerCase() === 'karincmm1@gmail.com';
+    const rolUpper = (currentUser?.rol || '').toUpperCase();
+    const emailLower = (currentUser?.correo || '').toLowerCase();
+    const esGerenteArea = (currentUser?.rol?.toLowerCase()?.includes('gerente') && !currentUser?.rol?.toLowerCase()?.includes('general')) || emailLower === 'karincmm1@gmail.com';
     const esSuGerenteDirecto = gerenteDirectoIdCreador && currentUser?.id === gerenteDirectoIdCreador;
     const esFavio = (currentUser?.nombre || '').toUpperCase().includes('FAVIO') && (currentUser?.apellido || '').toUpperCase().includes('BAVUSO');
+    const esGG = currentUser?.esAdminReal || rolUpper.includes('GERENTE GENERAL') || rolUpper.includes('ADMIN') || emailLower.includes('cvega');
 
-    if (!editandoId || (!esGerenteArea && !esSuGerenteDirecto && !esFavio)) {
-      toast.error('Solo el Gerente de Área o el superior directo correspondiente puede realizar esta aprobación.');
+    if (!editandoId || (!esGerenteArea && !esSuGerenteDirecto && !esFavio && !esGG)) {
+      toast.error('Solo el Gerente de Área, su encargado delegado o la Gerencia General pueden realizar esta aprobación.');
       return;
     }
-    if (reqActual?.solicitante === `${currentUser.nombre} ${currentUser.apellido}`) {
+    if (reqActual?.solicitante === `${currentUser.nombre} ${currentUser.apellido}` && !esGG) {
       toast.error('No puede aprobar su propia requisición.');
       return;
     }
@@ -1516,16 +1552,20 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
         toast.success('Aprobación Final registrada por Favio Bavuso. Enviada directamente a Compras.');
       } else {
         // Flujo normal: enviar a aprobación de Gerente General
+        const notaAprobador = esGG 
+          ? `${currentUser.nombre} ${currentUser.apellido} (GG / Sustitución Vacaciones)`.trim()
+          : `${currentUser.nombre} ${currentUser.apellido}`.trim();
+
         const { error } = await supabase.from('requisiciones').update({
           aprobado_gerente_area: true,
           firma_gerente: currentUser.firma_url || null, // Firma Nivel 1 guardada en firma_gerente
           estado_aprobacion: 'enviada_general',
           aprobacion_nombre: 'Aprobado por Área',
           f_aprobacion_area: new Date().toISOString(),
-          n_aprobacion_area: `${currentUser.nombre} ${currentUser.apellido}`.trim()
+          n_aprobacion_area: notaAprobador
         }).eq('id', editandoId);
         if (error) throw error;
-        toast.success('Aprobada por Gerente de Área. Enviada al Gerente General.');
+        toast.success('Aprobación de Área registrada. Enviada al Gerente General para Visto Bueno Final.');
         
         // NOTIFICAR AL GERENTE GENERAL
         try {
@@ -3000,12 +3040,12 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
           }
 
           return baseStats.filter(x => {
-            if (rolUser.includes('proyecto')) {
+            if (rolUser.includes('general') || currentUser?.esAdminReal) {
+              return true; // Gerente General y Admins ven todas las tarjetas
+            } else if (rolUser.includes('proyecto')) {
               return !(x.filter === 'pendiente_area' || x.filter === 'enviada_general');
             } else if (rolUser.includes('gerente') && !rolUser.includes('general')) {
               return !(x.filter === 'pendiente_proyecto' || x.filter === 'enviada_general');
-            } else if (rolUser.includes('general')) {
-              return !(x.filter === 'pendiente_proyecto' || x.filter === 'pendiente_area');
             }
             return true;
           });
@@ -4856,28 +4896,33 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                                 </>
                               );
                             }
-                            const esGerenteArea = (currentUser?.rol?.toLowerCase()?.includes('gerente') && !currentUser?.rol?.toLowerCase()?.includes('general')) || (currentUser?.correo || '').toLowerCase() === 'karincmm1@gmail.com';
+                            const rolUpper = (currentUser?.rol || '').toUpperCase();
+                            const emailLower = (currentUser?.correo || '').toLowerCase();
+                            const esGG = currentUser?.esAdminReal || rolUpper.includes('GERENTE GENERAL') || rolUpper.includes('ADMIN') || emailLower.includes('cvega') || esFavio;
+
+                            const esGerenteArea = (currentUser?.rol?.toLowerCase()?.includes('gerente') && !currentUser?.rol?.toLowerCase()?.includes('general')) || emailLower === 'karincmm1@gmail.com';
                             const esSuGerenteDirecto = gerenteDirectoIdCreador && currentUser?.id === gerenteDirectoIdCreador;
                             const esFavio = (currentUser?.nombre || '').toUpperCase().includes('FAVIO') && (currentUser?.apellido || '').toUpperCase().includes('BAVUSO');
 
-                            if (reqActual?.estado_aprobacion === 'pendiente_area' && (esGerenteArea || esSuGerenteDirecto || esFavio)) {
+                            if (reqActual?.estado_aprobacion === 'pendiente_area' && (esGerenteArea || esSuGerenteDirecto || esFavio || esGG)) {
                               return (
                                 <>
                                   <button className="btn-tc btn-tc-danger" onClick={manejarRechazarGerenteArea} disabled={loading}>
                                     {loading ? <Loader2 className="animate-spin" size={16} /> : 'RECHAZAR'}
                                   </button>
                                   <button className="btn-tc btn-tc-success" onClick={manejarAprobarGerenteArea} disabled={loading}>
-                                    {loading ? <Loader2 className="animate-spin" size={16} /> : '✓ APROBAR ÁREA'}
+                                    {loading ? <Loader2 className="animate-spin" size={16} /> : (esGG ? '✓ APROBAR ÁREA (DESDE GG)' : '✓ APROBAR ÁREA')}
                                   </button>
+                                  {esGG && (
+                                    <button className="btn-tc btn-tc-primary" onClick={manejarAprobarGeneral} disabled={loading} style={{ backgroundColor: '#7c3aed', color: 'white' }}>
+                                      {loading ? <Loader2 className="animate-spin" size={16} /> : '⚡ APROBACIÓN FINAL DIRECTA'}
+                                    </button>
+                                  )}
                                 </>
                               );
                             }
 
-                            const rolUpper = (currentUser?.rol || '').toUpperCase();
-                            const emailLower = (currentUser?.correo || '').toLowerCase();
-                            const esGG = currentUser?.esAdminReal || rolUpper === 'GERENTE GENERAL' || rolUpper === 'ADMIN' || emailLower.includes('cvega') || esFavio;
-
-                            if (esGG && reqActual?.estado_aprobacion === 'enviada_general' && reqActual?.solicitante !== `${currentUser.nombre} ${currentUser.apellido}`) {
+                            if (esGG && reqActual?.estado_aprobacion === 'enviada_general' && reqActual?.solicitante !== `${currentUser?.nombre} ${currentUser?.apellido}`) {
                               return (
                                 <>
                                   <button className="btn-tc btn-tc-danger" onClick={manejarRechazarGeneral} disabled={loading}>
