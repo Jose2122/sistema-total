@@ -1135,8 +1135,12 @@ function Dashboard() {
               }
             ].map(group => {
               const tienePermiso = (id) => {
+                if (id === 'requisiciones') return true;
                 if (id === 'ordenes_compra') {
                   return !!usuario?.permisos?.['ordenes_compra'] || !!usuario?.permisos?.['compras'] || !!usuario?.esAdminReal || (usuario?.departamento || '').toLowerCase().includes('compra') || (usuario?.rol || '').toLowerCase().includes('admin');
+                }
+                if (!usuario?.permisos_modulos || usuario?.permisos_modulos.length === 0) {
+                  if (['requisiciones', 'fondos', 'tickets', 'almacen', 'dashboard'].includes(id)) return true;
                 }
                 return !!usuario?.permisos?.[id];
               };

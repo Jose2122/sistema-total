@@ -21,11 +21,29 @@ const compararNombres = (nombre1, nombre2) => {
   return clean(nombre1) === clean(nombre2);
 };
 
+const parsearJsonSeguro = (val) => {
+  if (!val) return [];
+  if (Array.isArray(val)) return val;
+  if (typeof val === 'string') {
+    try {
+      let parsed = JSON.parse(val);
+      if (typeof parsed === 'string') {
+        parsed = JSON.parse(parsed);
+      }
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+};
+
 const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentUserProp }) => {
   // --- ESTADOS DEL SISTEMA ---
   const [showModal, setShowModal] = useState(false);
   const [historial, setHistorial] = useState([]);
   const [editandoId, setEditandoId] = useState(null);
+  const [requisicionActiva, setRequisicionActiva] = useState(null);
   const [loading, setLoading] = useState(false);
   const [currentUser, setCurrentUser] = useState(currentUserProp || null);
   const [modoEdicion, setModoEdicion] = useState(false);
@@ -55,25 +73,25 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
 
     if (!cc) return null;
     const ccUpper = cc.toString().toUpperCase().trim();
-    
+
     // Si contiene "MTTO", "MAYOR" o "GRANDE"
     if (
-      ccUpper.includes("MTTO") || 
-      ccUpper.includes("MAYOR") || 
+      ccUpper.includes("MTTO") ||
+      ccUpper.includes("MAYOR") ||
       ccUpper.includes("GRANDE")
     ) {
       return "Hilda Colina";
     }
-    
+
     // Si contiene "EXCELENCIA", "VAC" o "VACCUM"
     if (
-      ccUpper.includes("EXCELENCIA") || 
-      ccUpper.includes("VAC") || 
+      ccUpper.includes("EXCELENCIA") ||
+      ccUpper.includes("VAC") ||
       ccUpper.includes("VACCUM")
     ) {
       return "Johannel García";
     }
-    
+
     return null;
   };
 
@@ -218,7 +236,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
             destinatarioGGId = favioData[0].id;
           }
         }
-        
+
         if (!destinatarioGGId) {
           // Fallback a Carlos Vega (Gerente General de la empresa)
           const { data: carlos } = await supabase
@@ -399,73 +417,59 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
         }
       }
 
-      let data = [];
-      let page = 0;
-      const pageSize = 1000;
-      let hasMore = true;
+      const { data, error } = await query.order('fecha_emision', { ascending: false });
 
-      while (hasMore) {
-        const { data: chunk, error } = await query
-          .order('fecha_emision', { ascending: false })
-          .range(page * pageSize, (page + 1) * pageSize - 1);
-
-        if (error) throw error;
-        if (chunk && chunk.length > 0) {
-          data = data.concat(chunk);
-          if (chunk.length < pageSize) {
-            hasMore = false;
-          } else {
-            page++;
-          }
-        } else {
-          hasMore = false;
-        }
-      }
+      if (error) throw error;
       if (data) {
         let finalData = data;
         const myRank = getRank(currentUser.rol);
 
-        const historialMapeado = finalData.map(db => ({
-          id: db.id,
-          correlativo: db.correlativo_req || `REQ-${String(db.id).padStart(3, '0')}`,
-          origen: db.origen || 'Manual',
-          solicitante: db.solicitante,
-          centroCosto: db.centro_costo,
-          aprobacion: db.aprobacion_nombre || (db.aprobacion ? 'Aprobado' : 'Pendiente'),
-          status: db.status_compra || 'Pendiente',
-          prioridad: db.prioridad || 'Normal',
-          total: Number(db.total_bs) || 0,
-          detalles: db.items,
-          fecha: db.fecha_emision ? db.fecha_emision.split('T')[0] : '',
-          justificacion: db.justificacion,
-          fecha_requerida: db.fecha_requerida,
-          gerencia: db.gerencia,
-          aprobado_gerente_area: db.aprobado_gerente_area || false,
-          aprobado_gerente_general: db.aprobado_gerente_general || false,
-          aprobado_gerente_proyecto: db.aprobado_gerente_proyecto || false,
-          estado_aprobacion: db.estado_aprobacion || 'pendiente_area',
-          motivo_rechazo: db.motivo_rechazo || '',
-          firma_gerente_general: db.firma_gerente_general,
-          observaciones: db.observaciones || '',
-          observaciones_direccion: db.observaciones_direccion || '',
-          facturas_url: db.facturas_url || [],
-          id_referencia_proyecto: db.id_referencia_proyecto || '',
-          user_id: db.user_id,
-          fecha_emision: db.fecha_emision,
-          f_aprobacion_proyecto: db.f_aprobacion_proyecto,
-          n_aprobacion_proyecto: db.n_aprobacion_proyecto,
-          f_aprobacion_area: db.f_aprobacion_area,
-          n_aprobacion_area: db.n_aprobacion_area,
-          f_aprobacion_general: db.f_aprobacion_general,
-          n_aprobacion_general: db.n_aprobacion_general,
-          f_culminacion_compras: db.f_culminacion_compras,
-          f_inicio_compras: db.f_inicio_compras,
-          fecha_limite_compra: db.fecha_limite_compra,
-          is_pausada: db.is_pausada,
-          motivo_postergacion: db.motivo_postergacion,
-          con_iva: db.con_iva !== false,
-          asignado_nombre: db.asignado_nombre
-        }));
+        const historialMapeado = finalData.map(db => {
+          const itemsSeguros = parsearJsonSeguro(db.items);
+          const facturasSeguras = parsearJsonSeguro(db.facturas_url);
+          return {
+            id: db.id,
+            correlativo: db.correlativo_req || `REQ-${String(db.id).padStart(3, '0')}`,
+            origen: db.origen || 'Manual',
+            solicitante: db.solicitante,
+            centroCosto: db.centro_costo,
+            aprobacion: db.aprobacion_nombre || (db.aprobacion ? 'Aprobado' : 'Pendiente'),
+            status: db.status_compra || 'Pendiente',
+            prioridad: db.prioridad || 'Normal',
+            total: Number(db.total_bs) || 0,
+            detalles: itemsSeguros,
+            items: itemsSeguros,
+            fecha: db.fecha_emision ? db.fecha_emision.split('T')[0] : '',
+            justificacion: db.justificacion,
+            fecha_requerida: db.fecha_requerida,
+            gerencia: db.gerencia,
+            aprobado_gerente_area: db.aprobado_gerente_area || false,
+            aprobado_gerente_general: db.aprobado_gerente_general || false,
+            aprobado_gerente_proyecto: db.aprobado_gerente_proyecto || false,
+            estado_aprobacion: db.estado_aprobacion || 'pendiente_area',
+            motivo_rechazo: db.motivo_rechazo || '',
+            firma_gerente_general: db.firma_gerente_general,
+            observaciones: db.observaciones || '',
+            observaciones_direccion: db.observaciones_direccion || '',
+            facturas_url: facturasSeguras,
+            id_referencia_proyecto: db.id_referencia_proyecto || '',
+            user_id: db.user_id,
+            fecha_emision: db.fecha_emision,
+            f_aprobacion_proyecto: db.f_aprobacion_proyecto,
+            n_aprobacion_proyecto: db.n_aprobacion_proyecto,
+            f_aprobacion_area: db.f_aprobacion_area,
+            n_aprobacion_area: db.n_aprobacion_area,
+            f_aprobacion_general: db.f_aprobacion_general,
+            n_aprobacion_general: db.n_aprobacion_general,
+            f_culminacion_compras: db.f_culminacion_compras,
+            f_inicio_compras: db.f_inicio_compras,
+            fecha_limite_compra: db.fecha_limite_compra,
+            is_pausada: db.is_pausada,
+            motivo_postergacion: db.motivo_postergacion,
+            con_iva: db.con_iva !== false,
+            asignado_nombre: db.asignado_nombre
+          };
+        });
         setHistorial(historialMapeado);
 
         // Extraer subordinados y gerencias únicas
@@ -569,8 +573,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
         ));
 
       const matchDepto = filtroDepto === 'Todos' || req.gerencia === filtroDepto;
-      const matchStatus = filtroAprobacion === 'Todos' || 
-        (filtroAprobacion === 'pendientes_especiales' 
+      const matchStatus = filtroAprobacion === 'Todos' ||
+        (filtroAprobacion === 'pendientes_especiales'
           ? ['pendiente_proyecto', 'pendiente_area', 'enviada_general', 'rechazada', 'ANULADA'].includes(req.estado_aprobacion)
           : filtroAprobacion === 'pendientes_de_aprobacion'
             ? ['pendiente_proyecto', 'pendiente_area', 'enviada_general'].includes(req.estado_aprobacion)
@@ -588,11 +592,11 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
 
       return matchTexto && matchDepto && matchStatus && matchCategoria && matchCC && matchStatusCompra && matchFecha && matchSolicitante;
     }).sort((a, b) => {
-      const aEmergenciaPendiente = a.prioridad === 'Emergencia' && !( (a.estado_aprobacion === 'aprobado_final' && a.status?.toUpperCase() === 'COMPLETADO') || a.estado_aprobacion === 'ANULADA' );
-      const bEmergenciaPendiente = b.prioridad === 'Emergencia' && !( (b.estado_aprobacion === 'aprobado_final' && b.status?.toUpperCase() === 'COMPLETADO') || b.estado_aprobacion === 'ANULADA' );
+      const aEmergenciaPendiente = a.prioridad === 'Emergencia' && !((a.estado_aprobacion === 'aprobado_final' && a.status?.toUpperCase() === 'COMPLETADO') || a.estado_aprobacion === 'ANULADA');
+      const bEmergenciaPendiente = b.prioridad === 'Emergencia' && !((b.estado_aprobacion === 'aprobado_final' && b.status?.toUpperCase() === 'COMPLETADO') || b.estado_aprobacion === 'ANULADA');
 
-      const aEmergenciaFin = a.prioridad === 'Emergencia' && ( (a.estado_aprobacion === 'aprobado_final' && a.status?.toUpperCase() === 'COMPLETADO') || a.estado_aprobacion === 'ANULADA' );
-      const bEmergenciaFin = b.prioridad === 'Emergencia' && ( (b.estado_aprobacion === 'aprobado_final' && b.status?.toUpperCase() === 'COMPLETADO') || b.estado_aprobacion === 'ANULADA' );
+      const aEmergenciaFin = a.prioridad === 'Emergencia' && ((a.estado_aprobacion === 'aprobado_final' && a.status?.toUpperCase() === 'COMPLETADO') || a.estado_aprobacion === 'ANULADA');
+      const bEmergenciaFin = b.prioridad === 'Emergencia' && ((b.estado_aprobacion === 'aprobado_final' && b.status?.toUpperCase() === 'COMPLETADO') || b.estado_aprobacion === 'ANULADA');
 
       // 1. Emergencias pendientes primero
       if (aEmergenciaPendiente && !bEmergenciaPendiente) return -1;
@@ -698,7 +702,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
   const obtenerEstructuraCorrelativo = (depto, user) => {
     const sigla = obtenerSiglaGerencia(depto);
     const aa = new Date().getFullYear().toString().slice(-2);
-    
+
     return {
       likePattern: `RR-${sigla}-${aa}-%`,
       prefix: `RR-${sigla}-${aa}-`
@@ -983,6 +987,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     setObservacionesDireccion('');
     setIdReferenciaProyecto('');
     setEditandoId(null);
+    setRequisicionActiva(null);
     setFechaRequerida(new Date().toISOString().split('T')[0]);
     setPrioridad('');
     setRenglones([{ id: Date.now(), clasificacion: '', categoria: '', cant: 1, uni: 'UNID', descripcion: '', beneficiario: '', pu: 0, total: 0, status: 'En Espera', estado_item: 'pendiente' }]);
@@ -995,13 +1000,17 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
   };
 
   const verRequisicion = (req) => {
+    if (!req) return;
+    setRequisicionActiva(req);
     setEditandoId(req.id);
-    setPrioridad(req.prioridad);
-    setJustificacion(req.justificacion);
-    setObservaciones(req.observaciones);
+    setPrioridad(req.prioridad || 'Normal');
+    setJustificacion(req.justificacion || '');
+    setObservaciones(req.observaciones || '');
     setObservacionesDireccion(req.observaciones_direccion || '');
     setIdReferenciaProyecto(req.id_referencia_proyecto || '');
-    setFacturasUrls(req.facturas_url || []);
+
+    const facturasSeguras = parsearJsonSeguro(req.facturas_url);
+    setFacturasUrls(facturasSeguras);
     setFechaRequerida(req.fecha_requerida || req.fecha || req.fecha_emision);
     setDepartamento(req.gerencia || 'Operaciones');
     setGerenteDirectoCreador(null);
@@ -1011,8 +1020,9 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       supabase.from('perfiles')
         .select('gerente_directo_nombre, gerente_directo_id')
         .eq('id', req.user_id)
-        .single()
-        .then(({ data }) => {
+        .maybeSingle()
+        .then(({ data, error }) => {
+          if (error) console.error("Error al cargar gerente directo del creador:", error);
           if (data) {
             setGerenteDirectoCreador(data.gerente_directo_nombre || null);
             setGerenteDirectoIdCreador(data.gerente_directo_id || null);
@@ -1021,29 +1031,14 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
         .catch(err => console.error("Error al cargar gerente directo del creador:", err));
     }
 
-    // SANITIZACIÓN DE DATOS (Raíz del problema)
-    let detallesSeguros = [];
-    const itemsRaw = req.detalles || req.items || [];
-    if (typeof itemsRaw === 'string') {
-      try {
-        detallesSeguros = JSON.parse(itemsRaw);
-        // Sometimes it's double stringified
-        if (typeof detallesSeguros === 'string') {
-          detallesSeguros = JSON.parse(detallesSeguros);
-        }
-      } catch (e) {
-        detallesSeguros = [];
-      }
-    } else if (Array.isArray(itemsRaw)) {
-      detallesSeguros = itemsRaw;
-    }
+    const detallesSeguros = parsearJsonSeguro(req.detalles || req.items);
 
     setRenglones(detallesSeguros);
-    setCentroCosto(req.centroCosto || req.centro_costo);
+    setCentroCosto(req.centroCosto || req.centro_costo || '');
     setSolicitante(req.solicitante || `${req.solicitante_nombre || ''} ${req.solicitante_apellido || ''}`);
     setModoEdicion(false);
     setHasChanges(false);
-    setMostrarSoportes(detallesSeguros.length > 0 && (req.facturas_url?.length > 0));
+    setMostrarSoportes(detallesSeguros.length > 0 && (facturasSeguras.length > 0));
     setConIva(req.con_iva !== false);
     setShowModal(true);
   };
@@ -1552,7 +1547,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
         toast.success('Aprobación Final registrada por Favio Bavuso. Enviada directamente a Compras.');
       } else {
         // Flujo normal: enviar a aprobación de Gerente General
-        const notaAprobador = esGG 
+        const notaAprobador = esGG
           ? `${currentUser.nombre} ${currentUser.apellido} (GG / Sustitución Vacaciones)`.trim()
           : `${currentUser.nombre} ${currentUser.apellido}`.trim();
 
@@ -1566,7 +1561,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
         }).eq('id', editandoId);
         if (error) throw error;
         toast.success('Aprobación de Área registrada. Enviada al Gerente General para Visto Bueno Final.');
-        
+
         // NOTIFICAR AL GERENTE GENERAL
         try {
           let destinatarioGGId = null;
@@ -1583,7 +1578,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
               destinatarioGGId = favioData[0].id;
             }
           }
-          
+
           if (!destinatarioGGId) {
             const { data: carlos } = await supabase
               .from('perfiles')
@@ -1715,7 +1710,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
           .from('perfiles')
           .select('id, rol, departamento')
           .eq('departamento', 'Compras');
-        
+
         if (gerentesCompras) {
           const gCompras = gerentesCompras.filter(p => {
             const r = (p.rol || '').toUpperCase();
@@ -1766,11 +1761,11 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
         let requiereProyecto = false;
         const ccUpper = (centroCosto || '').toString().toUpperCase();
         if (
-          ccUpper.includes("MTTO") || 
-          ccUpper.includes("MAYOR") || 
-          ccUpper.includes("GRANDE") || 
-          ccUpper.includes("EXCELENCIA") || 
-          ccUpper.includes("VAC") || 
+          ccUpper.includes("MTTO") ||
+          ccUpper.includes("MAYOR") ||
+          ccUpper.includes("GRANDE") ||
+          ccUpper.includes("EXCELENCIA") ||
+          ccUpper.includes("VAC") ||
           ccUpper.includes("VACCUM")
         ) {
           requiereProyecto = true;
@@ -1813,13 +1808,13 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
         observaciones: (observaciones.startsWith('[') && observaciones.endsWith(']'))
           ? observaciones
           : (observaciones.trim()
-              ? JSON.stringify([{
-                  author: solicitante || `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim() || 'S/E',
-                  text: observaciones.trim(),
-                  date: new Date().toISOString(),
-                  rol: currentUser?.rol || 'Usuario'
-                }])
-              : '[]'),
+            ? JSON.stringify([{
+              author: solicitante || `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim() || 'S/E',
+              text: observaciones.trim(),
+              date: new Date().toISOString(),
+              rol: currentUser?.rol || 'Usuario'
+            }])
+            : '[]'),
         id_referencia_proyecto: idReferenciaProyecto,
         centro_costo: centroCosto,
         prioridad,
@@ -1982,13 +1977,13 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
           observaciones: (observaciones.startsWith('[') && observaciones.endsWith(']'))
             ? observaciones
             : (observaciones.trim()
-                ? JSON.stringify([{
-                    author: solicitante || `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim() || 'S/E',
-                    text: observaciones.trim(),
-                    date: new Date().toISOString(),
-                    rol: currentUser?.rol || 'Usuario'
-                  }])
-                : '[]'),
+              ? JSON.stringify([{
+                author: solicitante || `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim() || 'S/E',
+                text: observaciones.trim(),
+                date: new Date().toISOString(),
+                rol: currentUser?.rol || 'Usuario'
+              }])
+              : '[]'),
           id_referencia_proyecto: idReferenciaProyecto,
           total_bs: Number(totalEstimado) || 0,
           facturas_url: facturasUrls
@@ -2011,11 +2006,11 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
             let requiereProyecto = false;
             const ccUpper = (centroCosto || '').toString().toUpperCase();
             if (
-              ccUpper.includes("MTTO") || 
-              ccUpper.includes("MAYOR") || 
-              ccUpper.includes("GRANDE") || 
-              ccUpper.includes("EXCELENCIA") || 
-              ccUpper.includes("VAC") || 
+              ccUpper.includes("MTTO") ||
+              ccUpper.includes("MAYOR") ||
+              ccUpper.includes("GRANDE") ||
+              ccUpper.includes("EXCELENCIA") ||
+              ccUpper.includes("VAC") ||
               ccUpper.includes("VACCUM")
             ) {
               requiereProyecto = true;
@@ -2118,13 +2113,13 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       total_bs: Number(totalEstimado) || 0,
       items: renglones,
       justificacion,
-      observaciones: observaciones.trim() 
+      observaciones: observaciones.trim()
         ? JSON.stringify([{
-            author: solicitante || `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim() || 'S/E',
-            text: observaciones.trim(),
-            date: new Date().toISOString(),
-            rol: currentUser?.rol || 'Usuario'
-          }]) 
+          author: solicitante || `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim() || 'S/E',
+          text: observaciones.trim(),
+          date: new Date().toISOString(),
+          rol: currentUser?.rol || 'Usuario'
+        }])
         : '[]',
       id_referencia_proyecto: idReferenciaProyecto,
       origen: datosPredefinidos ? `REF: ${datosPredefinidos.id_control}` : 'Manual',
@@ -2188,11 +2183,11 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       let requiereProyecto = false;
       const ccUpper = (centroCosto || '').toString().toUpperCase();
       if (
-        ccUpper.includes("MTTO") || 
-        ccUpper.includes("MAYOR") || 
-        ccUpper.includes("GRANDE") || 
-        ccUpper.includes("EXCELENCIA") || 
-        ccUpper.includes("VAC") || 
+        ccUpper.includes("MTTO") ||
+        ccUpper.includes("MAYOR") ||
+        ccUpper.includes("GRANDE") ||
+        ccUpper.includes("EXCELENCIA") ||
+        ccUpper.includes("VAC") ||
         ccUpper.includes("VACCUM")
       ) {
         requiereProyecto = true;
@@ -2345,11 +2340,11 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     // Inicializar jsPDF (A4 en mm)
     const pdf = new jsPDF('p', 'mm', 'a4');
     const fontPrimary = 'helvetica';
-    
+
     // --- CABECERA (DISEÑO CORPORATIVO REFORMADO) ---
     const correlativoStr = reqActual.correlativo || `REQ-${String(reqActual.id).padStart(3, '0')}`;
-    const fechaEmision = reqActual.fecha 
-      ? format(new Date(reqActual.fecha + 'T12:00:00'), 'dd/MM/yyyy hh:mm a') 
+    const fechaEmision = reqActual.fecha
+      ? format(new Date(reqActual.fecha + 'T12:00:00'), 'dd/MM/yyyy hh:mm a')
       : format(new Date(), 'dd/MM/yyyy hh:mm a');
 
     try {
@@ -2357,13 +2352,13 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       if (logoImg) {
         // Logo en la esquina superior izquierda (tamaño ampliado)
         pdf.addImage(logoImg, 'PNG', 15, 11, 28, 21);
-        
+
         // Información de la empresa (a la derecha del logo)
         pdf.setFont(fontPrimary, 'bold');
         pdf.setFontSize(12);
         pdf.setTextColor(15, 23, 42); // Slate-900
         pdf.text("TOTAL CLEAN C.A.", 46, 18);
-        
+
         pdf.setFont(fontPrimary, 'normal');
         pdf.setFontSize(8.5);
         pdf.setTextColor(100, 116, 139); // Slate-500
@@ -2374,7 +2369,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
         pdf.setFontSize(12);
         pdf.setTextColor(15, 23, 42);
         pdf.text("TOTAL CLEAN C.A.", 15, 18);
-        
+
         pdf.setFont(fontPrimary, 'normal');
         pdf.setFontSize(8.5);
         pdf.setTextColor(100, 116, 139);
@@ -2387,34 +2382,34 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       pdf.setFontSize(12);
       pdf.setTextColor(15, 23, 42);
       pdf.text("TOTAL CLEAN C.A.", 15, 18);
-      
+
       pdf.setFont(fontPrimary, 'normal');
       pdf.setFontSize(8.5);
       pdf.setTextColor(100, 116, 139);
       pdf.text("J-303658587-0", 15, 23);
     }
-    
+
     // Derecha: Título de documento y correlativo alineados a la derecha
     pdf.setFont(fontPrimary, 'bold');
     pdf.setFontSize(14);
     pdf.setTextColor(15, 23, 42); // Slate-900
     pdf.text("REQUISICIÓN DE RECURSOS", 195, 17, { align: 'right' });
-    
+
     pdf.setFont(fontPrimary, 'bold');
     pdf.setFontSize(10.5);
     pdf.setTextColor(71, 85, 105); // Slate-600
     pdf.text(`No: ${correlativoStr}`, 195, 22, { align: 'right' });
-    
+
     pdf.setFont(fontPrimary, 'normal');
     pdf.setFontSize(8.0);
     pdf.setTextColor(100, 116, 139); // Slate-500
     pdf.text(`Fecha: ${fechaEmision}`, 195, 26, { align: 'right' });
-    
+
     // Línea horizontal divisora
     pdf.setDrawColor(226, 232, 240); // Slate-200
     pdf.setLineWidth(0.4);
     pdf.line(15, 31, 195, 31);
-    
+
     // --- CUADRO DE METADATA (Gerencia, Responsable, etc.) ---
     const startY = 36;
     const metadataBoxHeight = 26;
@@ -2422,18 +2417,18 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     pdf.setFillColor(248, 250, 252); // Fondo gris muy claro
     pdf.setLineWidth(0.3);
     pdf.roundedRect(15, startY, 180, metadataBoxHeight, 2, 2, 'FD');
-    
+
     // Texto dentro de la Metadata
     pdf.setFontSize(9.5);
     pdf.setTextColor(15, 23, 42);
-    
+
     // Columna Izquierda
     pdf.setFont(fontPrimary, 'bold');
     pdf.text("Gerencia: ", 20, startY + 7);
     pdf.setFont(fontPrimary, 'normal');
     pdf.setTextColor(51, 65, 85);
     pdf.text(reqActual.gerencia || 'N/A', 38, startY + 7);
-    
+
     pdf.setFont(fontPrimary, 'bold');
     pdf.setTextColor(15, 23, 42);
     pdf.text("Responsable: ", 20, startY + 14);
@@ -2452,12 +2447,12 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       pdf.setTextColor(51, 65, 85);
     }
     pdf.text(prioridadTexto, 38, startY + 21);
-    
+
     // Columna Derecha
-    const fechaEmisionMeta = reqActual.fecha 
-      ? format(new Date(reqActual.fecha + 'T12:00:00'), 'dd/MM/yyyy') 
+    const fechaEmisionMeta = reqActual.fecha
+      ? format(new Date(reqActual.fecha + 'T12:00:00'), 'dd/MM/yyyy')
       : 'N/A';
-      
+
     pdf.setFont(fontPrimary, 'bold');
     pdf.setTextColor(15, 23, 42);
     pdf.text("Fecha Emisión: ", 125, startY + 7);
@@ -2484,7 +2479,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     pdf.setFont(fontPrimary, 'bold');
     pdf.setTextColor(15, 23, 42);
     pdf.text("Estado: ", 125, startY + 14);
-    
+
     if (estadoTexto === 'APROBADA') {
       pdf.setTextColor(22, 163, 74); // Verde
     } else if (estadoTexto === 'RECHAZADA' || estadoTexto === 'ANULADA') {
@@ -2493,7 +2488,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       pdf.setTextColor(217, 119, 6); // Naranja
     }
     pdf.text(estadoTexto, 140, startY + 14);
-    
+
     // --- SECCIÓN DE OBSERVACIONES Y JUSTIFICACIÓN EN PARALELO ---
     let nextY = startY + metadataBoxHeight + 4; // ~76
     const textObs = obtenerTextoObservaciones(reqActual.observaciones);
@@ -2506,117 +2501,117 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     if (hasObs && hasJustif) {
       const splitObs = pdf.splitTextToSize(textObs, 78);
       const splitJustif = pdf.splitTextToSize(textJustif, 78);
-      
+
       const hObs = 11 + splitObs.length * 4;
       const hJustif = 11 + splitJustif.length * 4;
       upperContainerHeight = Math.max(hObs, hJustif);
-      
+
       // Dibujar tarjeta izquierda: Observaciones (Ancho 86, x = 15)
       pdf.setDrawColor(226, 232, 240); // Slate-200
       pdf.setFillColor(248, 250, 252); // Slate-50
       pdf.setLineWidth(0.3);
       pdf.roundedRect(15, nextY, 86, upperContainerHeight, 1.5, 1.5, 'FD');
-      
+
       pdf.setFont(fontPrimary, 'bold');
       pdf.setFontSize(8.0);
       pdf.setTextColor(15, 23, 42); // Slate-900
       pdf.text("OBSERVACIONES DE LA REQUISICIÓN:", 19, nextY + 5.5);
-      
+
       pdf.setFont(fontPrimary, 'normal');
       pdf.setFontSize(8.0);
       pdf.setTextColor(51, 65, 85); // Slate-600
       pdf.text(splitObs, 19, nextY + 11);
-      
+
       // Dibujar tarjeta derecha: Justificación (Ancho 86, x = 109)
       pdf.setDrawColor(226, 232, 240);
       pdf.setFillColor(248, 250, 252);
       pdf.setLineWidth(0.3);
       pdf.roundedRect(109, nextY, 86, upperContainerHeight, 1.5, 1.5, 'FD');
-      
+
       pdf.setFont(fontPrimary, 'bold');
       pdf.setFontSize(8.0);
       pdf.setTextColor(15, 23, 42);
       pdf.text("JUSTIFICACIÓN OPERATIVA:", 113, nextY + 5.5);
-      
+
       pdf.setFont(fontPrimary, 'normal');
       pdf.setFontSize(8.0);
       pdf.setTextColor(51, 65, 85);
       pdf.text(splitJustif, 113, nextY + 11);
-      
+
       nextY += upperContainerHeight + 4;
     } else if (hasObs) {
       // Solo observaciones, a ancho completo
       const splitObs = pdf.splitTextToSize(textObs, 170);
       upperContainerHeight = 11 + splitObs.length * 4;
-      
+
       pdf.setDrawColor(226, 232, 240);
       pdf.setFillColor(248, 250, 252);
       pdf.setLineWidth(0.3);
       pdf.roundedRect(15, nextY, 180, upperContainerHeight, 1.5, 1.5, 'FD');
-      
+
       pdf.setFont(fontPrimary, 'bold');
       pdf.setFontSize(8.5);
       pdf.setTextColor(15, 23, 42);
       pdf.text("OBSERVACIONES DE LA REQUISICIÓN:", 20, nextY + 5.5);
-      
+
       pdf.setFont(fontPrimary, 'normal');
       pdf.setFontSize(8);
       pdf.setTextColor(51, 65, 85);
       pdf.text(splitObs, 20, nextY + 11.5);
-      
+
       nextY += upperContainerHeight + 4;
     } else if (hasJustif) {
       // Solo justificación, a ancho completo
       const splitJustif = pdf.splitTextToSize(textJustif, 170);
       upperContainerHeight = 11 + splitJustif.length * 4;
-      
+
       pdf.setDrawColor(226, 232, 240);
       pdf.setFillColor(248, 250, 252);
       pdf.setLineWidth(0.3);
       pdf.roundedRect(15, nextY, 180, upperContainerHeight, 1.5, 1.5, 'FD');
-      
+
       pdf.setFont(fontPrimary, 'bold');
       pdf.setFontSize(8.5);
       pdf.setTextColor(15, 23, 42);
       pdf.text("JUSTIFICACIÓN OPERATIVA:", 20, nextY + 5.5);
-      
+
       pdf.setFont(fontPrimary, 'normal');
       pdf.setFontSize(8.5);
       pdf.setTextColor(51, 65, 85);
       pdf.text(splitJustif, 20, nextY + 11.5);
-      
+
       nextY += upperContainerHeight + 4;
     }
 
     // --- TABLA DE ITEMS ---
     const tableY = nextY;
-    
+
     // Cabecera de la tabla
     pdf.setFont(fontPrimary, 'bold');
     pdf.setFontSize(9.5);
     pdf.setTextColor(15, 23, 42);
-    
+
     // Dibujar líneas superior e inferior de la cabecera de la tabla
     pdf.setDrawColor(15, 23, 42);
     pdf.setLineWidth(0.5);
     pdf.line(15, tableY, 195, tableY);
-    
+
     pdf.text("C.COSTO", 16, tableY + 5);
     pdf.text("CLASIF.", 46, tableY + 5);
     pdf.text("DESCRIPCIÓN", 76, tableY + 5);
     pdf.text("CANT.", 145, tableY + 5, { align: 'right' });
     pdf.text("PAGO Bs ($)", 170, tableY + 5, { align: 'right' });
     pdf.text("PAGO USD ($)", 194, tableY + 5, { align: 'right' });
-    
+
     pdf.line(15, tableY + 8, 195, tableY + 8);
-    
+
     // Renglones de la tabla
     pdf.setFont(fontPrimary, 'normal');
     pdf.setFontSize(8.5);
     pdf.setTextColor(51, 65, 85);
-    
+
     let currentY = tableY + 13;
-    
+
     // Obtener ítems sanitizados
     let items = [];
     if (typeof reqActual.detalles === 'string') {
@@ -2629,24 +2624,24 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     } else if (Array.isArray(reqActual.detalles)) {
       items = reqActual.detalles;
     }
-    
+
     items.forEach((item) => {
       // Ajuste de descripción si es muy larga
       const descText = item.descripcion || 'N/A';
       const descLines = pdf.splitTextToSize(descText, 60);
-      
+
       // Mostrar Centro de Costo de la req
       const ccText = reqActual.centroCosto || 'N/A';
       const ccLines = pdf.splitTextToSize(ccText, 28);
-      
+
       // Mostrar Clasificación del renglón
       const clasifText = item.clasificacion || 'N/A';
       const clasifLines = pdf.splitTextToSize(clasifText, 28);
-      
+
       // Altura requerida para este renglón
       const linesCount = Math.max(descLines.length, ccLines.length, clasifLines.length);
       const rowHeight = linesCount * 4 + 7;
-      
+
       // Control de salto de página antes de dibujar el renglón
       if (currentY + rowHeight > 280) {
         pdf.addPage();
@@ -2656,25 +2651,25 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
         pdf.setTextColor(100, 116, 139);
         pdf.text(`REQUISICIÓN DE RECURSOS: ${correlativoStr}`, 15, 12);
         pdf.line(15, 14, 195, 14);
-        
+
         currentY = 22;
-        
+
         pdf.setFont(fontPrimary, 'bold');
         pdf.setFontSize(9.5);
         pdf.setTextColor(15, 23, 42);
         pdf.line(15, currentY, 195, currentY);
-        
+
         pdf.text("C.COSTO", 16, currentY + 5);
         pdf.text("CLASIF.", 46, currentY + 5);
         pdf.text("DESCRIPCIÓN", 76, currentY + 5);
         pdf.text("CANT.", 145, currentY + 5, { align: 'right' });
         pdf.text("PAGO Bs ($)", 170, currentY + 5, { align: 'right' });
         pdf.text("PAGO USD ($)", 194, currentY + 5, { align: 'right' });
-        
+
         pdf.line(15, currentY + 8, 195, currentY + 8);
         currentY += 13;
       }
-      
+
       // Renderizar columnas de texto multilínea
       pdf.setFont(fontPrimary, 'normal');
       pdf.setFontSize(8.5);
@@ -2682,17 +2677,17 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       pdf.text(ccLines, 16, currentY);
       pdf.text(clasifLines, 46, currentY);
       pdf.text(descLines, 76, currentY);
-      
+
       // Renderizar columnas simples
       pdf.text(`${item.cant || 1} ${item.uni || item.unidad || ''}`, 145, currentY, { align: 'right' });
-      
+
       // Calcular valores acumulados de pago (Bs o USD) para el ítem
       const historial = Array.isArray(item.historial_compras) ? item.historial_compras : [];
       const tieneCompras = historial.some(h => h.tipo !== 'JUSTIFICACION' && h.tipo !== 'ANULACION');
-      
+
       let totalPaidBs = 0;
       let totalPaidUsd = 0;
-      
+
       if (tieneCompras) {
         historial.forEach(h => {
           if (h.tipo === 'JUSTIFICACION' || h.tipo === 'ANULACION') return;
@@ -2709,19 +2704,19 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
         const puEst = Number(item.pu_estimado ?? item.precio_unitario ?? item.pu) || 0;
         totalPaidUsd = cantOri * puEst;
       }
-      
+
       if (totalPaidBs > 0) {
         pdf.text(`$ ${totalPaidBs.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 170, currentY, { align: 'right' });
       } else {
         pdf.text("-", 170, currentY, { align: 'right' });
       }
-      
+
       if (totalPaidUsd > 0) {
         pdf.text(`$ ${totalPaidUsd.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 194, currentY, { align: 'right' });
       } else {
         pdf.text("-", 194, currentY, { align: 'right' });
       }
-      
+
       // Estado de Almacén/Entrega del ítem
       const statusAlmacen = item.estatus_almacen || (item.enviado_almacen ? 'Ubicado' : 'Pendiente_Compras');
       const ubicacionVal = item.ubicacion_almacen || item.almacen_destino;
@@ -2744,26 +2739,26 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       pdf.setFontSize(7.5);
       pdf.setTextColor(100, 116, 139); // Slate-500
       pdf.text(metaLineText, 76, currentY + (descLines.length * 4));
-      
+
       currentY += rowHeight;
-      
+
       // Dibujar una sutil línea divisoria
       pdf.setDrawColor(241, 245, 249);
       pdf.setLineWidth(0.2);
       pdf.line(15, currentY - 1, 195, currentY - 1);
     });
-    
+
     // --- CUADRO DE TOTALES (ALINEADO A LA DERECHA) ---
     let totalPagoBs = 0;
     let totalPagoUsd = 0;
-    
+
     items.forEach(item => {
       const historial = Array.isArray(item.historial_compras) ? item.historial_compras : [];
       const tieneCompras = historial.some(h => h.tipo !== 'JUSTIFICACION' && h.tipo !== 'ANULACION');
-      
+
       let itemBs = 0;
       let itemUsd = 0;
-      
+
       if (tieneCompras) {
         historial.forEach(h => {
           if (h.tipo === 'JUSTIFICACION' || h.tipo === 'ANULACION') return;
@@ -2780,7 +2775,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
         const puEst = Number(item.pu_estimado ?? item.precio_unitario ?? item.pu) || 0;
         itemUsd = cantOri * puEst;
       }
-      
+
       totalPagoBs += itemBs;
       totalPagoUsd += itemUsd;
     });
@@ -2789,10 +2784,10 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     const labelIva = aplicaIva ? "(Con IVA)" : "(Sin IVA)";
     const totalPagoBsConIva = totalPagoBs * (aplicaIva ? 1.16 : 1.00);
     const totalPagoUsdConIva = totalPagoUsd * (aplicaIva ? 1.16 : 1.00);
-    
+
     let finalPagoBs = totalPagoBsConIva;
     let finalPagoUsd = totalPagoUsdConIva;
-    
+
     if (totalPagoBs > 0 && totalPagoUsd === 0) {
       finalPagoBs = Number(reqActual.total) || totalPagoBsConIva;
       finalPagoUsd = 0;
@@ -2800,7 +2795,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       finalPagoUsd = Number(reqActual.total) || totalPagoUsdConIva;
       finalPagoBs = 0;
     }
-    
+
     const finalTotal = finalPagoBs + finalPagoUsd;
 
     // Asegurarse de que haya espacio para el cuadro de totales (altura 20)
@@ -2813,40 +2808,40 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     const boxWidth = 70;
     const boxHeight = 20;
     const boxX = 195 - boxWidth;
-    
+
     // Relleno Slate-100 para destacar la fila de TOTAL
     pdf.setFillColor(241, 245, 249); // Slate-100
     pdf.rect(boxX, currentY + 13, boxWidth, 7, 'F');
-    
+
     // Línea divisora Slate-300
     pdf.setDrawColor(203, 213, 225); // Slate-300
     pdf.setLineWidth(0.2);
     pdf.line(boxX, currentY + 13, 195, currentY + 13);
-    
+
     // Borde exterior
     pdf.setDrawColor(15, 23, 42); // Slate-900
     pdf.setLineWidth(0.4);
     pdf.rect(boxX, currentY, boxWidth, boxHeight);
-    
+
     pdf.setFont(fontPrimary, 'normal');
     pdf.setFontSize(8.5);
     pdf.setTextColor(15, 23, 42);
-    
+
     // Fila 1: Pago Bs
     pdf.text(`Pago Bs ${labelIva}`, boxX + 3, currentY + 4.5);
     pdf.text(`$ ${finalPagoBs.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 192, currentY + 4.5, { align: 'right' });
-    
+
     // Fila 2: Pago USD
     pdf.text(`Pago USD ${labelIva}`, boxX + 3, currentY + 9.5);
     pdf.text(`$ ${finalPagoUsd.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 192, currentY + 9.5, { align: 'right' });
-    
+
     // Fila 3: Total General (Destacado)
     pdf.setFont(fontPrimary, 'bold');
     pdf.setFontSize(10);
     pdf.setTextColor(15, 23, 42);
     pdf.text(`TOTAL ${labelIva}`, boxX + 3, currentY + 17.5);
     pdf.text(`$ ${finalTotal.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 192, currentY + 17.5, { align: 'right' });
-    
+
     // --- SECCIÓN DE FIRMAS Y APROBACIONES (ANCLADO AL FINAL DE LA HOJA) ---
     let sigStart = 248;
     if (currentY + 25 > 240) {
@@ -2919,7 +2914,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
 
     approvals.forEach((app, index) => {
       const x = startX + index * (cardWidth + gap);
-      
+
       // Dibujar borde y fondo de la tarjeta
       pdf.setDrawColor(203, 213, 225); // Slate-300
       pdf.setFillColor(248, 250, 252); // Slate-50
@@ -2943,7 +2938,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
         pdf.setFontSize(8);
         pdf.setTextColor(22, 163, 74); // Green-600
         pdf.text("Aprobado", x + cardWidth / 2, sigCardY + 12, { align: 'center' });
-        
+
         // Nombre del firmante
         pdf.setFont(fontPrimary, 'bold');
         pdf.setFontSize(7.5);
@@ -3300,13 +3295,13 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
 
                         {/* Indicador de Entrega en Almacén con Graduación de Color por Avance */}
                         {(() => {
-                          const items = req.filas || req.detalles || req.items || [];
+                          const items = parsearJsonSeguro(req.filas || req.detalles || req.items);
                           if (!items || items.length === 0) return null;
 
                           const total = items.length;
-                          const entregados = items.filter(f => 
-                            f.estatus_almacen === 'entregado' || 
-                            f.is_entregado === true || 
+                          const entregados = items.filter(f =>
+                            f.estatus_almacen === 'entregado' ||
+                            f.is_entregado === true ||
                             f.estado === 'entregado'
                           ).length;
 
@@ -3405,17 +3400,17 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                     {req.justificacion || 'SIN JUSTIFICACIÓN'}
                     {req.observaciones && <MessageSquare size={14} style={{ color: '#8b5cf6', marginLeft: '8px', verticalAlign: 'middle' }} title="Tiene observaciones" />}
                     {(req.detalles || req.items || [])?.some(it => it.historial_compras?.some(h => h.tipo === 'JUSTIFICACION')) && (
-                      <span 
-                        style={{ 
-                          color: '#d97706', 
-                          marginLeft: '8px', 
-                          fontSize: '13px', 
-                          verticalAlign: 'middle', 
+                      <span
+                        style={{
+                          color: '#d97706',
+                          marginLeft: '8px',
+                          fontSize: '13px',
+                          verticalAlign: 'middle',
                           cursor: 'help',
                           fontWeight: 'bold',
                           display: 'inline-flex',
                           alignItems: 'center'
-                        }} 
+                        }}
                         title="Esta requisición posee alertas/justificaciones de compras"
                       >
                         ⚠️
@@ -3455,7 +3450,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
 
                 <td data-label="TIEMPO SLA" style={{ textAlign: 'center', verticalAlign: 'middle' }}>
                   {(() => {
-                    const isJustificada = (req.detalles || req.items || [])?.some(it => 
+                    const isJustificada = (req.detalles || req.items || [])?.some(it =>
                       it.historial_compras?.some(h => h.tipo === 'JUSTIFICACION')
                     );
 
@@ -3554,19 +3549,19 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                     </button>
 
                     {req.estado_aprobacion !== 'ANULADA' && (
-                      currentUser?.correo?.toLowerCase() === 'jcontreras.totalclean@gmail.com' || 
+                      currentUser?.correo?.toLowerCase() === 'jcontreras.totalclean@gmail.com' ||
                       (currentUser?.rol || '').toLowerCase().includes('analista') ||
                       req.user_id === currentUser?.id ||
                       compararNombres(req.solicitante, `${currentUser?.nombre} ${currentUser?.apellido}`)
                     ) && (
-                      <button
-                        onClick={(e) => { e.stopPropagation(); anularRequisicion(req.id); }}
-                        style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#94a3b8' }}
-                        title="Anular Requisición"
-                      >
-                        <Ban size={18} />
-                      </button>
-                    )}
+                        <button
+                          onClick={(e) => { e.stopPropagation(); anularRequisicion(req.id); }}
+                          style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#94a3b8' }}
+                          title="Anular Requisición"
+                        >
+                          <Ban size={18} />
+                        </button>
+                      )}
 
                     {currentUser?.correo?.toLowerCase() === 'jcontreras.totalclean@gmail.com' && (
                       <button
@@ -3589,7 +3584,9 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
 
       {/* --- MODAL DE FORMULARIO (NUEVA / EDITAR) --- */}
       {(isOpen || showModal) && ((() => {
-        const reqActual = editandoId ? historial.find(h => String(h.id) === String(editandoId)) : null;
+        const reqActual = editandoId
+          ? (historial.find(h => String(h.id) === String(editandoId)) || requisicionActiva)
+          : requisicionActiva;
         return (
           <div className="modal-overlay">
             <div className="modal-card animate-modal" style={{ maxWidth: '95%', width: '1300px', height: '95vh', display: 'flex', flexDirection: 'column', padding: 0, overflow: 'hidden' }}>
@@ -3603,7 +3600,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                   borderBottom: '1px solid rgba(0,0,0,0.05)',
                   position: 'relative'
                 }}>
-                  <button 
+                  <button
                     onClick={intentarCerrarModal}
                     style={{ position: 'absolute', top: '15px', right: '15px', border: 'none', background: 'rgba(255,255,255,0.8)', borderRadius: '50%', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#64748b', transition: 'all 0.2s', zIndex: 100 }}
                     onMouseEnter={(e) => { e.currentTarget.style.background = '#white'; e.currentTarget.style.color = '#0f172a'; }}
@@ -3649,7 +3646,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
 
 
                       {(() => {
-                        const reqActual = editandoId ? historial.find(h => h.id === editandoId) : null;
+                        const reqActual = editandoId ? (historial.find(h => String(h.id) === String(editandoId)) || requisicionActiva) : null;
                         const ref = datosPredefinidos?.id_control ? `REF: ${datosPredefinidos.id_control}` : (reqActual?.origen || '');
                         if (!ref) return null;
                         return (
@@ -3676,7 +3673,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                     {/* DERECHA: ID (AL TOPE) + SLA TIMER */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '20px', marginRight: '40px' }}>
                       {(() => {
-                        const reqActual = editandoId ? historial.find(h => h.id === editandoId) : null;
+                        const reqActual = editandoId ? (historial.find(h => String(h.id) === String(editandoId)) || requisicionActiva) : null;
                         if (!reqActual || reqActual.status?.toUpperCase() === 'COMPLETADO') return null;
 
                         if (reqActual.estado_aprobacion !== 'aprobado_final' && reqActual.estado_aprobacion !== 'finalizado') return null;
@@ -3692,8 +3689,9 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
 
                         if (!limiteDate) return null;
 
-                        const isJustificada = reqActual.items?.some(it => 
-                          it.historial_compras?.some(h => h.tipo === 'JUSTIFICACION')
+                        const itemsModal = parsearJsonSeguro(reqActual.items || reqActual.detalles);
+                        const isJustificada = itemsModal.some(it =>
+                          (Array.isArray(it?.historial_compras) ? it.historial_compras : []).some(h => h?.tipo === 'JUSTIFICACION')
                         );
 
                         const hoy = new Date();
@@ -3772,7 +3770,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                           lineHeight: '1',
                           letterSpacing: '0.05em'
                         }}>
-                          {editandoId ? (historial.find(h => h.id === editandoId)?.correlativo) : previewCorrelativo}
+                          {editandoId ? ((historial.find(h => String(h.id) === String(editandoId)) || requisicionActiva)?.correlativo) : previewCorrelativo}
                         </div>
                         <div style={{
                           fontSize: '0.6rem',
@@ -3786,7 +3784,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                         </div>
                         <div className="flex justify-end mt-2 select-none">
                           {(() => {
-                            const comprador = editandoId ? (historial.find(h => h.id === editandoId)?.asignado_nombre) : null;
+                            const comprador = editandoId ? ((historial.find(h => String(h.id) === String(editandoId)) || requisicionActiva)?.asignado_nombre) : null;
                             if (comprador) {
                               return (
                                 <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 shadow-sm uppercase tracking-wider">
@@ -3822,7 +3820,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                             <div className="timeline-container-premium">
                               <div className="timeline-line"></div>
                               {(() => {
-                                const reqActual = historial.find(h => String(h.id) === String(editandoId));
+                                const reqActual = editandoId ? (historial.find(h => String(h.id) === String(editandoId)) || requisicionActiva) : null;
                                 if (!reqActual) return null;
 
                                 const tieneProyecto = reqActual.aprobado_gerente_proyecto || reqActual.f_aprobacion_proyecto || reqActual.firma_gerente_proyecto;
@@ -3832,12 +3830,12 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                                   ...(tieneProyecto ? [{ label: 'GERENTE PROYECTO', name: reqActual.n_aprobacion_proyecto, date: reqActual.f_aprobacion_proyecto, icon: <Settings size={20} />, completed: true }] : []),
                                   { label: 'GERENTE ÁREA', name: reqActual.n_aprobacion_area, date: reqActual.f_aprobacion_area, icon: <Building2 size={20} />, completed: reqActual.aprobado_gerente_area || (reqActual.estado_aprobacion !== 'pendiente_proyecto' && reqActual.estado_aprobacion !== 'pendiente_area' && reqActual.estado_aprobacion !== 'enviada_area' && reqActual.estado_aprobacion !== 'rechazada') },
                                   { label: 'GERENTE GENERAL', name: reqActual.n_aprobacion_general, date: reqActual.f_aprobacion_general, icon: <Diamond size={20} />, completed: reqActual.aprobado_gerente_general || reqActual.estado_aprobacion === 'aprobado_final' },
-                                  { 
-                                    label: reqActual.f_inicio_compras ? 'INICIO COMPRAS / Compra asignada' : 'INICIO COMPRAS', 
+                                  {
+                                    label: reqActual.f_inicio_compras ? 'INICIO COMPRAS / Compra asignada' : 'INICIO COMPRAS',
                                     name: reqActual.f_inicio_compras ? (reqActual.asignado_nombre || 'Asignado') : null,
-                                    date: reqActual.f_inicio_compras, 
-                                    icon: <Clock size={20} />, 
-                                    completed: !!reqActual.f_inicio_compras 
+                                    date: reqActual.f_inicio_compras,
+                                    icon: <Clock size={20} />,
+                                    completed: !!reqActual.f_inicio_compras
                                   },
                                   { label: 'COMPRA CULMINADA', date: reqActual.f_culminacion_compras, icon: <ShoppingCart size={20} />, completed: reqActual.status?.toUpperCase() === 'COMPLETADO' }
                                 ];
@@ -3872,1078 +3870,1078 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                     </div>
                   )}
 
-                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(140px, 160px) 1.5fr 1fr 1fr 180px 1fr', gap: '20px', marginBottom: '25px' }}>
-                  <div>
-                    <label className="stat-label" style={{ color: '#1e293b' }}>FECHA REQUERIDA <span style={{ color: 'var(--danger)' }}>*</span></label>
-                    <div style={{ position: 'relative' }}>
-                      <Clock size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
-                      <input
-                        className="input-tc"
-                        type="date"
-                        value={fechaRequerida}
-                        onChange={(e) => { setHasChanges(true); setFechaRequerida(e.target.value); }}
-                        disabled={!!editandoId}
-                        style={{ width: '100%', paddingLeft: '38px' }}
-                        required
-                      />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="stat-label" style={{ color: '#1e293b' }}>SOLICITANTE</label>
-                    <div className="input-tc" style={{ display: 'flex', alignItems: 'center', gap: '10px', backgroundColor: '#f8fafc', height: '42px', boxSizing: 'border-box' }}>
-                      <div style={{
-                        width: '28px', height: '28px', borderRadius: '50%',
-                        backgroundColor: 'var(--primary)', color: 'white',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        fontSize: '0.7rem', fontWeight: 'bold'
-                      }}>
-                        {getInitials(solicitante)}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'minmax(140px, 160px) 1.5fr 1fr 1fr 180px 1fr', gap: '20px', marginBottom: '25px' }}>
+                    <div>
+                      <label className="stat-label" style={{ color: '#1e293b' }}>FECHA REQUERIDA <span style={{ color: 'var(--danger)' }}>*</span></label>
+                      <div style={{ position: 'relative' }}>
+                        <Clock size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
+                        <input
+                          className="input-tc"
+                          type="date"
+                          value={fechaRequerida}
+                          onChange={(e) => { setHasChanges(true); setFechaRequerida(e.target.value); }}
+                          disabled={!!editandoId}
+                          style={{ width: '100%', paddingLeft: '38px' }}
+                          required
+                        />
                       </div>
-                      <span style={{ fontSize: '0.9rem', fontWeight: '600', color: 'var(--slate-800)' }}>
-                        {solicitante}
-                      </span>
+                    </div>
+                    <div>
+                      <label className="stat-label" style={{ color: '#1e293b' }}>SOLICITANTE</label>
+                      <div className="input-tc" style={{ display: 'flex', alignItems: 'center', gap: '10px', backgroundColor: '#f8fafc', height: '42px', boxSizing: 'border-box' }}>
+                        <div style={{
+                          width: '28px', height: '28px', borderRadius: '50%',
+                          backgroundColor: 'var(--primary)', color: 'white',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          fontSize: '0.7rem', fontWeight: 'bold'
+                        }}>
+                          {getInitials(solicitante)}
+                        </div>
+                        <span style={{ fontSize: '0.9rem', fontWeight: '600', color: 'var(--slate-800)' }}>
+                          {solicitante}
+                        </span>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="stat-label" style={{ color: '#1e293b' }}>CENTRO DE COSTOS</label>
+                      <div className="input-tc" style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        backgroundColor: '#f8fafc',
+                        height: '42px',
+                        boxSizing: 'border-box',
+                        border: '1px solid #e2e8f0'
+                      }}>
+                        <span style={{ fontSize: '0.9rem', fontWeight: '600', color: 'var(--slate-800)' }}>
+                          {centroCosto || 'Sin asignar'}
+                        </span>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="stat-label" style={{ color: '#1e293b' }}>GERENCIA</label>
+                      <div className="input-tc" style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        backgroundColor: '#f8fafc',
+                        height: '42px',
+                        boxSizing: 'border-box',
+                        border: '1px solid #e2e8f0'
+                      }}>
+                        <span style={{ fontSize: '0.9rem', fontWeight: '600', color: 'var(--slate-800)' }}>
+                          {departamento || 'Sin asignar'}
+                        </span>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="stat-label" style={{ color: '#1e293b' }}>
+                        PRIORIDAD <span style={{ color: 'var(--danger)', fontWeight: 'bold' }}>*</span>
+                      </label>
+                      <div style={{
+                        display: 'flex',
+                        background: '#f1f5f9',
+                        padding: '3px',
+                        borderRadius: '12px',
+                        height: '42px',
+                        border: '1px solid',
+                        borderColor: !prioridad ? 'rgba(14, 165, 233, 0.4)' : '#e2e8f0',
+                        boxShadow: !prioridad ? '0 0 0 2px rgba(14, 165, 233, 0.1)' : 'none',
+                        gap: '3px',
+                        transition: 'all 0.3s ease'
+                      }}>
+                        <button
+                          onClick={() => { setHasChanges(true); setPrioridad('Normal'); }}
+                          disabled={editandoId && !modoEdicion}
+                          style={{
+                            flex: 1,
+                            border: 'none',
+                            borderRadius: '9px',
+                            background: prioridad === 'Normal' ? 'white' : 'transparent',
+                            boxShadow: prioridad === 'Normal' ? '0 2px 4px rgba(0,0,0,0.05)' : 'none',
+                            color: prioridad === 'Normal' ? '#0ea5e9' : '#64748b',
+                            fontSize: '0.65rem',
+                            fontWeight: '900',
+                            cursor: 'pointer',
+                            transition: 'all 0.2s',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '4px'
+                          }}
+                        >
+                          {prioridad === 'Normal' && <CheckCircle2 size={12} />}
+                          NORMAL
+                        </button>
+                        <button
+                          onClick={() => { setHasChanges(true); setPrioridad('Emergencia'); }}
+                          disabled={editandoId && !modoEdicion}
+                          style={{
+                            flex: 1,
+                            border: 'none',
+                            borderRadius: '9px',
+                            background: prioridad === 'Emergencia' ? 'white' : 'transparent',
+                            boxShadow: prioridad === 'Emergencia' ? '0 2px 4px rgba(0,0,0,0.05)' : 'none',
+                            color: prioridad === 'Emergencia' ? '#ef4444' : '#64748b',
+                            fontSize: '0.65rem',
+                            fontWeight: '900',
+                            cursor: 'pointer',
+                            transition: 'all 0.2s',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '4px'
+                          }}
+                        >
+                          {prioridad === 'Emergencia' && <CheckCircle2 size={12} color="#ef4444" />}
+                          EMERGENCIA
+                        </button>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="stat-label" style={{ color: '#1e293b' }}>ID REF. PROYECTO / CONTRATO</label>
+                      <div style={{ position: 'relative', height: '42px' }}>
+                        <Building2 size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
+                        <input
+                          className="input-tc"
+                          style={{ paddingLeft: '38px', width: '100%', height: '100%' }}
+                          list="ids-proyecto-previos"
+                          value={idReferenciaProyecto}
+                          onChange={manejarCambioIdProyecto}
+                          placeholder="XXX-0000-0000"
+                          disabled={editandoId && !modoEdicion}
+                        />
+                        <datalist id="ids-proyecto-previos">
+                          {idsReferenciaPrevios.map(id => <option key={id} value={id} />)}
+                        </datalist>
+                      </div>
                     </div>
                   </div>
-                  <div>
-                    <label className="stat-label" style={{ color: '#1e293b' }}>CENTRO DE COSTOS</label>
-                    <div className="input-tc" style={{
+
+                  <div style={{ marginBottom: '15px' }}>
+                    <label className="stat-label" style={{
+                      color: '#1e293b',
                       display: 'flex',
                       alignItems: 'center',
-                      backgroundColor: '#f8fafc',
-                      height: '42px',
-                      boxSizing: 'border-box',
-                      border: '1px solid #e2e8f0'
+                      gap: '8px',
+                      background: 'linear-gradient(90deg, #f1f5f9 0%, transparent 100%)',
+                      padding: '6px 12px',
+                      borderRadius: '8px',
+                      borderLeft: '4px solid var(--primary)',
+                      width: 'fit-content',
+                      marginBottom: '10px',
+                      boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
                     }}>
-                      <span style={{ fontSize: '0.9rem', fontWeight: '600', color: 'var(--slate-800)' }}>
-                        {centroCosto || 'Sin asignar'}
-                      </span>
-                    </div>
-                  </div>
-                  <div>
-                    <label className="stat-label" style={{ color: '#1e293b' }}>GERENCIA</label>
-                    <div className="input-tc" style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      backgroundColor: '#f8fafc',
-                      height: '42px',
-                      boxSizing: 'border-box',
-                      border: '1px solid #e2e8f0'
-                    }}>
-                      <span style={{ fontSize: '0.9rem', fontWeight: '600', color: 'var(--slate-800)' }}>
-                        {departamento || 'Sin asignar'}
-                      </span>
-                    </div>
-                  </div>
-                  <div>
-                    <label className="stat-label" style={{ color: '#1e293b' }}>
-                      PRIORIDAD <span style={{ color: 'var(--danger)', fontWeight: 'bold' }}>*</span>
+                      <FileText size={16} color="var(--primary)" />
+                      Descripción de la solicitud <span style={{ color: 'var(--danger)', fontWeight: 'bold' }}>*</span>
                     </label>
-                    <div style={{
-                      display: 'flex',
-                      background: '#f1f5f9',
-                      padding: '3px',
-                      borderRadius: '12px',
-                      height: '42px',
-                      border: '1px solid',
-                      borderColor: !prioridad ? 'rgba(14, 165, 233, 0.4)' : '#e2e8f0',
-                      boxShadow: !prioridad ? '0 0 0 2px rgba(14, 165, 233, 0.1)' : 'none',
-                      gap: '3px',
-                      transition: 'all 0.3s ease'
-                    }}>
-                      <button
-                        onClick={() => { setHasChanges(true); setPrioridad('Normal'); }}
-                        disabled={editandoId && !modoEdicion}
-                        style={{
-                          flex: 1,
-                          border: 'none',
-                          borderRadius: '9px',
-                          background: prioridad === 'Normal' ? 'white' : 'transparent',
-                          boxShadow: prioridad === 'Normal' ? '0 2px 4px rgba(0,0,0,0.05)' : 'none',
-                          color: prioridad === 'Normal' ? '#0ea5e9' : '#64748b',
-                          fontSize: '0.65rem',
-                          fontWeight: '900',
-                          cursor: 'pointer',
-                          transition: 'all 0.2s',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          gap: '4px'
-                        }}
-                      >
-                        {prioridad === 'Normal' && <CheckCircle2 size={12} />}
-                        NORMAL
-                      </button>
-                      <button
-                        onClick={() => { setHasChanges(true); setPrioridad('Emergencia'); }}
-                        disabled={editandoId && !modoEdicion}
-                        style={{
-                          flex: 1,
-                          border: 'none',
-                          borderRadius: '9px',
-                          background: prioridad === 'Emergencia' ? 'white' : 'transparent',
-                          boxShadow: prioridad === 'Emergencia' ? '0 2px 4px rgba(0,0,0,0.05)' : 'none',
-                          color: prioridad === 'Emergencia' ? '#ef4444' : '#64748b',
-                          fontSize: '0.65rem',
-                          fontWeight: '900',
-                          cursor: 'pointer',
-                          transition: 'all 0.2s',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          gap: '4px'
-                        }}
-                      >
-                        {prioridad === 'Emergencia' && <CheckCircle2 size={12} color="#ef4444" />}
-                        EMERGENCIA
-                      </button>
-                    </div>
-                  </div>
-                  <div>
-                    <label className="stat-label" style={{ color: '#1e293b' }}>ID REF. PROYECTO / CONTRATO</label>
-                    <div style={{ position: 'relative', height: '42px' }}>
-                      <Building2 size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
+                    <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
                       <input
                         className="input-tc"
-                        style={{ paddingLeft: '38px', width: '100%', height: '100%' }}
-                        list="ids-proyecto-previos"
-                        value={idReferenciaProyecto}
-                        onChange={manejarCambioIdProyecto}
-                        placeholder="XXX-0000-0000"
-                        disabled={editandoId && !modoEdicion}
+                        type="text"
+                        value={justificacion}
+                        onChange={(e) => { setHasChanges(true); setJustificacion(e.target.value); }}
+                        placeholder="Explique el motivo de la requisición (Obligatorio)"
+                        required
+                        disabled={!!editandoId}
+                        style={{
+                          flex: 1,
+                          border: '1px solid',
+                          borderColor: !justificacion ? 'rgba(14, 165, 233, 0.4)' : '#e2e8f0',
+                          boxShadow: !justificacion ? '0 0 0 2px rgba(14, 165, 233, 0.1)' : 'none',
+                          transition: 'all 0.3s ease'
+                        }}
                       />
-                      <datalist id="ids-proyecto-previos">
-                        {idsReferenciaPrevios.map(id => <option key={id} value={id} />)}
-                      </datalist>
+                      <button
+                        onClick={() => setMostrarObservaciones(!mostrarObservaciones)}
+                        style={{
+                          width: '42px', height: '42px', borderRadius: '12px',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          cursor: 'pointer', transition: 'all 0.2s',
+                          backgroundColor: mostrarObservaciones ? '#8b5cf6' : 'white',
+                          color: mostrarObservaciones ? 'white' : '#64748b',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
+                          border: '1px solid #e2e8f0'
+                        }}
+                        title="Ver Observaciones"
+                      >
+                        <MessageSquare size={20} />
+                      </button>
                     </div>
                   </div>
-                </div>
 
-                <div style={{ marginBottom: '15px' }}>
-                  <label className="stat-label" style={{
-                    color: '#1e293b',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    background: 'linear-gradient(90deg, #f1f5f9 0%, transparent 100%)',
-                    padding: '6px 12px',
-                    borderRadius: '8px',
-                    borderLeft: '4px solid var(--primary)',
-                    width: 'fit-content',
-                    marginBottom: '10px',
-                    boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
-                  }}>
-                    <FileText size={16} color="var(--primary)" />
-                    Descripción de la solicitud <span style={{ color: 'var(--danger)', fontWeight: 'bold' }}>*</span>
-                  </label>
-                  <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                    <input
-                      className="input-tc"
-                      type="text"
-                      value={justificacion}
-                      onChange={(e) => { setHasChanges(true); setJustificacion(e.target.value); }}
-                      placeholder="Explique el motivo de la requisición (Obligatorio)"
-                      required
-                      disabled={!!editandoId}
-                      style={{
-                        flex: 1,
-                        border: '1px solid',
-                        borderColor: !justificacion ? 'rgba(14, 165, 233, 0.4)' : '#e2e8f0',
-                        boxShadow: !justificacion ? '0 0 0 2px rgba(14, 165, 233, 0.1)' : 'none',
-                        transition: 'all 0.3s ease'
-                      }}
-                    />
-                    <button
-                      onClick={() => setMostrarObservaciones(!mostrarObservaciones)}
-                      style={{
-                        width: '42px', height: '42px', borderRadius: '12px',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        cursor: 'pointer', transition: 'all 0.2s',
-                        backgroundColor: mostrarObservaciones ? '#8b5cf6' : 'white',
-                        color: mostrarObservaciones ? 'white' : '#64748b',
-                        boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
-                        border: '1px solid #e2e8f0'
-                      }}
-                      title="Ver Observaciones"
-                    >
-                      <MessageSquare size={20} />
-                    </button>
-                  </div>
-                </div>
+                  {/* --- SECCIÓN DE DIRECTRICES DE DIRECCIÓN (ESTÁTICO / SIEMPRE VISIBLE SI EXISTE) --- */}
+                  {observacionesDireccion && (
+                    <div style={{
+                      backgroundColor: '#faf5ff',
+                      padding: '12px 18px',
+                      borderRadius: '12px',
+                      border: '1px solid #ddd6fe',
+                      borderLeft: '4px solid #7c3aed',
+                      marginBottom: '20px'
+                    }}>
+                      <label style={{ fontSize: '0.7rem', fontWeight: '900', color: '#6d28d9', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: '6px', margin: 0, marginBottom: '6px' }}>
+                        🏛️ Directrices de la Dirección
+                      </label>
+                      <p style={{ margin: 0, color: '#4c1d95', fontSize: '0.85rem', fontWeight: '600', lineHeight: '1.4', whiteSpace: 'pre-wrap' }}>
+                        {observacionesDireccion}
+                      </p>
+                    </div>
+                  )}
 
-                {/* --- SECCIÓN DE DIRECTRICES DE DIRECCIÓN (ESTÁTICO / SIEMPRE VISIBLE SI EXISTE) --- */}
-                {observacionesDireccion && (
-                  <div style={{
-                    backgroundColor: '#faf5ff',
-                    padding: '12px 18px',
-                    borderRadius: '12px',
-                    border: '1px solid #ddd6fe',
-                    borderLeft: '4px solid #7c3aed',
-                    marginBottom: '20px'
-                  }}>
-                    <label style={{ fontSize: '0.7rem', fontWeight: '900', color: '#6d28d9', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: '6px', margin: 0, marginBottom: '6px' }}>
-                      🏛️ Directrices de la Dirección
-                    </label>
-                    <p style={{ margin: 0, color: '#4c1d95', fontSize: '0.85rem', fontWeight: '600', lineHeight: '1.4', whiteSpace: 'pre-wrap' }}>
-                      {observacionesDireccion}
-                    </p>
-                  </div>
-                )}
-
-                {/* --- SECCIÓN DE OBSERVACIONES COLAPSABLE --- */}
-                <AnimatePresence>
-                  {mostrarObservaciones && (
-                    <motion.div
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: 'auto', opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }}
-                      style={{ overflow: 'hidden', marginBottom: '20px' }}
-                    >
-                      <div style={{ padding: '15px', backgroundColor: '#f8fafc', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
-                          <label className="stat-label" style={{ marginBottom: 0, color: '#1e293b', fontSize: '0.75rem' }}>OBSERVACIONES Y NOTAS</label>
-                          {editandoId && !editandoObs && (
-                            <button
-                              onClick={() => {
-                                setObsTemporal('');
-                                setEditandoObs(true);
-                              }}
-                              style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '0.9rem', padding: 0 }}
-                              title="Añadir Observación"
-                            >
-                              💬
-                            </button>
-                          )}
-                        </div>
-
-                        {editandoId ? (
-                          /* Modo Vista/Edición de Requisición Existente: Chat Historial */
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                            {/* Listado de comentarios */}
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '200px', overflowY: 'auto', paddingRight: '4px', marginBottom: '10px' }}>
-                              {parsearObservaciones(observaciones).length === 0 ? (
-                                <span style={{ fontSize: '0.8rem', color: '#94a3b8', fontStyle: 'italic' }}>No hay comentarios ni observaciones registradas.</span>
-                              ) : (
-                                parsearObservaciones(observaciones).map((c, idx) => {
-                                  const authorName = c.author || 'Usuario';
-                                  const isMe = authorName.toLowerCase().includes((currentUser?.nombre || '').toLowerCase()) && authorName.toLowerCase().includes((currentUser?.apellido || '').toLowerCase());
-                                  return (
-                                    <div 
-                                      key={idx} 
-                                      style={{
-                                        alignSelf: isMe ? 'flex-end' : 'flex-start',
-                                        maxWidth: '85%',
-                                        backgroundColor: isMe ? '#e0f2fe' : '#f1f5f9',
-                                        color: '#1e293b',
-                                        padding: '8px 12px',
-                                        borderRadius: isMe ? '12px 12px 2px 12px' : '12px 12px 12px 2px',
-                                        border: '1px solid',
-                                        borderColor: isMe ? '#bae6fd' : '#e2e8f0',
-                                        boxShadow: '0 1px 2px rgba(0,0,0,0.02)'
-                                      }}
-                                    >
-                                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '15px', marginBottom: '3px' }}>
-                                        <span style={{ fontSize: '0.65rem', fontWeight: '800', color: isMe ? '#0369a1' : '#475569' }}>
-                                          {c.author} {c.rol ? `(${c.rol})` : ''}
-                                        </span>
-                                        {c.date && (
-                                          <span style={{ fontSize: '0.55rem', color: '#94a3b8' }}>
-                                            {new Date(c.date).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' })} - {new Date(c.date).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', hour12: true })}
-                                          </span>
-                                        )}
-                                      </div>
-                                      <p style={{ margin: 0, fontSize: '0.75rem', whiteSpace: 'pre-wrap', lineHeight: '1.4', fontWeight: '500' }}>
-                                        {c.text}
-                                      </p>
-                                    </div>
-                                  );
-                                })
-                              )}
-                            </div>
-
-                            {/* Campo para redactar comentario */}
-                            {editandoObs ? (
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid #e2e8f0', paddingTop: '10px' }}>
-                                <textarea
-                                  className="input-tc"
-                                  style={{ minHeight: '60px', paddingTop: '8px', fontSize: '0.8rem' }}
-                                  value={obsTemporal}
-                                  onChange={(e) => setObsTemporal(e.target.value)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter' && !e.shiftKey) {
-                                      e.preventDefault();
-                                      guardarObservacionesDirecto();
-                                    }
-                                  }}
-                                  placeholder="Escriba un comentario o respuesta aquí..."
-                                />
-                                <div style={{ display: 'flex', gap: '8px' }}>
-                                  <button
-                                    className="btn-tc btn-tc-success"
-                                    style={{ padding: '4px 12px', fontSize: '0.65rem' }}
-                                    onClick={guardarObservacionesDirecto}
-                                  >
-                                    ✓ ENVIAR NOTA
-                                  </button>
-                                  <button
-                                    className="btn-tc btn-tc-secondary"
-                                    style={{ padding: '4px 12px', fontSize: '0.65rem' }}
-                                    onClick={() => setEditandoObs(false)}
-                                  >
-                                    CANCELAR
-                                  </button>
-                                </div>
-                              </div>
-                            ) : (
-                              <button 
-                                onClick={() => { setObsTemporal(''); setEditandoObs(true); }}
-                                className="btn-tc btn-tc-secondary"
-                                style={{ width: '100%', fontSize: '0.75rem', padding: '6px' }}
+                  {/* --- SECCIÓN DE OBSERVACIONES COLAPSABLE --- */}
+                  <AnimatePresence>
+                    {mostrarObservaciones && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: 'auto', opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        style={{ overflow: 'hidden', marginBottom: '20px' }}
+                      >
+                        <div style={{ padding: '15px', backgroundColor: '#f8fafc', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
+                            <label className="stat-label" style={{ marginBottom: 0, color: '#1e293b', fontSize: '0.75rem' }}>OBSERVACIONES Y NOTAS</label>
+                            {editandoId && !editandoObs && (
+                              <button
+                                onClick={() => {
+                                  setObsTemporal('');
+                                  setEditandoObs(true);
+                                }}
+                                style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '0.9rem', padding: 0 }}
+                                title="Añadir Observación"
                               >
-                                💬 Añadir comentario al historial...
+                                💬
                               </button>
                             )}
                           </div>
-                        ) : (
-                          /* Modo Creación de Nueva Requisición: Entrada simple */
-                          <textarea
-                            className="input-tc"
-                            style={{ minHeight: '60px', paddingTop: '10px', fontSize: '0.85rem' }}
-                            value={observaciones}
-                            onChange={(e) => { setHasChanges(true); setObservaciones(e.target.value); }}
-                            placeholder="Notas adicionales sobre la entrega, especificaciones técnicas, etc."
-                          />
-                        )}
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
 
-                {editandoId && historial.find(h => h.id === editandoId)?.estado_aprobacion === 'rechazada' && (
-                  <div style={{ marginBottom: '25px', padding: '15px', backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '12px' }}>
-                    <label style={{ fontSize: '0.65rem', fontWeight: '900', color: '#991b1b', textTransform: 'uppercase', marginBottom: '5px', display: 'block' }}>
-                      ⚠️ MOTIVO DE RECHAZO
-                    </label>
-                    <p style={{ margin: 0, color: '#b91c1c', fontSize: '0.9rem', fontWeight: '500' }}>
-                      {historial.find(h => h.id === editandoId)?.motivo_rechazo || 'No especificado'}
-                    </p>
-                  </div>
-                )}
+                          {editandoId ? (
+                            /* Modo Vista/Edición de Requisición Existente: Chat Historial */
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                              {/* Listado de comentarios */}
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '200px', overflowY: 'auto', paddingRight: '4px', marginBottom: '10px' }}>
+                                {parsearObservaciones(observaciones).length === 0 ? (
+                                  <span style={{ fontSize: '0.8rem', color: '#94a3b8', fontStyle: 'italic' }}>No hay comentarios ni observaciones registradas.</span>
+                                ) : (
+                                  parsearObservaciones(observaciones).map((c, idx) => {
+                                    const authorName = c.author || 'Usuario';
+                                    const isMe = authorName.toLowerCase().includes((currentUser?.nombre || '').toLowerCase()) && authorName.toLowerCase().includes((currentUser?.apellido || '').toLowerCase());
+                                    return (
+                                      <div
+                                        key={idx}
+                                        style={{
+                                          alignSelf: isMe ? 'flex-end' : 'flex-start',
+                                          maxWidth: '85%',
+                                          backgroundColor: isMe ? '#e0f2fe' : '#f1f5f9',
+                                          color: '#1e293b',
+                                          padding: '8px 12px',
+                                          borderRadius: isMe ? '12px 12px 2px 12px' : '12px 12px 12px 2px',
+                                          border: '1px solid',
+                                          borderColor: isMe ? '#bae6fd' : '#e2e8f0',
+                                          boxShadow: '0 1px 2px rgba(0,0,0,0.02)'
+                                        }}
+                                      >
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '15px', marginBottom: '3px' }}>
+                                          <span style={{ fontSize: '0.65rem', fontWeight: '800', color: isMe ? '#0369a1' : '#475569' }}>
+                                            {c.author} {c.rol ? `(${c.rol})` : ''}
+                                          </span>
+                                          {c.date && (
+                                            <span style={{ fontSize: '0.55rem', color: '#94a3b8' }}>
+                                              {new Date(c.date).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' })} - {new Date(c.date).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', hour12: true })}
+                                            </span>
+                                          )}
+                                        </div>
+                                        <p style={{ margin: 0, fontSize: '0.75rem', whiteSpace: 'pre-wrap', lineHeight: '1.4', fontWeight: '500' }}>
+                                          {c.text}
+                                        </p>
+                                      </div>
+                                    );
+                                  })
+                                )}
+                              </div>
 
-
-
-                <table className="tc-table" style={{ fontSize: '0.85rem' }}>
-                  <thead>
-                    <tr style={{ backgroundColor: 'var(--slate-50)' }}>
-                      <th style={{ width: '5px', fontSize: '0.65rem', color: '#1e293b' }}>#</th>
-                      <th style={{ width: '250px', color: '#1e293b' }}>CLASIFICACIÓN</th>
-                      <th style={{ width: '350px', color: '#1e293b' }}>CATEGORÍA</th>
-                      <th style={{ width: '70px', color: '#1e293b' }}>CANT.</th>
-                      <th style={{ width: '90px', color: '#1e293b' }}>UNI.</th>
-                      <th style={{ width: '450px', color: '#1e293b' }}>DESCRIPCIÓN</th>
-                      <th style={{ width: '250px', color: '#1e293b' }}>BENEFICIARIO</th>
-                      <th style={{ width: '60px', textAlign: 'right', color: '#1e293b' }}>P.U.</th>
-                      <th style={{ width: '60px', textAlign: 'right', color: '#1e293b' }}>TOTAL</th>
-                      <th style={{ width: '40px', textAlign: 'center', color: '#1e293b' }}>ALM.</th>
-                      <th style={{ width: '10px', textAlign: 'center', color: '#1e293b' }}>TR.</th>
-                      <th style={{ width: '5px' }}></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <AnimatePresence>
-                      {(Array.isArray(renglones) ? renglones : []).map((f, index) => (
-                        <React.Fragment key={f.id}>
-                          <motion.tr
-                            className="renglon-row"
-                            initial={{ opacity: 0, height: 0, scaleY: 0.8 }}
-                            animate={{ opacity: 1, height: 'auto', scaleY: 1 }}
-                            exit={{ opacity: 0, height: 0, scaleY: 0.8, overflow: 'hidden' }}
-                            transition={{ duration: 0.3 }}
-                            style={{ 
-                              minHeight: '60px',
-                              backgroundColor: f.anulado ? '#f8fafc' : 'transparent',
-                              borderLeft: f.anulado ? '4px solid #ef4444' : 'none',
-                              opacity: f.anulado ? 0.75 : 1
-                            }}
-                          >
-                            <td style={{ textAlign: 'center', fontSize: '0.75rem', fontWeight: 'bold', color: '#64748b', padding: '12px 4px' }}>{index + 1}</td>
-                            <td style={{ padding: '12px 4px' }}><input className="input-tc" value={f.clasificacion} onChange={(e) => actualizarFila(f.id, 'clasificacion', e.target.value)} disabled={!!editandoId || f.anulado} /></td>
-                            <td style={{ padding: '12px 4px' }}><input className="input-tc" value={f.categoria} onChange={(e) => actualizarFila(f.id, 'categoria', e.target.value)} disabled={!!editandoId || f.anulado} /></td>
-                            <td style={{ padding: '12px 4px' }}><input className="input-tc" type="number" value={f.cant === '' ? '' : Number(f.cant)} onChange={(e) => actualizarFila(f.id, 'cant', e.target.value)} disabled={(editandoId && !modoEdicion) || f.anulado} /></td>
-                            <td style={{ padding: '12px 4px' }}>
-                              <select className="input-tc" value={f.uni} onChange={(e) => actualizarFila(f.id, 'uni', e.target.value)} disabled={(editandoId && !modoEdicion) || f.anulado}>
-                                {unidades.map(u => <option key={u} value={u}>{u}</option>)}
-                              </select>
-                            </td>
-                            <td style={{ padding: '12px 4px' }}>
-                              <textarea 
-                                className="input-tc" 
-                                value={f.descripcion} 
-                                onChange={(e) => actualizarFila(f.id, 'descripcion', e.target.value)} 
-                                style={{ 
-                                  resize: 'vertical', 
-                                  minHeight: '48px', 
-                                  paddingTop: '10px', 
-                                  width: '100%', 
-                                  boxSizing: 'border-box', 
-                                  lineHeight: '1.4',
-                                  textDecoration: f.anulado ? 'line-through' : 'none',
-                                  color: f.anulado ? '#94a3b8' : 'inherit'
-                                }} 
-                                rows="1" 
-                                disabled={(editandoId && !modoEdicion) || f.anulado} 
-                              />
-                              {f.anulado && (
-                                <div style={{ marginTop: '4px', display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.6rem', color: '#ef4444', backgroundColor: '#fee2e2', padding: '2px 6px', borderRadius: '4px', fontWeight: 'bold' }}>
-                                  🚫 SIN EFECTO / SALDO ANULADO
+                              {/* Campo para redactar comentario */}
+                              {editandoObs ? (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid #e2e8f0', paddingTop: '10px' }}>
+                                  <textarea
+                                    className="input-tc"
+                                    style={{ minHeight: '60px', paddingTop: '8px', fontSize: '0.8rem' }}
+                                    value={obsTemporal}
+                                    onChange={(e) => setObsTemporal(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter' && !e.shiftKey) {
+                                        e.preventDefault();
+                                        guardarObservacionesDirecto();
+                                      }
+                                    }}
+                                    placeholder="Escriba un comentario o respuesta aquí..."
+                                  />
+                                  <div style={{ display: 'flex', gap: '8px' }}>
+                                    <button
+                                      className="btn-tc btn-tc-success"
+                                      style={{ padding: '4px 12px', fontSize: '0.65rem' }}
+                                      onClick={guardarObservacionesDirecto}
+                                    >
+                                      ✓ ENVIAR NOTA
+                                    </button>
+                                    <button
+                                      className="btn-tc btn-tc-secondary"
+                                      style={{ padding: '4px 12px', fontSize: '0.65rem' }}
+                                      onClick={() => setEditandoObs(false)}
+                                    >
+                                      CANCELAR
+                                    </button>
+                                  </div>
                                 </div>
+                              ) : (
+                                <button
+                                  onClick={() => { setObsTemporal(''); setEditandoObs(true); }}
+                                  className="btn-tc btn-tc-secondary"
+                                  style={{ width: '100%', fontSize: '0.75rem', padding: '6px' }}
+                                >
+                                  💬 Añadir comentario al historial...
+                                </button>
                               )}
-                            </td>
-                            <td style={{ padding: '12px 4px' }}><input className="input-tc" value={f.beneficiario} onChange={(e) => actualizarFila(f.id, 'beneficiario', e.target.value)} placeholder="Beneficiario" disabled={(editandoId && !modoEdicion) || f.anulado} /></td>
-                            <td style={{ padding: '12px 4px' }}><input className="input-tc" type="number" value={f.pu === '' ? '' : Number(f.pu)} style={{ textAlign: 'right' }} onChange={(e) => actualizarFila(f.id, 'pu', e.target.value)} disabled={(editandoId && !modoEdicion) || f.anulado} /></td>
-                            <td style={{ textAlign: 'right', fontWeight: 'bold', padding: '12px 4px' }}>{f.total.toLocaleString('de-DE')}</td>
-                            <td style={{ textAlign: 'center', verticalAlign: 'middle' }}>
-                              {(() => {
-                                const statusAlmacen = f.estatus_almacen || (f.enviado_almacen ? 'Ubicado' : 'Pendiente_Compras');
-                                const ubicacionVal = f.ubicacion_almacen || f.almacen_destino;
-                                if (statusAlmacen === 'Ubicado' || statusAlmacen === 'asignado') {
-                                  return (
-                                    <div 
-                                      className="warehouse-located-icon-wrapper"
-                                      style={{ 
-                                        position: 'relative',
-                                        display: 'inline-block',
-                                        fontSize: '1.2rem',
-                                        cursor: 'help',
-                                        transition: 'all 0.3s ease',
-                                        userSelect: 'none'
-                                      }}
-                                    >
-                                      📦
-                                      <div 
-                                        className="warehouse-located-tooltip"
+                            </div>
+                          ) : (
+                            /* Modo Creación de Nueva Requisición: Entrada simple */
+                            <textarea
+                              className="input-tc"
+                              style={{ minHeight: '60px', paddingTop: '10px', fontSize: '0.85rem' }}
+                              value={observaciones}
+                              onChange={(e) => { setHasChanges(true); setObservaciones(e.target.value); }}
+                              placeholder="Notas adicionales sobre la entrega, especificaciones técnicas, etc."
+                            />
+                          )}
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
+                  {editandoId && (historial.find(h => String(h.id) === String(editandoId)) || requisicionActiva)?.estado_aprobacion === 'rechazada' && (
+                    <div style={{ marginBottom: '25px', padding: '15px', backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: '12px' }}>
+                      <label style={{ fontSize: '0.65rem', fontWeight: '900', color: '#991b1b', textTransform: 'uppercase', marginBottom: '5px', display: 'block' }}>
+                        ⚠️ MOTIVO DE RECHAZO
+                      </label>
+                      <p style={{ margin: 0, color: '#b91c1c', fontSize: '0.9rem', fontWeight: '500' }}>
+                        {(historial.find(h => String(h.id) === String(editandoId)) || requisicionActiva)?.motivo_rechazo || 'No especificado'}
+                      </p>
+                    </div>
+                  )}
+
+
+
+                  <table className="tc-table" style={{ fontSize: '0.85rem' }}>
+                    <thead>
+                      <tr style={{ backgroundColor: 'var(--slate-50)' }}>
+                        <th style={{ width: '5px', fontSize: '0.65rem', color: '#1e293b' }}>#</th>
+                        <th style={{ width: '250px', color: '#1e293b' }}>CLASIFICACIÓN</th>
+                        <th style={{ width: '350px', color: '#1e293b' }}>CATEGORÍA</th>
+                        <th style={{ width: '70px', color: '#1e293b' }}>CANT.</th>
+                        <th style={{ width: '90px', color: '#1e293b' }}>UNI.</th>
+                        <th style={{ width: '450px', color: '#1e293b' }}>DESCRIPCIÓN</th>
+                        <th style={{ width: '250px', color: '#1e293b' }}>BENEFICIARIO</th>
+                        <th style={{ width: '60px', textAlign: 'right', color: '#1e293b' }}>P.U.</th>
+                        <th style={{ width: '60px', textAlign: 'right', color: '#1e293b' }}>TOTAL</th>
+                        <th style={{ width: '40px', textAlign: 'center', color: '#1e293b' }}>ALM.</th>
+                        <th style={{ width: '10px', textAlign: 'center', color: '#1e293b' }}>TR.</th>
+                        <th style={{ width: '5px' }}></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <AnimatePresence>
+                        {(Array.isArray(renglones) ? renglones : []).map((f, index) => (
+                          <React.Fragment key={f.id}>
+                            <motion.tr
+                              className="renglon-row"
+                              initial={{ opacity: 0, height: 0, scaleY: 0.8 }}
+                              animate={{ opacity: 1, height: 'auto', scaleY: 1 }}
+                              exit={{ opacity: 0, height: 0, scaleY: 0.8, overflow: 'hidden' }}
+                              transition={{ duration: 0.3 }}
+                              style={{
+                                minHeight: '60px',
+                                backgroundColor: f.anulado ? '#f8fafc' : 'transparent',
+                                borderLeft: f.anulado ? '4px solid #ef4444' : 'none',
+                                opacity: f.anulado ? 0.75 : 1
+                              }}
+                            >
+                              <td style={{ textAlign: 'center', fontSize: '0.75rem', fontWeight: 'bold', color: '#64748b', padding: '12px 4px' }}>{index + 1}</td>
+                              <td style={{ padding: '12px 4px' }}><input className="input-tc" value={f.clasificacion} onChange={(e) => actualizarFila(f.id, 'clasificacion', e.target.value)} disabled={!!editandoId || f.anulado} /></td>
+                              <td style={{ padding: '12px 4px' }}><input className="input-tc" value={f.categoria} onChange={(e) => actualizarFila(f.id, 'categoria', e.target.value)} disabled={!!editandoId || f.anulado} /></td>
+                              <td style={{ padding: '12px 4px' }}><input className="input-tc" type="number" value={f.cant === '' ? '' : Number(f.cant)} onChange={(e) => actualizarFila(f.id, 'cant', e.target.value)} disabled={(editandoId && !modoEdicion) || f.anulado} /></td>
+                              <td style={{ padding: '12px 4px' }}>
+                                <select className="input-tc" value={f.uni} onChange={(e) => actualizarFila(f.id, 'uni', e.target.value)} disabled={(editandoId && !modoEdicion) || f.anulado}>
+                                  {unidades.map(u => <option key={u} value={u}>{u}</option>)}
+                                </select>
+                              </td>
+                              <td style={{ padding: '12px 4px' }}>
+                                <textarea
+                                  className="input-tc"
+                                  value={f.descripcion}
+                                  onChange={(e) => actualizarFila(f.id, 'descripcion', e.target.value)}
+                                  style={{
+                                    resize: 'vertical',
+                                    minHeight: '48px',
+                                    paddingTop: '10px',
+                                    width: '100%',
+                                    boxSizing: 'border-box',
+                                    lineHeight: '1.4',
+                                    textDecoration: f.anulado ? 'line-through' : 'none',
+                                    color: f.anulado ? '#94a3b8' : 'inherit'
+                                  }}
+                                  rows="1"
+                                  disabled={(editandoId && !modoEdicion) || f.anulado}
+                                />
+                                {f.anulado && (
+                                  <div style={{ marginTop: '4px', display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.6rem', color: '#ef4444', backgroundColor: '#fee2e2', padding: '2px 6px', borderRadius: '4px', fontWeight: 'bold' }}>
+                                    🚫 SIN EFECTO / SALDO ANULADO
+                                  </div>
+                                )}
+                              </td>
+                              <td style={{ padding: '12px 4px' }}><input className="input-tc" value={f.beneficiario} onChange={(e) => actualizarFila(f.id, 'beneficiario', e.target.value)} placeholder="Beneficiario" disabled={(editandoId && !modoEdicion) || f.anulado} /></td>
+                              <td style={{ padding: '12px 4px' }}><input className="input-tc" type="number" value={f.pu === '' ? '' : Number(f.pu)} style={{ textAlign: 'right' }} onChange={(e) => actualizarFila(f.id, 'pu', e.target.value)} disabled={(editandoId && !modoEdicion) || f.anulado} /></td>
+                              <td style={{ textAlign: 'right', fontWeight: 'bold', padding: '12px 4px' }}>{f.total.toLocaleString('de-DE')}</td>
+                              <td style={{ textAlign: 'center', verticalAlign: 'middle' }}>
+                                {(() => {
+                                  const statusAlmacen = f.estatus_almacen || (f.enviado_almacen ? 'Ubicado' : 'Pendiente_Compras');
+                                  const ubicacionVal = f.ubicacion_almacen || f.almacen_destino;
+                                  if (statusAlmacen === 'Ubicado' || statusAlmacen === 'asignado') {
+                                    return (
+                                      <div
+                                        className="warehouse-located-icon-wrapper"
                                         style={{
-                                          position: 'absolute',
-                                          bottom: '125%',
-                                          left: '50%',
-                                          transform: 'translateX(-50%)',
-                                          backgroundColor: '#1e293b',
-                                          color: '#f8fafc',
-                                          padding: '6px 10px',
-                                          borderRadius: '6px',
-                                          fontSize: '11px',
-                                          fontWeight: '400',
-                                          whiteSpace: 'nowrap',
-                                          zIndex: 100,
-                                          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
-                                          opacity: 0,
-                                          pointerEvents: 'none',
-                                          transition: 'opacity 0.2s',
-                                          fontFamily: 'Inter, sans-serif'
+                                          position: 'relative',
+                                          display: 'inline-block',
+                                          fontSize: '1.2rem',
+                                          cursor: 'help',
+                                          transition: 'all 0.3s ease',
+                                          userSelect: 'none'
                                         }}
                                       >
-                                        Ubicado en: {ubicacionVal || 'Almacén general'}
-                                        <div style={{
-                                          position: 'absolute',
-                                          top: '100%',
-                                          left: '50%',
-                                          marginLeft: '-5px',
-                                          borderWidth: '5px',
-                                          borderStyle: 'solid',
-                                          borderColor: '#1e293b transparent transparent transparent'
-                                        }} />
+                                        📦
+                                        <div
+                                          className="warehouse-located-tooltip"
+                                          style={{
+                                            position: 'absolute',
+                                            bottom: '125%',
+                                            left: '50%',
+                                            transform: 'translateX(-50%)',
+                                            backgroundColor: '#1e293b',
+                                            color: '#f8fafc',
+                                            padding: '6px 10px',
+                                            borderRadius: '6px',
+                                            fontSize: '11px',
+                                            fontWeight: '400',
+                                            whiteSpace: 'nowrap',
+                                            zIndex: 100,
+                                            boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+                                            opacity: 0,
+                                            pointerEvents: 'none',
+                                            transition: 'opacity 0.2s',
+                                            fontFamily: 'Inter, sans-serif'
+                                          }}
+                                        >
+                                          Ubicado en: {ubicacionVal || 'Almacén general'}
+                                          <div style={{
+                                            position: 'absolute',
+                                            top: '100%',
+                                            left: '50%',
+                                            marginLeft: '-5px',
+                                            borderWidth: '5px',
+                                            borderStyle: 'solid',
+                                            borderColor: '#1e293b transparent transparent transparent'
+                                          }} />
+                                        </div>
                                       </div>
-                                    </div>
-                                  );
-                                } else if (statusAlmacen === 'entregado') {
-                                  return (
-                                    <div 
-                                      className="warehouse-located-icon-wrapper"
-                                      style={{ 
-                                        position: 'relative',
-                                        display: 'inline-block',
-                                        fontSize: '1.2rem',
-                                        cursor: 'help',
-                                        transition: 'all 0.3s ease',
-                                        userSelect: 'none'
-                                      }}
-                                    >
-                                      ✅
-                                      <div 
-                                        className="warehouse-located-tooltip"
+                                    );
+                                  } else if (statusAlmacen === 'entregado') {
+                                    return (
+                                      <div
+                                        className="warehouse-located-icon-wrapper"
                                         style={{
-                                          position: 'absolute',
-                                          bottom: '125%',
-                                          left: '50%',
-                                          transform: 'translateX(-50%)',
-                                          backgroundColor: '#16a34a',
-                                          color: '#ffffff',
-                                          padding: '6px 10px',
-                                          borderRadius: '6px',
-                                          fontSize: '11px',
-                                          fontWeight: 'bold',
-                                          whiteSpace: 'nowrap',
-                                          zIndex: 100,
-                                          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
-                                          opacity: 0,
-                                          pointerEvents: 'none',
-                                          transition: 'opacity 0.2s',
-                                          fontFamily: 'Inter, sans-serif'
+                                          position: 'relative',
+                                          display: 'inline-block',
+                                          fontSize: '1.2rem',
+                                          cursor: 'help',
+                                          transition: 'all 0.3s ease',
+                                          userSelect: 'none'
                                         }}
                                       >
-                                        Entregado al usuario final
-                                        <div style={{
-                                          position: 'absolute',
-                                          top: '100%',
-                                          left: '50%',
-                                          marginLeft: '-5px',
-                                          borderWidth: '5px',
-                                          borderStyle: 'solid',
-                                          borderColor: '#16a34a transparent transparent transparent'
-                                        }} />
+                                        ✅
+                                        <div
+                                          className="warehouse-located-tooltip"
+                                          style={{
+                                            position: 'absolute',
+                                            bottom: '125%',
+                                            left: '50%',
+                                            transform: 'translateX(-50%)',
+                                            backgroundColor: '#16a34a',
+                                            color: '#ffffff',
+                                            padding: '6px 10px',
+                                            borderRadius: '6px',
+                                            fontSize: '11px',
+                                            fontWeight: 'bold',
+                                            whiteSpace: 'nowrap',
+                                            zIndex: 100,
+                                            boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+                                            opacity: 0,
+                                            pointerEvents: 'none',
+                                            transition: 'opacity 0.2s',
+                                            fontFamily: 'Inter, sans-serif'
+                                          }}
+                                        >
+                                          Entregado al usuario final
+                                          <div style={{
+                                            position: 'absolute',
+                                            top: '100%',
+                                            left: '50%',
+                                            marginLeft: '-5px',
+                                            borderWidth: '5px',
+                                            borderStyle: 'solid',
+                                            borderColor: '#16a34a transparent transparent transparent'
+                                          }} />
+                                        </div>
                                       </div>
-                                    </div>
-                                  );
-                                }
-                                return null;
-                              })()}
-                              <style>{`
+                                    );
+                                  }
+                                  return null;
+                                })()}
+                                <style>{`
                                 .warehouse-located-icon-wrapper:hover .warehouse-located-tooltip {
                                   opacity: 1 !important;
                                 }
                               `}</style>
-                            </td>
-                            <td style={{ textAlign: 'center', padding: '12px 4px' }}>
-                              <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', alignItems: 'center' }}>
-                                <button
-                                  onClick={() => setExpandirHistorial(prev => ({ ...prev, [f.id]: !prev[f.id] }))}
-                                  style={{ border: 'none', background: 'none', cursor: 'pointer', opacity: (f.historial_compras?.length > 0) ? 1 : 0.3 }}
-                                  title="Ver Trazabilidad"
-                                  disabled={!f.historial_compras?.length}
-                                >
-                                  {expandirHistorial[f.id] ? '🔼' : '📜'}
-                                </button>
-                              </div>
-                            </td>
-                            <td style={{ textAlign: 'center', padding: '12px 4px' }}></td>
-                          </motion.tr>
-                          {expandirHistorial[f.id] && Array.isArray(f.historial_compras) && f.historial_compras.length > 0 && (
-                            <tr>
-                              <td colSpan="11" style={{ padding: '0 0 15px 40px' }}>
-                                <div style={{ backgroundColor: 'white', borderRadius: '8px', border: '1px solid #e2e8f0', overflow: 'hidden', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
-                                  <div style={{ padding: '8px 12px', backgroundColor: '#f8fafc', fontSize: '0.7rem', fontWeight: '900', color: '#334155', display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #e2e8f0' }}>
-                                    <span>TRAZABILIDAD Y JUSTIFICACIONES DEL ÍTEM</span>
-                                    <span style={{ color: 'var(--primary)' }}>{f.historial_compras.length} EVENTOS</span>
-                                  </div>
-                                  <table style={{ width: '100%', fontSize: '0.75rem', borderCollapse: 'collapse' }}>
-                                    <thead>
-                                      <tr style={{ backgroundColor: '#f1f5f9', color: '#334155', fontSize: '0.65rem' }}>
-                                        <th style={{ padding: '8px', textAlign: 'left' }}>FECHA</th>
-                                        <th style={{ padding: '8px', textAlign: 'left' }}>EVENTO</th>
-                                        <th style={{ padding: '8px', textAlign: 'left' }}>PROVEEDOR</th>
-                                        <th style={{ padding: '8px', textAlign: 'left' }}>DETALLE / MOTIVO</th>
-                                        <th style={{ padding: '8px', textAlign: 'center' }}>CANT.</th>
-                                        <th style={{ padding: '8px', textAlign: 'right' }}>P.U. REAL</th>
-                                        <th style={{ padding: '8px', textAlign: 'right' }}>TOTAL / COMENTARIO</th>
-                                        <th style={{ padding: '8px', textAlign: 'right' }}>USUARIO</th>
-                                      </tr>
-                                    </thead>
-                                    <tbody>
-                                      {(Array.isArray(f.historial_compras) ? f.historial_compras : []).map((h, idx) => (
-                                        <tr key={h.id || `${f.id}-h-${idx}`} style={{
-                                          borderBottom: idx < f.historial_compras.length - 1 ? '1px solid #f1f5f9' : 'none',
-                                          backgroundColor: h.tipo === 'ANULACION' ? '#fef2f2' : (h.tipo === 'JUSTIFICACION' ? '#fffbeb' : (h.tipo === 'DIRECTRIZ' ? '#faf5ff' : 'transparent'))
-                                        }}>
-                                          <td style={{ padding: '8px', color: '#64748b' }}>{new Date(h.fecha).toLocaleDateString()}</td>
-                                          <td style={{ padding: '8px', fontWeight: 'bold', color: h.tipo === 'ANULACION' ? '#ef4444' : (h.tipo === 'JUSTIFICACION' ? '#d97706' : (h.tipo === 'DIRECTRIZ' ? '#7c3aed' : '#16a34a')) }}>
-                                            {h.tipo === 'ANULACION' ? '🚫 SIN EFECTO' : (h.tipo === 'JUSTIFICACION' ? '⚠️ JUSTIFICACIÓN' : (h.tipo === 'DIRECTRIZ' ? '🏛️ DIRECTRIZ' : '✅ COMPRA'))}
-                                          </td>
-                                          <td style={{ padding: '8px', fontSize: '0.65rem', fontWeight: 'bold', color: '#64748b' }}>
-                                            {(h.tipo !== 'JUSTIFICACION' && h.tipo !== 'ANULACION' && h.tipo !== 'DIRECTRIZ') ? (h.proveedor_nombre || 'No asignado') : '-'}
-                                          </td>
-                                          <td style={{ padding: '8px' }}>
-                                            {h.tipo === 'ANULACION' ? (
-                                              <span style={{ fontStyle: 'italic', color: '#b91c1c', fontWeight: '600' }}>Motivo: {h.motivo}</span>
-                                            ) : h.tipo === 'JUSTIFICACION' ? (
-                                              <span style={{ fontStyle: 'italic', color: '#92400e', fontWeight: '600' }}>{h.motivo}</span>
-                                            ) : h.tipo === 'DIRECTRIZ' ? (
-                                              <span style={{ fontStyle: 'italic', color: '#6d28d9', fontWeight: '600' }}>{h.motivo}</span>
-                                            ) : (
-                                              <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                                                {h.metodo_pago && (
-                                                  <span style={{ fontSize: '0.55rem', backgroundColor: '#e2e8f0', color: '#475569', padding: '2px 5px', borderRadius: '4px', fontWeight: '900' }}>
-                                                    {h.metodo_pago}
-                                                  </span>
-                                                )}
-                                                <span style={{ fontWeight: '800', color: '#2563eb' }}>
-                                                  {h.doc_tipo || 'FAC'}: {h.doc_numero || 'S/D'}
-                                                </span>
-                                                {h.factura_url && (
-                                                  <a href={h.factura_url} target="_blank" rel="noreferrer" title="Ver Soporte" style={{ marginLeft: '8px', textDecoration: 'none', cursor: 'pointer', fontSize: '1rem' }}>
-                                                    📎
-                                                  </a>
-                                                )}
-                                              </div>
-                                            )}
-                                          </td>
-                                          <td style={{ padding: '8px', textAlign: 'center', fontWeight: '700' }}>{(h.tipo === 'JUSTIFICACION' || h.tipo === 'ANULACION' || h.tipo === 'DIRECTRIZ') ? '-' : (h.cant || '-')}</td>
-                                          <td style={{ padding: '8px', textAlign: 'right' }}>{(h.tipo === 'JUSTIFICACION' || h.tipo === 'ANULACION' || h.tipo === 'DIRECTRIZ') ? '-' : (h.pu ? `$ ${h.pu.toLocaleString('de-DE')}` : '-')}</td>
-                                          <td style={{ padding: '8px', textAlign: 'right' }}>
-                                            {h.tipo === 'ANULACION' ? (
-                                              <div style={{ fontSize: '0.7rem', color: '#7f1d1d', whiteSpace: 'pre-wrap', textAlign: 'left', backgroundColor: '#fee2e2', padding: '6px', borderRadius: '4px', border: '1px solid #fca5a5' }}>
-                                                {h.comentario}
-                                              </div>
-                                            ) : h.tipo === 'JUSTIFICACION' ? (
-                                              <div style={{ fontSize: '0.7rem', color: '#475569', whiteSpace: 'pre-wrap', textAlign: 'left', backgroundColor: '#fef3c7', padding: '6px', borderRadius: '4px' }}>
-                                                {h.comentario}
-                                              </div>
-                                            ) : h.tipo === 'DIRECTRIZ' ? (
-                                              <div style={{ fontSize: '0.7rem', color: '#4c1d95', whiteSpace: 'pre-wrap', textAlign: 'left', backgroundColor: '#f3e8ff', padding: '6px', borderRadius: '4px', border: '1px solid #ddd6fe' }}>
-                                                {h.comentario}
-                                              </div>
-                                            ) : <span style={{ fontWeight: 'bold' }}>$ {(h.cant * h.pu).toLocaleString('de-DE')}</span>}
-                                          </td>
-                                          <td style={{ padding: '8px', textAlign: 'right', color: '#64748b', fontSize: '0.65rem' }}>{h.usuario_nombre}</td>
-                                        </tr>
-                                      ))}
-                                    </tbody>
-                                  </table>
+                              </td>
+                              <td style={{ textAlign: 'center', padding: '12px 4px' }}>
+                                <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', alignItems: 'center' }}>
+                                  <button
+                                    onClick={() => setExpandirHistorial(prev => ({ ...prev, [f.id]: !prev[f.id] }))}
+                                    style={{ border: 'none', background: 'none', cursor: 'pointer', opacity: (f.historial_compras?.length > 0) ? 1 : 0.3 }}
+                                    title="Ver Trazabilidad"
+                                    disabled={!f.historial_compras?.length}
+                                  >
+                                    {expandirHistorial[f.id] ? '🔼' : '📜'}
+                                  </button>
                                 </div>
                               </td>
-                            </tr>
-                          )}
-                        </React.Fragment>
-                      ))}
-                    </AnimatePresence>
-                  </tbody>
-                </table>
+                              <td style={{ textAlign: 'center', padding: '12px 4px' }}></td>
+                            </motion.tr>
+                            {expandirHistorial[f.id] && Array.isArray(f.historial_compras) && f.historial_compras.length > 0 && (
+                              <tr>
+                                <td colSpan="11" style={{ padding: '0 0 15px 40px' }}>
+                                  <div style={{ backgroundColor: 'white', borderRadius: '8px', border: '1px solid #e2e8f0', overflow: 'hidden', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
+                                    <div style={{ padding: '8px 12px', backgroundColor: '#f8fafc', fontSize: '0.7rem', fontWeight: '900', color: '#334155', display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #e2e8f0' }}>
+                                      <span>TRAZABILIDAD Y JUSTIFICACIONES DEL ÍTEM</span>
+                                      <span style={{ color: 'var(--primary)' }}>{f.historial_compras.length} EVENTOS</span>
+                                    </div>
+                                    <table style={{ width: '100%', fontSize: '0.75rem', borderCollapse: 'collapse' }}>
+                                      <thead>
+                                        <tr style={{ backgroundColor: '#f1f5f9', color: '#334155', fontSize: '0.65rem' }}>
+                                          <th style={{ padding: '8px', textAlign: 'left' }}>FECHA</th>
+                                          <th style={{ padding: '8px', textAlign: 'left' }}>EVENTO</th>
+                                          <th style={{ padding: '8px', textAlign: 'left' }}>PROVEEDOR</th>
+                                          <th style={{ padding: '8px', textAlign: 'left' }}>DETALLE / MOTIVO</th>
+                                          <th style={{ padding: '8px', textAlign: 'center' }}>CANT.</th>
+                                          <th style={{ padding: '8px', textAlign: 'right' }}>P.U. REAL</th>
+                                          <th style={{ padding: '8px', textAlign: 'right' }}>TOTAL / COMENTARIO</th>
+                                          <th style={{ padding: '8px', textAlign: 'right' }}>USUARIO</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {(Array.isArray(f.historial_compras) ? f.historial_compras : []).map((h, idx) => (
+                                          <tr key={h.id || `${f.id}-h-${idx}`} style={{
+                                            borderBottom: idx < f.historial_compras.length - 1 ? '1px solid #f1f5f9' : 'none',
+                                            backgroundColor: h.tipo === 'ANULACION' ? '#fef2f2' : (h.tipo === 'JUSTIFICACION' ? '#fffbeb' : (h.tipo === 'DIRECTRIZ' ? '#faf5ff' : 'transparent'))
+                                          }}>
+                                            <td style={{ padding: '8px', color: '#64748b' }}>{new Date(h.fecha).toLocaleDateString()}</td>
+                                            <td style={{ padding: '8px', fontWeight: 'bold', color: h.tipo === 'ANULACION' ? '#ef4444' : (h.tipo === 'JUSTIFICACION' ? '#d97706' : (h.tipo === 'DIRECTRIZ' ? '#7c3aed' : '#16a34a')) }}>
+                                              {h.tipo === 'ANULACION' ? '🚫 SIN EFECTO' : (h.tipo === 'JUSTIFICACION' ? '⚠️ JUSTIFICACIÓN' : (h.tipo === 'DIRECTRIZ' ? '🏛️ DIRECTRIZ' : '✅ COMPRA'))}
+                                            </td>
+                                            <td style={{ padding: '8px', fontSize: '0.65rem', fontWeight: 'bold', color: '#64748b' }}>
+                                              {(h.tipo !== 'JUSTIFICACION' && h.tipo !== 'ANULACION' && h.tipo !== 'DIRECTRIZ') ? (h.proveedor_nombre || 'No asignado') : '-'}
+                                            </td>
+                                            <td style={{ padding: '8px' }}>
+                                              {h.tipo === 'ANULACION' ? (
+                                                <span style={{ fontStyle: 'italic', color: '#b91c1c', fontWeight: '600' }}>Motivo: {h.motivo}</span>
+                                              ) : h.tipo === 'JUSTIFICACION' ? (
+                                                <span style={{ fontStyle: 'italic', color: '#92400e', fontWeight: '600' }}>{h.motivo}</span>
+                                              ) : h.tipo === 'DIRECTRIZ' ? (
+                                                <span style={{ fontStyle: 'italic', color: '#6d28d9', fontWeight: '600' }}>{h.motivo}</span>
+                                              ) : (
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                                                  {h.metodo_pago && (
+                                                    <span style={{ fontSize: '0.55rem', backgroundColor: '#e2e8f0', color: '#475569', padding: '2px 5px', borderRadius: '4px', fontWeight: '900' }}>
+                                                      {h.metodo_pago}
+                                                    </span>
+                                                  )}
+                                                  <span style={{ fontWeight: '800', color: '#2563eb' }}>
+                                                    {h.doc_tipo || 'FAC'}: {h.doc_numero || 'S/D'}
+                                                  </span>
+                                                  {h.factura_url && (
+                                                    <a href={h.factura_url} target="_blank" rel="noreferrer" title="Ver Soporte" style={{ marginLeft: '8px', textDecoration: 'none', cursor: 'pointer', fontSize: '1rem' }}>
+                                                      📎
+                                                    </a>
+                                                  )}
+                                                </div>
+                                              )}
+                                            </td>
+                                            <td style={{ padding: '8px', textAlign: 'center', fontWeight: '700' }}>{(h.tipo === 'JUSTIFICACION' || h.tipo === 'ANULACION' || h.tipo === 'DIRECTRIZ') ? '-' : (h.cant || '-')}</td>
+                                            <td style={{ padding: '8px', textAlign: 'right' }}>{(h.tipo === 'JUSTIFICACION' || h.tipo === 'ANULACION' || h.tipo === 'DIRECTRIZ') ? '-' : (h.pu ? `$ ${h.pu.toLocaleString('de-DE')}` : '-')}</td>
+                                            <td style={{ padding: '8px', textAlign: 'right' }}>
+                                              {h.tipo === 'ANULACION' ? (
+                                                <div style={{ fontSize: '0.7rem', color: '#7f1d1d', whiteSpace: 'pre-wrap', textAlign: 'left', backgroundColor: '#fee2e2', padding: '6px', borderRadius: '4px', border: '1px solid #fca5a5' }}>
+                                                  {h.comentario}
+                                                </div>
+                                              ) : h.tipo === 'JUSTIFICACION' ? (
+                                                <div style={{ fontSize: '0.7rem', color: '#475569', whiteSpace: 'pre-wrap', textAlign: 'left', backgroundColor: '#fef3c7', padding: '6px', borderRadius: '4px' }}>
+                                                  {h.comentario}
+                                                </div>
+                                              ) : h.tipo === 'DIRECTRIZ' ? (
+                                                <div style={{ fontSize: '0.7rem', color: '#4c1d95', whiteSpace: 'pre-wrap', textAlign: 'left', backgroundColor: '#f3e8ff', padding: '6px', borderRadius: '4px', border: '1px solid #ddd6fe' }}>
+                                                  {h.comentario}
+                                                </div>
+                                              ) : <span style={{ fontWeight: 'bold' }}>$ {(h.cant * h.pu).toLocaleString('de-DE')}</span>}
+                                            </td>
+                                            <td style={{ padding: '8px', textAlign: 'right', color: '#64748b', fontSize: '0.65rem' }}>{h.usuario_nombre}</td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
+                        ))}
+                      </AnimatePresence>
+                    </tbody>
+                  </table>
 
 
 
-                <div style={{ display: 'flex', gap: '20px', marginTop: '20px', alignItems: 'stretch' }}>
-                  {/* IZQUIERDA: SOPORTES COMPACTOS */}
-                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-                    <>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
-                        <button
-                          onClick={() => setMostrarSoportes(!mostrarSoportes)}
-                          style={{
-                            padding: '6px 14px', borderRadius: '8px',
-                            display: 'flex', alignItems: 'center', gap: '8px',
-                            cursor: 'pointer', transition: 'all 0.2s',
-                            backgroundColor: mostrarSoportes ? '#10b981' : '#f8fafc',
-                            color: mostrarSoportes ? 'white' : '#64748b',
-                            border: '1px solid #e2e8f0',
-                            fontSize: '0.7rem',
-                            fontWeight: '900'
-                          }}
-                        >
-                          <Camera size={14} /> {mostrarSoportes ? 'OCULTAR SOPORTES' : 'VER SOPORTES'}
-                        </button>
-
-                        {mostrarSoportes && (!editandoId || modoEdicion) && (
-                          <label
+                  <div style={{ display: 'flex', gap: '20px', marginTop: '20px', alignItems: 'stretch' }}>
+                    {/* IZQUIERDA: SOPORTES COMPACTOS */}
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+                      <>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
+                          <button
+                            onClick={() => setMostrarSoportes(!mostrarSoportes)}
                             style={{
                               padding: '6px 14px', borderRadius: '8px',
                               display: 'flex', alignItems: 'center', gap: '8px',
-                              cursor: uploading ? 'not-allowed' : 'pointer',
-                              backgroundColor: '#0ea5e9',
-                              color: 'white',
-                              border: 'none',
+                              cursor: 'pointer', transition: 'all 0.2s',
+                              backgroundColor: mostrarSoportes ? '#10b981' : '#f8fafc',
+                              color: mostrarSoportes ? 'white' : '#64748b',
+                              border: '1px solid #e2e8f0',
                               fontSize: '0.7rem',
-                              fontWeight: '900',
-                              boxShadow: '0 2px 4px rgba(14, 165, 233, 0.2)'
+                              fontWeight: '900'
                             }}
                           >
-                            {uploading ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
-                            {uploading ? 'SUBIENDO...' : 'AÑADIR'}
-                            <input type="file" multiple style={{ display: 'none' }} onChange={subirFactura} disabled={uploading || (editandoId && !modoEdicion)} accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv" />
-                          </label>
-                        )}
-                      </div>
+                            <Camera size={14} /> {mostrarSoportes ? 'OCULTAR SOPORTES' : 'VER SOPORTES'}
+                          </button>
 
-                      <AnimatePresence>
-                        {mostrarSoportes && (
-                          <motion.div
-                            initial={{ height: 0, opacity: 0 }}
-                            animate={{ height: 'auto', opacity: 1 }}
-                            exit={{ height: 0, opacity: 0 }}
-                            style={{ overflow: 'hidden' }}
-                          >
-                            <div
-                              onDragOver={(e) => e.preventDefault()}
-                              onDrop={(e) => {
-                                if (editandoId && !modoEdicion) {
-                                  toast.error("Debe activar el modo edición para subir archivos.");
-                                  return;
-                                }
-                                handleDrop(e);
-                              }}
+                          {mostrarSoportes && (!editandoId || modoEdicion) && (
+                            <label
                               style={{
-                                padding: '15px',
-                                backgroundColor: '#f8fafc',
-                                borderRadius: '12px',
-                                border: '1px dashed #cbd5e1',
-                                minHeight: '135px',
-                                flex: 1
+                                padding: '6px 14px', borderRadius: '8px',
+                                display: 'flex', alignItems: 'center', gap: '8px',
+                                cursor: uploading ? 'not-allowed' : 'pointer',
+                                backgroundColor: '#0ea5e9',
+                                color: 'white',
+                                border: 'none',
+                                fontSize: '0.7rem',
+                                fontWeight: '900',
+                                boxShadow: '0 2px 4px rgba(14, 165, 233, 0.2)'
                               }}
                             >
-                              {facturasUrls.length === 0 ? (
-                                <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: '0.75rem', padding: '20px' }}>
-                                  No hay archivos. Arrastre aquí para subir.
-                                </div>
-                              ) : (
-                                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                                  {facturasUrls.map((item, idx) => {
-                                    const url = (() => {
-                                      if (typeof item === 'string') {
-                                        if (item.trim().startsWith('{')) {
-                                          try { return JSON.parse(item).url; } catch (e) { return item; }
+                              {uploading ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                              {uploading ? 'SUBIENDO...' : 'AÑADIR'}
+                              <input type="file" multiple style={{ display: 'none' }} onChange={subirFactura} disabled={uploading || (editandoId && !modoEdicion)} accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv" />
+                            </label>
+                          )}
+                        </div>
+
+                        <AnimatePresence>
+                          {mostrarSoportes && (
+                            <motion.div
+                              initial={{ height: 0, opacity: 0 }}
+                              animate={{ height: 'auto', opacity: 1 }}
+                              exit={{ height: 0, opacity: 0 }}
+                              style={{ overflow: 'hidden' }}
+                            >
+                              <div
+                                onDragOver={(e) => e.preventDefault()}
+                                onDrop={(e) => {
+                                  if (editandoId && !modoEdicion) {
+                                    toast.error("Debe activar el modo edición para subir archivos.");
+                                    return;
+                                  }
+                                  handleDrop(e);
+                                }}
+                                style={{
+                                  padding: '15px',
+                                  backgroundColor: '#f8fafc',
+                                  borderRadius: '12px',
+                                  border: '1px dashed #cbd5e1',
+                                  minHeight: '135px',
+                                  flex: 1
+                                }}
+                              >
+                                {facturasUrls.length === 0 ? (
+                                  <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: '0.75rem', padding: '20px' }}>
+                                    No hay archivos. Arrastre aquí para subir.
+                                  </div>
+                                ) : (
+                                  <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                                    {(Array.isArray(facturasUrls) ? facturasUrls : []).map((item, idx) => {
+                                      const url = (() => {
+                                        if (typeof item === 'string') {
+                                          if (item.trim().startsWith('{')) {
+                                            try { return JSON.parse(item).url; } catch (e) { return item; }
+                                          }
+                                          return item;
                                         }
-                                        return item;
+                                        return item?.url;
+                                      })();
+                                      if (!url) return null;
+                                      const lowerUrl = url.split('?')[0].toLowerCase();
+                                      const isImg = /\.(jpg|jpeg|png|webp|avif|gif)$/i.test(lowerUrl);
+                                      const isPdf = lowerUrl.endsWith('.pdf');
+                                      const isExcel = /\.(xls|xlsx|csv)$/i.test(lowerUrl);
+                                      const isWord = /\.(doc|docx)$/i.test(lowerUrl);
+                                      const isPowerPoint = /\.(ppt|pptx)$/i.test(lowerUrl);
+
+                                      let fileInfo = { iconColor: '#64748b', bgColor: '#f8fafc', label: 'DOC' };
+                                      if (isPdf) {
+                                        fileInfo = { iconColor: '#ef4444', bgColor: '#fef2f2', label: 'PDF' };
+                                      } else if (isExcel) {
+                                        fileInfo = { iconColor: '#10b981', bgColor: '#ecfdf5', label: 'EXCEL' };
+                                      } else if (isWord) {
+                                        fileInfo = { iconColor: '#2563eb', bgColor: '#eff6ff', label: 'WORD' };
+                                      } else if (isPowerPoint) {
+                                        fileInfo = { iconColor: '#f97316', bgColor: '#fff7ed', label: 'PPT' };
                                       }
-                                      return item?.url;
-                                    })();
-                                    if (!url) return null;
-                                    const lowerUrl = url.split('?')[0].toLowerCase();
-                                    const isImg = /\.(jpg|jpeg|png|webp|avif|gif)$/i.test(lowerUrl);
-                                    const isPdf = lowerUrl.endsWith('.pdf');
-                                    const isExcel = /\.(xls|xlsx|csv)$/i.test(lowerUrl);
-                                    const isWord = /\.(doc|docx)$/i.test(lowerUrl);
-                                    const isPowerPoint = /\.(ppt|pptx)$/i.test(lowerUrl);
 
-                                    let fileInfo = { iconColor: '#64748b', bgColor: '#f8fafc', label: 'DOC' };
-                                    if (isPdf) {
-                                      fileInfo = { iconColor: '#ef4444', bgColor: '#fef2f2', label: 'PDF' };
-                                    } else if (isExcel) {
-                                      fileInfo = { iconColor: '#10b981', bgColor: '#ecfdf5', label: 'EXCEL' };
-                                    } else if (isWord) {
-                                      fileInfo = { iconColor: '#2563eb', bgColor: '#eff6ff', label: 'WORD' };
-                                    } else if (isPowerPoint) {
-                                      fileInfo = { iconColor: '#f97316', bgColor: '#fff7ed', label: 'PPT' };
-                                    }
-
-                                    return (
-                                      <div key={idx} style={{ position: 'relative', width: '70px', height: '70px' }}>
-                                        <a href={url} target="_blank" rel="noreferrer" style={{
-                                          display: 'block', width: '100%', height: '100%',
-                                          borderRadius: '8px', overflow: 'hidden', border: '1px solid #cbd5e1',
-                                          backgroundColor: 'white'
-                                        }}>
-                                          {isImg ? (
-                                            <img src={url} alt={`Soporte ${idx}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                                          ) : (
-                                            <div style={{
-                                              width: '100%', height: '100%',
-                                              display: 'flex', flexDirection: 'column',
-                                              alignItems: 'center', justifyContent: 'center',
-                                              backgroundColor: fileInfo.bgColor, color: fileInfo.iconColor
-                                            }}>
-                                              <FileText size={18} style={{ marginBottom: '2px' }} />
-                                              <span style={{ fontSize: '7px', fontWeight: 'bold', textTransform: 'uppercase' }}>{fileInfo.label}</span>
-                                            </div>
-                                          )}
-                                        </a>
-                                        <button
-                                          onClick={() => eliminarSoporteDefinitivo(idx)}
-                                          style={{ position: 'absolute', top: '-5px', right: '-5px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '50%', width: '18px', height: '18px', fontSize: '9px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}
-                                        >
-                                          ✕
-                                        </button>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              )}
-                            </div>
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-                    </>
-                  </div>
-
-                  <div className="totals-container" style={{ width: '100%', maxWidth: '350px', minWidth: '350px', marginTop: 0 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', color: '#64748b' }}>
-                      <span className="stat-label" style={{ color: 'inherit' }}>SUB-TOTAL ESTIMADO:</span>
-                      <span style={{ fontWeight: 'bold' }}>$ {subTotalEstimado.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span>
-                    </div>
-                    {subTotalEjecutado > 0 && (
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', color: '#16a34a' }}>
-                        <span className="stat-label" style={{ color: 'inherit' }}>SUB-TOTAL EJECUTADO:</span>
-                        <span style={{ fontWeight: 'bold' }}>$ {subTotalEjecutado.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span>
-                      </div>
-                    )}
-
-                    <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '2px solid var(--slate-200)', paddingTop: '10px', color: '#64748b' }}>
-                      <span style={{ fontWeight: '900', fontSize: '1rem' }}>TOTAL ESTIMADO {conIva ? "(C/IVA)" : "(S/IVA)"}:</span>
-                      <span style={{ fontSize: '1.2rem', fontWeight: '900' }}>$ {totalEstimado.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span>
+                                      return (
+                                        <div key={idx} style={{ position: 'relative', width: '70px', height: '70px' }}>
+                                          <a href={url} target="_blank" rel="noreferrer" style={{
+                                            display: 'block', width: '100%', height: '100%',
+                                            borderRadius: '8px', overflow: 'hidden', border: '1px solid #cbd5e1',
+                                            backgroundColor: 'white'
+                                          }}>
+                                            {isImg ? (
+                                              <img src={url} alt={`Soporte ${idx}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                            ) : (
+                                              <div style={{
+                                                width: '100%', height: '100%',
+                                                display: 'flex', flexDirection: 'column',
+                                                alignItems: 'center', justifyContent: 'center',
+                                                backgroundColor: fileInfo.bgColor, color: fileInfo.iconColor
+                                              }}>
+                                                <FileText size={18} style={{ marginBottom: '2px' }} />
+                                                <span style={{ fontSize: '7px', fontWeight: 'bold', textTransform: 'uppercase' }}>{fileInfo.label}</span>
+                                              </div>
+                                            )}
+                                          </a>
+                                          <button
+                                            onClick={() => eliminarSoporteDefinitivo(idx)}
+                                            style={{ position: 'absolute', top: '-5px', right: '-5px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '50%', width: '18px', height: '18px', fontSize: '9px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}
+                                          >
+                                            ✕
+                                          </button>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </>
                     </div>
 
-                    {subTotalEjecutado > 0 && (
-                      <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: '10px', color: '#16a34a' }}>
-                        <span style={{ fontWeight: '900', fontSize: '1rem' }}>TOTAL EJECUTADO {conIva ? "(C/IVA)" : "(S/IVA)"}:</span>
-                        <span style={{ fontSize: '1.2rem', fontWeight: '900' }}>$ {totalEjecutado.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span>
+                    <div className="totals-container" style={{ width: '100%', maxWidth: '350px', minWidth: '350px', marginTop: 0 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', color: '#64748b' }}>
+                        <span className="stat-label" style={{ color: 'inherit' }}>SUB-TOTAL ESTIMADO:</span>
+                        <span style={{ fontWeight: 'bold' }}>$ {subTotalEstimado.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span>
                       </div>
-                    )}
+                      {subTotalEjecutado > 0 && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', color: '#16a34a' }}>
+                          <span className="stat-label" style={{ color: 'inherit' }}>SUB-TOTAL EJECUTADO:</span>
+                          <span style={{ fontWeight: 'bold' }}>$ {subTotalEjecutado.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span>
+                        </div>
+                      )}
 
-                    {/* Diferencia */}
-                    {subTotalEjecutado > 0 && (
-                      <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: '10px', marginTop: '10px', borderTop: '1px dashed #cbd5e1' }}>
-                        <span style={{ fontWeight: '600', fontSize: '0.9rem', color: '#475569' }}>DIFERENCIA:</span>
-                        {(() => {
-                          if (totalEstimado === 0) {
-                            return <span style={{ fontSize: '0.9rem', fontWeight: 'bold', color: '#64748b' }}>+ $ {totalEjecutado.toLocaleString('de-DE', { minimumFractionDigits: 2 })} (Sin Est. Previa)</span>;
-                          }
-                          const diff = totalEjecutado - totalEstimado;
-                          const pje = (diff / totalEstimado) * 100;
-                          const isRed = diff > 0;
-                          const isGreen = diff < 0;
-                          const color = isRed ? '#ef4444' : isGreen ? '#16a34a' : '#64748b';
-                          const sign = diff > 0 ? '+' : '';
-
-                          // Prevent NaN or extreme values if close to 0
-                          const pjeStr = isFinite(pje) ? `${pje > 0 ? '+' : ''}${pje.toFixed(1)}%` : 'N/A';
-
-                          return (
-                            <span style={{ fontSize: '0.9rem', fontWeight: 'bold', color }}>
-                              {sign} $ {diff.toLocaleString('de-DE', { minimumFractionDigits: 2 })} ({pjeStr})
-                            </span>
-                          );
-                        })()}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '2px solid var(--slate-200)', paddingTop: '10px', color: '#64748b' }}>
+                        <span style={{ fontWeight: '900', fontSize: '1rem' }}>TOTAL ESTIMADO {conIva ? "(C/IVA)" : "(S/IVA)"}:</span>
+                        <span style={{ fontSize: '1.2rem', fontWeight: '900' }}>$ {totalEstimado.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span>
                       </div>
-                    )}
+
+                      {subTotalEjecutado > 0 && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: '10px', color: '#16a34a' }}>
+                          <span style={{ fontWeight: '900', fontSize: '1rem' }}>TOTAL EJECUTADO {conIva ? "(C/IVA)" : "(S/IVA)"}:</span>
+                          <span style={{ fontSize: '1.2rem', fontWeight: '900' }}>$ {totalEjecutado.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span>
+                        </div>
+                      )}
+
+                      {/* Diferencia */}
+                      {subTotalEjecutado > 0 && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: '10px', marginTop: '10px', borderTop: '1px dashed #cbd5e1' }}>
+                          <span style={{ fontWeight: '600', fontSize: '0.9rem', color: '#475569' }}>DIFERENCIA:</span>
+                          {(() => {
+                            if (totalEstimado === 0) {
+                              return <span style={{ fontSize: '0.9rem', fontWeight: 'bold', color: '#64748b' }}>+ $ {totalEjecutado.toLocaleString('de-DE', { minimumFractionDigits: 2 })} (Sin Est. Previa)</span>;
+                            }
+                            const diff = totalEjecutado - totalEstimado;
+                            const pje = (diff / totalEstimado) * 100;
+                            const isRed = diff > 0;
+                            const isGreen = diff < 0;
+                            const color = isRed ? '#ef4444' : isGreen ? '#16a34a' : '#64748b';
+                            const sign = diff > 0 ? '+' : '';
+
+                            // Prevent NaN or extreme values if close to 0
+                            const pjeStr = isFinite(pje) ? `${pje > 0 ? '+' : ''}${pje.toFixed(1)}%` : 'N/A';
+
+                            return (
+                              <span style={{ fontSize: '0.9rem', fontWeight: 'bold', color }}>
+                                {sign} $ {diff.toLocaleString('de-DE', { minimumFractionDigits: 2 })} ({pjeStr})
+                              </span>
+                            );
+                          })()}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
-                </div>
 
-                  {/* --- PIE DE PÁGINA FIJO --- */}
-                  <div style={{
-                    flexShrink: 0,
-                    padding: '20px 40px',
-                    background: 'white',
-                    borderTop: '1px solid #e2e8f0',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    gap: '20px'
-                  }}>
-                    <div style={{ display: 'flex', gap: '20px' }}>
-                      <button
-                        className="btn-tc"
-                        style={{
-                          backgroundColor: 'transparent',
-                          color: '#475569',
-                          border: '2px solid #cbd5e1',
-                          fontWeight: '900',
-                          padding: '10px 22px',
-                          borderRadius: '10px',
-                          cursor: 'pointer',
-                          transition: 'all 0.2s',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '8px',
-                          fontSize: '0.85rem'
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.backgroundColor = '#f1f5f9';
-                          e.currentTarget.style.borderColor = '#94a3b8';
-                          e.currentTarget.style.color = '#0f172a';
-                          e.currentTarget.style.transform = 'scale(1.03)';
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.backgroundColor = 'transparent';
-                          e.currentTarget.style.borderColor = '#cbd5e1';
-                          e.currentTarget.style.color = '#475569';
-                          e.currentTarget.style.transform = 'scale(1)';
-                        }}
-                        onClick={intentarCerrarModal}
-                      >
-                        <ArrowLeft size={16} /> VOLVER
+                {/* --- PIE DE PÁGINA FIJO --- */}
+                <div style={{
+                  flexShrink: 0,
+                  padding: '20px 40px',
+                  background: 'white',
+                  borderTop: '1px solid #e2e8f0',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  gap: '20px'
+                }}>
+                  <div style={{ display: 'flex', gap: '20px' }}>
+                    <button
+                      className="btn-tc"
+                      style={{
+                        backgroundColor: 'transparent',
+                        color: '#475569',
+                        border: '2px solid #cbd5e1',
+                        fontWeight: '900',
+                        padding: '10px 22px',
+                        borderRadius: '10px',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        fontSize: '0.85rem'
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.backgroundColor = '#f1f5f9';
+                        e.currentTarget.style.borderColor = '#94a3b8';
+                        e.currentTarget.style.color = '#0f172a';
+                        e.currentTarget.style.transform = 'scale(1.03)';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.backgroundColor = 'transparent';
+                        e.currentTarget.style.borderColor = '#cbd5e1';
+                        e.currentTarget.style.color = '#475569';
+                        e.currentTarget.style.transform = 'scale(1)';
+                      }}
+                      onClick={intentarCerrarModal}
+                    >
+                      <ArrowLeft size={16} /> VOLVER
+                    </button>
+                    {editandoId && (
+                      <button className="btn-tc btn-tc-dark" onClick={exportarPDF} title="Descargar como PDF">
+                        <FileText size={18} /> PDF
                       </button>
-                      {editandoId && (
-                        <button className="btn-tc btn-tc-dark" onClick={exportarPDF} title="Descargar como PDF">
-                          <FileText size={18} /> PDF
-                        </button>
-                      )}
-                    </div>
+                    )}
+                  </div>
 
-                    <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                      {(!editandoId || modoEdicion) ? (
-                        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', fontWeight: 'bold', color: '#475569', cursor: 'pointer', userSelect: 'none', marginRight: '6px' }}>
-                          <input
-                            type="checkbox"
-                            checked={conIva}
-                            onChange={(e) => { setHasChanges(true); setConIva(e.target.checked); }}
-                            style={{ width: '15px', height: '15px', accentColor: 'var(--primary)', cursor: 'pointer' }}
-                          />
-                          ¿Con IVA (16%)?
-                        </label>
-                      ) : (
-                        <span style={{ fontSize: '0.7rem', fontWeight: '800', color: conIva ? '#16a34a' : '#ef4444', backgroundColor: conIva ? '#f0fdf4' : '#fef2f2', padding: '3px 8px', borderRadius: '6px', marginRight: '6px' }}>
-                          {conIva ? 'CON IVA (16%)' : 'SIN IVA'}
-                        </span>
-                      )}
-                      {editandoId ? (
-                        <>
-                          {modoEdicion ? (
-                            (() => {
-                              const reqActual = historial.find(h => String(h.id) === String(editandoId));
-                              const isRechazada = reqActual?.estado_aprobacion === 'rechazada';
+                  <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                    {(!editandoId || modoEdicion) ? (
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', fontWeight: 'bold', color: '#475569', cursor: 'pointer', userSelect: 'none', marginRight: '6px' }}>
+                        <input
+                          type="checkbox"
+                          checked={conIva}
+                          onChange={(e) => { setHasChanges(true); setConIva(e.target.checked); }}
+                          style={{ width: '15px', height: '15px', accentColor: 'var(--primary)', cursor: 'pointer' }}
+                        />
+                        ¿Con IVA (16%)?
+                      </label>
+                    ) : (
+                      <span style={{ fontSize: '0.7rem', fontWeight: '800', color: conIva ? '#16a34a' : '#ef4444', backgroundColor: conIva ? '#f0fdf4' : '#fef2f2', padding: '3px 8px', borderRadius: '6px', marginRight: '6px' }}>
+                        {conIva ? 'CON IVA (16%)' : 'SIN IVA'}
+                      </span>
+                    )}
+                    {editandoId ? (
+                      <>
+                        {modoEdicion ? (
+                          (() => {
+                            const reqActual = editandoId ? (historial.find(h => String(h.id) === String(editandoId)) || requisicionActiva) : null;
+                            const isRechazada = reqActual?.estado_aprobacion === 'rechazada';
 
-                              if (isRechazada) {
-                                return (
-                                  <button className="btn-tc btn-tc-primary" onClick={manejarGenerarOActualizar} disabled={loading}>
-                                    {loading ? <Loader2 className="animate-spin" size={16} /> : 'ACTUALIZAR Y FINALIZAR (RE-ENVIAR)'}
-                                  </button>
-                                );
-                              }
-
+                            if (isRechazada) {
                               return (
                                 <button className="btn-tc btn-tc-primary" onClick={manejarGenerarOActualizar} disabled={loading}>
-                                  {loading ? <Loader2 className="animate-spin" size={16} /> : 'GUARDAR CAMBIOS'}
+                                  {loading ? <Loader2 className="animate-spin" size={16} /> : 'ACTUALIZAR Y FINALIZAR (RE-ENVIAR)'}
                                 </button>
                               );
-                            })()
-                          ) : (
-                            <button
-                              className="btn-tc"
-                              style={{
-                                backgroundColor: '#2563eb', // Premium Blue-600
-                                color: 'white',
-                                fontWeight: '800',
-                                padding: '10px 22px',
-                                borderRadius: '10px',
-                                border: 'none',
-                                boxShadow: '0 4px 10px rgba(37, 99, 235, 0.35)',
-                                cursor: 'pointer',
-                                transition: 'all 0.2s',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '8px',
-                                fontSize: '0.85rem'
-                              }}
-                              onClick={() => {
-                                const reqActual = historial.find(h => String(h.id) === String(editandoId));
-                                if (!puedeModificarRequisicion(reqActual)) {
-                                  toast.error("No tienes permisos para modificar requisiciones de otros departamentos.");
-                                  return;
-                                }
-                                if (reqActual?.estado_aprobacion !== 'aprobado_final' && reqActual?.estado_aprobacion !== 'rechazada') {
-                                  setModoEdicion(true);
-                                } else if (reqActual?.estado_aprobacion === 'rechazada') {
-                                  // Si está rechazada, permitimos editar para re-enviar
-                                  setModoEdicion(true);
-                                } else {
-                                  toast.error("No se puede editar una requisición ya aprobada.");
-                                }
-                              }}
-                              onMouseEnter={(e) => {
-                                e.currentTarget.style.backgroundColor = '#1d4ed8';
-                                e.currentTarget.style.transform = 'scale(1.03)';
-                                e.currentTarget.style.boxShadow = '0 6px 14px rgba(29, 78, 216, 0.45)';
-                              }}
-                              onMouseLeave={(e) => {
-                                e.currentTarget.style.backgroundColor = '#2563eb';
-                                e.currentTarget.style.transform = 'scale(1)';
-                                e.currentTarget.style.boxShadow = '0 4px 10px rgba(37, 99, 235, 0.35)';
-                              }}
-                            >
-                              <Edit2 size={16} /> HABILITAR EDICIÓN
-                            </button>
-                          )}
+                            }
 
-
-
-                          {(() => {
-                            const rolUser = (currentUser?.rol || '').toLowerCase();
-                            const reqActual = historial.find(h => String(h.id) === String(editandoId));
-
-                            let puedeVerBotonesProyecto = false;
-                            if (reqActual?.estado_aprobacion === 'pendiente_proyecto') {
-                              const cc = reqActual.centro_costo || '';
-                              const gerenteEsperado = obtenerAprobadorProyecto(cc, gerenteDirectoCreador);
-                              const esAdmin = currentUser?.esAdminReal ||
-                                rolUser.includes('admin') ||
-                                rolUser.includes('general') ||
-                                (currentUser?.correo || '').toLowerCase() === 'cvega@totalclean.com.ve';
-                              
-                              if (esAdmin) {
-                                puedeVerBotonesProyecto = true;
+                            return (
+                              <button className="btn-tc btn-tc-primary" onClick={manejarGenerarOActualizar} disabled={loading}>
+                                {loading ? <Loader2 className="animate-spin" size={16} /> : 'GUARDAR CAMBIOS'}
+                              </button>
+                            );
+                          })()
+                        ) : (
+                          <button
+                            className="btn-tc"
+                            style={{
+                              backgroundColor: '#2563eb', // Premium Blue-600
+                              color: 'white',
+                              fontWeight: '800',
+                              padding: '10px 22px',
+                              borderRadius: '10px',
+                              border: 'none',
+                              boxShadow: '0 4px 10px rgba(37, 99, 235, 0.35)',
+                              cursor: 'pointer',
+                              transition: 'all 0.2s',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '8px',
+                              fontSize: '0.85rem'
+                            }}
+                            onClick={() => {
+                              const reqActual = editandoId ? (historial.find(h => String(h.id) === String(editandoId)) || requisicionActiva) : null;
+                              if (!puedeModificarRequisicion(reqActual)) {
+                                toast.error("No tienes permisos para modificar requisiciones de otros departamentos.");
+                                return;
+                              }
+                              if (reqActual?.estado_aprobacion !== 'aprobado_final' && reqActual?.estado_aprobacion !== 'rechazada') {
+                                setModoEdicion(true);
+                              } else if (reqActual?.estado_aprobacion === 'rechazada') {
+                                // Si está rechazada, permitimos editar para re-enviar
+                                setModoEdicion(true);
                               } else {
-                                if (gerenteDirectoIdCreador && currentUser?.id === gerenteDirectoIdCreador) {
-                                  puedeVerBotonesProyecto = true;
-                                } else if (gerenteEsperado === 'Johannel García') {
-                                  puedeVerBotonesProyecto = currentUser?.nombre?.toUpperCase().includes('JOHANNEL');
-                                } else if (gerenteEsperado === 'Hilda Colina') {
-                                  puedeVerBotonesProyecto = currentUser?.nombre?.toUpperCase().includes('HILDA');
-                                } else if (gerenteEsperado) {
-                                  const miNombre = `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim();
-                                  puedeVerBotonesProyecto = compararNombres(miNombre, gerenteEsperado) || rolUser.includes('proyecto');
-                                } else {
-                                  puedeVerBotonesProyecto = rolUser.includes('proyecto');
-                                }
+                                toast.error("No se puede editar una requisición ya aprobada.");
+                              }
+                            }}
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.backgroundColor = '#1d4ed8';
+                              e.currentTarget.style.transform = 'scale(1.03)';
+                              e.currentTarget.style.boxShadow = '0 6px 14px rgba(29, 78, 216, 0.45)';
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.backgroundColor = '#2563eb';
+                              e.currentTarget.style.transform = 'scale(1)';
+                              e.currentTarget.style.boxShadow = '0 4px 10px rgba(37, 99, 235, 0.35)';
+                            }}
+                          >
+                            <Edit2 size={16} /> HABILITAR EDICIÓN
+                          </button>
+                        )}
+
+
+
+                        {(() => {
+                          const rolUser = (currentUser?.rol || '').toLowerCase();
+                          const reqActual = editandoId ? (historial.find(h => String(h.id) === String(editandoId)) || requisicionActiva) : null;
+
+                          let puedeVerBotonesProyecto = false;
+                          if (reqActual?.estado_aprobacion === 'pendiente_proyecto') {
+                            const cc = reqActual.centro_costo || '';
+                            const gerenteEsperado = obtenerAprobadorProyecto(cc, gerenteDirectoCreador);
+                            const esAdmin = currentUser?.esAdminReal ||
+                              rolUser.includes('admin') ||
+                              rolUser.includes('general') ||
+                              (currentUser?.correo || '').toLowerCase() === 'cvega@totalclean.com.ve';
+
+                            if (esAdmin) {
+                              puedeVerBotonesProyecto = true;
+                            } else {
+                              if (gerenteDirectoIdCreador && currentUser?.id === gerenteDirectoIdCreador) {
+                                puedeVerBotonesProyecto = true;
+                              } else if (gerenteEsperado === 'Johannel García') {
+                                puedeVerBotonesProyecto = currentUser?.nombre?.toUpperCase().includes('JOHANNEL');
+                              } else if (gerenteEsperado === 'Hilda Colina') {
+                                puedeVerBotonesProyecto = currentUser?.nombre?.toUpperCase().includes('HILDA');
+                              } else if (gerenteEsperado) {
+                                const miNombre = `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim();
+                                puedeVerBotonesProyecto = compararNombres(miNombre, gerenteEsperado) || rolUser.includes('proyecto');
+                              } else {
+                                puedeVerBotonesProyecto = rolUser.includes('proyecto');
                               }
                             }
+                          }
 
-                            if (puedeVerBotonesProyecto) {
-                              return (
-                                <>
-                                  <button className="btn-tc btn-tc-danger" onClick={manejarRechazarGerenteProyecto} disabled={loading}>
-                                    {loading ? <Loader2 className="animate-spin" size={16} /> : 'RECHAZAR'}
-                                  </button>
-                                  <button className="btn-tc btn-tc-success" onClick={manejarAprobarGerenteProyecto} disabled={loading}>
-                                    {loading ? <Loader2 className="animate-spin" size={16} /> : '✓ APROBAR PROYECTO'}
-                                  </button>
-                                </>
-                              );
-                            }
-                            const rolUpper = (currentUser?.rol || '').toUpperCase();
-                            const emailLower = (currentUser?.correo || '').toLowerCase();
-                            const esGG = currentUser?.esAdminReal || rolUpper.includes('GERENTE GENERAL') || rolUpper.includes('ADMIN') || emailLower.includes('cvega') || esFavio;
+                          if (puedeVerBotonesProyecto) {
+                            return (
+                              <>
+                                <button className="btn-tc btn-tc-danger" onClick={manejarRechazarGerenteProyecto} disabled={loading}>
+                                  {loading ? <Loader2 className="animate-spin" size={16} /> : 'RECHAZAR'}
+                                </button>
+                                <button className="btn-tc btn-tc-success" onClick={manejarAprobarGerenteProyecto} disabled={loading}>
+                                  {loading ? <Loader2 className="animate-spin" size={16} /> : '✓ APROBAR PROYECTO'}
+                                </button>
+                              </>
+                            );
+                          }
+                          const rolUpper = (currentUser?.rol || '').toUpperCase();
+                          const emailLower = (currentUser?.correo || '').toLowerCase();
+                          const esFavio = (currentUser?.nombre || '').toUpperCase().includes('FAVIO') && (currentUser?.apellido || '').toUpperCase().includes('BAVUSO');
+                          const esGG = currentUser?.esAdminReal || rolUpper.includes('GERENTE GENERAL') || rolUpper.includes('ADMIN') || emailLower.includes('cvega') || esFavio;
 
-                            const esGerenteArea = (currentUser?.rol?.toLowerCase()?.includes('gerente') && !currentUser?.rol?.toLowerCase()?.includes('general')) || emailLower === 'karincmm1@gmail.com';
-                            const esSuGerenteDirecto = gerenteDirectoIdCreador && currentUser?.id === gerenteDirectoIdCreador;
-                            const esFavio = (currentUser?.nombre || '').toUpperCase().includes('FAVIO') && (currentUser?.apellido || '').toUpperCase().includes('BAVUSO');
+                          const esGerenteArea = (currentUser?.rol?.toLowerCase()?.includes('gerente') && !currentUser?.rol?.toLowerCase()?.includes('general')) || emailLower === 'karincmm1@gmail.com';
+                          const esSuGerenteDirecto = gerenteDirectoIdCreador && currentUser?.id === gerenteDirectoIdCreador;
 
-                            if (reqActual?.estado_aprobacion === 'pendiente_area' && (esGerenteArea || esSuGerenteDirecto || esFavio || esGG)) {
-                              return (
-                                <>
-                                  <button className="btn-tc btn-tc-danger" onClick={manejarRechazarGerenteArea} disabled={loading}>
-                                    {loading ? <Loader2 className="animate-spin" size={16} /> : 'RECHAZAR'}
+                          if (reqActual?.estado_aprobacion === 'pendiente_area' && (esGerenteArea || esSuGerenteDirecto || esFavio || esGG)) {
+                            return (
+                              <>
+                                <button className="btn-tc btn-tc-danger" onClick={manejarRechazarGerenteArea} disabled={loading}>
+                                  {loading ? <Loader2 className="animate-spin" size={16} /> : 'RECHAZAR'}
+                                </button>
+                                <button className="btn-tc btn-tc-success" onClick={manejarAprobarGerenteArea} disabled={loading}>
+                                  {loading ? <Loader2 className="animate-spin" size={16} /> : (esGG ? '✓ APROBAR ÁREA (DESDE GG)' : '✓ APROBAR ÁREA')}
+                                </button>
+                                {esGG && (
+                                  <button className="btn-tc btn-tc-primary" onClick={manejarAprobarGeneral} disabled={loading} style={{ backgroundColor: '#7c3aed', color: 'white' }}>
+                                    {loading ? <Loader2 className="animate-spin" size={16} /> : '⚡ APROBACIÓN FINAL DIRECTA'}
                                   </button>
-                                  <button className="btn-tc btn-tc-success" onClick={manejarAprobarGerenteArea} disabled={loading}>
-                                    {loading ? <Loader2 className="animate-spin" size={16} /> : (esGG ? '✓ APROBAR ÁREA (DESDE GG)' : '✓ APROBAR ÁREA')}
-                                  </button>
-                                  {esGG && (
-                                    <button className="btn-tc btn-tc-primary" onClick={manejarAprobarGeneral} disabled={loading} style={{ backgroundColor: '#7c3aed', color: 'white' }}>
-                                      {loading ? <Loader2 className="animate-spin" size={16} /> : '⚡ APROBACIÓN FINAL DIRECTA'}
-                                    </button>
-                                  )}
-                                </>
-                              );
-                            }
+                                )}
+                              </>
+                            );
+                          }
 
-                            if (esGG && reqActual?.estado_aprobacion === 'enviada_general' && reqActual?.solicitante !== `${currentUser?.nombre} ${currentUser?.apellido}`) {
-                              return (
-                                <>
-                                  <button className="btn-tc btn-tc-danger" onClick={manejarRechazarGeneral} disabled={loading}>
-                                    {loading ? <Loader2 className="animate-spin" size={16} /> : 'RECHAZAR'}
-                                  </button>
-                                  <button className="btn-tc btn-tc-success" onClick={manejarAprobarGeneral} disabled={loading}>
-                                    {loading ? <Loader2 className="animate-spin" size={16} /> : '✓ APROBACIÓN FINAL'}
-                                  </button>
-                                </>
-                              );
-                            }
-                            return null;
-                          })()}
-                        </>
-                      ) : (
-                        <button className="btn-tc btn-tc-primary" onClick={manejarGenerarOActualizar} disabled={loading}>
-                          {loading ? <Loader2 className="animate-spin" size={16} /> : 'GENERAR Y FINALIZAR REQUISICIÓN'}
-                        </button>
-                      )}
-                    </div>
+                          if (esGG && reqActual?.estado_aprobacion === 'enviada_general' && reqActual?.solicitante !== `${currentUser?.nombre} ${currentUser?.apellido}`) {
+                            return (
+                              <>
+                                <button className="btn-tc btn-tc-danger" onClick={manejarRechazarGeneral} disabled={loading}>
+                                  {loading ? <Loader2 className="animate-spin" size={16} /> : 'RECHAZAR'}
+                                </button>
+                                <button className="btn-tc btn-tc-success" onClick={manejarAprobarGeneral} disabled={loading}>
+                                  {loading ? <Loader2 className="animate-spin" size={16} /> : '✓ APROBACIÓN FINAL'}
+                                </button>
+                              </>
+                            );
+                          }
+                          return null;
+                        })()}
+                      </>
+                    ) : (
+                      <button className="btn-tc btn-tc-primary" onClick={manejarGenerarOActualizar} disabled={loading}>
+                        {loading ? <Loader2 className="animate-spin" size={16} /> : 'GENERAR Y FINALIZAR REQUISICIÓN'}
+                      </button>
+                    )}
                   </div>
+                </div>
               </div>
             </div>
           </div>
