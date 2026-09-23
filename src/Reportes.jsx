@@ -234,6 +234,7 @@ const Reportes = () => {
             observaciones: doc.observaciones || '',
             facturas_url: doc.facturas_url || [],
             solicitante: doc.solicitante || 'N/A',
+            comprador: doc.asignado_nombre || 'Sin Asignar',
             nroFactura: compras.map(c => c.doc_numero).filter(Boolean).join(', ') || 'N/A',
             almacen: item.enviado_almacen || (historial.length > 0 && historial.every(h => h.enviado_almacen)),
             idReal: doc.id,
@@ -267,6 +268,7 @@ const Reportes = () => {
             observaciones: doc.observaciones || '',
             facturas_url: doc.facturas_url || [],
             solicitante: doc.responsable_nombre || 'N/A',
+            comprador: doc.responsable_nombre || 'Directo',
             nroFactura: doc.ref_pago || 'N/A',
             almacen: false,
             cantPendiente: 0
@@ -464,7 +466,7 @@ const Reportes = () => {
     const worksheet = workbook.addWorksheet('Compras Faltantes');
 
     // Logo/Header Row
-    worksheet.mergeCells('A1:O1');
+    worksheet.mergeCells('A1:L1');
     const titleCell = worksheet.getCell('A1');
     titleCell.value = 'TOTAL CLEAN C.A. - REPORTE DE COMPRAS FALTANTES';
     titleCell.font = { name: 'Arial Black', size: 14, color: { argb: 'FFFFFFFF' } };
@@ -475,15 +477,12 @@ const Reportes = () => {
     // Encabezados según solicitud
     const headers = [
       'CORRELATIVO #',
-      'ALMACÉN',
       'DESCRIPCIÓN',
-      'NRO DE FACTURA',
-      'FECHA',
       'SOLICITANTE',
+      'COMPRADOR',
       'CATEGORÍA',
       'GERENCIA',
       'CENTRO DE COSTO',
-      'MONEDA DE PAGO',
       'STATUS',
       'CANTIDAD PEDIDA',
       'CANTIDAD COMPRADA',
@@ -510,22 +509,14 @@ const Reportes = () => {
         }
       }
 
-      let monedaPago = r.metodoPago || '—';
-      if (monedaPago === 'N/A' || !monedaPago || monedaPago === '—') {
-        monedaPago = r.rawItem?.metodo_pago_actual || '—';
-      }
-
       const row = worksheet.addRow([
         r.idReq,
-        r.almacen ? 'SÍ' : 'NO',
         r.descripcion,
-        r.nroFactura,
-        r.fechaPago !== 'Pendiente' && r.fechaPago !== 'N/A' ? new Date(r.fechaPago + 'T12:00:00') : r.fechaPago,
         r.solicitante,
+        r.comprador || 'Sin Asignar',
         r.categoria,
         r.gerencia,
         r.centroCosto,
-        monedaPago,
         statusText,
         r.cantPedida,
         r.cantComprada,
@@ -533,25 +524,17 @@ const Reportes = () => {
         r.total
       ]);
 
-      // Aplicar formato de fecha
-      if (r.fechaPago !== 'Pendiente' && r.fechaPago !== 'N/A') {
-        row.getCell(5).numFmt = 'dd/mm/yyyy';
-      }
-
       // Format ID as text
       row.getCell(1).numFmt = '@';
-      row.getCell(15).numFmt = '"$"#,##0.00;[Red]"$"#,##0.00';
+      row.getCell(12).numFmt = '"$"#,##0.00;[Red]"$"#,##0.00';
 
       // Alignment & borders
       row.getCell(1).alignment = { horizontal: 'center' };
-      row.getCell(2).alignment = { horizontal: 'center' };
-      row.getCell(5).alignment = { horizontal: 'center' };
-      row.getCell(10).alignment = { horizontal: 'center' };
-      row.getCell(11).alignment = { horizontal: 'center' };
+      row.getCell(8).alignment = { horizontal: 'center' };
+      row.getCell(9).alignment = { horizontal: 'right' };
+      row.getCell(10).alignment = { horizontal: 'right' };
+      row.getCell(11).alignment = { horizontal: 'right' };
       row.getCell(12).alignment = { horizontal: 'right' };
-      row.getCell(13).alignment = { horizontal: 'right' };
-      row.getCell(14).alignment = { horizontal: 'right' };
-      row.getCell(15).alignment = { horizontal: 'right' };
 
       row.eachCell(cell => {
         cell.border = {
@@ -565,16 +548,13 @@ const Reportes = () => {
 
     // Ajuste de columnas
     worksheet.columns = [
-      { width: 16 }, // CORRELATIVO #
-      { width: 12 }, // ALMACÉN
+      { width: 18 }, // CORRELATIVO #
       { width: 40 }, // DESCRIPCIÓN
-      { width: 20 }, // NRO DE FACTURA
-      { width: 15 }, // FECHA
       { width: 25 }, // SOLICITANTE
+      { width: 25 }, // COMPRADOR
       { width: 20 }, // CATEGORÍA
       { width: 25 }, // GERENCIA
       { width: 25 }, // CENTRO DE COSTO
-      { width: 20 }, // MONEDA DE PAGO
       { width: 15 }, // STATUS
       { width: 18 }, // CANTIDAD PEDIDA
       { width: 22 }, // CANTIDAD COMPRADA
@@ -585,13 +565,13 @@ const Reportes = () => {
     // Totales
     const totalGastoFaltantes = faltantes.reduce((sum, r) => sum + (Number(r.total) || 0), 0);
     const lastRowNum = faltantes.length + 3;
-    worksheet.mergeCells(`A${lastRowNum}:N${lastRowNum}`);
+    worksheet.mergeCells(`A${lastRowNum}:K${lastRowNum}`);
     const totalLabel = worksheet.getCell(`A${lastRowNum}`);
     totalLabel.value = 'TOTAL ESTIMADO FALTANTES ($):';
     totalLabel.font = { bold: true };
     totalLabel.alignment = { horizontal: 'right', vertical: 'middle' };
 
-    const totalVal = worksheet.getCell(`O${lastRowNum}`);
+    const totalVal = worksheet.getCell(`L${lastRowNum}`);
     totalVal.value = totalGastoFaltantes;
     totalVal.font = { bold: true, color: { argb: 'FF15803D' } };
     totalVal.numFmt = '"$"#,##0.00';

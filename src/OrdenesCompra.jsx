@@ -3,15 +3,28 @@ import { supabase } from './supabaseClient';
 import toast from 'react-hot-toast';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { motion } from 'framer-motion';
 import { 
   FileText, Search, Filter, Printer, Download, Eye, CheckCircle2, 
   Clock, AlertTriangle, XCircle, ShieldCheck, Plus, Calendar, DollarSign,
   Building2, Truck, CreditCard, User, ChevronRight, RefreshCw, Lock,
-  Edit2, Trash2, Save
+  Edit2, Trash2, Save, Ban, Landmark
 } from 'lucide-react';
 import './OrdenesCompra.css';
 
 const DIRECCION_FISCAL_OFICIAL = "AV 61 ENTRE CALLE 147 Y TAPÓN PARCELA CI-19 SECTOR I, LOCAL GALPÓN NRO 147-113, ZONA INDUSTRIAL DE MARACAIBO SUR.";
+
+const parsearJsonSeguro = (val) => {
+  if (!val) return [];
+  if (Array.isArray(val)) return val;
+  if (typeof val === 'object') return [val];
+  try {
+    const parsed = JSON.parse(val);
+    return Array.isArray(parsed) ? parsed : [parsed];
+  } catch (e) {
+    return [];
+  }
+};
 
 const OrdenesCompra = ({ currentUser }) => {
   const [ordenes, setOrdenes] = useState([]);
@@ -33,9 +46,60 @@ const OrdenesCompra = ({ currentUser }) => {
   const [loadingEditData, setLoadingEditData] = useState(false);
   const [guardandoEditOdc, setGuardandoEditOdc] = useState(false);
   const [proveedoresList, setProveedoresList] = useState([]);
+  const [filtroCategoriaProveedor, setFiltroCategoriaProveedor] = useState('TODAS');
   const [requisicionesList, setRequisicionesList] = useState([]);
   const [sourceReqSelected, setSourceReqSelected] = useState(null);
   const [showReqItemsPicker, setShowReqItemsPicker] = useState(false);
+
+  const categoriasDisponibles = useMemo(() => {
+    const setCat = new Set();
+    (proveedoresList || []).forEach(p => {
+      const c = p.categoria || p.categoria_proveedor || p.rubro;
+      if (Array.isArray(c)) {
+        c.forEach(x => { if (x) setCat.add(String(x).toUpperCase().trim()); });
+      } else if (typeof c === 'string') {
+        try {
+          const parsed = JSON.parse(c);
+          if (Array.isArray(parsed)) {
+            parsed.forEach(x => { if (x) setCat.add(String(x).toUpperCase().trim()); });
+          } else if (c.trim()) {
+            setCat.add(c.toUpperCase().trim());
+          }
+        } catch {
+          if (c.trim()) setCat.add(c.toUpperCase().trim());
+        }
+      }
+    });
+
+    const base = ["SERVICIO", "REPUESTO", "ALIMENTACIÓN", "TECNOLOGÍA", "PAPELERÍA", "LIMPIEZA", "MANTENIMIENTO", "FERRETERÍA", "CONSUMIBLE", "EQUIPO", "TRANSPORTE", "OTROS"];
+    base.forEach(b => setCat.add(b));
+    return Array.from(setCat).sort();
+  }, [proveedoresList]);
+
+  const proveedoresFiltradosPorCategoria = useMemo(() => {
+    if (!filtroCategoriaProveedor || filtroCategoriaProveedor === 'TODAS') {
+      return proveedoresList;
+    }
+    const filtroUpper = filtroCategoriaProveedor.toUpperCase().trim();
+    return proveedoresList.filter(p => {
+      const c = p.categoria || p.categoria_proveedor || p.rubro;
+      if (Array.isArray(c)) {
+        return c.some(x => String(x).toUpperCase().trim() === filtroUpper);
+      }
+      if (typeof c === 'string') {
+        try {
+          const parsed = JSON.parse(c);
+          if (Array.isArray(parsed)) {
+            return parsed.some(x => String(x).toUpperCase().trim() === filtroUpper);
+          }
+        } catch {
+          // ignore
+        }
+        return c.toUpperCase().includes(filtroUpper);
+      }
+      return false;
+    });
+  }, [proveedoresList, filtroCategoriaProveedor]);
   
   // Edición de Términos y Condiciones / Leyes
   const [editandoTerminos, setEditandoTerminos] = useState(false);
@@ -97,15 +161,18 @@ const OrdenesCompra = ({ currentUser }) => {
         }
       });
 
-      // 2. Cargar requisiciones de origen para vinculación directa
+      // 2. Cargar requisiciones de origen para vinculación directa (Paginación completa)
       let reqsData = [];
       let pageReq = 0;
       let keepReq = true;
       while (keepReq) {
-        const { data: chunk } = await supabase
+        const { data: chunk, error: reqErr } = await supabase
           .from('requisiciones')
-          .select('id, correlativo_req, solicitante, gerencia, departamento, items')
+          .select('id, correlativo_req, solicitante, gerencia, items')
           .range(pageReq * 1000, (pageReq + 1) * 1000 - 1);
+        if (reqErr) {
+          console.error("Error al cargar catálogo de requisiciones:", reqErr);
+        }
         if (chunk && chunk.length > 0) {
           reqsData = reqsData.concat(chunk);
           if (chunk.length < 1000) keepReq = false;
@@ -121,9 +188,12 @@ const OrdenesCompra = ({ currentUser }) => {
           reqMap[String(r.id)] = r;
         }
         if (r.correlativo_req) {
-          reqMap[String(r.correlativo_req).trim()] = r;
+          const cTrim = String(r.correlativo_req).trim();
+          reqMap[cTrim] = r;
+          reqMap[cTrim.toUpperCase()] = r;
         }
       });
+      setRequisicionesList(reqsData || []);
 
       // 3. Cargar órdenes de compra sin pedir relaciones embebidas
       let data = [];
@@ -152,9 +222,10 @@ const OrdenesCompra = ({ currentUser }) => {
       const mapeadas = (data || []).map(o => {
         const prov = provMap[String(o.proveedor_id)];
         const reqObj = reqMap[String(o.requisicion_id)] || 
-                       reqMap[String(o.numero_req)] || 
-                       reqMap[String(o.correlativo_req)] || 
-                       reqMap[String(o.requisicion_correlativo)];
+                       (o.requisicion_id ? reqMap[String(o.requisicion_id).trim().toUpperCase()] : null) ||
+                       (o.numero_req ? reqMap[String(o.numero_req).trim().toUpperCase()] : null) || 
+                       (o.correlativo_req ? reqMap[String(o.correlativo_req).trim().toUpperCase()] : null) || 
+                       (o.requisicion_correlativo ? reqMap[String(o.requisicion_correlativo).trim().toUpperCase()] : null);
 
         const nombreVal = (o.proveedor_nombre && o.proveedor_nombre !== 'N/A') 
           ? o.proveedor_nombre 
@@ -167,9 +238,11 @@ const OrdenesCompra = ({ currentUser }) => {
         const direccionVal = o.proveedor_direccion || prov?.direccion || 'N/A';
 
         const correlativoReq = reqObj?.correlativo_req || o.numero_req || o.correlativo_req || o.requisicion_correlativo || (o.requisicion_id && String(o.requisicion_id).startsWith('REQ-') ? o.requisicion_id : null);
+        const reqIdResolved = reqObj?.id ? String(reqObj.id) : (o.requisicion_id && !String(o.requisicion_id).includes('-') ? String(o.requisicion_id) : null);
 
         return {
           ...o,
+          requisicion_id: reqIdResolved || o.requisicion_id || (reqObj ? reqObj.id : null),
           proveedor_nombre: nombreVal,
           proveedor_rif: rifVal,
           proveedor_contacto: contactoVal,
@@ -289,22 +362,52 @@ const OrdenesCompra = ({ currentUser }) => {
         .order('razon_social', { ascending: true });
       setProveedoresList(provs || []);
 
-      // 2. Cargar lista de requisiciones aprobadas/activas para vincular o importar renglones
-      const { data: reqs } = await supabase
-        .from('requisiciones')
-        .select('id, correlativo_req, solicitante, gerencia, departamento, items, created_at')
-        .order('created_at', { ascending: false });
-      setRequisicionesList(reqs || []);
+      // 2. Cargar lista de requisiciones aprobadas/activas para vincular o importar renglones (Paginación completa)
+      let reqsAll = [];
+      let pageReq = 0;
+      let keepReq = true;
+      while (keepReq) {
+        const { data: chunk, error: reqErr2 } = await supabase
+          .from('requisiciones')
+          .select('id, correlativo_req, solicitante, gerencia, items, created_at')
+          .order('created_at', { ascending: false })
+          .range(pageReq * 1000, (pageReq + 1) * 1000 - 1);
+        if (reqErr2) {
+          console.error("Error al cargar requisiciones en modal edición:", reqErr2);
+        }
+        if (chunk && chunk.length > 0) {
+          reqsAll = reqsAll.concat(chunk);
+          if (chunk.length < 1000) keepReq = false;
+          else pageReq++;
+        } else {
+          keepReq = false;
+        }
+      }
+      setRequisicionesList(reqsAll || []);
 
       // Determinar requisición de origen vinculada
-      let reqEncontrada = null;
-      if (odc.requisicion_id) {
-        reqEncontrada = (reqs || []).find(r => String(r.id) === String(odc.requisicion_id));
+      let reqEncontrada = odc.requisicion_obj || null;
+      if (!reqEncontrada && odc.requisicion_id) {
+        reqEncontrada = (reqsAll || []).find(r => 
+          String(r.id) === String(odc.requisicion_id) || 
+          (r.correlativo_req && String(r.correlativo_req).trim().toUpperCase() === String(odc.requisicion_id).trim().toUpperCase())
+        );
       }
       if (!reqEncontrada && odc.requisicion_correlativo) {
-        reqEncontrada = (reqs || []).find(r => String(r.correlativo_req) === String(odc.requisicion_correlativo));
+        reqEncontrada = (reqsAll || []).find(r => 
+          (r.correlativo_req && String(r.correlativo_req).trim().toUpperCase() === String(odc.requisicion_correlativo).trim().toUpperCase()) || 
+          String(r.id) === String(odc.requisicion_correlativo)
+        );
+      }
+      if (!reqEncontrada && odc.numero_req) {
+        reqEncontrada = (reqsAll || []).find(r => 
+          (r.correlativo_req && String(r.correlativo_req).trim().toUpperCase() === String(odc.numero_req).trim().toUpperCase()) || 
+          String(r.id) === String(odc.numero_req)
+        );
       }
       setSourceReqSelected(reqEncontrada || null);
+
+      const resolvedReqId = reqEncontrada ? String(reqEncontrada.id) : (odc.requisicion_id ? String(odc.requisicion_id) : '');
 
       // 3. Cargar ítems/renglones existentes de la ODC
       const { data: items, error: itemsErr } = await supabase
@@ -340,7 +443,7 @@ const OrdenesCompra = ({ currentUser }) => {
 
       setEditOdcTarget({
         ...odc,
-        requisicion_id: odc.requisicion_id || (reqEncontrada ? reqEncontrada.id : ''),
+        requisicion_id: resolvedReqId,
         proveedor_id: odc.proveedor_id || '',
         proveedor_nombre: odc.proveedor_nombre || '',
         proveedor_rif: odc.proveedor_rif || '',
@@ -370,6 +473,19 @@ const OrdenesCompra = ({ currentUser }) => {
   const manejarCambioProveedorEdicion = (provId) => {
     const p = proveedoresList.find(prov => String(prov.id) === String(provId));
     if (p) {
+      let ctas = [];
+      if (p.cuentas_bancarias) {
+        if (Array.isArray(p.cuentas_bancarias)) ctas = p.cuentas_bancarias;
+        else if (typeof p.cuentas_bancarias === 'string') {
+          try { ctas = JSON.parse(p.cuentas_bancarias); } catch { ctas = []; }
+        }
+      }
+      let defaultCtaStr = '';
+      if (ctas.length > 0) {
+        const c0 = ctas[0];
+        defaultCtaStr = `${c0.banco || 'Banco'} (${c0.moneda || 'USD'}) - N° Cuenta: ${c0.nro_cuenta || 'N/A'} - Titular: ${c0.titular || 'N/A'} (${c0.rif || 'N/A'}) ${c0.tipo_cuenta ? `[${c0.tipo_cuenta}]` : ''}`;
+      }
+
       setEditOdcTarget(prev => ({
         ...prev,
         proveedor_id: p.id,
@@ -377,7 +493,9 @@ const OrdenesCompra = ({ currentUser }) => {
         proveedor_rif: p.rif || p.rif_nit || '',
         proveedor_contacto: p.persona_contacto || p.contacto_nombre || '',
         proveedor_ciudad: p.ciudad || p.localizacion || '',
-        proveedor_direccion: p.direccion || ''
+        proveedor_direccion: p.direccion || '',
+        datos_bancarios: defaultCtaStr,
+        cuenta_bancaria: defaultCtaStr
       }));
     } else {
       setEditOdcTarget(prev => ({ ...prev, proveedor_id: provId }));
@@ -385,11 +503,16 @@ const OrdenesCompra = ({ currentUser }) => {
   };
 
   const manejarCambioRequisicionEdicion = (reqId) => {
-    const reqObj = requisicionesList.find(r => String(r.id) === String(reqId));
+    const reqObj = (requisicionesList || []).find(r => 
+      String(r.id) === String(reqId) || 
+      (r.correlativo_req && String(r.correlativo_req).trim().toUpperCase() === String(reqId).trim().toUpperCase())
+    );
     setSourceReqSelected(reqObj || null);
     setEditOdcTarget(prev => ({
       ...prev,
-      requisicion_id: reqId || null
+      requisicion_id: reqObj ? String(reqObj.id) : (reqId || ''),
+      requisicion_correlativo: reqObj ? reqObj.correlativo_req : null,
+      numero_req: reqObj ? reqObj.correlativo_req : null
     }));
     if (reqObj) {
       toast.success(`Vínculo actualizado a la Requisición ${reqObj.correlativo_req}`);
@@ -403,28 +526,145 @@ const OrdenesCompra = ({ currentUser }) => {
     ]);
   };
 
-  const agregarItemDesdeRequisicion = (reqItem) => {
+  const agregarItemDesdeRequisicion = (reqItem, cantOverride = null) => {
     const desc = reqItem.descripcion || reqItem.nombre || reqItem.item || '';
     const uni = reqItem.unidad || reqItem.uni || 'UNID';
-    const cant = parseFloat(reqItem.cant_aprobada || reqItem.cantidad || reqItem.cant || 1);
+    const cantAprobada = parseFloat(reqItem.cant_aprobada || reqItem.cantidad || reqItem.cant || 1);
+    const cant = cantOverride !== null ? parseFloat(cantOverride) : cantAprobada;
+    const pu = parseFloat(reqItem.pu_usd || reqItem.pu_bs || reqItem.precio || 0);
+    const reqItemIdStr = String(reqItem.id || desc.toLowerCase().trim());
+
+    setEditItems(prev => {
+      const existingIdx = prev.findIndex(it => 
+        (it.requisicion_item_id && String(it.requisicion_item_id) === reqItemIdStr) ||
+        (it.descripcion || '').toLowerCase().trim() === desc.toLowerCase().trim()
+      );
+
+      if (existingIdx >= 0) {
+        const updated = [...prev];
+        const prevItem = updated[existingIdx];
+        const nuevaCant = (parseFloat(prevItem.cantidad) || 0) + cant;
+        updated[existingIdx] = {
+          ...prevItem,
+          requisicion_item_id: reqItemIdStr,
+          cantidad: nuevaCant,
+          total_fila: nuevaCant * (parseFloat(prevItem.precio_unitario) || pu)
+        };
+        toast.success(`Se actualizó la cantidad de "${desc}" a ${nuevaCant} ${uni} en la ODC.`);
+        return updated;
+      } else {
+        toast.success(`Ítem "${desc}" (${cant} ${uni}) agregado a la ODC.`);
+        const prevFiltrados = prev.filter(it => (it.descripcion || '').trim() !== '' || (parseFloat(it.cantidad) || 0) > 0);
+        return [
+          ...prevFiltrados,
+          {
+            id: `req_item_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+            requisicion_item_id: reqItemIdStr,
+            item_numero: prevFiltrados.length + 1,
+            descripcion: desc,
+            unidad: uni,
+            cantidad: cant,
+            precio_unitario: pu,
+            total_fila: cant * pu,
+            origen_req: sourceReqSelected?.correlativo_req || 'Requisición'
+          }
+        ];
+      }
+    });
+  };
+
+  const modificarCantidadDesdeRequisicion = (reqItem, delta) => {
+    const desc = reqItem.descripcion || reqItem.nombre || reqItem.item || '';
+    const reqItemIdStr = String(reqItem.id || desc.toLowerCase().trim());
     const pu = parseFloat(reqItem.pu_usd || reqItem.pu_bs || reqItem.precio || 0);
 
-    setEditItems(prev => [
-      ...prev,
-      {
-        id: `req_item_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-        requisicion_item_id: String(reqItem.id || Date.now()),
-        item_numero: prev.length + 1,
-        descripcion: desc,
-        unidad: uni,
-        cantidad: cant,
-        precio_unitario: pu,
-        total_fila: cant * pu,
-        origen_req: sourceReqSelected?.correlativo_req || 'Requisición'
-      }
-    ]);
+    setEditItems(prev => {
+      const existingIdx = prev.findIndex(it => 
+        (it.requisicion_item_id && String(it.requisicion_item_id) === reqItemIdStr) ||
+        (it.descripcion || '').toLowerCase().trim() === desc.toLowerCase().trim()
+      );
 
-    toast.success(`Ítem "${desc}" agregado desde ${sourceReqSelected?.correlativo_req || 'Requisición de Origen'}`);
+      if (existingIdx >= 0) {
+        const updated = [...prev];
+        const prevItem = updated[existingIdx];
+        const nuevaCant = Math.max(0, (parseFloat(prevItem.cantidad) || 0) + delta);
+        if (nuevaCant === 0) {
+          toast.error(`"${desc}" removido de la ODC.`);
+          return updated.filter((_, i) => i !== existingIdx);
+        }
+        updated[existingIdx] = {
+          ...prevItem,
+          cantidad: nuevaCant,
+          total_fila: nuevaCant * (parseFloat(prevItem.precio_unitario) || pu)
+        };
+        return updated;
+      } else if (delta > 0) {
+        const uni = reqItem.unidad || reqItem.uni || 'UNID';
+        const prevFiltrados = prev.filter(it => (it.descripcion || '').trim() !== '' || (parseFloat(it.cantidad) || 0) > 0);
+        return [
+          ...prevFiltrados,
+          {
+            id: `req_item_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+            requisicion_item_id: reqItemIdStr,
+            item_numero: prevFiltrados.length + 1,
+            descripcion: desc,
+            unidad: uni,
+            cantidad: delta,
+            precio_unitario: pu,
+            total_fila: delta * pu,
+            origen_req: sourceReqSelected?.correlativo_req || 'Requisición'
+          }
+        ];
+      }
+      return prev;
+    });
+  };
+
+  const establecerCantidadDesdeRequisicion = (reqItem, nuevaCantVal) => {
+    const desc = reqItem.descripcion || reqItem.nombre || reqItem.item || '';
+    const reqItemIdStr = String(reqItem.id || desc.toLowerCase().trim());
+    const pu = parseFloat(reqItem.pu_usd || reqItem.pu_bs || reqItem.precio || 0);
+    const val = Math.max(0, parseFloat(nuevaCantVal) || 0);
+
+    setEditItems(prev => {
+      const existingIdx = prev.findIndex(it => 
+        (it.requisicion_item_id && String(it.requisicion_item_id) === reqItemIdStr) ||
+        (it.descripcion || '').toLowerCase().trim() === desc.toLowerCase().trim()
+      );
+
+      if (existingIdx >= 0) {
+        if (val === 0) {
+          toast.error(`"${desc}" removido de la ODC.`);
+          return prev.filter((_, i) => i !== existingIdx);
+        }
+        const updated = [...prev];
+        const prevItem = updated[existingIdx];
+        updated[existingIdx] = {
+          ...prevItem,
+          cantidad: val,
+          total_fila: val * (parseFloat(prevItem.precio_unitario) || pu)
+        };
+        return updated;
+      } else if (val > 0) {
+        const uni = reqItem.unidad || reqItem.uni || 'UNID';
+        const prevFiltrados = prev.filter(it => (it.descripcion || '').trim() !== '' || (parseFloat(it.cantidad) || 0) > 0);
+        return [
+          ...prevFiltrados,
+          {
+            id: `req_item_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+            requisicion_item_id: reqItemIdStr,
+            item_numero: prevFiltrados.length + 1,
+            descripcion: desc,
+            unidad: uni,
+            cantidad: val,
+            precio_unitario: pu,
+            total_fila: val * pu,
+            origen_req: sourceReqSelected?.correlativo_req || 'Requisición'
+          }
+        ];
+      }
+      return prev;
+    });
   };
 
   const eliminarItemEdicion = (index) => {
@@ -462,6 +702,26 @@ const OrdenesCompra = ({ currentUser }) => {
   const guardarEdicionOdc = async () => {
     if (!editOdcTarget) return;
 
+    if (!editOdcTarget.proveedor_id) {
+      toast.error("Debe seleccionar un Proveedor para la Órden de Compra.");
+      return;
+    }
+    if (!editOdcTarget.fecha_cotizacion) {
+      toast.error("Debe ingresar la Fecha de Cotización del Proveedor.");
+      return;
+    }
+    if (!editOdcTarget.fecha_despacho) {
+      toast.error("Debe ingresar la Fecha Estimada de Despacho.");
+      return;
+    }
+    if (editOdcTarget.tipo_pago === 'CREDITO') {
+      const dias = parseInt(editOdcTarget.dias_credito, 10);
+      if (isNaN(dias) || dias <= 0) {
+        toast.error("Para compras a Crédito, debe ingresar los Días de Crédito (mayor a 0).");
+        return;
+      }
+    }
+
     const itemsValidos = editItems.filter(it => (it.descripcion || '').trim() !== '' && (parseFloat(it.cantidad) || 0) > 0);
     if (itemsValidos.length === 0) {
       toast.error("Debe incluir al menos un renglón con descripción y cantidad válida mayores a 0.");
@@ -479,8 +739,13 @@ const OrdenesCompra = ({ currentUser }) => {
         fechaVenc = null;
       }
 
+      const reqObjTarget = (requisicionesList || []).find(r => 
+        String(r.id) === String(editOdcTarget.requisicion_id) || 
+        (r.correlativo_req && String(r.correlativo_req).trim().toUpperCase() === String(editOdcTarget.requisicion_id).trim().toUpperCase())
+      );
+
       const payloadOdc = {
-        requisicion_id: editOdcTarget.requisicion_id || null,
+        requisicion_id: reqObjTarget ? reqObjTarget.id : (editOdcTarget.requisicion_id && !isNaN(parseInt(editOdcTarget.requisicion_id)) ? parseInt(editOdcTarget.requisicion_id) : null),
         proveedor_id: editOdcTarget.proveedor_id || null,
         proveedor_nombre: editOdcTarget.proveedor_nombre || null,
         proveedor_rif: editOdcTarget.proveedor_rif || null,
@@ -495,10 +760,11 @@ const OrdenesCompra = ({ currentUser }) => {
         fecha_vencimiento_credito: fechaVenc,
         fecha_vencimiento_pago: fechaVenc,
         moneda: editOdcTarget.moneda || 'USD',
-        tasa_bcv: parseFloat(editOdcTarget.tasa_cambio) || 1,
-        tasa_cambio: parseFloat(editOdcTarget.tasa_cambio) || 1,
+        tasa_bcv: parseFloat(editOdcTarget.tasa_cambio || editOdcTarget.tasa_bcv) || 1,
         despachar_a_direccion: editOdcTarget.destino_despacho || null,
         destino_despacho: editOdcTarget.destino_despacho || null,
+        datos_bancarios: editOdcTarget.datos_bancarios || editOdcTarget.cuenta_bancaria || null,
+        cuenta_bancaria: editOdcTarget.datos_bancarios || editOdcTarget.cuenta_bancaria || null,
         terminos_condiciones: editOdcTarget.terminos_condiciones || null,
         subtotal: subtotalEdit,
         iva_porcentaje: porcentajeIvaEdit,
@@ -545,8 +811,52 @@ const OrdenesCompra = ({ currentUser }) => {
 
       if (errInsItems) throw errInsItems;
 
+      // 3.1 Sincronizar trazabilidad en la Requisición de origen en Supabase
+      if (reqObjTarget) {
+        try {
+          const itemsReq = Array.isArray(reqObjTarget.items) ? reqObjTarget.items : (Array.isArray(reqObjTarget.detalles) ? reqObjTarget.detalles : []);
+          const itemsReqActualizados = itemsReq.map(r => {
+            const itemCoincidente = itemsValidos.find(it => String(it.requisicion_item_id) === String(r.id));
+            if (itemCoincidente) {
+              const historialPrevio = Array.isArray(r.historial_compras) ? r.historial_compras : [];
+              const yaExiste = historialPrevio.some(h => h.odc_id === editOdcTarget.id || h.odc_numero === editOdcTarget.numero_odc);
+              if (!yaExiste) {
+                return {
+                  ...r,
+                  historial_compras: [
+                    ...historialPrevio,
+                    {
+                      fecha: new Date().toISOString(),
+                      tipo: 'ODC',
+                      odc_numero: editOdcTarget.numero_odc,
+                      odc_id: editOdcTarget.id,
+                      proveedor_nombre: editOdcTarget.proveedor_nombre || 'Proveedor',
+                      cantidad: parseFloat(itemCoincidente.cantidad) || 0,
+                      pu: parseFloat(itemCoincidente.precio_unitario) || 0,
+                      usuario: `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim()
+                    }
+                  ]
+                };
+              }
+            }
+            return r;
+          });
+
+          await supabase
+            .from('requisiciones')
+            .update({
+              items: itemsReqActualizados,
+              f_inicio_compras: reqObjTarget.f_inicio_compras || new Date().toISOString(),
+              status_compra: 'EN_PROCESO'
+            })
+            .eq('id', reqObjTarget.id);
+        } catch (syncErr) {
+          console.warn("Aviso al sincronizar requisición de origen:", syncErr);
+        }
+      }
+
       // 4. Refrescar estado local
-      const reqObjNuevo = (requisicionesList || []).find(r => String(r.id) === String(editOdcTarget.requisicion_id));
+      const reqObjNuevo = reqObjTarget || (requisicionesList || []).find(r => String(r.id) === String(editOdcTarget.requisicion_id));
       const odcRefrescada = {
         ...editOdcTarget,
         ...payloadOdc,
@@ -617,20 +927,19 @@ const OrdenesCompra = ({ currentUser }) => {
     if (!confirmar) return;
 
     try {
-      const payload = {
-        estatus_pago: 'ANULADA',
-        status_pago: 'ANULADA',
-        estatus_recepcion: 'ANULADA'
+      const dbPayload = {
+        estatus_pago: 'ANULADO',
+        status_pago: 'ANULADO'
       };
 
       const { error } = await supabase
         .from('ordenes_compra')
-        .update(payload)
+        .update(dbPayload)
         .eq('id', odcTarget.id);
 
       if (error) throw error;
 
-      const odcActualizada = { ...odcTarget, ...payload };
+      const odcActualizada = { ...odcTarget, ...dbPayload, estatus_pago: 'ANULADA', status_pago: 'ANULADA', estatus_recepcion: 'ANULADA' };
       if (odcSeleccionada && odcSeleccionada.id === odcTarget.id) {
         setOdcSeleccionada(odcActualizada);
       }
@@ -639,6 +948,40 @@ const OrdenesCompra = ({ currentUser }) => {
     } catch (err) {
       console.error("Error al anular ODC:", err);
       toast.error("Error al anular la Órden de Compra: " + err.message);
+    }
+  };
+
+  // Alternar Firma Digital Remota de Carlos Vega
+  const toggleFirmaDigitalCarlos = async (activa) => {
+    if (!odcSeleccionada) return;
+    setGuardandoFirmaCarlos(true);
+    try {
+      const hoyIso = new Date().toISOString();
+      const payload = {
+        carlos_firma_digital_activa: activa,
+        carlos_firma_fecha: activa ? hoyIso : null
+      };
+
+      const { error } = await supabase
+        .from('ordenes_compra')
+        .update(payload)
+        .eq('id', odcSeleccionada.id);
+
+      if (error) throw error;
+
+      const odcActualizada = { ...odcSeleccionada, ...payload };
+      setOdcSeleccionada(odcActualizada);
+      setOrdenes(prev => prev.map(o => o.id === odcSeleccionada.id ? odcActualizada : o));
+
+      toast.success(activa
+        ? "Firma Digital de Carlos Vega activada correctamente."
+        : "Firma Digital de Carlos Vega desactivada."
+      );
+    } catch (err) {
+      console.error("Error al actualizar firma digital de Carlos Vega:", err);
+      toast.error("Error al actualizar la firma digital: " + err.message);
+    } finally {
+      setGuardandoFirmaCarlos(false);
     }
   };
 
@@ -900,6 +1243,15 @@ const OrdenesCompra = ({ currentUser }) => {
       const splitTerms = doc.splitTextToSize(odcSeleccionada.terminos_condiciones || "Precios incluyen entrega en el sitio de destino especificado. Mercancía sujeta a inspección de calidad y conteo físico.", 110);
       doc.text(splitTerms, 14, finalY + 8);
 
+      const ctaPagoPdf = odcSeleccionada.datos_bancarios || odcSeleccionada.cuenta_bancaria || null;
+      if (ctaPagoPdf) {
+        doc.setFont("helvetica", "bold");
+        doc.text("Datos Bancarios de Destino para Pago:", 14, finalY + 20);
+        doc.setFont("helvetica", "normal");
+        const splitCta = doc.splitTextToSize(ctaPagoPdf, 110);
+        doc.text(splitCta, 14, finalY + 24);
+      }
+
       // Tabla de Cuadro de Totales (A la derecha)
       const subtotal = Number(odcSeleccionada.subtotal || 0);
       const percentageIva = Number(odcSeleccionada.porcentaje_iva || 16);
@@ -954,7 +1306,7 @@ const OrdenesCompra = ({ currentUser }) => {
           doc.setFontSize(7.2);
           doc.setFont("helvetica", "bold");
           doc.setTextColor(4, 120, 87);
-          doc.text("✓ FIRMADO Y APROBADO", xPos + cardWidth / 2, sigY + 14, { align: 'center' });
+          doc.text("FIRMADO Y APROBADO", xPos + cardWidth / 2, sigY + 14, { align: 'center' });
 
           doc.setFontSize(6.8);
           doc.setFont("helvetica", "bold");
@@ -1039,18 +1391,46 @@ const OrdenesCompra = ({ currentUser }) => {
   return (
     <div className="odc-container">
       {/* Header Banner */}
-      <div className="odc-header">
-        <div className="odc-header-title">
-          <FileText size={32} color="#38bdf8" />
-          <div>
-            <h1>Órdenes de Compra (ODC)</h1>
-            <p>Ecosistema de Compras | Formato Institucional Oficial F-ADM-01-2</p>
-          </div>
+      <div style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        borderLeft: '6px solid #0ea5e9',
+        paddingLeft: '16px',
+        marginBottom: '24px',
+        flexWrap: 'wrap',
+        gap: '15px'
+      }}>
+        <div>
+          <h1 style={{ margin: 0, color: '#0f172a', fontSize: '1.8rem', fontWeight: '900', fontFamily: 'Inter, sans-serif', letterSpacing: '-0.5px' }}>
+            Órdenes de Compra
+          </h1>
+          <p style={{ margin: '4px 0 0 0', color: '#64748b', fontSize: '0.9rem', fontWeight: '500', fontFamily: 'Inter, sans-serif' }}>
+            Gestión centralizada de compras y proveedores
+          </p>
         </div>
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-          <button className="odc-tab-btn" onClick={cargarOrdenes} title="Actualizar lista">
+          <motion.button
+            onClick={cargarOrdenes}
+            whileHover={{ scale: 1.04, boxShadow: '0 6px 20px rgba(14, 165, 233, 0.25)' }}
+            whileTap={{ scale: 0.96 }}
+            transition={{ type: 'spring', stiffness: 400, damping: 15 }}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '10px 18px',
+              borderRadius: '12px',
+              backgroundColor: '#0ea5e9',
+              color: 'white',
+              border: 'none',
+              fontWeight: '700',
+              fontSize: '0.85rem',
+              cursor: 'pointer'
+            }}
+          >
             <RefreshCw size={16} /> Actualizar
-          </button>
+          </motion.button>
         </div>
       </div>
 
@@ -1130,40 +1510,37 @@ const OrdenesCompra = ({ currentUser }) => {
                 const sem = calcularSemaforoCredito(odc);
                 return (
                   <tr key={odc.id} style={{ borderBottom: '1px solid #f1f5f9', transition: 'all 0.2s' }}>
-                    <td style={{ padding: '14px 16px', fontWeight: '800', color: '#0ea5e9' }}>
-                      <button
-                        type="button"
+                    <td style={{ padding: '14px 16px' }}>
+                      <motion.span
                         onClick={() => abrirDetalleOdc(odc)}
-                        style={{ background: 'none', border: 'none', color: '#0ea5e9', fontWeight: '900', cursor: 'pointer', padding: 0, fontSize: '0.85rem', textDecoration: 'underline' }}
+                        whileHover={{
+                          scale: 1.1,
+                          x: 5,
+                          color: '#2563eb',
+                          textShadow: '0 0 8px rgba(37, 99, 235, 0.2)'
+                        }}
+                        whileTap={{ scale: 0.95 }}
+                        transition={{ type: "spring", stiffness: 400, damping: 10 }}
+                        style={{
+                          fontSize: '13px',
+                          fontWeight: '900',
+                          color: '#1e40af',
+                          textDecoration: 'underline',
+                          textUnderlineOffset: '3px',
+                          textDecorationColor: 'rgba(30, 64, 175, 0.4)',
+                          cursor: 'pointer',
+                          display: 'inline-block'
+                        }}
                         title="Ver expediente y vista previa de esta ODC"
                       >
                         {odc.numero_odc}
-                      </button>
+                      </motion.span>
                     </td>
-                    <td style={{ padding: '14px 16px', fontWeight: '600' }}>
+                    <td style={{ padding: '14px 16px', fontWeight: '600', color: '#0f172a' }}>
                       {odc.proveedor_nombre || 'N/A'}
                     </td>
-                    <td style={{ padding: '14px 16px' }}>
-                      {odc.requisicion_correlativo ? (
-                        <span style={{ 
-                          padding: '4px 10px', 
-                          borderRadius: '12px', 
-                          fontSize: '0.78rem', 
-                          fontWeight: '800',
-                          backgroundColor: '#e0f2fe', 
-                          color: '#0369a1', 
-                          border: '1px solid #bae6fd',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '4px'
-                        }}>
-                          📋 {odc.requisicion_correlativo}
-                        </span>
-                      ) : (
-                        <span style={{ color: '#94a3b8', fontSize: '0.75rem', fontStyle: 'italic' }}>
-                          Sin Requisición
-                        </span>
-                      )}
+                    <td style={{ padding: '14px 16px', fontWeight: '600', color: '#0f172a' }}>
+                      {odc.requisicion_correlativo || (odc.requisicion_id ? `REQ-${odc.requisicion_id}` : 'N/A')}
                     </td>
                     <td style={{ padding: '14px 16px' }}>
                       <span style={{ 
@@ -1230,79 +1607,95 @@ const OrdenesCompra = ({ currentUser }) => {
                       )}
                     </td>
                     <td style={{ padding: '14px 16px', textAlign: 'center' }}>
-                      <div style={{ display: 'flex', gap: '6px', justifyContent: 'center', alignItems: 'center' }}>
-                        <button 
-                          className="btn-primary" 
-                          style={{ padding: '6px 12px', fontSize: '0.75rem', borderRadius: '8px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                      <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', alignItems: 'center' }}>
+                        <motion.button 
+                          whileHover={{ scale: 1.15 }}
+                          whileTap={{ scale: 0.9 }}
+                          style={{
+                            width: '32px',
+                            height: '32px',
+                            borderRadius: '8px',
+                            border: '1px solid #bae6fd',
+                            backgroundColor: '#f0f9ff',
+                            color: '#0284c7',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center'
+                          }}
                           onClick={() => abrirDetalleOdc(odc)}
+                          title="Ver Expediente / Formato F-ADM-01-2"
                         >
-                          <Eye size={14} /> Ver F-ADM-01-2
-                        </button>
+                          <Eye size={16} />
+                        </motion.button>
                         {esUsuarioCompras && (
-                          <button
+                          <motion.button
                             type="button"
+                            whileHover={{ scale: 1.15 }}
+                            whileTap={{ scale: 0.9 }}
                             onClick={() => abrirModalEditarOdc(odc)}
                             style={{ 
-                              padding: '6px 10px', 
-                              fontSize: '0.75rem', 
-                              fontWeight: '700', 
-                              borderRadius: '8px', 
-                              border: '1px solid #cbd5e1', 
-                              backgroundColor: '#f8fafc', 
-                              color: '#0284c7', 
+                              width: '32px',
+                              height: '32px',
+                              borderRadius: '8px',
+                              border: '1px solid #fed7aa',
+                              backgroundColor: '#fff7ed',
+                              color: '#ea580c',
                               cursor: 'pointer',
-                              display: 'inline-flex',
+                              display: 'flex',
                               alignItems: 'center',
-                              gap: '4px'
+                              justifyContent: 'center'
                             }}
                             title="Editar ODC (proveedor, precios, renglones, destino)"
                           >
-                            <Edit2 size={13} /> Editar
-                          </button>
+                            <Edit2 size={16} />
+                          </motion.button>
                         )}
                         {esUsuarioCompras && odc.estatus_pago !== 'ANULADA' && (
-                          <button
+                          <motion.button
                             type="button"
+                            whileHover={{ scale: 1.15 }}
+                            whileTap={{ scale: 0.9 }}
                             onClick={() => manejarAnularOdc(odc)}
                             style={{ 
-                              padding: '6px 10px', 
-                              fontSize: '0.75rem', 
-                              fontWeight: '700', 
-                              borderRadius: '8px', 
-                              border: '1px solid #fca5a5', 
-                              backgroundColor: '#fef2f2', 
-                              color: '#dc2626', 
+                              width: '32px',
+                              height: '32px',
+                              borderRadius: '8px',
+                              border: '1px solid #fca5a5',
+                              backgroundColor: '#fef2f2',
+                              color: '#dc2626',
                               cursor: 'pointer',
-                              display: 'inline-flex',
+                              display: 'flex',
                               alignItems: 'center',
-                              gap: '4px'
+                              justifyContent: 'center'
                             }}
                             title="Anular esta Órden de Compra"
                           >
-                            <XCircle size={13} /> Anular
-                          </button>
+                            <Ban size={16} />
+                          </motion.button>
                         )}
                         {esAdminSuper && (
-                          <button
+                          <motion.button
                             type="button"
+                            whileHover={{ scale: 1.15 }}
+                            whileTap={{ scale: 0.9 }}
                             onClick={() => manejarEliminarOdc(odc)}
                             style={{ 
-                              padding: '6px 10px', 
-                              fontSize: '0.75rem', 
-                              fontWeight: '700', 
-                              borderRadius: '8px', 
-                              border: 'none', 
-                              backgroundColor: '#7f1d1d', 
-                              color: 'white', 
+                              width: '32px',
+                              height: '32px',
+                              borderRadius: '8px',
+                              border: 'none',
+                              backgroundColor: '#991b1b',
+                              color: 'white',
                               cursor: 'pointer',
-                              display: 'inline-flex',
+                              display: 'flex',
                               alignItems: 'center',
-                              gap: '4px'
+                              justifyContent: 'center'
                             }}
                             title="Eliminar permanentemente esta Órden de Compra"
                           >
-                            <Trash2 size={13} /> Eliminar
-                          </button>
+                            <Trash2 size={16} />
+                          </motion.button>
                         )}
                       </div>
                     </td>
@@ -1323,7 +1716,14 @@ const OrdenesCompra = ({ currentUser }) => {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: '1px solid #e2e8f0', paddingBottom: '16px' }}>
               <div>
                 <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#0ea5e9', textTransform: 'uppercase', letterSpacing: '1px' }}>Expediente de Órden de Compra</span>
-                <h2 style={{ margin: '2px 0 0 0', fontSize: '1.4rem', fontWeight: '800' }}>{odcSeleccionada.numero_odc}</h2>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '2px' }}>
+                  <h2 style={{ margin: 0, fontSize: '1.4rem', fontWeight: '800' }}>{odcSeleccionada.numero_odc}</h2>
+                  {(odcSeleccionada.requisicion_correlativo || odcSeleccionada.requisicion_id) && (
+                    <span style={{ backgroundColor: '#e0f2fe', color: '#0369a1', padding: '4px 12px', borderRadius: '12px', fontSize: '0.82rem', fontWeight: '800', border: '1px solid #bae6fd', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                      📋 Requisición Origen: {odcSeleccionada.requisicion_correlativo || `REQ-${odcSeleccionada.requisicion_id}`}
+                    </span>
+                  )}
+                </div>
               </div>
               <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
                 {esUsuarioCompras && (
@@ -1331,10 +1731,10 @@ const OrdenesCompra = ({ currentUser }) => {
                     type="button"
                     onClick={() => abrirModalEditarOdc(odcSeleccionada)}
                     style={{
-                      padding: '6px 12px',
-                      fontSize: '0.75rem',
+                      padding: '8px 16px',
+                      fontSize: '0.8rem',
                       fontWeight: '800',
-                      borderRadius: '8px',
+                      borderRadius: '10px',
                       border: '1px solid #38bdf8',
                       cursor: 'pointer',
                       backgroundColor: '#f0f9ff',
@@ -1345,69 +1745,7 @@ const OrdenesCompra = ({ currentUser }) => {
                     }}
                     title="Editar datos, proveedor, ítems y montos de esta Órden de Compra"
                   >
-                    <Edit2 size={14} /> ✏️ Editar ODC
-                  </button>
-                )}
-
-                {esUsuarioCompras && (
-                  <button
-                    type="button"
-                    onClick={() => cambiarEstatusRecepcion(odcSeleccionada.estatus_recepcion === 'RECIBIDO' ? 'PENDIENTE' : 'RECIBIDO')}
-                    style={{
-                      padding: '6px 12px',
-                      fontSize: '0.75rem',
-                      fontWeight: '800',
-                      borderRadius: '8px',
-                      border: 'none',
-                      cursor: 'pointer',
-                      backgroundColor: odcSeleccionada.estatus_recepcion === 'RECIBIDO' ? '#dcfce7' : '#fef3c7',
-                      color: odcSeleccionada.estatus_recepcion === 'RECIBIDO' ? '#15803d' : '#b45309'
-                    }}
-                    title="Marca si la mercancía ya fue recibida en almacén para iniciar la cuenta regresiva del crédito"
-                  >
-                    {odcSeleccionada.estatus_recepcion === 'RECIBIDO' ? '📦 RECIBIDO' : '🚚 MARCAR RECIBIDO'}
-                  </button>
-                )}
-
-                {esUsuarioCompras && (
-                  <select
-                    style={{ padding: '6px 10px', fontSize: '0.75rem', fontWeight: '800', borderRadius: '8px', border: '1px solid #cbd5e1', cursor: 'pointer', backgroundColor: '#f8fafc' }}
-                    value={odcSeleccionada.estatus_pago || 'PENDIENTE'}
-                    onChange={(e) => {
-                      if (e.target.value === 'ANULADA') {
-                        manejarAnularOdc(odcSeleccionada);
-                      } else {
-                        cambiarEstatusPago(e.target.value);
-                      }
-                    }}
-                    title="Actualizar estatus de pago de la ODC"
-                  >
-                    <option value="PENDIENTE">⏳ PENDIENTE</option>
-                    <option value="PAGADO">✅ PAGADO</option>
-                    <option value="VENCIDO">🔴 VENCIDO</option>
-                    <option value="ANULADA">🚫 ANULADA</option>
-                  </select>
-                )}
-                {esAdminSuper && (
-                  <button
-                    type="button"
-                    onClick={() => manejarEliminarOdc(odcSeleccionada)}
-                    style={{
-                      padding: '6px 12px',
-                      fontSize: '0.75rem',
-                      fontWeight: '800',
-                      borderRadius: '8px',
-                      border: 'none',
-                      backgroundColor: '#991b1b',
-                      color: 'white',
-                      cursor: 'pointer',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '6px'
-                    }}
-                    title="Eliminar permanentemente esta Órden de Compra"
-                  >
-                    <Trash2 size={14} /> Eliminar ODC
+                    <Edit2 size={15} /> ✏️ Editar ODC
                   </button>
                 )}
 
@@ -1415,7 +1753,7 @@ const OrdenesCompra = ({ currentUser }) => {
                 {esUsuarioCompras ? (
                   <button 
                     className="btn-primary" 
-                    style={{ backgroundColor: '#0284c7', display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 18px', borderRadius: '12px' }}
+                    style={{ backgroundColor: '#0284c7', display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 18px', borderRadius: '12px', fontSize: '0.8rem', fontWeight: '800' }}
                     onClick={exportarPDF_F_ADM_01_2}
                   >
                     <Printer size={16} /> Exportar / Imprimir F-ADM-01-2
@@ -1540,6 +1878,9 @@ const OrdenesCompra = ({ currentUser }) => {
                 <tbody>
                   <tr>
                     <td style={{ width: '55%', padding: '10px 14px', lineHeight: '1.6' }}>
+                      <div style={{ marginBottom: '6px', backgroundColor: '#e0f2fe', padding: '4px 8px', borderRadius: '6px', border: '1px solid #bae6fd', display: 'inline-block' }}>
+                        <strong style={{ color: '#0369a1' }}>Requisición Origen:</strong> <span style={{ color: '#0369a1', fontWeight: '800' }}>{odcSeleccionada.requisicion_correlativo || (odcSeleccionada.requisicion_id ? `REQ-${odcSeleccionada.requisicion_id}` : 'N/A')}</span>
+                      </div>
                       <div style={{ marginBottom: '4px' }}><strong>Nombre:</strong> {odcSeleccionada.proveedor_nombre || 'N/A'}</div>
                       <div style={{ marginBottom: '4px' }}><strong>Dirección:</strong> {odcSeleccionada.proveedor_direccion || 'N/A'}</div>
                       <div style={{ marginBottom: '4px' }}><strong>Teléfono:</strong> {odcSeleccionada.proveedor_telefono || 'N/A'}</div>
@@ -1642,7 +1983,9 @@ const OrdenesCompra = ({ currentUser }) => {
                   <div className="f-adm-signature-title-img1">Aprobado Por</div>
                   {odcSeleccionada.carlos_firma_digital_activa ? (
                     <div className="f-adm-digital-seal-img1">
-                      <div style={{ color: '#047857', fontWeight: '800', fontSize: '0.72rem' }}>✓ FIRMADO Y APROBADO</div>
+                      <div style={{ color: '#047857', fontWeight: '800', fontSize: '0.70rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', width: '100%', textAlign: 'center' }}>
+                        <ShieldCheck size={13} color="#047857" /> FIRMADO Y APROBADO
+                      </div>
                       <div style={{ color: '#0f766e', fontWeight: '700', fontSize: '0.68rem', marginTop: '2px' }}>
                         Carlos Vega (Gerencia General)
                       </div>
@@ -1720,23 +2063,30 @@ const OrdenesCompra = ({ currentUser }) => {
                       <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '800', color: '#0369a1', marginBottom: '4px' }}>
                         📌 Requisición de Origen (Vínculo)
                       </label>
+                      <div style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #0284c7', fontSize: '0.82rem', backgroundColor: '#f0f9ff', fontWeight: '700', color: '#0369a1' }}>
+                        {sourceReqSelected ? `${sourceReqSelected.correlativo_req} - ${sourceReqSelected.solicitante || 'Sin solicitante'}` : (editOdcTarget?.requisicion_correlativo || (editOdcTarget?.requisicion_id ? `REQ-${editOdcTarget.requisicion_id}` : 'Sin Requisición Vinculada'))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '800', color: '#0ea5e9', marginBottom: '4px' }}>
+                        🔍 Categoría de Proveedor
+                      </label>
                       <select
-                        style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #0284c7', fontSize: '0.82rem', backgroundColor: '#f0f9ff', fontWeight: '700', color: '#0369a1' }}
-                        value={editOdcTarget.requisicion_id || ''}
-                        onChange={(e) => manejarCambioRequisicionEdicion(e.target.value)}
+                        style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #38bdf8', fontSize: '0.82rem', backgroundColor: '#f0f9ff', fontWeight: '700', color: '#0284c7' }}
+                        value={filtroCategoriaProveedor}
+                        onChange={(e) => setFiltroCategoriaProveedor(e.target.value)}
                       >
-                        <option value="">-- Sin Requisición Vinculada --</option>
-                        {requisicionesList.map(r => (
-                          <option key={r.id} value={r.id}>
-                            {r.correlativo_req} - {r.solicitante || 'Sin solicitante'} ({r.gerencia || r.departamento || 'General'})
-                          </option>
+                        <option value="TODAS">-- Todas las Categorías ({proveedoresList.length}) --</option>
+                        {categoriasDisponibles.map(cat => (
+                          <option key={cat} value={cat}>{cat}</option>
                         ))}
                       </select>
                     </div>
 
                     <div>
                       <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '4px' }}>
-                        Seleccionar Proveedor
+                        Seleccionar Proveedor ({proveedoresFiltradosPorCategoria.length})
                       </label>
                       <select
                         style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.82rem', backgroundColor: 'white' }}
@@ -1744,13 +2094,47 @@ const OrdenesCompra = ({ currentUser }) => {
                         onChange={(e) => manejarCambioProveedorEdicion(e.target.value)}
                       >
                         <option value="">-- Proveedor Personalizado --</option>
-                        {proveedoresList.map(p => (
+                        {proveedoresFiltradosPorCategoria.map(p => (
                           <option key={p.id} value={p.id}>
                             {p.razon_social || p.nombre} ({p.rif || 'Sin RIF'})
                           </option>
                         ))}
                       </select>
                     </div>
+
+                    {/* Cuenta Bancaria de Destino del Proveedor */}
+                    {(() => {
+                      const provSeleccionado = proveedoresList.find(p => String(p.id) === String(editOdcTarget.proveedor_id));
+                      let ctasProv = [];
+                      if (provSeleccionado?.cuentas_bancarias) {
+                        if (Array.isArray(provSeleccionado.cuentas_bancarias)) ctasProv = provSeleccionado.cuentas_bancarias;
+                        else if (typeof provSeleccionado.cuentas_bancarias === 'string') {
+                          try { ctasProv = JSON.parse(provSeleccionado.cuentas_bancarias); } catch { ctasProv = []; }
+                        }
+                      }
+
+                      return (
+                        <div>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', fontWeight: '700', color: '#0ea5e9', marginBottom: '4px' }}>
+                            <Landmark size={13} /> Cuenta Bancaria de Destino para Pago
+                          </label>
+                          <select
+                            style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #0ea5e9', fontSize: '0.82rem', backgroundColor: ctasProv.length > 0 ? '#f0f9ff' : 'white', fontWeight: '600' }}
+                            value={editOdcTarget.datos_bancarios || editOdcTarget.cuenta_bancaria || ''}
+                            onChange={(e) => setEditOdcTarget(prev => ({ ...prev, datos_bancarios: e.target.value, cuenta_bancaria: e.target.value }))}
+                          >
+                            <option value="">-- Seleccionar Cuenta Bancaria de Pago --</option>
+                            {ctasProv.map((c, idx) => {
+                              const label = `${c.banco || 'Banco'} (${c.moneda || 'USD'}) - N° Cuenta: ${c.nro_cuenta || 'N/A'} - Titular: ${c.titular || 'N/A'} (${c.rif || 'N/A'}) ${c.tipo_cuenta ? `[${c.tipo_cuenta}]` : ''}`;
+                              return <option key={idx} value={label}>{label}</option>;
+                            })}
+                            {ctasProv.length === 0 && (
+                              <option value="" disabled>Sin cuentas de banco guardadas</option>
+                            )}
+                          </select>
+                        </div>
+                      );
+                    })()}
 
                     <div>
                       <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '4px' }}>
@@ -1949,18 +2333,20 @@ const OrdenesCompra = ({ currentUser }) => {
                     <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
                       <button
                         type="button"
-                        onClick={() => setShowReqItemsPicker(true)}
+                        onClick={() => {
+                          if (!sourceReqSelected && editOdcTarget?.requisicion_id) {
+                            const match = (requisicionesList || []).find(r => 
+                              String(r.id) === String(editOdcTarget.requisicion_id) || 
+                              (r.correlativo_req && String(r.correlativo_req).trim().toUpperCase() === String(editOdcTarget.requisicion_id).trim().toUpperCase())
+                            );
+                            if (match) setSourceReqSelected(match);
+                          }
+                          setShowReqItemsPicker(true);
+                        }}
                         style={{ padding: '6px 14px', fontSize: '0.75rem', fontWeight: '800', backgroundColor: '#0284c7', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px', boxShadow: '0 2px 4px rgba(2, 132, 199, 0.2)' }}
-                        title="Seleccionar cualquier Requisición e importar sus productos directamente a la ODC"
+                        title="Importar productos de la Requisición de Origen"
                       >
-                        📋 Importar de Requisición {sourceReqSelected ? `(${sourceReqSelected.correlativo_req})` : ''}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={agregarItemEdicion}
-                        style={{ padding: '6px 14px', fontSize: '0.75rem', fontWeight: '700', backgroundColor: '#0ea5e9', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
-                      >
-                        <Plus size={14} /> Renglón Manual
+                        📋 Importar Renglones de Requisición
                       </button>
                     </div>
                   </div>
@@ -2128,23 +2514,14 @@ const OrdenesCompra = ({ currentUser }) => {
               </button>
             </div>
 
-            {/* Selector desplegable de Requisiciones en la ventana modal */}
+            {/* Requisición de Origen fija (no modificable) */}
             <div style={{ marginBottom: '18px', backgroundColor: '#f0f9ff', padding: '14px 16px', borderRadius: '12px', border: '1px solid #bae6fd' }}>
-              <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '800', color: '#0369a1', marginBottom: '6px' }}>
-                📌 Seleccionar Requisición de Origen:
+              <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '800', color: '#0369a1', marginBottom: '4px' }}>
+                📌 Requisición de Origen (Vínculo):
               </label>
-              <select
-                style={{ width: '100%', padding: '10px 14px', borderRadius: '8px', border: '1px solid #0284c7', fontSize: '0.85rem', fontWeight: '800', color: '#0369a1', backgroundColor: 'white' }}
-                value={sourceReqSelected?.id || ''}
-                onChange={(e) => manejarCambioRequisicionEdicion(e.target.value)}
-              >
-                <option value="">-- Seleccionar Requisición --</option>
-                {requisicionesList.map(r => (
-                  <option key={r.id} value={r.id}>
-                    {r.correlativo_req} — {r.solicitante || 'Sin solicitante'} ({r.gerencia || r.departamento || 'General'}) [{(r.items || []).length} ítems]
-                  </option>
-                ))}
-              </select>
+              <div style={{ fontSize: '0.95rem', fontWeight: '900', color: '#0284c7' }}>
+                {sourceReqSelected ? `${sourceReqSelected.correlativo_req} — ${sourceReqSelected.solicitante || 'Solicitante'} (${sourceReqSelected.gerencia || 'General'}) [${parsearJsonSeguro(sourceReqSelected.items).length} ítems]` : (editOdcTarget?.requisicion_correlativo || 'Sin Requisición Vinculada')}
+              </div>
             </div>
 
             {!sourceReqSelected ? (
@@ -2168,34 +2545,73 @@ const OrdenesCompra = ({ currentUser }) => {
                   <thead>
                     <tr style={{ backgroundColor: '#0f172a', color: 'white', textAlign: 'left' }}>
                       <th style={{ padding: '10px', width: '5%', textAlign: 'center' }}>#</th>
-                      <th style={{ padding: '10px', width: '45%' }}>Descripción del Ítem</th>
-                      <th style={{ padding: '10px', width: '12%', textAlign: 'center' }}>Unidad</th>
-                      <th style={{ padding: '10px', width: '14%', textAlign: 'right' }}>Cant. Aprobada</th>
-                      <th style={{ padding: '10px', width: '14%', textAlign: 'right' }}>P. Ref ($)</th>
-                      <th style={{ padding: '10px', width: '10%', textAlign: 'center' }}>Acción</th>
+                      <th style={{ padding: '10px', width: '35%' }}>Descripción del Ítem</th>
+                      <th style={{ padding: '10px', width: '10%', textAlign: 'center' }}>Unidad</th>
+                      <th style={{ padding: '10px', width: '12%', textAlign: 'right' }}>Cant. Aprobada</th>
+                      <th style={{ padding: '10px', width: '12%', textAlign: 'right' }}>P. Ref ($)</th>
+                      <th style={{ padding: '10px', width: '26%', textAlign: 'center' }}>Cant. en ODC / Acción</th>
                     </tr>
                   </thead>
                   <tbody>
                     {(sourceReqSelected.items || []).map((reqIt, idx) => {
                       const desc = reqIt.descripcion || reqIt.nombre || reqIt.item || 'Sin descripción';
-                      const cant = reqIt.cant_aprobada || reqIt.cantidad || reqIt.cant || 1;
+                      const cantAprobada = parseFloat(reqIt.cant_aprobada || reqIt.cantidad || reqIt.cant || 1);
                       const uni = reqIt.unidad || reqIt.uni || 'UNID';
                       const pu = reqIt.pu_usd || reqIt.pu_bs || reqIt.precio || 0;
+                      const reqItemIdStr = String(reqIt.id || desc.toLowerCase().trim());
+                      
+                      const itemEnOdc = editItems.find(it => 
+                        (it.requisicion_item_id && String(it.requisicion_item_id) === reqItemIdStr) ||
+                        (it.descripcion || '').toLowerCase().trim() === desc.toLowerCase().trim()
+                      );
+                      const cantEnOdc = itemEnOdc ? (parseFloat(itemEnOdc.cantidad) || 0) : 0;
+
                       return (
-                        <tr key={reqIt.id || idx} style={{ borderBottom: '1px solid #e2e8f0', backgroundColor: idx % 2 === 0 ? 'white' : '#f8fafc' }}>
+                        <tr key={reqIt.id || idx} style={{ borderBottom: '1px solid #e2e8f0', backgroundColor: cantEnOdc > 0 ? '#f0f9ff' : (idx % 2 === 0 ? 'white' : '#f8fafc') }}>
                           <td style={{ padding: '10px', textAlign: 'center', fontWeight: '700', color: '#64748b' }}>{idx + 1}</td>
                           <td style={{ padding: '10px', fontWeight: '600', color: '#0f172a' }}>{desc}</td>
                           <td style={{ padding: '10px', textAlign: 'center' }}>{uni}</td>
-                          <td style={{ padding: '10px', textAlign: 'right', fontWeight: '800', color: '#0ea5e9' }}>{cant}</td>
+                          <td style={{ padding: '10px', textAlign: 'right', fontWeight: '800', color: '#0ea5e9' }}>{cantAprobada}</td>
                           <td style={{ padding: '10px', textAlign: 'right' }}>$ {Number(pu).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
                           <td style={{ padding: '10px', textAlign: 'center' }}>
-                            <button
-                              type="button"
-                              onClick={() => agregarItemDesdeRequisicion(reqIt)}
-                              style={{ padding: '6px 12px', fontSize: '0.72rem', fontWeight: '800', backgroundColor: '#0284c7', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', whiteSpace: 'nowrap' }}
-                            >
-                              + Agregar a ODC
-                            </button>
+                            {cantEnOdc > 0 ? (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', justifyContent: 'center' }}>
+                                <button
+                                  type="button"
+                                  onClick={() => modificarCantidadDesdeRequisicion(reqIt, -1)}
+                                  style={{ width: '28px', height: '28px', borderRadius: '6px', border: '1px solid #bae6fd', backgroundColor: '#e0f2fe', color: '#0369a1', fontWeight: '900', fontSize: '1rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                                  title="Disminuir cantidad en ODC (-1)"
+                                >
+                                  -
+                                </button>
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  min="0"
+                                  value={cantEnOdc}
+                                  onChange={(e) => establecerCantidadDesdeRequisicion(reqIt, e.target.value)}
+                                  style={{ width: '56px', textAlign: 'center', fontWeight: '800', fontSize: '0.85rem', border: '1px solid #0284c7', borderRadius: '6px', padding: '4px', backgroundColor: 'white', color: '#0369a1' }}
+                                  title="Modificar cantidad directa del renglón en ODC"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => modificarCantidadDesdeRequisicion(reqIt, 1)}
+                                  style={{ width: '28px', height: '28px', borderRadius: '6px', border: 'none', backgroundColor: '#0284c7', color: 'white', fontWeight: '900', fontSize: '1rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                                  title="Aumentar cantidad en ODC (+1)"
+                                >
+                                  +
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => agregarItemDesdeRequisicion(reqIt)}
+                                style={{ padding: '6px 14px', fontSize: '0.75rem', fontWeight: '800', backgroundColor: '#0284c7', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', whiteSpace: 'nowrap', boxShadow: '0 2px 4px rgba(2, 132, 199, 0.2)' }}
+                                title={`Agregar ${cantAprobada} ${uni} a la Órden de Compra`}
+                              >
+                                + Agregar a ODC ({cantAprobada} {uni})
+                              </button>
+                            )}
                           </td>
                         </tr>
                       );

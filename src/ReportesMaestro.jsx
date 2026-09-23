@@ -1169,7 +1169,9 @@ const ReportesMaestro = () => {
             { header: 'Descripción', key: 'descripcion', width: 45 },
             { header: 'Monto', key: 'monto', width: 15 },
             { header: 'Proyecto', key: 'proyecto', width: 25 },
-            { header: 'Gerencia', key: 'gerencia', width: 25 }
+            { header: 'Gerencia', key: 'gerencia', width: 25 },
+            { header: 'N° Requisición Origen', key: 'ref', width: 22 },
+            { header: 'Solicitante', key: 'solicitante', width: 25 }
         ];
 
         worksheet.columns = columns;
@@ -1184,7 +1186,9 @@ const ReportesMaestro = () => {
                 descripcion: r.descripcion || '',
                 monto: Number(r.monto) || 0,
                 proyecto: r.cc ? r.cc.split('(')[0].trim() : '',
-                gerencia: r.gerencia || ''
+                gerencia: r.gerencia || '',
+                ref: r.ref || 'N/A',
+                solicitante: r.solicitante || 'N/A'
             });
 
             if (r.fecha) {

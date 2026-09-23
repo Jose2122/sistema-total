@@ -2079,13 +2079,13 @@ const ModuloTicketsPago = () => {
           if (reqId) {
             await supabase
               .from('ordenes_compra')
-              .update({ estatus_pago: 'PAGADO', status_pago: 'PAGADO', estatus_recepcion: 'RECIBIDO' })
+              .update({ estatus_pago: 'PAGADO', status_pago: 'PAGADO' })
               .or(`requisicion_id.eq.${reqId},requisicion_correlativo.eq.${reqId}`);
           }
           if (codTicket) {
             await supabase
               .from('ordenes_compra')
-              .update({ estatus_pago: 'PAGADO', status_pago: 'PAGADO', estatus_recepcion: 'RECIBIDO' })
+              .update({ estatus_pago: 'PAGADO', status_pago: 'PAGADO' })
               .or(`numero_odc.eq.${codTicket},numero_req.eq.${codTicket}`);
           }
         } catch (syncErr) {
@@ -2588,10 +2588,11 @@ const ModuloTicketsPago = () => {
       const sMatch = filtroStatus !== 'Todos'
         ? (filtroStatus === 'anulados_rechazados'
             ? ((t.status || '').toLowerCase() === 'anulado' || (t.status || '').toLowerCase() === 'rechazado')
-            : (filtroStatus.toLowerCase() === 'emitido'
+            : (filtroStatus.toLowerCase() === 'emitido' || filtroStatus.toLowerCase() === 'pendiente')
                 ? ((t.status || '').toLowerCase() === 'emitido' || (t.status || '').toLowerCase() === 'parcial')
-                : (t.status || 'Emitido').toLowerCase() === filtroStatus.toLowerCase()
-              )
+                : (filtroStatus.toLowerCase() === 'pagado' || filtroStatus.toLowerCase() === 'completado')
+                    ? ((t.status || '').toLowerCase() === 'pagado' || (t.status || '').toLowerCase() === 'completado' || (t.status || '').toLowerCase() === 'liquidado')
+                    : (t.status || 'Emitido').toLowerCase() === filtroStatus.toLowerCase()
           )
         : true;
       const gMatch = filtroGerencia !== 'Todos' ? t.departamento === filtroGerencia : true;
@@ -3443,6 +3444,18 @@ const ModuloTicketsPago = () => {
                 style={{ width: '100%', padding: '11px 12px 11px 30px', borderRadius: '10px', border: '1px solid #e2e8f0', outline: 'none', boxSizing: 'border-box', backgroundColor: '#f8fafc', fontSize: '13px' }}
               />
             </div>
+
+            <select
+              value={filtroStatus}
+              onChange={(e) => setFiltroStatus(e.target.value)}
+              style={{ flex: 1, minWidth: '150px', padding: '11px', borderRadius: '10px', border: '1.5px solid #0ea5e9', backgroundColor: '#f0f9ff', color: '#0369a1', fontWeight: '700', fontSize: '13px' }}
+            >
+              <option value="Todos">Todos los Estatus</option>
+              <option value="Emitido">⏳ Por procesar / Pendientes</option>
+              <option value="Pagado">✅ Pagados / Cancelados</option>
+              <option value="Pendiente Aprobación">🔍 Por Aprobar</option>
+              <option value="anulados_rechazados">🔴 Anulados / Rechazados</option>
+            </select>
 
             <select
               value={filtroGerencia}

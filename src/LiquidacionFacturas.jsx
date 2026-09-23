@@ -19,7 +19,13 @@ import {
   FileText,
   User,
   Hash,
-  ArrowRight
+  ArrowRight,
+  Landmark,
+  Plus,
+  Trash2,
+  Save,
+  Edit3,
+  RefreshCw
 } from 'lucide-react';
 import './LiquidacionFacturas.css';
 
@@ -76,7 +82,8 @@ const LiquidacionFacturas = ({ currentUser }) => {
   const [proveedores, setProveedores] = useState([]);
   const [filtroTipoProveedor, setFiltroTipoProveedor] = useState('Todos');
   const [filtroProveedor, setFiltroProveedor] = useState('Todos');
-  const [subtabCxp, setSubtabCxp] = useState('todas'); // 'todas', 'facturas', 'odc_credito'
+  const [subtabCxp, setSubtabCxp] = useState('todas'); // 'todas', 'facturas', 'odc_credito', 'odc_contado', 'historico'
+  const [filtroSemaforo, setFiltroSemaforo] = useState('Todos'); // 'Todos', 'En Plazo', 'Por Vencer', 'Vencidos'
 
   // Modal detailed view
   const [invoiceSeleccionada, setInvoiceSeleccionada] = useState(null);
@@ -148,6 +155,124 @@ const LiquidacionFacturas = ({ currentUser }) => {
     files: []
   });
 
+  // --- SUBMÓDULO GESTIÓN DE BANCOS (CUENTAS DE ORIGEN DE LA EMPRESA) ---
+  const [showModalBancos, setShowModalBancos] = useState(false);
+  const [bancoEditandoId, setBancoEditandoId] = useState(null);
+  const [guardandoBanco, setGuardandoBanco] = useState(false);
+  const [bancoForm, setBancoForm] = useState({
+    nombre: '',
+    cbu: '',
+    tipo: 'Corriente',
+    moneda: 'USD',
+    activo: true
+  });
+
+  const abrirCrearBanco = () => {
+    setBancoEditandoId(null);
+    setBancoForm({
+      nombre: '',
+      cbu: '',
+      tipo: 'Corriente',
+      moneda: 'USD',
+      activo: true
+    });
+  };
+
+  const abrirEditarBanco = (banco) => {
+    setBancoEditandoId(banco.id);
+    setBancoForm({
+      nombre: banco.nombre || '',
+      cbu: banco.cbu || '',
+      tipo: banco.tipo || 'Corriente',
+      moneda: banco.moneda || 'USD',
+      activo: banco.activo !== false
+    });
+  };
+
+  const handleGuardarBanco = async (e) => {
+    e?.preventDefault();
+    if (!bancoForm.nombre.trim()) {
+      return toast.error('El nombre del banco es obligatorio.');
+    }
+
+    setGuardandoBanco(true);
+    try {
+      if (bancoEditandoId) {
+        const { error } = await supabase
+          .from('bancos')
+          .update({
+            nombre: bancoForm.nombre.trim(),
+            cbu: bancoForm.cbu.trim() || null,
+            tipo: bancoForm.tipo,
+            moneda: bancoForm.moneda,
+            activo: bancoForm.activo
+          })
+          .eq('id', bancoEditandoId);
+
+        if (error) throw error;
+        toast.success('Banco actualizado correctamente.');
+      } else {
+        const { error } = await supabase
+          .from('bancos')
+          .insert([{
+            nombre: bancoForm.nombre.trim(),
+            cbu: bancoForm.cbu.trim() || null,
+            tipo: bancoForm.tipo,
+            moneda: bancoForm.moneda,
+            activo: bancoForm.activo
+          }]);
+
+        if (error) throw error;
+        toast.success('Banco creado exitosamente.');
+      }
+
+      const { data: bData } = await supabase.from('bancos').select('*').order('nombre');
+      if (bData) setBancos(bData);
+
+      abrirCrearBanco();
+    } catch (err) {
+      console.error('Error al guardar banco:', err);
+      toast.error('Error al guardar banco: ' + err.message);
+    } finally {
+      setGuardandoBanco(false);
+    }
+  };
+
+  const toggleActivoBanco = async (banco) => {
+    try {
+      const nuevoEstado = !banco.activo;
+      const { error } = await supabase
+        .from('bancos')
+        .update({ activo: nuevoEstado })
+        .eq('id', banco.id);
+
+      if (error) throw error;
+
+      toast.success(`Banco "${banco.nombre}" ${nuevoEstado ? 'activado' : 'desactivado'}.`);
+      setBancos(prev => prev.map(b => b.id === banco.id ? { ...b, activo: nuevoEstado } : b));
+    } catch (err) {
+      toast.error('Error al cambiar estatus: ' + err.message);
+    }
+  };
+
+  const eliminarBancoModal = async (bancoId, bancoNombre) => {
+    if (!window.confirm(`¿Está seguro de eliminar el banco "${bancoNombre}"?`)) return;
+
+    try {
+      const { error } = await supabase
+        .from('bancos')
+        .delete()
+        .eq('id', bancoId);
+
+      if (error) throw error;
+
+      toast.success(`Banco "${bancoNombre}" eliminado.`);
+      setBancos(prev => prev.filter(b => b.id !== bancoId));
+    } catch (err) {
+      toast.error('Error al eliminar banco: ' + err.message);
+    }
+  };
+
   // --- SUBMÓDULO ASIGNACIÓN DE FONDOS A COMPRAS (CUENTAS POR PAGAR) ---
   const [showModalAsignarFondo, setShowModalAsignarFondo] = useState(false);
   const [montoFondoInput, setMontoFondoInput] = useState('');
@@ -187,14 +312,14 @@ const LiquidacionFacturas = ({ currentUser }) => {
       if (reqError) throw reqError;
       setRequisiciones(reqData || []);
 
-      // 2. Fetch bancos to populate selector
+      // 2. Fetch bancos to populate selector & management
       const { data: bancoData, error: bancoError } = await supabase
         .from('bancos')
         .select('*')
-        .eq('activo', true)
         .order('nombre');
-      if (bancoError) throw bancoError;
-      setBancos(bancoData || []);
+      if (!bancoError) {
+        setBancos(bancoData || []);
+      }
 
       // 3. Fetch proveedores to map types/categories
       const { data: provData, error: provError } = await supabase
@@ -340,6 +465,34 @@ const LiquidacionFacturas = ({ currentUser }) => {
     return Array.from(listMap.values());
   }, [requisiciones]);
 
+  // Helper de Semaforización de Vencimiento de Crédito (Aging)
+  const calcularSemaforoCredito = useCallback((odc) => {
+    if (odc.tipo_pago !== 'CREDITO') return { nivel: 'verde', texto: 'Contado', color: '#16a34a', bg: '#dcfce7', dias: null };
+    const st = (odc.estatus_pago || odc.status_pago || 'PENDIENTE').toUpperCase();
+    if (st === 'PAGADO') return { nivel: 'verde', texto: 'Pagado', color: '#166534', bg: '#dcfce7', dias: null };
+
+    const fechaVencStr = odc.fecha_vencimiento_credito || odc.fecha_vencimiento_pago;
+    if (!fechaVencStr) return { nivel: 'verde', texto: 'En Plazo', color: '#0369a1', bg: '#e0f2fe', dias: null };
+
+    const hoy = new Date();
+    hoy.setHours(0, 0, 0, 0);
+    const fVenc = new Date(fechaVencStr);
+    fVenc.setHours(0, 0, 0, 0);
+
+    const diffTime = fVenc.getTime() - hoy.getTime();
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+    if (diffDays < 0) {
+      const diasMora = Math.abs(diffDays);
+      if (diasMora > 15) return { nivel: 'morado', texto: `Mora Crítica (${diasMora}d)`, color: '#6b21a8', bg: '#f3e8ff', dias: diffDays };
+      return { nivel: 'rojo', texto: `Vencido (${diasMora}d)`, color: '#991b1b', bg: '#fee2e2', dias: diffDays };
+    } else if (diffDays <= 5) {
+      return { nivel: 'amarillo', texto: `Por Vencer (${diffDays}d)`, color: '#854d0e', bg: '#fef9c3', dias: diffDays };
+    } else {
+      return { nivel: 'verde', texto: `En Plazo (${diffDays}d)`, color: '#065f46', bg: '#d1fae5', dias: diffDays };
+    }
+  }, []);
+
   // Órdenes de Compra a Crédito y sus balances para CxP
   const odcsCredito = useMemo(() => {
     return ordenesCompra.filter(o => o.tipo_pago === 'CREDITO');
@@ -355,6 +508,22 @@ const LiquidacionFacturas = ({ currentUser }) => {
   const totalOdcCreditoMonto = useMemo(() => {
     return odcsCreditoPendientes.reduce((sum, o) => sum + (Number(o.total_general ?? o.total) || 0), 0);
   }, [odcsCreditoPendientes]);
+
+  // Órdenes de Compra a Contado para CxP
+  const odcsContado = useMemo(() => {
+    return ordenesCompra.filter(o => o.tipo_pago !== 'CREDITO');
+  }, [ordenesCompra]);
+
+  const odcsContadoPendientes = useMemo(() => {
+    return odcsContado.filter(o => {
+      const st = (o.estatus_pago || o.status_pago || 'PENDIENTE').toUpperCase();
+      return st !== 'PAGADO';
+    });
+  }, [odcsContado]);
+
+  const totalOdcContadoMonto = useMemo(() => {
+    return odcsContadoPendientes.reduce((sum, o) => sum + (Number(o.total_general ?? o.total) || 0), 0);
+  }, [odcsContadoPendientes]);
 
   // Group purchased items by Invoice and Provider
   const facturasAgrupadas = useMemo(() => {
@@ -572,7 +741,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
   }, [facturasAgrupadas, filtroBusqueda, filtroEstatus, filtroTipoProveedor, filtroProveedor, getProveedorCategorias]);
 
   // Órdenes de Compra a Crédito Filtradas para la vista CxP
-  const odcsFiltradas = useMemo(() => {
+  const odcsCreditoFiltradas = useMemo(() => {
     const q = filtroBusqueda.toLowerCase().trim();
     return odcsCredito.filter(odc => {
       const matchesSearch = !q ||
@@ -587,7 +756,40 @@ const LiquidacionFacturas = ({ currentUser }) => {
         filtroEstatus === 'Todos' ||
         (filtroEstatus === 'EMITIDO' && st === 'PENDIENTE') ||
         (filtroEstatus === 'PAGADO' && st === 'PAGADO') ||
-        (filtroEstatus === 'PAGADO PARCIAL' && st === 'PENDIENTE');
+        (filtroEstatus === 'PAGADO PARCIAL' && st === 'PAGADO PARCIAL');
+
+      const sem = calcularSemaforoCredito(odc);
+      const matchesSemaforo =
+        filtroSemaforo === 'Todos' ||
+        (filtroSemaforo === 'En Plazo' && sem.nivel === 'verde') ||
+        (filtroSemaforo === 'Por Vencer' && sem.nivel === 'amarillo') ||
+        (filtroSemaforo === 'Vencidos' && (sem.nivel === 'rojo' || sem.nivel === 'morado'));
+
+      const matchesProv =
+        filtroProveedor === 'Todos' ||
+        (odc.proveedor_nombre || '').trim().toUpperCase() === filtroProveedor.trim().toUpperCase();
+
+      return matchesSearch && matchesStatus && matchesSemaforo && matchesProv;
+    });
+  }, [odcsCredito, filtroBusqueda, filtroEstatus, filtroSemaforo, filtroProveedor, calcularSemaforoCredito]);
+
+  // Órdenes de Compra a Contado Filtradas para la vista CxP
+  const odcsContadoFiltradas = useMemo(() => {
+    const q = filtroBusqueda.toLowerCase().trim();
+    return odcsContado.filter(odc => {
+      const matchesSearch = !q ||
+        (odc.numero_odc || '').toLowerCase().includes(q) ||
+        (odc.proveedor_nombre || '').toLowerCase().includes(q) ||
+        (odc.cotizacion_ref || '').toLowerCase().includes(q) ||
+        (odc.orden_pago_ref || '').toLowerCase().includes(q) ||
+        (odc.destino_despacho || '').toLowerCase().includes(q);
+
+      const st = (odc.estatus_pago || odc.status_pago || 'PENDIENTE').toUpperCase();
+      const matchesStatus =
+        filtroEstatus === 'Todos' ||
+        (filtroEstatus === 'EMITIDO' && st === 'PENDIENTE') ||
+        (filtroEstatus === 'PAGADO' && st === 'PAGADO') ||
+        (filtroEstatus === 'PAGADO PARCIAL' && st === 'PAGADO PARCIAL');
 
       const matchesProv =
         filtroProveedor === 'Todos' ||
@@ -595,7 +797,39 @@ const LiquidacionFacturas = ({ currentUser }) => {
 
       return matchesSearch && matchesStatus && matchesProv;
     });
-  }, [odcsCredito, filtroBusqueda, filtroEstatus, filtroProveedor]);
+  }, [odcsContado, filtroBusqueda, filtroEstatus, filtroProveedor]);
+
+  // Histórico de Pagos Realizados (Totalmente Liquidados o Pagados)
+  const pagadosConsolidados = useMemo(() => {
+    const q = filtroBusqueda.toLowerCase().trim();
+
+    const facturasPagadas = facturasAgrupadas.filter(f => {
+      const isPag = f.estatus === 'PAGADO' || f.estatus_general === 'PAGADO' || f.saldo_pendiente <= 0.01;
+      if (!isPag) return false;
+      const matchesSearch = !q ||
+        (f.doc_numero || '').toLowerCase().includes(q) ||
+        (f.proveedor_nombre || '').toLowerCase().includes(q);
+      const matchesProv = filtroProveedor === 'Todos' || (f.proveedor_nombre || '').trim().toUpperCase() === filtroProveedor.trim().toUpperCase();
+      return matchesSearch && matchesProv;
+    });
+
+    const odcsPagadas = ordenesCompra.filter(o => {
+      const st = (o.estatus_pago || o.status_pago || '').toUpperCase();
+      const isPag = st === 'PAGADO';
+      if (!isPag) return false;
+      const matchesSearch = !q ||
+        (o.numero_odc || '').toLowerCase().includes(q) ||
+        (o.proveedor_nombre || '').toLowerCase().includes(q);
+      const matchesProv = filtroProveedor === 'Todos' || (o.proveedor_nombre || '').trim().toUpperCase() === filtroProveedor.trim().toUpperCase();
+      return matchesSearch && matchesProv;
+    });
+
+    return {
+      facturas: facturasPagadas,
+      odcs: odcsPagadas,
+      total: facturasPagadas.length + odcsPagadas.length
+    };
+  }, [facturasAgrupadas, ordenesCompra, filtroBusqueda, filtroProveedor]);
 
   // Actualizar estatus de pago de una ODC directamente desde CxP
   const cambiarEstatusPagoOdc = async (odcId, nuevoEstatus) => {
@@ -636,24 +870,26 @@ const LiquidacionFacturas = ({ currentUser }) => {
       else if (f.estatus === 'PAGADO') pagados++;
     });
 
-    const totalPendienteGlobal = totalPendiente + totalOdcCreditoMonto;
+    const totalPendienteGlobal = totalPendiente + totalOdcCreditoMonto + totalOdcContadoMonto;
 
     return { 
       totalFacturas, 
       totalAbonado, 
       totalPendiente, 
       totalOdcCreditoMonto,
+      totalOdcContadoMonto,
       totalPendienteGlobal,
       emitidos, 
       parciales, 
       pagados,
-      odcsPendientesCount: odcsCreditoPendientes.length
+      odcsPendientesCount: odcsCreditoPendientes.length + odcsContadoPendientes.length
     };
-  }, [facturasAgrupadas, totalOdcCreditoMonto, odcsCreditoPendientes]);
+  }, [facturasAgrupadas, totalOdcCreditoMonto, totalOdcContadoMonto, odcsCreditoPendientes, odcsContadoPendientes]);
 
-  // Prepare and open abono registration modal
+  // Prepare and open abono registration modal for Facturas
   const abrirRegistrarAbono = (invoice) => {
     setAbonoForm({
+      es_odc: false,
       factura_num: invoice.doc_numero,
       proveedor_nombre: invoice.proveedor_nombre,
       monto: invoice.saldo_pendiente.toFixed(2), // prefill with remaining balance
@@ -664,6 +900,74 @@ const LiquidacionFacturas = ({ currentUser }) => {
     });
     setShowAbonoModal(true);
   };
+
+  // Prepare and open abono registration modal for ODC
+  const abrirRegistrarAbonoOdc = (odc) => {
+    const totalVal = Number(odc.total_general ?? odc.total ?? 0);
+    const abonosExistentes = parsearItems(odc.detalles_pago || odc.datos_pago || []);
+    const sumaAbonos = abonosExistentes.reduce((sum, a) => sum + (Number(a.monto) || 0), 0);
+    const saldoPend = Math.max(0, totalVal - sumaAbonos);
+
+    setAbonoForm({
+      es_odc: true,
+      odc_id: odc.id,
+      numero_odc: odc.numero_odc,
+      factura_num: odc.numero_odc,
+      proveedor_nombre: odc.proveedor_nombre || 'Proveedor',
+      monto: (saldoPend > 0 ? saldoPend : totalVal).toFixed(2),
+      referencia: '',
+      banco_id: '',
+      moneda: odc.moneda === 'BS' ? '$ / BS' : '$ / $',
+      files: []
+    });
+    setShowAbonoModal(true);
+  };
+
+  const uploadSoporteUnificado = useCallback(async (fileObj, prefix = 'abono') => {
+    const file = fileObj.file;
+    if (!file) return { name: fileObj.label || 'Soporte', url: fileObj.url || '' };
+    const fileExt = file.name ? file.name.split('.').pop() : 'png';
+    const storageFileName = `${prefix}_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.${fileExt}`;
+
+    try {
+      const compressedFile = await compressImage(file);
+      const { error: uploadError } = await supabase.storage
+        .from('facturas')
+        .upload(storageFileName, compressedFile);
+
+      if (uploadError) throw uploadError;
+
+      const { data: { publicUrl } } = supabase.storage.from('facturas').getPublicUrl(storageFileName);
+      return {
+        name: fileObj.label || file.name.split('.')[0],
+        url: publicUrl
+      };
+    } catch (err) {
+      try {
+        const compressedFile = await compressImage(file);
+        const { error: uploadError2 } = await supabase.storage
+          .from('tickets-evidencia')
+          .upload(`soportes/${storageFileName}`, compressedFile);
+        if (uploadError2) throw uploadError2;
+        const { data: { publicUrl: publicUrl2 } } = supabase.storage.from('tickets-evidencia').getPublicUrl(`soportes/${storageFileName}`);
+        return {
+          name: fileObj.label || file.name.split('.')[0],
+          url: publicUrl2
+        };
+      } catch (err2) {
+        return new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            resolve({
+              name: fileObj.label || file.name.split('.')[0],
+              url: reader.result
+            });
+          };
+          reader.readAsDataURL(file);
+        });
+      }
+    }
+  }, []);
 
   const handleConfirmAbono = async () => {
     const montoNum = Number(abonoForm.monto);
@@ -686,46 +990,77 @@ const LiquidacionFacturas = ({ currentUser }) => {
 
     setSubiendoAbono(true);
     try {
-      // 1. Upload all transfer proofs to storage concurrently
-      const uploadPromises = abonoForm.files.map(async (fileObj) => {
-        const file = fileObj.file;
-        const fileExt = file.name.split('.').pop();
-        const storageFileName = `abono_${abonoForm.factura_num.replace(/\s+/g, '_')}_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.${fileExt}`;
-        
-        const compressedFile = await compressImage(file);
-        const { error: uploadError } = await supabase.storage
-          .from('facturas')
-          .upload(storageFileName, compressedFile);
-
-        if (uploadError) throw uploadError;
-
-        const { data: { publicUrl } } = supabase.storage.from('facturas').getPublicUrl(storageFileName);
-        return {
-          name: fileObj.label || file.name.split('.')[0],
-          url: publicUrl
-        };
-      });
-
+      // 1. Upload all transfer proofs with fallback
+      const uploadPromises = abonoForm.files.map(fileObj => uploadSoporteUnificado(fileObj, 'abono'));
       const uploadedFiles = await Promise.all(uploadPromises);
 
       // 2. Build abono object
       const abonoId = `ab_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const bancoNombre = bancos.find(b => b.id === abonoForm.banco_id)?.nombre || 'Desconocido';
       const nuevoAbono = {
         abono_id: abonoId,
-        url: uploadedFiles[0]?.url || null, // fallback for compatibility
-        urls: uploadedFiles, // array of all uploaded files
+        url: uploadedFiles[0]?.url || null,
+        urls: uploadedFiles,
         name: uploadedFiles.map(f => f.name).join(', '),
         tipo: 'abono',
         monto: montoNum,
         fecha: new Date().toISOString(),
         banco_id: abonoForm.banco_id,
-        banco_nombre: bancos.find(b => b.id === abonoForm.banco_id)?.nombre || 'Desconocido',
+        banco_nombre: bancoNombre,
         moneda: abonoForm.moneda,
         referencia: abonoForm.referencia.trim(),
         factura_num: abonoForm.factura_num.trim(),
         proveedor_nombre: abonoForm.proveedor_nombre.trim(),
         usuario_nombre: currentUser ? `${currentUser.nombre} ${currentUser.apellido}` : 'Administración'
       };
+
+      // Si es un abono/pago de ODC
+      if (abonoForm.es_odc) {
+        const targetOdc = ordenesCompra.find(o => String(o.id) === String(abonoForm.odc_id));
+        if (!targetOdc) throw new Error('No se encontró la Órden de Compra a abonar.');
+
+        const abonosExistentes = parsearItems(targetOdc.detalles_pago || targetOdc.datos_pago || []);
+        const nuevosAbonos = [...abonosExistentes, nuevoAbono];
+        const sumaTotalAbonos = nuevosAbonos.reduce((sum, a) => sum + (Number(a.monto) || 0), 0);
+        const totalOdcVal = Number(targetOdc.total_general ?? targetOdc.total ?? 0);
+        const saldoRemanente = totalOdcVal - sumaTotalAbonos;
+
+        const estatusFinal = saldoRemanente <= 0.01 ? 'PAGADO' : 'PAGADO PARCIAL';
+
+        const { error: errUpdateOdc } = await supabase
+          .from('ordenes_compra')
+          .update({
+            estatus_pago: estatusFinal,
+            status_pago: estatusFinal,
+            detalles_pago: nuevosAbonos,
+            datos_pago: nuevosAbonos,
+            banco_destino: bancoNombre,
+            banco: bancoNombre,
+            orden_pago_ref: abonoForm.referencia.trim()
+          })
+          .eq('id', targetOdc.id);
+
+        if (errUpdateOdc) throw errUpdateOdc;
+
+        toast.success(`Pago de $ ${montoNum.toLocaleString('de-DE', { minimumFractionDigits: 2 })} registrado exitosamente para la ODC ${targetOdc.numero_odc}`);
+        
+        if (showOdcPreviewModal && odcPreviewSeleccionada && String(odcPreviewSeleccionada.id) === String(targetOdc.id)) {
+          setOdcPreviewSeleccionada(prev => ({
+            ...prev,
+            estatus_pago: estatusFinal,
+            status_pago: estatusFinal,
+            detalles_pago: nuevosAbonos,
+            datos_pago: nuevosAbonos,
+            banco_destino: bancoNombre,
+            banco: bancoNombre,
+            orden_pago_ref: abonoForm.referencia.trim()
+          }));
+        }
+
+        await fetchData();
+        setShowAbonoModal(false);
+        return;
+      }
 
       // 3. Find parent requisitions sharing this invoice
       const targetInvoice = facturasAgrupadas.find(
@@ -932,30 +1267,56 @@ const LiquidacionFacturas = ({ currentUser }) => {
           <p>Cuentas por Pagar, Control de Abonos e Historial Financiero</p>
         </div>
 
-        <button
-          onClick={() => {
-            setShowModalAsignarFondo(true);
-            fetchHistorialFondosCxp();
-          }}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            padding: '10px 18px',
-            background: 'linear-gradient(135deg, #10b981, #059669)',
-            color: 'white',
-            border: 'none',
-            borderRadius: '12px',
-            cursor: 'pointer',
-            fontSize: '13px',
-            fontWeight: '800',
-            boxShadow: '0 4px 12px rgba(16, 185, 129, 0.25)',
-            transition: 'transform 0.1s ease'
-          }}
-        >
-          <DollarSign size={16} />
-          <span>💰 Asignar Fondo a Compras</span>
-        </button>
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+          <button
+            onClick={() => {
+              setShowModalBancos(true);
+            }}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '10px 18px',
+              background: 'linear-gradient(135deg, #0284c7, #0369a1)',
+              color: 'white',
+              border: 'none',
+              borderRadius: '12px',
+              cursor: 'pointer',
+              fontSize: '13px',
+              fontWeight: '800',
+              boxShadow: '0 4px 12px rgba(2, 132, 199, 0.25)',
+              transition: 'transform 0.1s ease'
+            }}
+          >
+            <Landmark size={16} />
+            <span>🏦 Gestionar Bancos</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setShowModalAsignarFondo(true);
+              fetchHistorialFondosCxp();
+            }}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '10px 18px',
+              background: 'linear-gradient(135deg, #10b981, #059669)',
+              color: 'white',
+              border: 'none',
+              borderRadius: '12px',
+              cursor: 'pointer',
+              fontSize: '13px',
+              fontWeight: '800',
+              boxShadow: '0 4px 12px rgba(16, 185, 129, 0.25)',
+              transition: 'transform 0.1s ease'
+            }}
+          >
+            <DollarSign size={16} />
+            <span>💰 Asignar Fondo a Compras</span>
+          </button>
+        </div>
       </div>
 
       {/* FINANCIAL KPIS */}
@@ -1007,7 +1368,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
           style={{ fontWeight: '800', backgroundColor: subtabCxp === 'todas' ? '#0f172a' : '#ffffff', color: subtabCxp === 'todas' ? 'white' : '#475569', border: '1px solid #cbd5e1', borderRadius: '10px', padding: '10px 18px', cursor: 'pointer', fontSize: '0.85rem' }}
           onClick={() => setSubtabCxp('todas')}
         >
-          🔍 Cuentas por Pagar Consolidadas ({facturasFiltradas.length + odcsFiltradas.length})
+          🔍 Cuentas por Pagar Consolidadas ({facturasFiltradas.length + odcsCreditoFiltradas.length + odcsContadoFiltradas.length})
         </button>
         <button
           style={{ fontWeight: '800', backgroundColor: subtabCxp === 'facturas' ? '#0284c7' : '#ffffff', color: subtabCxp === 'facturas' ? 'white' : '#475569', border: '1px solid #cbd5e1', borderRadius: '10px', padding: '10px 18px', cursor: 'pointer', fontSize: '0.85rem' }}
@@ -1019,7 +1380,19 @@ const LiquidacionFacturas = ({ currentUser }) => {
           style={{ fontWeight: '800', backgroundColor: subtabCxp === 'odc_credito' ? '#d97706' : '#ffffff', color: subtabCxp === 'odc_credito' ? 'white' : '#475569', border: '1px solid #cbd5e1', borderRadius: '10px', padding: '10px 18px', cursor: 'pointer', fontSize: '0.85rem' }}
           onClick={() => setSubtabCxp('odc_credito')}
         >
-          💳 Órdenes de Compra a Crédito ({odcsFiltradas.length})
+          💳 Órdenes a Crédito ({odcsCreditoFiltradas.length})
+        </button>
+        <button
+          style={{ fontWeight: '800', backgroundColor: subtabCxp === 'odc_contado' ? '#16a34a' : '#ffffff', color: subtabCxp === 'odc_contado' ? 'white' : '#475569', border: '1px solid #cbd5e1', borderRadius: '10px', padding: '10px 18px', cursor: 'pointer', fontSize: '0.85rem' }}
+          onClick={() => setSubtabCxp('odc_contado')}
+        >
+          💵 Órdenes a Contado ({odcsContadoFiltradas.length})
+        </button>
+        <button
+          style={{ fontWeight: '800', backgroundColor: subtabCxp === 'historico' ? '#7c3aed' : '#ffffff', color: subtabCxp === 'historico' ? 'white' : '#475569', border: '1px solid #cbd5e1', borderRadius: '10px', padding: '10px 18px', cursor: 'pointer', fontSize: '0.85rem' }}
+          onClick={() => setSubtabCxp('historico')}
+        >
+          ✅ Histórico de Pagos Realizados ({pagadosConsolidados.total})
         </button>
       </div>
 
@@ -1037,6 +1410,21 @@ const LiquidacionFacturas = ({ currentUser }) => {
         </div>
 
         <div className="liquidacion-filters-group">
+          {/* Filtro Semáforo de Crédito */}
+          {(subtabCxp === 'todas' || subtabCxp === 'odc_credito') && (
+            <select
+              className="liquidacion-select-filter"
+              style={{ border: '1.5px solid #f59e0b', backgroundColor: '#fffbeb', fontWeight: '700', color: '#b45309' }}
+              value={filtroSemaforo}
+              onChange={(e) => setFiltroSemaforo(e.target.value)}
+            >
+              <option value="Todos">Todos los Plazos</option>
+              <option value="En Plazo">🟢 En Plazo</option>
+              <option value="Por Vencer">🟡 Por Vencer (≤5d)</option>
+              <option value="Vencidos">🔴 Vencidos / En Mora</option>
+            </select>
+          )}
+
           {/* Filtro Tipo de Proveedor */}
           <select
             className="liquidacion-select-filter"
@@ -1078,18 +1466,18 @@ const LiquidacionFacturas = ({ currentUser }) => {
       {/* MAIN DATA TABLES */}
       {(subtabCxp === 'todas' || subtabCxp === 'odc_credito') && (
         <div className="liquidacion-table-wrapper" style={{ marginBottom: '25px' }}>
-          <div style={{ padding: '16px 20px', backgroundColor: '#fffbeb', borderBottom: '1px solid #fde68a', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontWeight: '900', color: '#92400e', fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <CreditCard size={18} /> Órdenes de Compra a Crédito por Pagar ({odcsFiltradas.length})
+          <div style={{ padding: '16px 20px', backgroundColor: '#f0f9ff', borderBottom: '1px solid #bae6fd', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontWeight: '900', color: '#0369a1', fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <CreditCard size={18} /> Órdenes de Compra a Crédito por Pagar ({odcsCreditoFiltradas.length})
             </span>
-            <span style={{ fontWeight: '900', color: '#b45309', fontSize: '0.9rem' }}>
+            <span style={{ fontWeight: '900', color: '#0284c7', fontSize: '0.9rem' }}>
               Total Crédito ODC: $ {totalOdcCreditoMonto.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
             </span>
           </div>
 
-          {odcsFiltradas.length === 0 ? (
+          {odcsCreditoFiltradas.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '30px', color: '#94a3b8', fontSize: '0.85rem', fontWeight: '700' }}>
-              No hay Órdenes de Compra a crédito pendientes registradas.
+              No hay Órdenes de Compra a crédito pendientes registradas con los filtros aplicados.
             </div>
           ) : (
             <table className="liquidacion-table">
@@ -1097,16 +1485,17 @@ const LiquidacionFacturas = ({ currentUser }) => {
                 <tr>
                   <th>Correlativo ODC</th>
                   <th>Proveedor</th>
-                  <th>Plazo / Vencimiento Crédito</th>
+                  <th>Plazo / Semaforización Crédito</th>
                   <th>Total ODC</th>
                   <th>Estatus Pago</th>
                   <th style={{ textAlign: 'center' }}>Gestión de Pago</th>
                 </tr>
               </thead>
               <tbody>
-                {odcsFiltradas.map(odc => {
+                {odcsCreditoFiltradas.map(odc => {
                   const statusActual = (odc.estatus_pago || odc.status_pago || 'PENDIENTE').toUpperCase();
                   const isPagado = statusActual === 'PAGADO';
+                  const sem = calcularSemaforoCredito(odc);
                   return (
                     <tr key={odc.id} style={{ backgroundColor: isPagado ? '#f0fdf4' : 'transparent' }}>
                       <td>
@@ -1134,8 +1523,22 @@ const LiquidacionFacturas = ({ currentUser }) => {
                           {odc.proveedor_nombre || 'N/A'}
                         </div>
                       </td>
-                      <td style={{ color: '#64748b', fontSize: '0.8rem' }}>
-                        <strong>{odc.dias_credito || 0} Días</strong> ({odc.fecha_vencimiento_credito || odc.fecha_emision || 'N/A'})
+                      <td>
+                        <span style={{
+                          padding: '3px 8px',
+                          borderRadius: '6px',
+                          fontSize: '0.72rem',
+                          fontWeight: '800',
+                          backgroundColor: sem.bg,
+                          color: sem.color,
+                          display: 'inline-block',
+                          marginBottom: '4px'
+                        }}>
+                          {sem.texto}
+                        </span>
+                        <div style={{ color: '#64748b', fontSize: '0.78rem' }}>
+                          <strong>{odc.dias_credito || 0} Días</strong> ({odc.fecha_vencimiento_credito || odc.fecha_emision || 'N/A'})
+                        </div>
                       </td>
                       <td style={{ fontWeight: '900', color: '#0f172a' }}>
                         $ {Number(odc.total_general ?? odc.total ?? 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
@@ -1153,15 +1556,32 @@ const LiquidacionFacturas = ({ currentUser }) => {
                         </span>
                       </td>
                       <td style={{ textAlign: 'center' }}>
-                        <select
-                          style={{ padding: '6px 10px', fontSize: '0.75rem', fontWeight: '800', borderRadius: '8px', border: '1px solid #cbd5e1', cursor: 'pointer', backgroundColor: '#f8fafc' }}
-                          value={statusActual}
-                          onChange={(e) => cambiarEstatusPagoOdc(odc.id, e.target.value)}
-                        >
-                          <option value="PENDIENTE">⏳ PENDIENTE</option>
-                          <option value="PAGADO">✅ PAGADO</option>
-                          <option value="VENCIDO">🔴 VENCIDO</option>
-                        </select>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+                          <button
+                            className="liquidacion-action-btn view"
+                            title="Ver Detalles y Renglones ODC"
+                            onClick={() => abrirDetalleOdcPreview(odc)}
+                          >
+                            <Eye size={15} />
+                          </button>
+                          <button
+                            className="liquidacion-action-btn pay"
+                            title="Registrar Pago / Abono ODC"
+                            onClick={() => abrirRegistrarAbonoOdc(odc)}
+                          >
+                            <CreditCard size={15} />
+                          </button>
+                          <select
+                            style={{ padding: '5px 8px', fontSize: '0.72rem', fontWeight: '800', borderRadius: '8px', border: '1px solid #cbd5e1', cursor: 'pointer', backgroundColor: '#f8fafc' }}
+                            value={statusActual}
+                            onChange={(e) => cambiarEstatusPagoOdc(odc.id, e.target.value)}
+                          >
+                            <option value="PENDIENTE">⏳ PENDIENTE</option>
+                            <option value="PAGADO PARCIAL">🟡 PARCIAL</option>
+                            <option value="PAGADO">✅ PAGADO</option>
+                            <option value="VENCIDO">🔴 VENCIDO</option>
+                          </select>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -1261,6 +1681,242 @@ const LiquidacionFacturas = ({ currentUser }) => {
           </table>
         )}
       </div>
+      )}
+
+      {(subtabCxp === 'todas' || subtabCxp === 'odc_contado') && (
+        <div className="liquidacion-table-wrapper" style={{ marginBottom: '25px', marginTop: '25px' }}>
+          <div style={{ padding: '16px 20px', backgroundColor: '#f0f9ff', borderBottom: '1px solid #bae6fd', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontWeight: '900', color: '#0369a1', fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <DollarSign size={18} /> Órdenes de Compra a Contado por Rendir / Liquidar ({odcsContadoFiltradas.length})
+            </span>
+            <span style={{ fontWeight: '900', color: '#0284c7', fontSize: '0.9rem' }}>
+              Total Contado ODC: $ {totalOdcContadoMonto.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+            </span>
+          </div>
+
+          {odcsContadoFiltradas.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '30px', color: '#94a3b8', fontSize: '0.85rem', fontWeight: '700' }}>
+              No hay Órdenes de Compra a contado pendientes registradas con los filtros aplicados.
+            </div>
+          ) : (
+            <table className="liquidacion-table">
+              <thead>
+                <tr>
+                  <th>Correlativo ODC</th>
+                  <th>Proveedor</th>
+                  <th>Fecha Emisión</th>
+                  <th>Total ODC</th>
+                  <th>Condición</th>
+                  <th>Estatus Pago</th>
+                  <th style={{ textAlign: 'center' }}>Gestión de Pago</th>
+                </tr>
+              </thead>
+              <tbody>
+                {odcsContadoFiltradas.map(odc => {
+                  const statusActual = (odc.estatus_pago || odc.status_pago || 'PENDIENTE').toUpperCase();
+                  const isPagado = statusActual === 'PAGADO';
+                  return (
+                    <tr key={odc.id} style={{ backgroundColor: isPagado ? '#f0fdf4' : 'transparent' }}>
+                      <td>
+                        <button
+                          type="button"
+                          onClick={() => abrirDetalleOdcPreview(odc)}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            color: '#0ea5e9',
+                            fontWeight: '900',
+                            fontSize: '0.85rem',
+                            cursor: 'pointer',
+                            padding: 0,
+                            textDecoration: 'underline'
+                          }}
+                          title="Ver detalle y renglones ODC"
+                        >
+                          {odc.numero_odc}
+                        </button>
+                      </td>
+                      <td style={{ fontWeight: '700' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <Building2 size={16} color="#64748b" />
+                          {odc.proveedor_nombre || 'N/A'}
+                        </div>
+                      </td>
+                      <td style={{ color: '#64748b', fontSize: '0.8rem' }}>
+                        {odc.fecha_emision ? new Date(odc.fecha_emision).toLocaleDateString() : 'N/A'}
+                      </td>
+                      <td style={{ fontWeight: '900', color: '#0f172a' }}>
+                        $ {Number(odc.total_general ?? odc.total ?? 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                      </td>
+                      <td>
+                        <span style={{ padding: '3px 8px', borderRadius: '6px', fontSize: '0.72rem', fontWeight: '800', backgroundColor: '#dcfce7', color: '#15803d' }}>
+                          💵 CONTADO
+                        </span>
+                      </td>
+                      <td>
+                        <span style={{
+                          padding: '4px 10px',
+                          borderRadius: '8px',
+                          fontSize: '0.75rem',
+                          fontWeight: '900',
+                          backgroundColor: isPagado ? '#dcfce7' : '#fef3c7',
+                          color: isPagado ? '#166534' : '#92400e'
+                        }}>
+                          {isPagado ? '✅ PAGADO' : '⏳ PENDIENTE'}
+                        </span>
+                      </td>
+                      <td style={{ textAlign: 'center' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+                          <button
+                            className="liquidacion-action-btn view"
+                            title="Ver Detalles y Renglones ODC"
+                            onClick={() => abrirDetalleOdcPreview(odc)}
+                          >
+                            <Eye size={15} />
+                          </button>
+                          <button
+                            className="liquidacion-action-btn pay"
+                            title="Registrar Pago / Abono ODC"
+                            onClick={() => abrirRegistrarAbonoOdc(odc)}
+                          >
+                            <CreditCard size={15} />
+                          </button>
+                          <select
+                            style={{ padding: '5px 8px', fontSize: '0.72rem', fontWeight: '800', borderRadius: '8px', border: '1px solid #cbd5e1', cursor: 'pointer', backgroundColor: '#f8fafc' }}
+                            value={statusActual}
+                            onChange={(e) => cambiarEstatusPagoOdc(odc.id, e.target.value)}
+                          >
+                            <option value="PENDIENTE">⏳ PENDIENTE</option>
+                            <option value="PAGADO PARCIAL">🟡 PARCIAL</option>
+                            <option value="PAGADO">✅ PAGADO</option>
+                          </select>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {subtabCxp === 'historico' && (
+        <div className="liquidacion-table-wrapper" style={{ marginTop: '10px' }}>
+          <div style={{ padding: '16px 20px', backgroundColor: '#f0f9ff', borderBottom: '1px solid #bae6fd', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontWeight: '900', color: '#0369a1', fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <CheckCircle2 size={18} /> Histórico de Pagos y Liquidaciones Completadas ({pagadosConsolidados.total})
+            </span>
+            <span style={{ fontWeight: '900', color: '#0284c7', fontSize: '0.9rem' }}>
+              Registros Consolidados: {pagadosConsolidados.total}
+            </span>
+          </div>
+
+          {pagadosConsolidados.total === 0 ? (
+            <div style={{ textAlign: 'center', padding: '40px', color: '#94a3b8', fontSize: '0.85rem', fontWeight: '700' }}>
+              No hay pagos o liquidaciones finalizadas registradas con los filtros seleccionados.
+            </div>
+          ) : (
+            <table className="liquidacion-table">
+              <thead>
+                <tr>
+                  <th>Tipo / Documento</th>
+                  <th>Proveedor</th>
+                  <th>Fecha Registro</th>
+                  <th>Monto Total Pagado</th>
+                  <th>Estatus Finanzas</th>
+                  <th style={{ textAlign: 'center' }}>Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pagadosConsolidados.facturas.map(fac => (
+                  <tr key={`fac_${fac.key}`} style={{ backgroundColor: '#faf5ff' }}>
+                    <td>
+                      <span style={{ fontSize: '11px', backgroundColor: '#f3e8ff', color: '#7e22ce', padding: '3px 8px', borderRadius: '5px', fontWeight: '800', border: '1px solid #d8b4fe' }}>
+                        📜 FACTURA: {fac.doc_numero}
+                      </span>
+                    </td>
+                    <td style={{ fontWeight: '700' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <Building2 size={16} color="#64748b" />
+                        {fac.proveedor_nombre}
+                      </div>
+                    </td>
+                    <td style={{ color: '#64748b', fontSize: '0.8rem' }}>
+                      {fac.fecha_compra ? new Date(fac.fecha_compra).toLocaleDateString() : 'N/A'}
+                    </td>
+                    <td style={{ fontWeight: '900', color: '#16a34a' }}>
+                      $ {fac.total_factura.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                    </td>
+                    <td>
+                      <span style={{ padding: '4px 10px', borderRadius: '8px', fontSize: '0.75rem', fontWeight: '900', backgroundColor: '#dcfce7', color: '#15803d' }}>
+                        ✅ LIQUIDADO
+                      </span>
+                    </td>
+                    <td style={{ textAlign: 'center' }}>
+                      <button
+                        className="liquidacion-action-btn view"
+                        title="Ver Comprobantes y Abonos"
+                        onClick={() => setInvoiceSeleccionada(fac)}
+                      >
+                        <Eye size={15} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+
+                {pagadosConsolidados.odcs.map(odc => (
+                  <tr key={`odc_${odc.id}`} style={{ backgroundColor: '#faf5ff' }}>
+                    <td>
+                      <button
+                        type="button"
+                        onClick={() => abrirDetalleOdcPreview(odc)}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          color: '#7e22ce',
+                          fontWeight: '900',
+                          fontSize: '0.85rem',
+                          cursor: 'pointer',
+                          padding: 0,
+                          textDecoration: 'underline'
+                        }}
+                      >
+                        🛍️ ODC ({odc.tipo_pago}): {odc.numero_odc}
+                      </button>
+                    </td>
+                    <td style={{ fontWeight: '700' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <Building2 size={16} color="#64748b" />
+                        {odc.proveedor_nombre || 'N/A'}
+                      </div>
+                    </td>
+                    <td style={{ color: '#64748b', fontSize: '0.8rem' }}>
+                      {odc.fecha_emision ? new Date(odc.fecha_emision).toLocaleDateString() : 'N/A'}
+                    </td>
+                    <td style={{ fontWeight: '900', color: '#16a34a' }}>
+                      $ {Number(odc.total_general ?? odc.total ?? 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                    </td>
+                    <td>
+                      <span style={{ padding: '4px 10px', borderRadius: '8px', fontSize: '0.75rem', fontWeight: '900', backgroundColor: '#dcfce7', color: '#15803d' }}>
+                        ✅ PAGADO TOTAL
+                      </span>
+                    </td>
+                    <td style={{ textAlign: 'center' }}>
+                      <button
+                        className="liquidacion-action-btn view"
+                        title="Ver Vista Previa ODC"
+                        onClick={() => abrirDetalleOdcPreview(odc)}
+                      >
+                        <Eye size={15} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
       )}
 
       {/* MODAL DETALLES DE FACTURA */}
@@ -1479,6 +2135,24 @@ const LiquidacionFacturas = ({ currentUser }) => {
         const direccionProv = provDetallePreview?.direccion || odcPreviewSeleccionada.direccion_proveedor || '—';
         const rifProv = provDetallePreview?.rif || odcPreviewSeleccionada.rif_proveedor || '—';
 
+        // Parse ODC payment records
+        let abonosOdc = parsearItems(odcPreviewSeleccionada.detalles_pago || odcPreviewSeleccionada.datos_pago || []);
+        if (abonosOdc.length === 0 && (odcPreviewSeleccionada.orden_pago_ref || odcPreviewSeleccionada.banco_destino || odcPreviewSeleccionada.banco)) {
+          abonosOdc = [{
+            abono_id: `legacy_${odcPreviewSeleccionada.id}`,
+            monto: Number(odcPreviewSeleccionada.total_general ?? odcPreviewSeleccionada.total ?? 0),
+            referencia: odcPreviewSeleccionada.orden_pago_ref || 'REGISTRO PREVIO',
+            banco_nombre: odcPreviewSeleccionada.banco_destino || odcPreviewSeleccionada.banco || 'Banco Empresa',
+            moneda: odcPreviewSeleccionada.moneda || '$ / $',
+            fecha: odcPreviewSeleccionada.fecha_emision,
+            usuario_nombre: 'Finanzas'
+          }];
+        }
+        const totalAbonadoOdc = abonosOdc.reduce((sum, a) => sum + (Number(a.monto) || 0), 0);
+        const totalOdcMonto = Number(odcPreviewSeleccionada.total_general ?? odcPreviewSeleccionada.total ?? 0);
+        const saldoPendienteOdc = Math.max(0, totalOdcMonto - totalAbonadoOdc);
+        const estatusPagoOdc = (odcPreviewSeleccionada.estatus_pago || odcPreviewSeleccionada.status_pago || 'PENDIENTE').toUpperCase();
+
         return (
           <div className="liquidacion-modal-overlay" style={{ zIndex: 9999 }}>
             <div className="liquidacion-modal-card" style={{ maxWidth: '940px', width: '94%', maxHeight: '90vh', overflowY: 'auto', borderRadius: '24px', padding: '28px', backgroundColor: 'white' }}>
@@ -1602,6 +2276,98 @@ const LiquidacionFacturas = ({ currentUser }) => {
                     </div>
                   </div>
 
+                  {/* HISTORIAL Y COMPROBANTES DE PAGOS REGISTRADOS DE LA ODC */}
+                  <div>
+                    <h4 style={{ margin: '0 0 10px 0', fontSize: '11px', fontWeight: '900', textTransform: 'uppercase', color: '#64748b', letterSpacing: '0.5px' }}>
+                      HISTORIAL Y COMPROBANTES DE PAGOS REGISTRADOS ({abonosOdc.length})
+                    </h4>
+
+                    {abonosOdc.length === 0 ? (
+                      <div style={{ padding: '20px', textAlign: 'center', color: '#94a3b8', fontSize: '0.78rem', fontStyle: 'italic', border: '1px dashed #cbd5e1', borderRadius: '12px', backgroundColor: '#f8fafc' }}>
+                        No se han registrado pagos o abonos para esta Órden de Compra todavía.
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        {abonosOdc.map((ab, idx) => (
+                          <div key={ab.abono_id || idx} style={{ padding: '12px 14px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                              <div style={{ fontSize: '1.05rem', fontWeight: '900', color: '#10b981' }}>
+                                + $ {(Number(ab.monto) || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                              </div>
+                              <div style={{ fontSize: '0.78rem', color: '#475569', display: 'flex', flexDirection: 'column' }}>
+                                <span style={{ fontWeight: '800', color: '#0f172a' }}>Ref: {ab.referencia || 'Sin Referencia'}</span>
+                                <span style={{ fontSize: '0.72rem', color: '#64748b' }}>
+                                  <strong>Banco:</strong> {ab.banco_nombre || 'Banco Empresa'} | <strong>Moneda:</strong> {ab.moneda || 'USD'}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                              <div style={{ fontSize: '0.72rem', color: '#64748b', textAlign: 'right' }}>
+                                <div style={{ fontWeight: '700', color: '#334155' }}>Por: {ab.usuario_nombre || 'Finanzas'}</div>
+                                <div>{ab.fecha ? new Date(ab.fecha).toLocaleDateString() : 'N/A'}</div>
+                              </div>
+
+                              {ab.urls && ab.urls.length > 0 ? (
+                                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                                  {ab.urls.map((u, uIdx) => (
+                                    <a
+                                      key={uIdx}
+                                      href={u.url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '4px',
+                                        textDecoration: 'none',
+                                        color: '#0284c7',
+                                        backgroundColor: '#e0f2fe',
+                                        padding: '4px 10px',
+                                        borderRadius: '6px',
+                                        fontSize: '0.72rem',
+                                        fontWeight: '800',
+                                        border: '1px solid #bae6fd'
+                                      }}
+                                      title={u.name}
+                                    >
+                                      <FileText size={12} />
+                                      Comprobante
+                                    </a>
+                                  ))}
+                                </div>
+                              ) : ab.url ? (
+                                <a
+                                  href={ab.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '4px',
+                                    textDecoration: 'none',
+                                    color: '#0284c7',
+                                    backgroundColor: '#e0f2fe',
+                                    padding: '4px 10px',
+                                    borderRadius: '6px',
+                                    fontSize: '0.72rem',
+                                    fontWeight: '800',
+                                    border: '1px solid #bae6fd'
+                                  }}
+                                >
+                                  <FileText size={12} />
+                                  Comprobante
+                                </a>
+                              ) : (
+                                <span style={{ fontSize: '0.7rem', color: '#94a3b8', fontStyle: 'italic' }}>Sin comprobante</span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
                 </div>
 
                 {/* COLUMNA DERECHA: RESUMEN FINANCIERO Y CONTACTO */}
@@ -1645,16 +2411,32 @@ const LiquidacionFacturas = ({ currentUser }) => {
                       <div style={{ height: '1px', backgroundColor: '#e2e8f0' }}></div>
 
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px' }}>
+                        <span style={{ fontWeight: '800', color: '#475569' }}>Total Abonado:</span>
+                        <span style={{ fontWeight: '800', color: '#10b981' }}>
+                          $ {totalAbonadoOdc.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                        </span>
+                      </div>
+
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px' }}>
+                        <span style={{ fontWeight: '800', color: '#475569' }}>Saldo Remanente:</span>
+                        <span style={{ fontWeight: '900', color: saldoPendienteOdc <= 0.01 ? '#10b981' : '#f59e0b' }}>
+                          $ {saldoPendienteOdc.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                        </span>
+                      </div>
+
+                      <div style={{ height: '1px', backgroundColor: '#e2e8f0' }}></div>
+
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px' }}>
                         <span style={{ fontWeight: '800', color: '#475569' }}>Estatus de Pago:</span>
                         <span style={{
                           padding: '4px 12px',
                           borderRadius: '8px',
                           fontSize: '0.75rem',
                           fontWeight: '900',
-                          backgroundColor: (odcPreviewSeleccionada.estatus_pago || odcPreviewSeleccionada.status_pago) === 'PAGADO' ? '#dcfce7' : '#fef3c7',
-                          color: (odcPreviewSeleccionada.estatus_pago || odcPreviewSeleccionada.status_pago) === 'PAGADO' ? '#166534' : '#92400e'
+                          backgroundColor: estatusPagoOdc === 'PAGADO' ? '#dcfce7' : (estatusPagoOdc === 'PAGADO PARCIAL' ? '#fef9c3' : '#fef3c7'),
+                          color: estatusPagoOdc === 'PAGADO' ? '#166534' : (estatusPagoOdc === 'PAGADO PARCIAL' ? '#854d0e' : '#92400e')
                         }}>
-                          {(odcPreviewSeleccionada.estatus_pago || odcPreviewSeleccionada.status_pago) === 'PAGADO' ? '✅ PAGADO' : '⏳ PENDIENTE'}
+                          {estatusPagoOdc === 'PAGADO' ? '✅ PAGADO' : (estatusPagoOdc === 'PAGADO PARCIAL' ? '🟡 PARCIAL' : '⏳ PENDIENTE')}
                         </span>
                       </div>
 
@@ -1663,6 +2445,15 @@ const LiquidacionFacturas = ({ currentUser }) => {
                           Vencimiento Crédito: {odcPreviewSeleccionada.fecha_vencimiento_credito}
                         </div>
                       )}
+
+                      <button
+                        className="liquidacion-btn liquidacion-btn-primary"
+                        style={{ width: '100%', marginTop: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '10px 16px', borderRadius: '10px', fontWeight: '800', fontSize: '0.85rem' }}
+                        onClick={() => abrirRegistrarAbonoOdc(odcPreviewSeleccionada)}
+                      >
+                        <CreditCard size={16} />
+                        Registrar Pago / Abono ODC
+                      </button>
                     </div>
                   </div>
 
@@ -1729,7 +2520,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
         <div className="liquidacion-modal-overlay">
           <div className="liquidacion-modal-card form-abono">
             <div className="liquidacion-modal-header">
-              <h3>Registrar Abono de Factura</h3>
+              <h3>{abonoForm.es_odc ? `Registrar Pago / Abono — ODC ${abonoForm.numero_odc || abonoForm.factura_num}` : `Registrar Abono de Factura: ${abonoForm.factura_num}`}</h3>
               <button className="liquidacion-modal-close" onClick={() => setShowAbonoModal(false)}>
                 <X size={18} />
               </button>
@@ -1739,7 +2530,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
               <div className="liquidacion-form-grid">
                 <div className="liquidacion-form-row-2">
                   <div className="liquidacion-form-group">
-                    <label className="liquidacion-form-label">N° Factura</label>
+                    <label className="liquidacion-form-label">{abonoForm.es_odc ? 'N° ODC' : 'N° Factura'}</label>
                     <input type="text" className="liquidacion-form-input" value={abonoForm.factura_num} disabled />
                   </div>
                   <div className="liquidacion-form-group">
@@ -2024,6 +2815,202 @@ const LiquidacionFacturas = ({ currentUser }) => {
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '20px' }}>
               <button onClick={() => setShowModalAsignarFondo(false)} style={{ padding: '8px 20px', borderRadius: '10px', border: '1px solid #cbd5e1', background: '#f1f5f9', color: '#475569', fontWeight: '700', fontSize: '0.85rem', cursor: 'pointer' }}>
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL GESTIÓN DE BANCOS DE LA EMPRESA */}
+      {showModalBancos && (
+        <div className="sf-modal-overlay" style={{ zIndex: 9999 }}>
+          <div className="sf-modal-container" style={{ maxWidth: '900px', width: '92%', borderRadius: '24px', padding: '28px', backgroundColor: 'white' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: '1px solid #e2e8f0', paddingBottom: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{ width: '42px', height: '42px', borderRadius: '12px', backgroundColor: '#e0f2fe', color: '#0284c7', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '22px' }}>🏦</div>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '1.35rem', fontWeight: '950', color: '#0f172a' }}>Gestión de Bancos y Cuentas de Origen</h3>
+                  <p style={{ margin: 0, fontSize: '0.8rem', color: '#64748b' }}>Configure las cuentas bancarias de la empresa para pagos de Cuentas por Pagar</p>
+                </div>
+              </div>
+              <button onClick={() => setShowModalBancos(false)} style={{ background: '#f1f5f9', border: 'none', borderRadius: '50%', width: '36px', height: '36px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <X size={20} color="#64748b" />
+              </button>
+            </div>
+
+            {/* FORMULARIO DE BANCO */}
+            <form onSubmit={handleGuardarBanco} style={{ backgroundColor: '#f8fafc', padding: '20px', borderRadius: '16px', border: '1px solid #e2e8f0', marginBottom: '24px' }}>
+              <div style={{ fontSize: '11px', fontWeight: '900', color: '#0369a1', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>{bancoEditandoId ? '✏️ Editar Banco' : '➕ Agregar Nuevo Banco / Cuenta de Origen'}</span>
+                {bancoEditandoId && (
+                  <button type="button" onClick={abrirCrearBanco} style={{ background: 'none', border: 'none', color: '#64748b', fontSize: '11px', cursor: 'pointer', textDecoration: 'underline', fontWeight: '700' }}>
+                    + Nuevo registro
+                  </button>
+                )}
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '14px', marginBottom: '14px' }}>
+                <div>
+                  <label style={{ fontSize: '11px', fontWeight: '800', color: '#334155', display: 'block', marginBottom: '6px' }}>NOMBRE DEL BANCO / MÉTODO *</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Ej: Banco Mercantil, Banplus, Morgan Stanley, Zelle..."
+                    value={bancoForm.nombre}
+                    onChange={(e) => setBancoForm({ ...bancoForm, nombre: e.target.value })}
+                    style={{ width: '100%', padding: '10px 14px', borderRadius: '10px', border: '1px solid #cbd5e1', fontSize: '0.9rem', fontWeight: '700', color: '#0f172a', boxSizing: 'border-box' }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '11px', fontWeight: '800', color: '#334155', display: 'block', marginBottom: '6px' }}>N° CUENTA / CBU / REFERENCIA</label>
+                  <input
+                    type="text"
+                    placeholder="Ej: 01050149191149098414..."
+                    value={bancoForm.cbu}
+                    onChange={(e) => setBancoForm({ ...bancoForm, cbu: e.target.value })}
+                    style={{ width: '100%', padding: '10px 14px', borderRadius: '10px', border: '1px solid #cbd5e1', fontSize: '0.9rem', fontFamily: 'monospace', color: '#0f172a', boxSizing: 'border-box' }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '11px', fontWeight: '800', color: '#334155', display: 'block', marginBottom: '6px' }}>MONEDA *</label>
+                  <select
+                    value={bancoForm.moneda}
+                    onChange={(e) => setBancoForm({ ...bancoForm, moneda: e.target.value })}
+                    style={{ width: '100%', padding: '10px 14px', borderRadius: '10px', border: '1px solid #cbd5e1', fontSize: '0.9rem', fontWeight: '700', color: '#0f172a', boxSizing: 'border-box', backgroundColor: 'white' }}
+                  >
+                    <option value="USD">USD ($ Dólares)</option>
+                    <option value="VES">VES (Bs. Bolívares)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '11px', fontWeight: '800', color: '#334155', display: 'block', marginBottom: '6px' }}>TIPO DE CUENTA</label>
+                  <select
+                    value={bancoForm.tipo}
+                    onChange={(e) => setBancoForm({ ...bancoForm, tipo: e.target.value })}
+                    style={{ width: '100%', padding: '10px 14px', borderRadius: '10px', border: '1px solid #cbd5e1', fontSize: '0.9rem', fontWeight: '700', color: '#0f172a', boxSizing: 'border-box', backgroundColor: 'white' }}
+                  >
+                    <option value="Corriente">Corriente</option>
+                    <option value="Ahorro">Ahorro</option>
+                    <option value="Zelle">Zelle / Digital</option>
+                    <option value="Custodia">Custodia USD</option>
+                  </select>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: '700', color: '#334155' }}>
+                  <input
+                    type="checkbox"
+                    checked={bancoForm.activo}
+                    onChange={(e) => setBancoForm({ ...bancoForm, activo: e.target.checked })}
+                    style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+                  />
+                  <span>Banco Activo para Operaciones</span>
+                </label>
+
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  {bancoEditandoId && (
+                    <button type="button" onClick={abrirCrearBanco} style={{ padding: '8px 16px', borderRadius: '10px', border: '1px solid #cbd5e1', background: '#ffffff', color: '#475569', fontWeight: '700', fontSize: '0.82rem', cursor: 'pointer' }}>
+                      Cancelar
+                    </button>
+                  )}
+                  <button type="submit" disabled={guardandoBanco} style={{ padding: '9px 22px', borderRadius: '10px', border: 'none', background: 'linear-gradient(135deg, #0284c7, #0369a1)', color: 'white', fontWeight: '800', fontSize: '0.85rem', cursor: 'pointer', boxShadow: '0 2px 6px rgba(2, 132, 199, 0.3)' }}>
+                    {guardandoBanco ? 'Guardando...' : (bancoEditandoId ? '💾 Actualizar Banco' : '💾 Guardar Banco')}
+                  </button>
+                </div>
+              </div>
+            </form>
+
+            {/* TABLA DE BANCOS REGISTRADOS */}
+            <div>
+              <h4 style={{ margin: '0 0 12px 0', fontSize: '0.95rem', fontWeight: '900', color: '#1e293b', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>🏛️ Cuentas Bancarias Registradas ({bancos.length})</span>
+              </h4>
+
+              <div style={{ maxHeight: '300px', overflowY: 'auto', borderRadius: '14px', border: '1px solid #e2e8f0' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', textAlign: 'left' }}>
+                  <thead style={{ backgroundColor: '#1e293b', color: 'white', fontWeight: '800', position: 'sticky', top: 0 }}>
+                    <tr>
+                      <th style={{ padding: '10px 14px' }}>BANCO / MÉTODO</th>
+                      <th style={{ padding: '10px 14px' }}>MONEDA</th>
+                      <th style={{ padding: '10px 14px' }}>N° CUENTA / CBU</th>
+                      <th style={{ padding: '10px 14px' }}>TIPO</th>
+                      <th style={{ padding: '10px 14px' }}>ESTATUS</th>
+                      <th style={{ padding: '10px 14px', textAlign: 'center' }}>ACCIONES</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {bancos.length === 0 ? (
+                      <tr>
+                        <td colSpan="6" style={{ padding: '25px', textAlign: 'center', color: '#94a3b8' }}>No hay bancos o cuentas de origen registradas.</td>
+                      </tr>
+                    ) : (
+                      bancos.map((b, idx) => {
+                        const isActivo = b.activo !== false;
+                        return (
+                          <tr key={b.id || idx} style={{ borderBottom: '1px solid #f1f5f9', backgroundColor: isActivo ? 'white' : '#f8fafc' }}>
+                            <td style={{ padding: '10px 14px', fontWeight: '800', color: '#0f172a' }}>
+                              {b.nombre}
+                            </td>
+                            <td style={{ padding: '10px 14px' }}>
+                              <span style={{ fontSize: '10px', fontWeight: '900', padding: '2px 8px', borderRadius: '6px', backgroundColor: b.moneda === 'USD' ? '#dcfce7' : '#eff6ff', color: b.moneda === 'USD' ? '#15803d' : '#1d4ed8', border: `1px solid ${b.moneda === 'USD' ? '#bbf7d0' : '#bfdbfe'}` }}>
+                                {b.moneda || 'USD'}
+                              </span>
+                            </td>
+                            <td style={{ padding: '10px 14px', fontFamily: 'monospace', color: '#334155', fontWeight: '700' }}>
+                              {b.cbu || '—'}
+                            </td>
+                            <td style={{ padding: '10px 14px', color: '#64748b', fontWeight: '600' }}>
+                              {b.tipo || 'Corriente'}
+                            </td>
+                            <td style={{ padding: '10px 14px' }}>
+                              <span style={{ fontSize: '10px', fontWeight: '800', padding: '2px 8px', borderRadius: '6px', backgroundColor: isActivo ? '#dcfce7' : '#fee2e2', color: isActivo ? '#166534' : '#991b1b' }}>
+                                {isActivo ? '✅ ACTIVO' : '🚫 INACTIVO'}
+                              </span>
+                            </td>
+                            <td style={{ padding: '10px 14px', textAlign: 'center' }}>
+                              <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
+                                <button
+                                  type="button"
+                                  onClick={() => abrirEditarBanco(b)}
+                                  style={{ padding: '4px 8px', borderRadius: '6px', border: '1px solid #cbd5e1', background: '#f8fafc', color: '#0284c7', cursor: 'pointer', fontWeight: '800' }}
+                                  title="Editar Banco"
+                                >
+                                  <Edit3 size={14} />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => toggleActivoBanco(b)}
+                                  style={{ padding: '4px 8px', borderRadius: '6px', border: '1px solid #cbd5e1', background: '#f8fafc', color: isActivo ? '#d97706' : '#16a34a', cursor: 'pointer', fontWeight: '800' }}
+                                  title={isActivo ? 'Desactivar Banco' : 'Activar Banco'}
+                                >
+                                  <RefreshCw size={14} />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => eliminarBancoModal(b.id, b.nombre)}
+                                  style={{ padding: '4px 8px', borderRadius: '6px', border: '1px solid #fca5a5', background: '#fef2f2', color: '#dc2626', cursor: 'pointer', fontWeight: '800' }}
+                                  title="Eliminar Banco"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '20px' }}>
+              <button onClick={() => setShowModalBancos(false)} style={{ padding: '9px 24px', borderRadius: '10px', border: '1px solid #cbd5e1', background: '#f1f5f9', color: '#475569', fontWeight: '800', fontSize: '0.85rem', cursor: 'pointer' }}>
                 Cerrar
               </button>
             </div>

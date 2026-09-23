@@ -6,7 +6,7 @@ import { supabase } from './supabaseClient';
 import toast from 'react-hot-toast';
 import { format } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Loader2, Upload, FileText, MessageSquare, Paperclip, Clock, CheckCircle2, AlertCircle, ShoppingBag, ChevronDown, X } from 'lucide-react';
+import { Loader2, Upload, FileText, MessageSquare, Paperclip, Clock, CheckCircle2, AlertCircle, ShoppingBag, ChevronDown, X, Landmark } from 'lucide-react';
 import { getSemanaInfo, getSemanaInfoForWeek } from './utils/helpers';
 import { compressImage } from './utils/compressImage';
 import './Requisiciones.css';
@@ -288,6 +288,57 @@ const Compras = () => {
   const [filtroCentroCosto, setFiltroCentroCosto] = useState('Todos');
   const [filtroSemana, setFiltroSemana] = useState('Actual'); // 'Actual' (Semana Actual por defecto), 'Todas', o key de semana
   const [proveedores, setProveedores] = useState([]);
+  const [filtroCatProvOdc, setFiltroCatProvOdc] = useState('TODAS');
+
+  const categoriasProveedoresOdc = useMemo(() => {
+    const setCat = new Set();
+    (proveedores || []).forEach(p => {
+      const c = p.categoria || p.categoria_proveedor || p.rubro;
+      if (Array.isArray(c)) {
+        c.forEach(x => { if (x) setCat.add(String(x).toUpperCase().trim()); });
+      } else if (typeof c === 'string') {
+        try {
+          const parsed = JSON.parse(c);
+          if (Array.isArray(parsed)) {
+            parsed.forEach(x => { if (x) setCat.add(String(x).toUpperCase().trim()); });
+          } else if (c.trim()) {
+            setCat.add(c.toUpperCase().trim());
+          }
+        } catch {
+          if (c.trim()) setCat.add(c.toUpperCase().trim());
+        }
+      }
+    });
+
+    const base = ["SERVICIO", "REPUESTO", "ALIMENTACIÓN", "TECNOLOGÍA", "PAPELERÍA", "LIMPIEZA", "MANTENIMIENTO", "FERRETERÍA", "CONSUMIBLE", "EQUIPO", "TRANSPORTE", "OTROS"];
+    base.forEach(b => setCat.add(b));
+    return Array.from(setCat).sort();
+  }, [proveedores]);
+
+  const proveedoresOdcFiltrados = useMemo(() => {
+    if (!filtroCatProvOdc || filtroCatProvOdc === 'TODAS') {
+      return proveedores;
+    }
+    const filtroUpper = filtroCatProvOdc.toUpperCase().trim();
+    return proveedores.filter(p => {
+      const c = p.categoria || p.categoria_proveedor || p.rubro;
+      if (Array.isArray(c)) {
+        return c.some(x => String(x).toUpperCase().trim() === filtroUpper);
+      }
+      if (typeof c === 'string') {
+        try {
+          const parsed = JSON.parse(c);
+          if (Array.isArray(parsed)) {
+            return parsed.some(x => String(x).toUpperCase().trim() === filtroUpper);
+          }
+        } catch {
+          // ignore
+        }
+        return c.toUpperCase().includes(filtroUpper);
+      }
+      return false;
+    });
+  }, [proveedores, filtroCatProvOdc]);
 
   // --- ESTADOS DE CONTROL DE FONDOS EN TIEMPO REAL ---
   const [presupuestoAsignado, setPresupuestoAsignado] = useState(0);
@@ -454,6 +505,8 @@ const Compras = () => {
     }));
 
     setOdcForm({
+      requisicion_id: requisicionActiva?.id || null,
+      requisicion_correlativo: requisicionActiva?.correlativo_req || requisicionActiva?.correlativo || null,
       proveedor_id: provMatch ? provMatch.id : '',
       tipo_pago: provMatch?.condicion_pago_defecto || 'CONTADO',
       dias_credito: provMatch?.dias_credito_habituales || provMatch?.dias_credito || 0,
@@ -500,8 +553,23 @@ const Compras = () => {
 
   const guardarOrdenCompra = async () => {
     if (!odcForm.proveedor_id) {
-      toast.error("Seleccione un proveedor para la Órden de Compra.");
+      toast.error("Debe seleccionar un Proveedor para la Órden de Compra.");
       return;
+    }
+    if (!odcForm.fecha_cotizacion) {
+      toast.error("Debe ingresar la Fecha de Cotización del Proveedor.");
+      return;
+    }
+    if (!odcForm.fecha_despacho) {
+      toast.error("Debe ingresar la Fecha Estimada de Despacho.");
+      return;
+    }
+    if (odcForm.tipo_pago === 'CREDITO') {
+      const dias = parseInt(odcForm.dias_credito, 10);
+      if (isNaN(dias) || dias <= 0) {
+        toast.error("Para compras a Crédito, debe ingresar los Días de Crédito (mayor a 0).");
+        return;
+      }
     }
     if (!odcForm.items || odcForm.items.length === 0) {
       toast.error("No hay renglones incluidos en la Órden de Compra.");
@@ -553,7 +621,7 @@ const Compras = () => {
         .from('ordenes_compra')
         .insert([{
           numero_odc,
-          requisicion_id: requisicionActiva.id,
+          requisicion_id: odcForm.requisicion_id || requisicionActiva?.id || null,
           proveedor_id: odcForm.proveedor_id,
           proveedor_nombre: prov?.razon_social || prov?.nombre || null,
           proveedor_rif: prov?.rif || prov?.rif_nit || null,
@@ -569,6 +637,8 @@ const Compras = () => {
           despachar_a_id: odcForm.despachar_a_id || null,
           despachar_a_direccion: odcForm.despachar_a_direccion || 'Galpones Riese - Av. Los Haticos',
           destino_despacho: odcForm.despachar_a_direccion || 'Galpones Riese - Av. Los Haticos',
+          datos_bancarios: odcForm.cuenta_bancaria_proveedor || null,
+          cuenta_bancaria: odcForm.cuenta_bancaria_proveedor || null,
           observaciones: odcForm.observaciones || null,
           subtotal: subtotalVal,
           iva_porcentaje: odcForm.aplica_iva ? 16 : 0,
@@ -635,10 +705,18 @@ const Compras = () => {
         return r;
       });
 
+      const nuevoStatus = renglonesActualizados.every(r => (parseFloat(r.cantidad_pendiente) || 0) <= 0 || r.anulado) 
+        ? 'COMPLETADA' 
+        : 'EN_PROCESO';
+
       await supabase.from('requisiciones')
-        .update({ items: renglonesActualizados })
+        .update({ 
+          items: renglonesActualizados,
+          status_compra: nuevoStatus
+        })
         .eq('id', requisicionActiva.id);
 
+      setRequisicionActiva(prev => prev ? { ...prev, items: renglonesActualizados, status_compra: nuevoStatus } : prev);
       setRenglones(renglonesActualizados);
       setShowOdcModal(false);
 
@@ -1014,9 +1092,13 @@ const Compras = () => {
       setHistorial(prev => prev.map(h => h.id === req.id ? { ...h, leido_compras_at: req.leido_compras_at } : h));
     }
 
-    const renglonesIniciados = (req.detalles || []).map(item => {
-      const cantidad_pedida = item.cantidad_pedida || item.cant || 0;
-      const cantidad_comprada = item.cantidad_comprada || 0;
+    const itemsList = (req.items && req.items.length > 0) ? req.items : (req.detalles || []);
+    const renglonesIniciados = itemsList.map(item => {
+      const cantidad_pedida = parseFloat(item.cant_aprobada || item.cantidad_pedida || item.cantidad || item.cant || 0);
+      const historialSum = (Array.isArray(item.historial_compras) ? item.historial_compras : [])
+        .filter(h => h.tipo !== 'JUSTIFICACION')
+        .reduce((acc, h) => acc + (parseFloat(h.cantidad) || 0), 0);
+      const cantidad_comprada = Math.max(parseFloat(item.cantidad_comprada || item.cant_comprada || 0), historialSum);
       const cantidad_pendiente = item.anulado ? 0 : Math.max(0, cantidad_pedida - cantidad_comprada);
 
       return {
@@ -1029,7 +1111,7 @@ const Compras = () => {
         compra_actual_cant: 0,
         compra_actual_pu: item.pu || 0, // Iniciamos con el último PU sugerido
         doc_tipo_actual: item.doc_tipo || 'FAC',
-         doc_numero_actual: '', // Siempre vacío por defecto para evitar errores
+        doc_numero_actual: '', // Siempre vacío por defecto para evitar errores
         proveedor_seleccionado_id: '', // Siempre vacío por defecto
         categoria_proveedor: ''
       };
@@ -5600,37 +5682,106 @@ const Compras = () => {
               <div>
                 <span style={{ backgroundColor: '#0ea5e9', color: 'white', padding: '4px 10px', borderRadius: '6px', fontSize: '0.7rem', fontWeight: '900' }}>EMISIÓN DE ODC</span>
                 <h2 style={{ margin: '6px 0 0 0', color: '#0f172a', fontSize: '1.4rem', fontWeight: '900' }}>
-                  Generar Órden de Compra - {requisicionActiva?.correlativo}
+                  Generar Órden de Compra - {requisicionActiva?.correlativo_req || requisicionActiva?.correlativo || (requisicionActiva?.id ? `REQ-${requisicionActiva.id}` : '')}
                 </h2>
               </div>
               <button onClick={() => setShowOdcModal(false)} style={{ border: 'none', background: '#f1f5f9', borderRadius: '50%', width: '32px', height: '32px', cursor: 'pointer', fontWeight: 'bold' }}>✕</button>
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '20px' }}>
-              {/* Proveedor */}
-              <div>
-                <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '6px' }}>PROVEEDOR *</label>
-                <select
-                  className="input-tc"
-                  style={{ width: '100%', padding: '10px', fontWeight: '700', borderRadius: '8px', border: '1px solid #cbd5e1' }}
-                  value={odcForm.proveedor_id}
-                  onChange={(e) => {
-                    const provId = e.target.value;
-                    const prov = proveedores.find(p => String(p.id) === String(provId));
-                    setOdcForm(prev => ({
-                      ...prev,
-                      proveedor_id: provId,
-                      tipo_pago: prov?.condicion_pago_defecto || prev.tipo_pago,
-                      dias_credito: prov?.dias_credito_habituales || prov?.dias_credito || 0
-                    }));
-                  }}
-                >
-                  <option value="">Seleccione Proveedor...</option>
-                  {proveedores.map(p => (
-                    <option key={p.id} value={p.id}>{p.razon_social} {p.rif ? `(${p.rif})` : ''}</option>
-                  ))}
-                </select>
+              {/* Proveedor y Categoría */}
+              <div style={{ display: 'flex', gap: '12px' }}>
+                <div style={{ width: '45%' }}>
+                  <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#0ea5e9', display: 'block', marginBottom: '6px' }}>🔍 CATEGORÍA</label>
+                  <select
+                    className="input-tc"
+                    style={{ width: '100%', padding: '10px', fontWeight: '800', borderRadius: '8px', border: '1px solid #38bdf8', backgroundColor: '#f0f9ff', color: '#0284c7' }}
+                    value={filtroCatProvOdc}
+                    onChange={(e) => setFiltroCatProvOdc(e.target.value)}
+                  >
+                    <option value="TODAS">Todas ({proveedores.length})</option>
+                    {categoriasProveedoresOdc.map(cat => (
+                      <option key={cat} value={cat}>{cat}</option>
+                    ))}
+                  </select>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '6px' }}>PROVEEDOR * ({proveedoresOdcFiltrados.length})</label>
+                  <select
+                    className="input-tc"
+                    style={{ width: '100%', padding: '10px', fontWeight: '700', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+                    value={odcForm.proveedor_id}
+                    onChange={(e) => {
+                      const provId = e.target.value;
+                      const prov = proveedores.find(p => String(p.id) === String(provId));
+                      let defaultCtaStr = '';
+                      if (prov?.cuentas_bancarias) {
+                        let ctas = [];
+                        if (Array.isArray(prov.cuentas_bancarias)) ctas = prov.cuentas_bancarias;
+                        else if (typeof prov.cuentas_bancarias === 'string') {
+                          try { ctas = JSON.parse(prov.cuentas_bancarias); } catch { ctas = []; }
+                        }
+                        if (ctas.length > 0) {
+                          const c0 = ctas[0];
+                          defaultCtaStr = `${c0.banco || 'Banco'} (${c0.moneda || 'USD'}) - N° Cuenta: ${c0.nro_cuenta || 'N/A'} - Titular: ${c0.titular || 'N/A'} (${c0.rif || 'N/A'}) ${c0.tipo_cuenta ? `[${c0.tipo_cuenta}]` : ''}`;
+                        }
+                      }
+                      setOdcForm(prev => ({
+                        ...prev,
+                        proveedor_id: provId,
+                        cuenta_bancaria_proveedor: defaultCtaStr,
+                        tipo_pago: prov?.condicion_pago_defecto || prev.tipo_pago,
+                        dias_credito: prov?.dias_credito_habituales || prov?.dias_credito || 0
+                      }));
+                    }}
+                  >
+                    <option value="">Seleccione Proveedor...</option>
+                    {proveedoresOdcFiltrados.map(p => (
+                      <option key={p.id} value={p.id}>{p.razon_social} {p.rif ? `(${p.rif})` : ''}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
+
+              {/* Cuenta Bancaria de Destino del Proveedor */}
+              {(() => {
+                const provSeleccionado = proveedores.find(p => String(p.id) === String(odcForm.proveedor_id));
+                let ctasProv = [];
+                if (provSeleccionado?.cuentas_bancarias) {
+                  if (Array.isArray(provSeleccionado.cuentas_bancarias)) ctasProv = provSeleccionado.cuentas_bancarias;
+                  else if (typeof provSeleccionado.cuentas_bancarias === 'string') {
+                    try { ctasProv = JSON.parse(provSeleccionado.cuentas_bancarias); } catch { ctasProv = []; }
+                  }
+                }
+
+                return (
+                  <div style={{ marginTop: '14px', marginBottom: '16px' }}>
+                    <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#0ea5e9', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
+                      <Landmark size={14} /> CUENTA BANCARIA DE DESTINO PARA PAGO (PROVEEDOR)
+                    </label>
+                    <select
+                      className="input-tc"
+                      style={{ width: '100%', padding: '10px', fontWeight: '700', borderRadius: '8px', border: '1px solid #0ea5e9', backgroundColor: ctasProv.length > 0 ? '#f0f9ff' : '#fff' }}
+                      value={odcForm.cuenta_bancaria_proveedor || ''}
+                      onChange={(e) => setOdcForm(prev => ({ ...prev, cuenta_bancaria_proveedor: e.target.value }))}
+                    >
+                      <option value="">-- Seleccionar Cuenta Bancaria de Pago --</option>
+                      {ctasProv.map((c, idx) => {
+                        const label = `${c.banco || 'Banco'} (${c.moneda || 'USD'}) - N° Cuenta: ${c.nro_cuenta || 'N/A'} - Titular: ${c.titular || 'N/A'} (${c.rif || 'N/A'}) ${c.tipo_cuenta ? `[${c.tipo_cuenta}]` : ''}`;
+                        return <option key={idx} value={label}>{label}</option>;
+                      })}
+                      {ctasProv.length === 0 && (
+                        <option value="" disabled>El proveedor no posee cuentas bancarias registradas</option>
+                      )}
+                    </select>
+                    {odcForm.proveedor_id && ctasProv.length === 0 && (
+                      <p style={{ margin: '4px 0 0 0', fontSize: '0.72rem', color: '#f59e0b', fontWeight: '600' }}>
+                        ⚠️ Este proveedor no tiene cuentas bancarias guardadas en el sistema.
+                      </p>
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* Tipo de Pago y Días Crédito */}
               <div style={{ display: 'flex', gap: '15px' }}>
