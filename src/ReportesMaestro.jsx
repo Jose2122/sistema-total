@@ -521,23 +521,72 @@ const ReportesMaestro = () => {
         return { totalUSD, totalBs, docId };
     }, [transaccionesBenefSeleccionado]);
 
+    // --- HELPER DE ANULACIÓN Y SOLICITANTE ---
+    const isDocOrItemAnulado = (doc, item) => {
+        if (!doc) return true;
+        if (doc.anulado === true || item?.anulado === true) return true;
+        const stStatus = String(doc.status || doc.estado || doc.status_compra || '').toUpperCase();
+        const stApp = String(doc.estado_aprobacion || '').toUpperCase();
+        if (stStatus.includes('ANULAD') || stStatus.includes('RECHAZAD') || stStatus.includes('CANCELAD')) return true;
+        if (stApp.includes('ANULAD') || stApp.includes('RECHAZAD') || stApp.includes('CANCELAD')) return true;
+        return false;
+    };
+
+    const resolveTicketSolicitante = (t, reqMatch, solMatch, partidas, solicitudes) => {
+        if (!t) return 'N/A';
+
+        // 1. Campos directos del Ticket (gerente_nombre es el campo principal en tickets directos)
+        if (t.gerente_nombre && t.gerente_nombre !== 'N/A') return t.gerente_nombre;
+        if (t.responsable_nombre && t.responsable_nombre !== 'N/A') return t.responsable_nombre;
+        if (t.responsable && t.responsable !== 'N/A') return t.responsable;
+        if (t.solicitante && t.solicitante !== 'N/A') return t.solicitante;
+        if (t.solicitante_nombre && t.solicitante_nombre !== 'N/A') return t.solicitante_nombre;
+
+        // 2. Referencia cruzada con Partidas -> Solicitud de Fondos padre
+        if (partidas && partidas.length > 0) {
+            const partidaMatch = partidas.find(p => p.ticket_id === t.id || p.codigo_ticket === t.codigo_control);
+            if (partidaMatch && partidaMatch.solicitud_id) {
+                const solPadre = (solicitudes || []).find(s => s.id === partidaMatch.solicitud_id);
+                if (solPadre?.responsable_nombre) return solPadre.responsable_nombre;
+                if (solPadre?.solicitante) return solPadre.solicitante;
+            }
+        }
+
+        // 3. Matched Solicitud o Requisición ref
+        if (solMatch?.responsable_nombre) return solMatch.responsable_nombre;
+        if (solMatch?.solicitante) return solMatch.solicitante;
+        if (reqMatch?.solicitante) return reqMatch.solicitante;
+
+        // 4. Creador / Emisor
+        if (t.usuario_creador && t.usuario_creador !== 'N/A') return t.usuario_creador;
+        if (t.creador_nombre && t.creador_nombre !== 'N/A') return t.creador_nombre;
+        if (t.emisor && t.emisor !== 'N/A') return t.emisor;
+        if (t.usuario && t.usuario !== 'N/A') return t.usuario;
+
+        return 'N/A';
+    };
+
     // --- PROCESAMIENTO: VISTA 1 - RELACIÓN DE COSTOS (FLATTENED) ---
     const costosRows = useMemo(() => {
         const rows = [];
 
-        // 1. Procesar Tickets Directos
+        // 1. Procesar Tickets Directos (excluyendo anulados/rechazados)
         (data.tickets || []).forEach(t => {
+            if (isDocOrItemAnulado(t)) return;
             const items = Array.isArray(t.items) ? t.items : [];
             items.forEach(item => {
+                if (item.anulado) return;
                 const rowDate = t.fecha_emision ? t.fecha_emision.split('T')[0] : '';
 
                 // Buscar requisición por correlativo_req o id
-                const reqMatch = (data.requisiciones || []).find(r => r.correlativo_req === t.solicitud_ref || r.id === t.solicitud_ref);
+                const reqMatch = (data.requisiciones || []).find(r => String(r.correlativo_req || '').trim() === String(t.solicitud_ref || '').trim() || String(r.id || '').trim() === String(t.solicitud_ref || '').trim());
+                const solMatch = (data.solicitudes || []).find(s => String(s.codigo_control || '').trim() === String(t.solicitud_ref || '').trim() || String(s.id || '').trim() === String(t.solicitud_ref || '').trim());
                 const proyectoRef = reqMatch ? (reqMatch.id_referencia_proyecto || 'Sin ID Proyecto') : 'Directo / Sin Proyecto';
 
                 const metodo = getMetodoPagoForTicketItem(item);
                 const monedaPago = parseMonedaPago(metodo);
                 const docNumero = (item.historial_compras || []).map(h => h.doc_numero).filter(Boolean).join(', ') || '-';
+                const solicitanteVal = resolveTicketSolicitante(t, reqMatch, solMatch, data.partidas, data.solicitudes);
 
                 rows.push({
                     uId: `TK-${t.id}-${item.id || Math.random()}`,
@@ -552,19 +601,20 @@ const ReportesMaestro = () => {
                     ref: t.codigo_control || `TK-${t.id}`,
                     proyecto: proyectoRef,
                     moneda_pago: monedaPago,
-                    solicitante: t.responsable_nombre || 'N/A',
+                    solicitante: solicitanteVal,
                     factura: docNumero,
                     almacen: false
                 });
             });
         });
 
-        // 2. Procesar Requisiciones (Historial de Compras sólamente para Relación de Costos)
-        (data.requisiciones || []).filter(r => r.estado_aprobacion === 'aprobado_final').forEach(r => {
+        // 2. Procesar Requisiciones (Historial de Compras sólamente para Relación de Costos, excluyendo anuladas)
+        (data.requisiciones || []).filter(r => r.estado_aprobacion === 'aprobado_final' && !isDocOrItemAnulado(r)).forEach(r => {
             const items = Array.isArray(r.items) ? r.items : [];
             items.forEach(item => {
+                if (item.anulado) return;
                 const historial = Array.isArray(item.historial_compras) ? item.historial_compras : [];
-                historial.filter(h => h.tipo !== 'JUSTIFICACION').forEach((h, hIdx) => {
+                historial.filter(h => h.tipo !== 'JUSTIFICACION' && h.tipo !== 'ANULACION').forEach((h, hIdx) => {
                     const rowDate = h.fecha ? h.fecha.split('T')[0] : '';
                     const monedaPago = parseMonedaPago(h.metodo_pago);
                     rows.push({
@@ -1579,14 +1629,18 @@ const ReportesMaestro = () => {
 
             // 1. Tickets
             (data.tickets || []).forEach(t => {
+                if (isDocOrItemAnulado(t)) return;
                 const items = Array.isArray(t.items) ? t.items : [];
                 items.forEach(item => {
+                    if (item.anulado) return;
                     const rowDate = t.fecha_emision ? t.fecha_emision.split('T')[0] : '';
-                    const reqMatch = (data.requisiciones || []).find(r => r.correlativo_req === t.solicitud_ref || r.id === t.solicitud_ref);
+                    const reqMatch = (data.requisiciones || []).find(r => String(r.correlativo_req || '').trim() === String(t.solicitud_ref || '').trim() || String(r.id || '').trim() === String(t.solicitud_ref || '').trim());
+                    const solMatch = (data.solicitudes || []).find(s => String(s.codigo_control || '').trim() === String(t.solicitud_ref || '').trim() || String(s.id || '').trim() === String(t.solicitud_ref || '').trim());
                     const proyectoRef = reqMatch ? (reqMatch.id_referencia_proyecto || 'Sin ID Proyecto') : 'Directo / Sin Proyecto';
                     const metodo = getMetodoPagoForTicketItem(item);
                     const monedaPago = parseMonedaPago(metodo);
                     const docNumero = (item.historial_compras || []).map(h => h.doc_numero).filter(Boolean).join(', ') || '-';
+                    const solicitanteVal = resolveTicketSolicitante(t, reqMatch, solMatch, data.partidas, data.solicitudes);
 
                     rows.push({
                         uId: `TK-${t.id}-${item.id || Math.random()}`,
@@ -1601,7 +1655,7 @@ const ReportesMaestro = () => {
                         ref: t.codigo_control || `TK-${t.id}`,
                         proyecto: proyectoRef,
                         moneda_pago: monedaPago,
-                        solicitante: t.responsable_nombre || 'N/A',
+                        solicitante: solicitanteVal,
                         factura: docNumero,
                         almacen: false
                     });
@@ -1609,11 +1663,12 @@ const ReportesMaestro = () => {
             });
 
             // 2. Requisiciones
-            (data.requisiciones || []).filter(r => r.estado_aprobacion === 'aprobado_final').forEach(r => {
+            (data.requisiciones || []).filter(r => r.estado_aprobacion === 'aprobado_final' && !isDocOrItemAnulado(r)).forEach(r => {
                 const items = Array.isArray(r.items) ? r.items : [];
                 items.forEach(item => {
+                    if (item.anulado) return;
                     const historial = Array.isArray(item.historial_compras) ? item.historial_compras : [];
-                    historial.filter(h => h.tipo !== 'JUSTIFICACION').forEach((h, hIdx) => {
+                    historial.filter(h => h.tipo !== 'JUSTIFICACION' && h.tipo !== 'ANULACION').forEach((h, hIdx) => {
                         const rowDate = h.fecha ? h.fecha.split('T')[0] : '';
                         const monedaPago = parseMonedaPago(h.metodo_pago);
                         rows.push({
