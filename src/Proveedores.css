@@ -661,3 +661,123 @@
 .prov-ranking-table tr:hover td {
   background-color: #f8fafc;
 }
+
+/* DATE RANGE FILTER CARD */
+.prov-filter-date-card {
+  background: white;
+  border-radius: 18px;
+  border: 1px solid var(--prov-slate-200);
+  padding: 16px 20px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.prov-filter-date-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.prov-filter-icon {
+  color: var(--prov-accent);
+}
+
+.prov-filter-badge {
+  background-color: var(--prov-slate-100);
+  color: var(--prov-slate-600);
+  font-size: 0.72rem;
+  font-weight: 800;
+  padding: 4px 12px;
+  border-radius: 99px;
+  border: 1px solid var(--prov-slate-200);
+}
+
+.prov-filter-badge.active {
+  background-color: #e0f2fe;
+  color: #0369a1;
+  border-color: #bae6fd;
+}
+
+.prov-filter-date-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.prov-date-input-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.prov-date-input-group label {
+  font-size: 0.75rem;
+  font-weight: 800;
+  color: var(--prov-slate-600);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.prov-date-input {
+  border: 1px solid var(--prov-slate-200);
+  background-color: var(--prov-slate-50);
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--prov-slate-900);
+  outline: none;
+  font-family: inherit;
+  transition: all 0.2s;
+}
+
+.prov-date-input:focus {
+  background-color: white;
+  border-color: var(--prov-accent);
+  box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.12);
+}
+
+.prov-date-presets {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
+.prov-preset-btn {
+  background-color: var(--prov-slate-100);
+  color: var(--prov-slate-700);
+  border: 1px solid var(--prov-slate-200);
+  padding: 7px 12px;
+  border-radius: 8px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.prov-preset-btn:hover {
+  background-color: #e2e8f0;
+  color: var(--prov-slate-900);
+}
+
+.prov-preset-btn.clear {
+  background-color: #fee2e2;
+  color: #991b1b;
+  border-color: #fecaca;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.prov-preset-btn.clear:hover {
+  background-color: #fca5a5;
+  color: #7f1d1d;
+}
+

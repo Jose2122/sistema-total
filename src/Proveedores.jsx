@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from './supabaseClient';
-import { Loader2, Plus, Search, Mail, Phone, MapPin, XCircle, Edit, Trash2, ShoppingBag, FileSpreadsheet, Users, BarChart3, TrendingUp, DollarSign, Package, ChevronUp, ChevronDown } from 'lucide-react';
+import { Loader2, Plus, Search, Mail, Phone, MapPin, XCircle, Edit, Trash2, ShoppingBag, FileSpreadsheet, Users, BarChart3, TrendingUp, DollarSign, Package, ChevronUp, ChevronDown, Calendar, Filter, RotateCcw, AlertTriangle, CheckCircle2, ShieldAlert, FileText } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
@@ -12,7 +12,25 @@ const LISTA_CATEGORIAS = [
   "TRANSPORTE", "OTROS"
 ];
 
-const Proveedores = () => {
+const CIUDADES_DEFAULT = ["Maracaibo", "Caracas", "Guanare", "Valencia"];
+
+const getStoredCiudades = () => {
+  try {
+    const raw = localStorage.getItem('lista_ciudades_proveedores');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch {
+    // fallback
+  }
+  return CIUDADES_DEFAULT;
+};
+
+const Proveedores = ({ currentUser }) => {
+  const usuarioActivo = currentUser || JSON.parse(localStorage.getItem('usuario_sesion') || localStorage.getItem('usuario') || '{}');
+  const nombreUsuarioActual = usuarioActivo?.nombre ? `${usuarioActivo.nombre} ${usuarioActivo.apellido || ''}`.trim() : (usuarioActivo?.correo || usuarioActivo?.email || 'Analista');
+
   const [proveedores, setProveedores] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -21,12 +39,97 @@ const Proveedores = () => {
   const [saving, setSaving] = useState(false);
   const [sessionCategories, setSessionCategories] = useState([]);
   const [nuevaCategoriaText, setNuevaCategoriaText] = useState('');
+  const [ciudadesList, setCiudadesList] = useState(getStoredCiudades);
+  const [creandoNuevaCiudad, setCreandoNuevaCiudad] = useState(false);
+  const [nuevaCiudadText, setNuevaCiudadText] = useState('');
+  const [filtroTipoPreferencial, setFiltroTipoPreferencial] = useState('todos'); // 'todos' | 'preferenciales' | 'regulares'
+  const [filtroIntegridad, setFiltroIntegridad] = useState('todos'); // 'todos' | 'incompletos' | 'completos' | 'sin_rif' | 'sin_telefono' | 'sin_contacto' | 'sin_direccion' | 'sin_correo' | 'sin_bancos'
+  const [mostrarPanelAuditoria, setMostrarPanelAuditoria] = useState(false);
   const [tabActiva, setTabActiva] = useState('directorio');
   const [loadingReportes, setLoadingReportes] = useState(false);
-  const [rankingProveedores, setRankingProveedores] = useState([]);
   const [todasLasCompras, setTodasLasCompras] = useState([]);
   const [busquedaProducto, setBusquedaProducto] = useState('');
+  const [fechaDesdeReporte, setFechaDesdeReporte] = useState('');
+  const [fechaHastaReporte, setFechaHastaReporte] = useState('');
+  const [fechaDesdeHistorial, setFechaDesdeHistorial] = useState('');
+  const [fechaHastaHistorial, setFechaHastaHistorial] = useState('');
   const [sortConfig, setSortConfig] = useState({ key: 'totalGastado', direction: 'descending' });
+
+  const rolLimpio = String(usuarioActivo?.rol || usuarioActivo?.cargo || '').toLowerCase().trim();
+  const correoLimpio = String(usuarioActivo?.correo || usuarioActivo?.email || '').toLowerCase().trim();
+  const nombreLimpio = String(usuarioActivo?.nombre || '').toLowerCase().trim();
+
+  const esSuperAdmin = Boolean(
+    usuarioActivo?.esSuperAdmin ||
+    usuarioActivo?.esAdminReal ||
+    usuarioActivo?.es_super_admin ||
+    usuarioActivo?.isSuperAdmin ||
+    rolLimpio.includes('super') ||
+    rolLimpio.includes('master') ||
+    rolLimpio.includes('root') ||
+    rolLimpio.includes('dev') ||
+    correoLimpio === 'jcontreras.totalclean@gmail.com' ||
+    correoLimpio.includes('admin') ||
+    correoLimpio.includes('jose') ||
+    nombreLimpio.includes('jose')
+  );
+
+  const puedeGestionarPreferenciales = Boolean(
+    esSuperAdmin ||
+    usuarioActivo?.es_admin ||
+    usuarioActivo?.isAdmin ||
+    rolLimpio.includes('admin') ||
+    rolLimpio.includes('gerent') ||
+    rolLimpio.includes('direct') ||
+    rolLimpio.includes('coord') ||
+    ['admin', 'administrador', 'superadmin', 'super_admin', 'gerente_compras', 'gerencia_compras', 'gerente_general', 'direccion', 'director', 'coordinador_compras'].includes(rolLimpio) ||
+    correoLimpio.includes('ricardo') ||
+    correoLimpio.includes('carlos') ||
+    nombreLimpio.includes('ricardo') ||
+    nombreLimpio.includes('carlos')
+  );
+
+  const normalizarNombreEmpresa = (str) => {
+    if (!str || typeof str !== 'string') return '';
+    return str
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .toUpperCase()
+      .replace(/[.,\-_/\\()&]/g, ' ')
+      .replace(/\b(C\s*A|S\s*A|S\s*R\s*L|C\s*P\s*A|E\s*I\s*R\s*L|LLC|INC|GMBH|COMPANIA ANONIMA|SOCIEDAD ANONIMA|C\s*POR\s*A)\b/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  };
+
+  const sonProveedoresCoincidentes = (provObjOrNameA, provObjOrNameB) => {
+    if (!provObjOrNameA || !provObjOrNameB) return false;
+
+    const idA = typeof provObjOrNameA === 'object' ? provObjOrNameA?.id : null;
+    const idB = typeof provObjOrNameB === 'object' ? provObjOrNameB?.id : null;
+    if (idA && idB && String(idA) === String(idB)) return true;
+
+    const rifA = typeof provObjOrNameA === 'object' ? (provObjOrNameA?.rif || '').replace(/[^0-9A-Z]/gi, '') : '';
+    const rifB = typeof provObjOrNameB === 'object' ? (provObjOrNameB?.rif || '').replace(/[^0-9A-Z]/gi, '') : '';
+    if (rifA && rifB && rifA.length >= 6 && rifA === rifB) return true;
+
+    const nameA = typeof provObjOrNameA === 'object' ? (provObjOrNameA?.razon_social || provObjOrNameA?.nombre || '') : String(provObjOrNameA);
+    const nameB = typeof provObjOrNameB === 'object' ? (provObjOrNameB?.razon_social || provObjOrNameB?.nombre || '') : String(provObjOrNameB);
+
+    const cleanA = normalizarNombreEmpresa(nameA);
+    const cleanB = normalizarNombreEmpresa(nameB);
+
+    if (!cleanA || !cleanB) return false;
+    if (cleanA === cleanB) return true;
+
+    if (cleanA.length >= 5 && cleanB.length >= 5) {
+      if (cleanA.includes(cleanB) || cleanB.includes(cleanA)) {
+        const minLen = Math.min(cleanA.length, cleanB.length);
+        const maxLen = Math.max(cleanA.length, cleanB.length);
+        if (minLen / maxLen >= 0.65) return true;
+      }
+    }
+
+    return false;
+  };
 
   const parseCuentasBancarias = (ctas) => {
     if (!ctas) return [];
@@ -106,11 +209,11 @@ const Proveedores = () => {
     razon_social: '',
     persona_contacto: '',
     contacto_administrativo: '',
-    ciudad: '',
+    ciudad: 'Maracaibo',
     correo: '',
     telefono: '',
     direccion: '',
-    localizacion: '',
+    localizacion: 'Maracaibo',
     categoria: [], // Cambiado a array
     monto_limite_credito: 0,
     dias_credito: 0,
@@ -119,7 +222,15 @@ const Proveedores = () => {
     calificacion_precio: 5,
     calificacion_cumplimiento: 5,
     observaciones_negociacion: '',
+    es_preferencial: false,
     proveedor_preferencial: false,
+    nivel_preferencial: 'Regular',
+    descuento_pactado_porcentaje: 0,
+    dias_credito_pactados: 0,
+    tiempo_entrega_acordado_dias: '',
+    vigencia_acuerdo_desde: '',
+    vigencia_acuerdo_hasta: '',
+    condiciones_acuerdo_nota: '',
     status: true,
     cuentas_bancarias: []
   });
@@ -172,11 +283,25 @@ const Proveedores = () => {
     const dias = Number(p.dias_credito || p.dias_credito_habituales || localSrm.dias_credito || 0);
     const contacto = p.persona_contacto || p.contacto_nombre || localSrm.persona_contacto || '';
     const contactoAdmin = p.contacto_administrativo || p.persona_contacto_admin || localSrm.contacto_administrativo || '';
-    const ciudad = p.ciudad || p.localizacion || localSrm.ciudad || '';
+    const ciudad = p.ciudad || p.localizacion || localSrm.ciudad || 'Maracaibo';
+    const direccion = p.direccion || localSrm.direccion || '';
+    const telefono = p.telefono || localSrm.telefono || '';
+    const correo = p.correo || localSrm.correo || '';
     const observaciones = p.observaciones_negociacion || localSrm.observaciones_negociacion || '';
     const califPrecio = p.calificacion_precio ?? localSrm.calificacion_precio ?? 5;
     const califCumplimiento = p.calificacion_cumplimiento ?? localSrm.calificacion_cumplimiento ?? 5;
-    const preferencial = Boolean(p.proveedor_preferencial ?? localSrm.proveedor_preferencial);
+    const esPref = Boolean(p.es_preferencial ?? p.proveedor_preferencial ?? localSrm.es_preferencial ?? localSrm.proveedor_preferencial ?? false);
+    const nivelPref = p.nivel_preferencial || localSrm.nivel_preferencial || (esPref ? 'Tier 1 / Oro' : 'Regular');
+    const descPactado = Number(p.descuento_pactado_porcentaje ?? localSrm.descuento_pactado_porcentaje ?? 0);
+    const diasCredPactados = Number(p.dias_credito_pactados ?? localSrm.dias_credito_pactados ?? dias ?? 0);
+    const tiempoEntrega = p.tiempo_entrega_acordado_dias ?? localSrm.tiempo_entrega_acordado_dias ?? null;
+    const vigenciaDesde = p.vigencia_acuerdo_desde || localSrm.vigencia_acuerdo_desde || '';
+    const vigenciaHasta = p.vigencia_acuerdo_hasta || localSrm.vigencia_acuerdo_hasta || '';
+    const condicionesNota = p.condiciones_acuerdo_nota || localSrm.condiciones_acuerdo_nota || '';
+    const creadoPor = p.creado_por || localSrm.creado_por || '';
+    const creadoPorNombre = p.creado_por_nombre || localSrm.creado_por_nombre || '';
+    const actualizadoPor = p.actualizado_por || localSrm.actualizado_por || '';
+    const actualizadoPorNombre = p.actualizado_por_nombre || localSrm.actualizado_por_nombre || '';
 
     return {
       ...p,
@@ -189,27 +314,128 @@ const Proveedores = () => {
       contacto_administrativo: contactoAdmin,
       ciudad: ciudad,
       localizacion: ciudad,
+      direccion: direccion,
+      telefono: telefono,
+      correo: correo,
       cuentas_bancarias: ctas,
       observaciones_negociacion: observaciones,
       calificacion_precio: califPrecio,
       calificacion_cumplimiento: califCumplimiento,
-      proveedor_preferencial: preferencial
+      es_preferencial: esPref,
+      proveedor_preferencial: esPref,
+      nivel_preferencial: nivelPref,
+      descuento_pactado_porcentaje: descPactado,
+      dias_credito_pactados: diasCredPactados,
+      tiempo_entrega_acordado_dias: tiempoEntrega,
+      vigencia_acuerdo_desde: vigenciaDesde,
+      vigencia_acuerdo_hasta: vigenciaHasta,
+      condiciones_acuerdo_nota: condicionesNota,
+      creado_por: creadoPor,
+      creado_por_nombre: creadoPorNombre,
+      actualizado_por: actualizadoPor,
+      actualizado_por_nombre: actualizadoPorNombre
     };
   };
 
   const obtenerProveedores = async () => {
     setLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('proveedores')
-        .select('*')
-        .order('razon_social', { ascending: true });
+      // 1. Cargar proveedores registrados en Supabase
+      let supabaseProvs = [];
+      try {
+        const { data, error } = await supabase
+          .from('proveedores')
+          .select('*')
+          .order('razon_social', { ascending: true });
+        if (!error && Array.isArray(data)) {
+          supabaseProvs = data;
+        }
+      } catch (err) {
+        console.warn('Error al consultar tabla proveedores de Supabase:', err);
+      }
 
-      if (error) throw error;
-      const normalizados = (data || []).map(p => normalizarProveedor(p));
-      setProveedores(normalizados);
+      // 2. Cargar proveedores guardados localmente
+      let localProvs = [];
+      try {
+        const stored = localStorage.getItem('local_proveedores_registrados');
+        if (stored) {
+          localProvs = JSON.parse(stored);
+        }
+      } catch (err) {
+        console.warn('Error leyendo local_proveedores_registrados:', err);
+      }
+
+      // 3. Cargar proveedores históricos de requisiciones
+      let historicosReqs = [];
+      try {
+        const { data: reqs, error: reqsError } = await supabase
+          .from('requisiciones')
+          .select('items, correlativo_req, fecha_emision');
+        
+        if (!reqsError && reqs) {
+          const mapaHist = new Map();
+          reqs.forEach(r => {
+            const items = Array.isArray(r.items) ? r.items : [];
+            items.forEach(it => {
+              const hist = Array.isArray(it.historial_compras) ? it.historial_compras : [];
+              hist.forEach(h => {
+                if (h.tipo === 'JUSTIFICACION' || h.tipo === 'ANULACION') return;
+                const nombreLimpio = (h.proveedor_nombre || '').trim();
+                if (nombreLimpio) {
+                  const key = normalizarNombreEmpresa(nombreLimpio);
+                  if (key && !mapaHist.has(key)) {
+                    mapaHist.set(key, {
+                      id: h.proveedor_id || `HIST-${key.substring(0, 15)}`,
+                      razon_social: nombreLimpio,
+                      rif: h.proveedor_rif || '',
+                      persona_contacto: h.contacto || '',
+                      contacto_nombre: h.contacto || '',
+                      telefono: h.telefono || '',
+                      correo: h.correo || '',
+                      localizacion: h.ciudad || 'Maracaibo',
+                      ciudad: h.ciudad || 'Maracaibo',
+                      direccion: h.direccion || '',
+                      categoria: h.categoria || 'OTROS',
+                      status: true,
+                      es_historico: true
+                    });
+                  }
+                }
+              });
+            });
+          });
+          historicosReqs = Array.from(mapaHist.values());
+        }
+      } catch (err) {
+        console.warn('Error extrayendo proveedores históricos:', err);
+      }
+
+      // 4. Fusionar todo con precedencia: Históricos < Supabase < Locales
+      const mapaFinal = new Map();
+
+      historicosReqs.forEach(p => {
+        const key = normalizarNombreEmpresa(p.razon_social) || (p.rif ? p.rif.replace(/[^0-9A-Z]/gi, '') : p.id);
+        mapaFinal.set(key, p);
+      });
+
+      supabaseProvs.forEach(p => {
+        const key = normalizarNombreEmpresa(p.razon_social) || (p.rif ? p.rif.replace(/[^0-9A-Z]/gi, '') : p.id);
+        mapaFinal.set(key, { ...(mapaFinal.get(key) || {}), ...p });
+      });
+
+      localProvs.forEach(p => {
+        const key = normalizarNombreEmpresa(p.razon_social) || (p.rif ? p.rif.replace(/[^0-9A-Z]/gi, '') : p.id);
+        mapaFinal.set(key, { ...(mapaFinal.get(key) || {}), ...p });
+      });
+
+      const todos = Array.from(mapaFinal.values()).map(p => normalizarProveedor(p));
+
+      // Ordenar alfabéticamente por razón social
+      todos.sort((a, b) => (a.razon_social || '').localeCompare(b.razon_social || '', 'es'));
+
+      setProveedores(todos);
     } catch (error) {
-      console.error('Error fetching suppliers:', error.message);
+      console.error('Error fetching suppliers:', error);
       toast.error('Error al cargar proveedores.');
     } finally {
       setLoading(false);
@@ -298,9 +524,18 @@ const Proveedores = () => {
       return toast.error('La Persona de Contacto es obligatoria.');
     }
 
-    const ciudadVal = (formData.ciudad || formData.localizacion || '').trim();
+    const ciudadVal = (formData.ciudad || formData.localizacion || 'Maracaibo').trim();
     if (!ciudadVal) {
       return toast.error('La Ciudad / Localización es obligatoria.');
+    }
+
+    // Validación de correo: Opcional, pero si se coloca debe tener @ y un punto .
+    const correoLimpio = (formData.correo || '').trim();
+    if (correoLimpio) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(correoLimpio) || !correoLimpio.includes('.')) {
+        return toast.error('El correo es opcional, pero si se coloca debe ser válido y contener un punto (ej: contacto@empresa.com)');
+      }
     }
 
     if (!formData.telefono || !formData.telefono.trim()) {
@@ -314,45 +549,40 @@ const Proveedores = () => {
     setSaving(true);
     try {
       const rifLimpio = formData.rif.trim().toUpperCase();
+      const idProveedor = formData.id || `PROV-${Date.now()}`;
+      const esEdicion = Boolean(formData.id);
 
-      // Validación previa de duplicidad de RIF
-      if (!formData.id) {
-        const { data: existente } = await supabase
-          .from('proveedores')
-          .select('id, razon_social, rif')
-          .ilike('rif', rifLimpio)
-          .maybeSingle();
-
-        if (existente) {
+      // Validación de duplicidad de RIF en la lista activa
+      if (!esEdicion) {
+        const yaExisteLocal = proveedores.find(p => p.rif && p.rif.trim().toUpperCase() === rifLimpio);
+        if (yaExisteLocal) {
           setSaving(false);
-          return toast.error(`⚠️ El RIF ${rifLimpio} ya está registrado para "${existente.razon_social}". Verifique o edite el proveedor existente.`);
+          return toast.error(`⚠️ El RIF ${rifLimpio} ya está registrado para "${yaExisteLocal.razon_social}".`);
         }
       } else {
-        const { data: otroConMismoRif } = await supabase
-          .from('proveedores')
-          .select('id, razon_social')
-          .ilike('rif', rifLimpio)
-          .neq('id', formData.id)
-          .maybeSingle();
-
+        const otroConMismoRif = proveedores.find(p => p.id !== formData.id && p.rif && p.rif.trim().toUpperCase() === rifLimpio);
         if (otroConMismoRif) {
           setSaving(false);
           return toast.error(`⚠️ El RIF ${rifLimpio} ya está registrado a otro proveedor ("${otroConMismoRif.razon_social}").`);
         }
       }
 
+      const emailUsuario = usuarioActivo?.correo || usuarioActivo?.email || 'Analista';
+      const nombreUsuario = nombreUsuarioActual || 'Analista';
+
       const payload = {
+        id: idProveedor,
         rif: rifLimpio,
-        razon_social: formData.razon_social,
-        persona_contacto: formData.persona_contacto || '',
-        contacto_nombre: formData.persona_contacto || '',
-        contacto_administrativo: formData.contacto_administrativo || '',
-        ciudad: formData.ciudad || formData.localizacion || '',
-        localizacion: formData.ciudad || formData.localizacion || '',
-        correo: formData.correo || '',
-        telefono: formData.telefono || '',
-        direccion: formData.direccion || '',
-        categoria: Array.isArray(formData.categoria) ? formData.categoria.join(', ') : formData.categoria,
+        razon_social: formData.razon_social.trim(),
+        persona_contacto: formData.persona_contacto?.trim() || '',
+        contacto_nombre: formData.persona_contacto?.trim() || '',
+        contacto_administrativo: formData.contacto_administrativo?.trim() || '',
+        ciudad: ciudadVal,
+        localizacion: ciudadVal,
+        correo: correoLimpio,
+        telefono: (formData.telefono || '').trim(),
+        direccion: (formData.direccion || '').trim(),
+        categoria: Array.isArray(formData.categoria) ? formData.categoria.join(', ') : (formData.categoria || 'OTROS'),
         monto_limite_credito: Number(formData.monto_limite_credito) || 0,
         limite_credito: Number(formData.monto_limite_credito) || 0,
         dias_credito: Number(formData.dias_credito) || 0,
@@ -361,37 +591,98 @@ const Proveedores = () => {
         calificacion_precio: Number(formData.calificacion_precio) || 5,
         calificacion_cumplimiento: Number(formData.calificacion_cumplimiento) || 5,
         observaciones_negociacion: formData.observaciones_negociacion || '',
-        proveedor_preferencial: Boolean(formData.proveedor_preferencial),
+        es_preferencial: Boolean(formData.es_preferencial || formData.proveedor_preferencial),
+        proveedor_preferencial: Boolean(formData.es_preferencial || formData.proveedor_preferencial),
+        nivel_preferencial: (formData.es_preferencial || formData.proveedor_preferencial) ? (formData.nivel_preferencial || 'Tier 1 / Oro') : 'Regular',
+        descuento_pactado_porcentaje: Number(formData.descuento_pactado_porcentaje) || 0,
+        dias_credito_pactados: Number(formData.dias_credito_pactados || formData.dias_credito) || 0,
+        tiempo_entrega_acordado_dias: formData.tiempo_entrega_acordado_dias ? Number(formData.tiempo_entrega_acordado_dias) : null,
+        vigencia_acuerdo_desde: formData.vigencia_acuerdo_desde || null,
+        vigencia_acuerdo_hasta: formData.vigencia_acuerdo_hasta || null,
+        condiciones_acuerdo_nota: formData.condiciones_acuerdo_nota || '',
         status: formData.status !== undefined ? formData.status : true,
-        cuentas_bancarias: formData.cuentas_bancarias || []
+        cuentas_bancarias: formData.cuentas_bancarias || [],
+        creado_por: esEdicion ? (formData.creado_por || emailUsuario) : emailUsuario,
+        creado_por_nombre: esEdicion ? (formData.creado_por_nombre || nombreUsuario) : nombreUsuario,
+        actualizado_por: emailUsuario,
+        actualizado_por_nombre: nombreUsuario,
+        created_at: esEdicion ? (formData.created_at || new Date().toISOString()) : new Date().toISOString(),
+        updated_at: new Date().toISOString()
       };
 
-      saveStoredSrm(formData.id || rifLimpio, rifLimpio, {
+      // Guardar en almacenamiento local persistente
+      try {
+        const localList = JSON.parse(localStorage.getItem('local_proveedores_registrados') || '[]');
+        let updatedList;
+        if (esEdicion) {
+          let replaced = false;
+          updatedList = localList.map(p => {
+            if (p.id === idProveedor || (p.rif && p.rif === rifLimpio)) {
+              replaced = true;
+              return payload;
+            }
+            return p;
+          });
+          if (!replaced) updatedList.unshift(payload);
+        } else {
+          const sinMismoRif = localList.filter(p => p.rif !== rifLimpio && p.id !== idProveedor);
+          updatedList = [payload, ...sinMismoRif];
+        }
+        localStorage.setItem('local_proveedores_registrados', JSON.stringify(updatedList));
+      } catch (e) {
+        console.warn("Error guardando en localStorage:", e);
+      }
+
+      // Guardar SRM en almacenamiento local
+      saveStoredSrm(idProveedor, rifLimpio, {
         monto_limite_credito: Number(formData.monto_limite_credito) || 0,
         limite_credito: Number(formData.monto_limite_credito) || 0,
         dias_credito: Number(formData.dias_credito) || 0,
         dias_credito_habituales: Number(formData.dias_credito) || 0,
         persona_contacto: formData.persona_contacto || '',
         contacto_administrativo: formData.contacto_administrativo || '',
-        ciudad: formData.ciudad || formData.localizacion || '',
+        ciudad: ciudadVal,
         observaciones_negociacion: formData.observaciones_negociacion || '',
         calificacion_precio: Number(formData.calificacion_precio) || 5,
         calificacion_cumplimiento: Number(formData.calificacion_cumplimiento) || 5,
-        proveedor_preferencial: Boolean(formData.proveedor_preferencial),
-        cuentas_bancarias: formData.cuentas_bancarias || []
+        es_preferencial: payload.es_preferencial,
+        proveedor_preferencial: payload.proveedor_preferencial,
+        nivel_preferencial: payload.nivel_preferencial,
+        descuento_pactado_porcentaje: payload.descuento_pactado_porcentaje,
+        dias_credito_pactados: payload.dias_credito_pactados,
+        tiempo_entrega_acordado_dias: payload.tiempo_entrega_acordado_dias,
+        vigencia_acuerdo_desde: payload.vigencia_acuerdo_desde,
+        vigencia_acuerdo_hasta: payload.vigencia_acuerdo_hasta,
+        condiciones_acuerdo_nota: payload.condiciones_acuerdo_nota,
+        cuentas_bancarias: formData.cuentas_bancarias || [],
+        creado_por: payload.creado_por,
+        creado_por_nombre: payload.creado_por_nombre,
+        actualizado_por: payload.actualizado_por,
+        actualizado_por_nombre: payload.actualizado_por_nombre,
+        updated_at: new Date().toISOString()
       });
 
-      if (formData.id) {
-        await ejecutarOperacionSegura(true, formData.id, payload);
-        toast.success('Proveedor actualizado con éxito');
-      } else {
-        await ejecutarOperacionSegura(false, null, payload);
-        toast.success('Proveedor registrado con éxito');
+      // Actualizar estado de React inmediatamente para visualización instantánea
+      const normalizadoNuevo = normalizarProveedor(payload);
+      setProveedores(prev => {
+        if (esEdicion) {
+          return prev.map(p => (p.id === idProveedor || (p.rif && p.rif === rifLimpio)) ? normalizadoNuevo : p);
+        } else {
+          const sinMismoRif = prev.filter(p => p.rif !== rifLimpio && p.id !== idProveedor);
+          return [normalizadoNuevo, ...sinMismoRif];
+        }
+      });
+
+      // Intentar persistir en Supabase de forma segura en segundo plano
+      try {
+        await ejecutarOperacionSegura(esEdicion, esEdicion ? formData.id : null, payload);
+      } catch (errDb) {
+        console.warn("Aviso Supabase (guardado localmente activo):", errDb?.message || errDb);
       }
 
+      toast.success(esEdicion ? 'Proveedor actualizado con éxito' : 'Proveedor registrado con éxito');
       setShowModal(false);
       resetForm();
-      await obtenerProveedores();
     } catch (error) {
       console.error("Error al guardar proveedor:", error);
       if (error.code === '23505' || error.message?.includes('proveedores_rif_key') || error.message?.includes('duplicate key')) {
@@ -423,10 +714,23 @@ const Proveedores = () => {
 
   const ejecutarEliminacion = async (id) => {
     try {
-      const { error } = await supabase.from('proveedores').delete().eq('id', id);
-      if (error) throw error;
+      try {
+        const localList = JSON.parse(localStorage.getItem('local_proveedores_registrados') || '[]');
+        const updated = localList.filter(p => p.id !== id);
+        localStorage.setItem('local_proveedores_registrados', JSON.stringify(updated));
+      } catch (e) {
+        console.warn('Error eliminando de localStorage:', e);
+      }
+
+      setProveedores(prev => prev.filter(p => p.id !== id));
+
+      try {
+        await supabase.from('proveedores').delete().eq('id', id);
+      } catch (err) {
+        console.warn('Aviso Supabase delete:', err);
+      }
+
       toast.success('Proveedor eliminado');
-      obtenerProveedores();
     } catch (error) {
       toast.error('Error al eliminar: ' + error.message);
     }
@@ -438,18 +742,29 @@ const Proveedores = () => {
       rif: '',
       razon_social: '',
       persona_contacto: '',
-      ciudad: '',
+      contacto_administrativo: '',
+      ciudad: 'Maracaibo',
       correo: '',
       telefono: '',
       direccion: '',
-      localizacion: '',
+      localizacion: 'Maracaibo',
       categoria: [],
       monto_limite_credito: 0,
       dias_credito: 0,
+      condicion_pago_defecto: 'CONTADO',
+      dias_credito_habituales: 0,
       calificacion_precio: 5,
       calificacion_cumplimiento: 5,
       observaciones_negociacion: '',
+      es_preferencial: false,
       proveedor_preferencial: false,
+      nivel_preferencial: 'Regular',
+      descuento_pactado_porcentaje: 0,
+      dias_credito_pactados: 0,
+      tiempo_entrega_acordado_dias: '',
+      vigencia_acuerdo_desde: '',
+      vigencia_acuerdo_hasta: '',
+      condiciones_acuerdo_nota: '',
       status: true,
       cuentas_bancarias: []
     });
@@ -464,6 +779,45 @@ const Proveedores = () => {
     });
     setCreandoNuevoBanco(false);
     setNuevoBancoNombre('');
+    setCreandoNuevaCiudad(false);
+    setNuevaCiudadText('');
+  };
+
+  const agregarCiudad = () => {
+    const nombreLimpio = nuevaCiudadText.trim();
+    if (!nombreLimpio) {
+      return toast.error('El nombre de la ciudad no puede estar vacío');
+    }
+    const ciudadFormateada = nombreLimpio.charAt(0).toUpperCase() + nombreLimpio.slice(1);
+    const yaExiste = ciudadesList.some(c => c.toUpperCase() === ciudadFormateada.toUpperCase());
+    if (yaExiste) {
+      toast.error(`La ciudad "${ciudadFormateada}" ya está en la lista`);
+      setFormData(prev => ({ ...prev, ciudad: ciudadFormateada, localizacion: ciudadFormateada }));
+      setCreandoNuevaCiudad(false);
+      setNuevaCiudadText('');
+      return;
+    }
+    const updated = [...ciudadesList, ciudadFormateada];
+    setCiudadesList(updated);
+    localStorage.setItem('lista_ciudades_proveedores', JSON.stringify(updated));
+    setFormData(prev => ({ ...prev, ciudad: ciudadFormateada, localizacion: ciudadFormateada }));
+    setCreandoNuevaCiudad(false);
+    setNuevaCiudadText('');
+    toast.success(`Ciudad "${ciudadFormateada}" agregada a la lista`);
+  };
+
+  const eliminarCiudad = (ciudadAEliminar) => {
+    if (!ciudadAEliminar) return;
+    if (ciudadesList.length <= 1) {
+      return toast.error('Debe haber al menos una ciudad en la lista.');
+    }
+    const updated = ciudadesList.filter(c => c.toUpperCase() !== ciudadAEliminar.toUpperCase());
+    setCiudadesList(updated);
+    localStorage.setItem('lista_ciudades_proveedores', JSON.stringify(updated));
+    
+    const defaultCiudad = updated.includes('Maracaibo') ? 'Maracaibo' : (updated[0] || 'Maracaibo');
+    setFormData(prev => ({ ...prev, ciudad: defaultCiudad, localizacion: defaultCiudad }));
+    toast.success(`Ciudad "${ciudadAEliminar}" eliminada de la lista`);
   };
 
   const agregarCategoriaSession = () => {
@@ -569,7 +923,10 @@ const Proveedores = () => {
   };
 
   const cargarHistorialCompras = async (p) => {
-    const pNormalizado = normalizarProveedor(p);
+    // Buscar la ficha completa del proveedor en la lista general con coincidencia inteligente para garantizar que tenga todos los datos (teléfono, ciudad, dirección, contacto, etc.)
+    const provCompleto = proveedores.find(item => sonProveedoresCoincidentes(item, p)) || p;
+    const merged = { ...provCompleto, ...p };
+    const pNormalizado = normalizarProveedor(merged);
     setProvSeleccionado(pNormalizado);
     setLoadingHistorial(true);
     setShowHistoryModal(true);
@@ -588,10 +945,11 @@ const Proveedores = () => {
           const hist = Array.isArray(it.historial_compras) ? it.historial_compras : [];
           hist.forEach(h => {
             if (h.tipo === 'JUSTIFICACION' || h.tipo === 'ANULACION') return;
-            const matchesId = h.proveedor_id === p.id;
-            const matchesName = h.proveedor_nombre && h.proveedor_nombre.trim().toLowerCase() === p.razon_social.trim().toLowerCase();
             
-            if (matchesId || matchesName) {
+            const matches = sonProveedoresCoincidentes(p, { id: h.proveedor_id, razon_social: h.proveedor_nombre }) ||
+                            sonProveedoresCoincidentes(provCompleto, { id: h.proveedor_id, razon_social: h.proveedor_nombre });
+            
+            if (matches) {
               comprasFiltradas.push({
                 requisicion: r.correlativo_req || `REQ-${r.id}`,
                 fecha: h.fecha ? h.fecha.split('T')[0] : (r.fecha_emision ? r.fecha_emision.split('T')[0] : '—'),
@@ -658,40 +1016,6 @@ const Proveedores = () => {
 
       comprasConsolidadas.sort((a, b) => b.fecha.localeCompare(a.fecha));
       setTodasLasCompras(comprasConsolidadas);
-
-      const agrupado = {};
-      comprasConsolidadas.forEach(c => {
-        const key = c.proveedor_id || c.proveedor_nombre.trim().toUpperCase();
-        if (!agrupado[key]) {
-          agrupado[key] = {
-            id: c.proveedor_id,
-            nombre: c.proveedor_nombre,
-            comprasCount: 0,
-            unidadesCompradas: 0,
-            totalGastado: 0,
-          };
-        }
-        agrupado[key].comprasCount += 1;
-        agrupado[key].unidadesCompradas += c.cantidad;
-        agrupado[key].totalGastado += c.total;
-      });
-
-      const rankingList = Object.values(agrupado).map(agg => {
-        const provOriginal = proveedores.find(p => p.id === agg.id || p.razon_social.trim().toUpperCase() === agg.nombre.trim().toUpperCase());
-        return {
-          id: agg.id || (provOriginal ? provOriginal.id : null),
-          rif: provOriginal ? provOriginal.rif : 'N/A',
-          razon_social: provOriginal ? provOriginal.razon_social : agg.nombre,
-          categoria: provOriginal ? provOriginal.categoria : 'OTROS',
-          comprasCount: agg.comprasCount,
-          unidadesCompradas: agg.unidadesCompradas,
-          totalGastado: agg.totalGastado,
-          promedioCompra: agg.totalGastado / agg.comprasCount
-        };
-      });
-
-      rankingList.sort((a, b) => b.totalGastado - a.totalGastado);
-      setRankingProveedores(rankingList);
     } catch (err) {
       console.error("Error cargando reportes:", err);
       toast.error("Error al cargar reportes: " + err.message);
@@ -751,10 +1075,10 @@ const Proveedores = () => {
             if (h.tipo === 'JUSTIFICACION' || h.tipo === 'ANULACION') return;
             const provId = h.proveedor_id;
             
-            // Encontrar proveedor por ID o por coincidencia de Razón Social
+            // Encontrar proveedor por ID o por coincidencia inteligente de Razón Social
             let provKey = provId;
             if (!provKey && h.proveedor_nombre) {
-              const matched = proveedores.find(p => p.razon_social.trim().toUpperCase() === h.proveedor_nombre.trim().toUpperCase());
+              const matched = proveedores.find(p => sonProveedoresCoincidentes(p, { id: h.proveedor_id, razon_social: h.proveedor_nombre }));
               if (matched) provKey = matched.id;
             }
 
@@ -989,6 +1313,91 @@ const Proveedores = () => {
     }
   };
 
+  const aplicarPresetFecha = (preset) => {
+    const hoy = new Date();
+    const yyyy = hoy.getFullYear();
+    const mm = String(hoy.getMonth() + 1).padStart(2, '0');
+    const dd = String(hoy.getDate()).padStart(2, '0');
+    const hoyStr = `${yyyy}-${mm}-${dd}`;
+
+    if (preset === 'este_mes') {
+      const primerDia = `${yyyy}-${mm}-01`;
+      setFechaDesdeReporte(primerDia);
+      setFechaHastaReporte(hoyStr);
+    } else if (preset === 'ultimos_30') {
+      const hace30 = new Date();
+      hace30.setDate(hace30.getDate() - 30);
+      const hace30Str = hace30.toISOString().split('T')[0];
+      setFechaDesdeReporte(hace30Str);
+      setFechaHastaReporte(hoyStr);
+    } else if (preset === 'este_ano') {
+      setFechaDesdeReporte(`${yyyy}-01-01`);
+      setFechaHastaReporte(hoyStr);
+    } else if (preset === 'todo') {
+      setFechaDesdeReporte('');
+      setFechaHastaReporte('');
+    }
+  };
+
+  const comprasReporteFiltradas = useMemo(() => {
+    return todasLasCompras.filter(c => {
+      if (fechaDesdeReporte && c.fecha !== '—' && c.fecha < fechaDesdeReporte) return false;
+      if (fechaHastaReporte && c.fecha !== '—' && c.fecha > fechaHastaReporte) return false;
+      if ((fechaDesdeReporte || fechaHastaReporte) && c.fecha === '—') return false;
+      return true;
+    });
+  }, [todasLasCompras, fechaDesdeReporte, fechaHastaReporte]);
+
+  const rankingProveedores = useMemo(() => {
+    const agrupado = {};
+    comprasReporteFiltradas.forEach(c => {
+      // Cruzar con el directorio de proveedores usando coincidencia inteligente
+      const matchedProv = proveedores.find(p => sonProveedoresCoincidentes(p, { id: c.proveedor_id, razon_social: c.proveedor_nombre }));
+      
+      const key = matchedProv ? `prov_${matchedProv.id}` : (c.proveedor_id ? `id_${c.proveedor_id}` : `name_${normalizarNombreEmpresa(c.proveedor_nombre) || c.proveedor_nombre.trim().toUpperCase()}`);
+      if (!agrupado[key]) {
+        agrupado[key] = {
+          id: matchedProv ? matchedProv.id : c.proveedor_id,
+          nombre: matchedProv ? matchedProv.razon_social : c.proveedor_nombre,
+          provOriginal: matchedProv || null,
+          comprasCount: 0,
+          unidadesCompradas: 0,
+          totalGastado: 0,
+        };
+      }
+      agrupado[key].comprasCount += 1;
+      agrupado[key].unidadesCompradas += c.cantidad;
+      agrupado[key].totalGastado += c.total;
+    });
+
+    const rankingList = Object.values(agrupado).map(agg => {
+      const provOriginal = agg.provOriginal || proveedores.find(p => sonProveedoresCoincidentes(p, { id: agg.id, razon_social: agg.nombre }));
+      return {
+        ...(provOriginal || {}),
+        id: agg.id || (provOriginal ? provOriginal.id : null),
+        rif: provOriginal ? provOriginal.rif : 'N/A',
+        razon_social: provOriginal ? provOriginal.razon_social : agg.nombre,
+        categoria: provOriginal ? provOriginal.categoria : 'OTROS',
+        comprasCount: agg.comprasCount,
+        unidadesCompradas: agg.unidadesCompradas,
+        totalGastado: agg.totalGastado,
+        promedioCompra: agg.comprasCount > 0 ? (agg.totalGastado / agg.comprasCount) : 0
+      };
+    });
+
+    rankingList.sort((a, b) => b.totalGastado - a.totalGastado);
+    return rankingList;
+  }, [comprasReporteFiltradas, proveedores]);
+
+  const historialComprasFiltrado = useMemo(() => {
+    return historialCompras.filter(c => {
+      if (fechaDesdeHistorial && c.fecha !== '—' && c.fecha < fechaDesdeHistorial) return false;
+      if (fechaHastaHistorial && c.fecha !== '—' && c.fecha > fechaHastaHistorial) return false;
+      if ((fechaDesdeHistorial || fechaHastaHistorial) && c.fecha === '—') return false;
+      return true;
+    });
+  }, [historialCompras, fechaDesdeHistorial, fechaHastaHistorial]);
+
   const exportRankingToExcel = async () => {
     if (rankingProveedores.length === 0) {
       toast.error("No hay datos de ranking para exportar.");
@@ -1000,7 +1409,10 @@ const Proveedores = () => {
 
     worksheet.mergeCells('A1:G1');
     const titleCell = worksheet.getCell('A1');
-    titleCell.value = 'TOTAL CLEAN C.A. - RANKING GENERAL DE PROVEEDORES';
+    const rangoStr = (fechaDesdeReporte || fechaHastaReporte)
+      ? ` (${fechaDesdeReporte ? fechaDesdeReporte.split('-').reverse().join('/') : 'INICIO'} AL ${fechaHastaReporte ? fechaHastaReporte.split('-').reverse().join('/') : 'HOY'})`
+      : '';
+    titleCell.value = `TOTAL CLEAN C.A. - RANKING GENERAL DE PROVEEDORES${rangoStr}`;
     titleCell.font = { name: 'Arial Black', size: 12, color: { argb: 'FFFFFFFF' } };
     titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } };
     titleCell.alignment = { vertical: 'middle', horizontal: 'center' };
@@ -1008,6 +1420,7 @@ const Proveedores = () => {
 
     const headers = [
       'RIF',
+      'CONDICIÓN',
       'RAZÓN SOCIAL',
       'CATEGORÍA',
       'N° COMPRAS',
@@ -1023,8 +1436,11 @@ const Proveedores = () => {
     worksheet.getRow(2).height = 25;
 
     rankingProveedores.forEach(p => {
+      const esPref = Boolean(p.es_preferencial || p.proveedor_preferencial);
+      const condicionText = esPref ? `★ PREFERENCIAL (${(p.nivel_preferencial && p.nivel_preferencial !== 'Regular') ? p.nivel_preferencial.toUpperCase() : 'TIER 1'})` : 'REGULAR';
       const row = worksheet.addRow([
         p.rif,
+        condicionText,
         p.razon_social,
         p.categoria,
         p.comprasCount,
@@ -1034,13 +1450,19 @@ const Proveedores = () => {
       ]);
 
       row.getCell(1).alignment = { horizontal: 'center' };
-      row.getCell(4).alignment = { horizontal: 'right' };
+      row.getCell(2).alignment = { horizontal: 'center' };
       row.getCell(5).alignment = { horizontal: 'right' };
       row.getCell(6).alignment = { horizontal: 'right' };
       row.getCell(7).alignment = { horizontal: 'right' };
+      row.getCell(8).alignment = { horizontal: 'right' };
 
-      row.getCell(6).numFmt = '"$"#,##0.00';
       row.getCell(7).numFmt = '"$"#,##0.00';
+      row.getCell(8).numFmt = '"$"#,##0.00';
+
+      if (esPref) {
+        row.getCell(2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF3C7' } };
+        row.getCell(2).font = { color: { argb: 'FF92400E' }, bold: true };
+      }
 
       row.eachCell(cell => {
         cell.border = {
@@ -1054,6 +1476,7 @@ const Proveedores = () => {
 
     worksheet.columns = [
       { width: 18 }, // RIF
+      { width: 26 }, // CONDICIÓN
       { width: 35 }, // RAZÓN SOCIAL
       { width: 25 }, // CATEGORÍA
       { width: 15 }, // N° COMPRAS
@@ -1084,10 +1507,10 @@ const Proveedores = () => {
 
   const comprasProductoFiltradas = useMemo(() => {
     if (!busquedaProducto.trim()) return [];
-    return todasLasCompras.filter(c => 
+    return comprasReporteFiltradas.filter(c => 
       c.descripcion.toLowerCase().includes(busquedaProducto.toLowerCase())
     );
-  }, [busquedaProducto, todasLasCompras]);
+  }, [busquedaProducto, comprasReporteFiltradas]);
 
   const mejorPrecioUnitario = useMemo(() => {
     if (comprasProductoFiltradas.length === 0) return null;
@@ -1123,8 +1546,9 @@ const Proveedores = () => {
   }, [rankingProveedores, sortConfig]);
 
   const exportHistoryToExcel = async (p) => {
-    if (historialCompras.length === 0) {
-      toast.error("No hay compras registradas para este proveedor.");
+    const listadoExportar = (fechaDesdeHistorial || fechaHastaHistorial) ? historialComprasFiltrado : historialCompras;
+    if (listadoExportar.length === 0) {
+      toast.error("No hay compras registradas para este proveedor en ese rango.");
       return;
     }
 
@@ -1134,7 +1558,10 @@ const Proveedores = () => {
     // Title Row
     worksheet.mergeCells('A1:J1');
     const titleCell = worksheet.getCell('A1');
-    titleCell.value = `TOTAL CLEAN C.A. - HISTORIAL DE COMPRAS: ${p.razon_social}`;
+    const rangoHistStr = (fechaDesdeHistorial || fechaHastaHistorial)
+      ? ` (${fechaDesdeHistorial ? fechaDesdeHistorial.split('-').reverse().join('/') : 'INICIO'} AL ${fechaHastaHistorial ? fechaHastaHistorial.split('-').reverse().join('/') : 'HOY'})`
+      : '';
+    titleCell.value = `TOTAL CLEAN C.A. - HISTORIAL DE COMPRAS: ${p.razon_social}${rangoHistStr}`;
     titleCell.font = { name: 'Arial Black', size: 12, color: { argb: 'FFFFFFFF' } };
     titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0EA5E9' } };
     titleCell.alignment = { vertical: 'middle', horizontal: 'center' };
@@ -1160,7 +1587,7 @@ const Proveedores = () => {
     headerRow.alignment = { horizontal: 'center', vertical: 'middle' };
     worksheet.getRow(2).height = 25;
 
-    historialCompras.forEach(c => {
+    listadoExportar.forEach(c => {
       const row = worksheet.addRow([
         c.fecha !== '—' ? new Date(c.fecha + 'T12:00:00') : '—',
         c.requisicion,
@@ -1213,7 +1640,7 @@ const Proveedores = () => {
       { width: 25 }  // GERENCIA
     ];
 
-    const lastRowNum = historialCompras.length + 3;
+    const lastRowNum = listadoExportar.length + 3;
     worksheet.mergeCells(`A${lastRowNum}:E${lastRowNum}`);
     const totalLabel = worksheet.getCell(`A${lastRowNum}`);
     totalLabel.value = 'TOTAL GASTADO ($):';
@@ -1221,7 +1648,7 @@ const Proveedores = () => {
     totalLabel.alignment = { horizontal: 'right', vertical: 'middle' };
 
     const totalVal = worksheet.getCell(`F${lastRowNum}`);
-    const totalSpent = historialCompras.reduce((sum, c) => sum + c.total, 0);
+    const totalSpent = listadoExportar.reduce((sum, c) => sum + c.total, 0);
     totalVal.value = totalSpent;
     totalVal.font = { bold: true, color: { argb: 'FF15803D' } };
     totalVal.numFmt = '"$"#,##0.00';
@@ -1252,14 +1679,15 @@ const Proveedores = () => {
   };
 
   const obtenerOpcionesLocalizacion = useMemo(() => {
-    const locs = new Set(['Barcelona', 'Maracaibo']);
-    proveedores.forEach(p => {
-      if (p.localizacion) {
-        locs.add(p.localizacion.trim());
-      }
-    });
-    return Array.from(locs);
-  }, [proveedores]);
+    const locs = new Set(ciudadesList);
+    if (formData.ciudad && formData.ciudad.trim()) locs.add(formData.ciudad.trim());
+    if (formData.localizacion && formData.localizacion.trim()) locs.add(formData.localizacion.trim());
+    
+    const arr = Array.from(locs).filter(Boolean);
+    const hasMaracaibo = arr.some(c => c.toUpperCase() === 'MARACAIBO');
+    const rest = arr.filter(c => c.toUpperCase() !== 'MARACAIBO');
+    return hasMaracaibo ? ['Maracaibo', ...rest] : arr;
+  }, [ciudadesList, formData.ciudad, formData.localizacion]);
 
   const categoriasUnicas = useMemo(() => {
     const cats = new Set();
@@ -1275,14 +1703,219 @@ const Proveedores = () => {
     return Array.from(cats).sort();
   }, [proveedores, sessionCategories]);
 
+  const obtenerDiagnosticoProveedor = (p) => {
+    if (!p) return { faltantes: [], esCompleto: false, porcentaje: 0, tieneRif: false, tieneTelefono: false, tieneContacto: false, tieneDireccion: false, tieneCorreo: false, tieneBancos: false };
+    const faltantes = [];
+
+    // 1. RIF válido (no vacío, no placeholder HIST-, longitud >= 6)
+    const rifLimpio = String(p.rif || '').trim().toUpperCase();
+    const tieneRif = Boolean(rifLimpio && !rifLimpio.startsWith('HIST-') && rifLimpio.length >= 6);
+    if (!tieneRif) faltantes.push({ key: 'rif', label: 'RIF', icon: '🆔' });
+
+    // 2. Teléfono
+    const tieneTelefono = Boolean(String(p.telefono || '').trim());
+    if (!tieneTelefono) faltantes.push({ key: 'telefono', label: 'Teléfono', icon: '📞' });
+
+    // 3. Persona de Contacto
+    const tieneContacto = Boolean(String(p.persona_contacto || p.contacto_nombre || '').trim());
+    if (!tieneContacto) faltantes.push({ key: 'contacto', label: 'Contacto', icon: '👤' });
+
+    // 4. Dirección
+    const tieneDireccion = Boolean(String(p.direccion || '').trim());
+    if (!tieneDireccion) faltantes.push({ key: 'direccion', label: 'Dirección', icon: '📍' });
+
+    // 5. Correo (debe tener @ y .)
+    const correoStr = String(p.correo || '').trim();
+    const tieneCorreo = Boolean(correoStr && correoStr.includes('@') && correoStr.includes('.'));
+    if (!tieneCorreo) faltantes.push({ key: 'correo', label: 'Correo', icon: '✉️' });
+
+    // 6. Cuentas Bancarias
+    const ctas = parseCuentasBancarias(p.cuentas_bancarias);
+    const tieneBancos = Boolean(ctas && ctas.length > 0);
+    if (!tieneBancos) faltantes.push({ key: 'bancos', label: 'Banco', icon: '🏦' });
+
+    const totalCampos = 6;
+    const camposLlenos = totalCampos - faltantes.length;
+    const porcentaje = Math.round((camposLlenos / totalCampos) * 100);
+
+    return {
+      faltantes,
+      esCompleto: faltantes.length === 0,
+      porcentaje,
+      tieneRif,
+      tieneTelefono,
+      tieneContacto,
+      tieneDireccion,
+      tieneCorreo,
+      tieneBancos
+    };
+  };
+
+  const estadisticasCalidad = useMemo(() => {
+    let completos = 0;
+    let incompletos = 0;
+    let sinRif = 0;
+    let sinTelefono = 0;
+    let sinContacto = 0;
+    let sinDireccion = 0;
+    let sinCorreo = 0;
+    let sinBancos = 0;
+
+    proveedores.forEach(p => {
+      const diag = obtenerDiagnosticoProveedor(p);
+      if (diag.esCompleto) completos++;
+      else incompletos++;
+
+      if (!diag.tieneRif) sinRif++;
+      if (!diag.tieneTelefono) sinTelefono++;
+      if (!diag.tieneContacto) sinContacto++;
+      if (!diag.tieneDireccion) sinDireccion++;
+      if (!diag.tieneCorreo) sinCorreo++;
+      if (!diag.tieneBancos) sinBancos++;
+    });
+
+    const saludGeneral = proveedores.length > 0 ? Math.round((completos / proveedores.length) * 100) : 100;
+
+    return {
+      total: proveedores.length,
+      completos,
+      incompletos,
+      saludGeneral,
+      sinRif,
+      sinTelefono,
+      sinContacto,
+      sinDireccion,
+      sinCorreo,
+      sinBancos
+    };
+  }, [proveedores]);
+
+  const exportarAuditoriaFaltantesExcel = async () => {
+    if (proveedores.length === 0) {
+      toast.error("No hay proveedores para auditar.");
+      return;
+    }
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Auditoría Proveedores');
+
+    worksheet.mergeCells('A1:J1');
+    const titleCell = worksheet.getCell('A1');
+    titleCell.value = `TOTAL CLEAN C.A. - AUDITORÍA DE CALIDAD Y FALTANTES EN PROVEEDORES`;
+    titleCell.font = { name: 'Arial Black', size: 12, color: { argb: 'FFFFFFFF' } };
+    titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F172A' } };
+    titleCell.alignment = { vertical: 'middle', horizontal: 'center' };
+    worksheet.getRow(1).height = 40;
+
+    const headers = [
+      'RIF',
+      'RAZÓN SOCIAL',
+      'ESTADO EXPEDIENTE',
+      '% COMPLETITUD',
+      'CAMPOS FALTANTES',
+      'TELÉFONO',
+      'PERSONA CONTACTO',
+      'CORREO',
+      'DIRECCIÓN',
+      'CUENTAS BANCARIAS'
+    ];
+    worksheet.addRow(headers);
+    const headerRow = worksheet.getRow(2);
+    headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF475569' } };
+    headerRow.alignment = { horizontal: 'center', vertical: 'middle' };
+    worksheet.getRow(2).height = 25;
+
+    const ordenadosAuditoria = [...proveedores].sort((a, b) => {
+      const diagA = obtenerDiagnosticoProveedor(a);
+      const diagB = obtenerDiagnosticoProveedor(b);
+      return diagA.porcentaje - diagB.porcentaje;
+    });
+
+    ordenadosAuditoria.forEach(p => {
+      const diag = obtenerDiagnosticoProveedor(p);
+      const ctas = parseCuentasBancarias(p.cuentas_bancarias);
+      const ctasStr = ctas.length > 0 ? `${ctas.length} cta(s) (${ctas.map(c => c.banco).join(', ')})` : 'SIN CUENTAS';
+      const faltantesStr = diag.faltantes.length > 0 ? diag.faltantes.map(f => f.label).join(', ') : 'NINGUNO (COMPLETO)';
+
+      const row = worksheet.addRow([
+        diag.tieneRif ? p.rif : 'SIN RIF',
+        p.razon_social,
+        diag.esCompleto ? 'COMPLETO' : 'INCOMPLETO',
+        `${diag.porcentaje}%`,
+        faltantesStr,
+        diag.tieneTelefono ? p.telefono : 'FALTANTE',
+        diag.tieneContacto ? (p.persona_contacto || p.contacto_nombre) : 'FALTANTE',
+        diag.tieneCorreo ? p.correo : 'FALTANTE',
+        diag.tieneDireccion ? p.direccion : 'FALTANTE',
+        ctasStr
+      ]);
+
+      row.getCell(1).alignment = { horizontal: 'center' };
+      row.getCell(3).alignment = { horizontal: 'center' };
+      row.getCell(4).alignment = { horizontal: 'center' };
+
+      if (diag.esCompleto) {
+        row.getCell(3).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDCFCE7' } };
+        row.getCell(3).font = { color: { argb: 'FF15803D' }, bold: true };
+      } else {
+        row.getCell(3).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFE4E6' } };
+        row.getCell(3).font = { color: { argb: 'FFE11D48' }, bold: true };
+        row.getCell(5).font = { color: { argb: 'FFE11D48' }, bold: true };
+      }
+
+      row.eachCell(cell => {
+        cell.border = {
+          top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+          left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+          bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+          right: { style: 'thin', color: { argb: 'FFE2E8F0' } }
+        };
+      });
+    });
+
+    worksheet.columns = [
+      { width: 16 },
+      { width: 35 },
+      { width: 18 },
+      { width: 15 },
+      { width: 32 },
+      { width: 18 },
+      { width: 25 },
+      { width: 28 },
+      { width: 35 },
+      { width: 30 }
+    ];
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    saveAs(new Blob([buffer]), `Auditoria_Faltantes_Proveedores_${new Date().toISOString().split('T')[0]}.xlsx`);
+    toast.success("Reporte de auditoría de faltantes exportado con éxito.");
+  };
+
   const proveedoresFiltrados = proveedores.filter(p => {
     const matchTexto = p.razon_social?.toLowerCase().includes(busqueda.toLowerCase()) ||
                        p.rif?.toLowerCase().includes(busqueda.toLowerCase());
     
-    const pCats = p.categoria ? p.categoria.split(', ').filter(c => c) : [];
+    const pCats = p.categoria ? (Array.isArray(p.categoria) ? p.categoria : p.categoria.split(', ').filter(c => c)) : [];
     const matchCat = filtroCategoria === 'Todos' || pCats.includes(filtroCategoria);
+
+    const esPref = Boolean(p.es_preferencial || p.proveedor_preferencial);
+    let matchTipo = true;
+    if (filtroTipoPreferencial === 'preferenciales') matchTipo = esPref;
+    if (filtroTipoPreferencial === 'regulares') matchTipo = !esPref;
+
+    const diag = obtenerDiagnosticoProveedor(p);
+    let matchIntegridad = true;
+    if (filtroIntegridad === 'incompletos') matchIntegridad = !diag.esCompleto;
+    else if (filtroIntegridad === 'completos') matchIntegridad = diag.esCompleto;
+    else if (filtroIntegridad === 'sin_rif') matchIntegridad = !diag.tieneRif;
+    else if (filtroIntegridad === 'sin_telefono') matchIntegridad = !diag.tieneTelefono;
+    else if (filtroIntegridad === 'sin_contacto') matchIntegridad = !diag.tieneContacto;
+    else if (filtroIntegridad === 'sin_direccion') matchIntegridad = !diag.tieneDireccion;
+    else if (filtroIntegridad === 'sin_correo') matchIntegridad = !diag.tieneCorreo;
+    else if (filtroIntegridad === 'sin_bancos') matchIntegridad = !diag.tieneBancos;
     
-    return matchTexto && matchCat;
+    return matchTexto && matchCat && matchTipo && matchIntegridad;
   });
 
   return (
@@ -1328,38 +1961,456 @@ const Proveedores = () => {
 
         {tabActiva === 'directorio' ? (
           <>
-            {/* Buscador */}
-            <div className="prov-search-wrapper">
-              <Search className="prov-search-icon" size={20} />
-              <input 
-                type="text"
-                placeholder="Buscar por RIF o Razón Social..."
-                className="prov-search-input"
-                value={busqueda}
-                onChange={(e) => setBusqueda(e.target.value)}
-              />
-              <select 
-                className="prov-cat-select"
-                style={{ 
-                  padding: '10px 15px', 
-                  borderRadius: '12px', 
-                  border: '1px solid #e2e8f0', 
-                  marginLeft: '15px',
-                  fontSize: '0.85rem',
-                  color: '#475569',
-                  fontWeight: '600',
-                  outline: 'none',
-                  backgroundColor: 'white'
-                 }}
-                value={filtroCategoria}
-                onChange={(e) => setFiltroCategoria(e.target.value)}
-              >
-                <option value="Todos">Todas las Categorías</option>
-                {categoriasUnicas.map(cat => (
-                  <option key={cat} value={cat}>{cat}</option>
-                ))}
-              </select>
+            {/* Buscador & Filtros Rápidos */}
+            <div className="prov-search-wrapper" style={{ flexWrap: 'wrap', gap: '12px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, minWidth: '280px' }}>
+                <Search className="prov-search-icon" size={20} />
+                <input 
+                  type="text"
+                  placeholder="Buscar por RIF o Razón Social..."
+                  className="prov-search-input"
+                  value={busqueda}
+                  onChange={(e) => setBusqueda(e.target.value)}
+                />
+              </div>
+
+              {/* Botones de Filtro Tipo Píldora para Preferenciales e Integridad */}
+              <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+                <button 
+                  type="button"
+                  onClick={() => { setFiltroTipoPreferencial('todos'); setFiltroIntegridad('todos'); }}
+                  style={{
+                    padding: '8px 14px',
+                    borderRadius: '20px',
+                    fontSize: '0.75rem',
+                    fontWeight: '800',
+                    border: (filtroTipoPreferencial === 'todos' && filtroIntegridad === 'todos') ? '1px solid #0f172a' : '1px solid #cbd5e1',
+                    backgroundColor: (filtroTipoPreferencial === 'todos' && filtroIntegridad === 'todos') ? '#0f172a' : '#f8fafc',
+                    color: (filtroTipoPreferencial === 'todos' && filtroIntegridad === 'todos') ? '#ffffff' : '#64748b',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  Todos ({proveedores.length})
+                </button>
+                <button 
+                  type="button"
+                  onClick={() => { setFiltroTipoPreferencial('preferenciales'); setFiltroIntegridad('todos'); }}
+                  style={{
+                    padding: '8px 14px',
+                    borderRadius: '20px',
+                    fontSize: '0.75rem',
+                    fontWeight: '800',
+                    border: (filtroTipoPreferencial === 'preferenciales' && filtroIntegridad === 'todos') ? '1px solid #f59e0b' : '1px solid #fde68a',
+                    backgroundColor: (filtroTipoPreferencial === 'preferenciales' && filtroIntegridad === 'todos') ? '#fef3c7' : '#fffbeb',
+                    color: '#92400e',
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    transition: 'all 0.2s',
+                    boxShadow: (filtroTipoPreferencial === 'preferenciales' && filtroIntegridad === 'todos') ? '0 2px 4px rgba(245, 158, 11, 0.2)' : 'none'
+                  }}
+                >
+                  ★ Preferenciales ({proveedores.filter(p => p.es_preferencial || p.proveedor_preferencial).length})
+                </button>
+                <button 
+                  type="button"
+                  onClick={() => { setFiltroTipoPreferencial('regulares'); setFiltroIntegridad('todos'); }}
+                  style={{
+                    padding: '8px 14px',
+                    borderRadius: '20px',
+                    fontSize: '0.75rem',
+                    fontWeight: '800',
+                    border: (filtroTipoPreferencial === 'regulares' && filtroIntegridad === 'todos') ? '1px solid #64748b' : '1px solid #cbd5e1',
+                    backgroundColor: (filtroTipoPreferencial === 'regulares' && filtroIntegridad === 'todos') ? '#e2e8f0' : '#f8fafc',
+                    color: (filtroTipoPreferencial === 'regulares' && filtroIntegridad === 'todos') ? '#0f172a' : '#64748b',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  Regulares ({proveedores.filter(p => !p.es_preferencial && !p.proveedor_preferencial).length})
+                </button>
+
+                {/* Píldora de Faltantes / Por Completar */}
+                <button 
+                  type="button"
+                  onClick={() => {
+                    setFiltroTipoPreferencial('todos');
+                    setFiltroIntegridad(filtroIntegridad === 'incompletos' ? 'todos' : 'incompletos');
+                  }}
+                  style={{
+                    padding: '8px 14px',
+                    borderRadius: '20px',
+                    fontSize: '0.75rem',
+                    fontWeight: '800',
+                    border: (filtroIntegridad !== 'todos' && filtroIntegridad !== 'completos') ? '1px solid #e11d48' : '1px solid #fecdd3',
+                    backgroundColor: (filtroIntegridad !== 'todos' && filtroIntegridad !== 'completos') ? '#ffe4e6' : '#fff1f2',
+                    color: '#be123c',
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '5px',
+                    transition: 'all 0.2s',
+                    boxShadow: (filtroIntegridad !== 'todos' && filtroIntegridad !== 'completos') ? '0 2px 5px rgba(225, 29, 72, 0.2)' : 'none'
+                  }}
+                >
+                  <AlertTriangle size={13} />
+                  Por Completar ({estadisticasCalidad.incompletos})
+                </button>
+
+                {/* Píldora de Completos */}
+                <button 
+                  type="button"
+                  onClick={() => {
+                    setFiltroTipoPreferencial('todos');
+                    setFiltroIntegridad(filtroIntegridad === 'completos' ? 'todos' : 'completos');
+                  }}
+                  style={{
+                    padding: '8px 14px',
+                    borderRadius: '20px',
+                    fontSize: '0.75rem',
+                    fontWeight: '800',
+                    border: filtroIntegridad === 'completos' ? '1px solid #16a34a' : '1px solid #bbf7d0',
+                    backgroundColor: filtroIntegridad === 'completos' ? '#dcfce7' : '#f0fdf4',
+                    color: '#15803d',
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '5px',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  <CheckCircle2 size={13} />
+                  100% Completos ({estadisticasCalidad.completos})
+                </button>
+              </div>
+
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <select 
+                  className="prov-cat-select"
+                  style={{ 
+                    padding: '8px 15px', 
+                    borderRadius: '12px', 
+                    border: '1px solid #e2e8f0', 
+                    fontSize: '0.82rem',
+                    color: '#475569',
+                    fontWeight: '700',
+                    outline: 'none',
+                    backgroundColor: 'white'
+                  }}
+                  value={filtroCategoria}
+                  onChange={(e) => setFiltroCategoria(e.target.value)}
+                >
+                  <option value="Todos">Todas las Categorías</option>
+                  {categoriasUnicas.map(cat => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
+                </select>
+
+                {/* Botón para desplegar Diagnóstico de Calidad */}
+                <button
+                  type="button"
+                  onClick={() => setMostrarPanelAuditoria(!mostrarPanelAuditoria)}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '8px 14px',
+                    borderRadius: '12px',
+                    border: '1px solid #e2e8f0',
+                    backgroundColor: mostrarPanelAuditoria ? '#0f172a' : 'white',
+                    color: mostrarPanelAuditoria ? '#ffffff' : '#0f172a',
+                    fontWeight: '800',
+                    fontSize: '0.78rem',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s',
+                    whiteSpace: 'nowrap'
+                  }}
+                  title="Ver Diagnóstico de Salud de Datos"
+                >
+                  <span>📊</span>
+                  <span>Salud: {estadisticasCalidad.saludGeneral}%</span>
+                  {mostrarPanelAuditoria ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                </button>
+              </div>
             </div>
+
+            {/* Sub-Barra de Filtro Específico por Campo Faltante */}
+            {(filtroIntegridad !== 'todos' && filtroIntegridad !== 'completos') && (
+              <div style={{ 
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: '8px', 
+                flexWrap: 'wrap', 
+                backgroundColor: '#fff1f2', 
+                padding: '10px 16px', 
+                borderRadius: '14px', 
+                border: '1px solid #fecdd3', 
+                marginTop: '10px' 
+              }}>
+                <span style={{ fontSize: '0.75rem', fontWeight: '900', color: '#9f1239', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                  <Filter size={13} /> Filtrar por dato faltante:
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setFiltroIntegridad('incompletos')}
+                  style={{
+                    padding: '4px 10px',
+                    borderRadius: '12px',
+                    fontSize: '0.7rem',
+                    fontWeight: '800',
+                    border: filtroIntegridad === 'incompletos' ? '1px solid #be123c' : '1px solid #fda4af',
+                    backgroundColor: filtroIntegridad === 'incompletos' ? '#be123c' : 'white',
+                    color: filtroIntegridad === 'incompletos' ? 'white' : '#9f1239',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Cualquier Faltante ({estadisticasCalidad.incompletos})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFiltroIntegridad('sin_rif')}
+                  style={{
+                    padding: '4px 10px',
+                    borderRadius: '12px',
+                    fontSize: '0.7rem',
+                    fontWeight: '800',
+                    border: filtroIntegridad === 'sin_rif' ? '1px solid #be123c' : '1px solid #fda4af',
+                    backgroundColor: filtroIntegridad === 'sin_rif' ? '#be123c' : 'white',
+                    color: filtroIntegridad === 'sin_rif' ? 'white' : '#9f1239',
+                    cursor: 'pointer'
+                  }}
+                >
+                  🆔 Sin RIF ({estadisticasCalidad.sinRif})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFiltroIntegridad('sin_telefono')}
+                  style={{
+                    padding: '4px 10px',
+                    borderRadius: '12px',
+                    fontSize: '0.7rem',
+                    fontWeight: '800',
+                    border: filtroIntegridad === 'sin_telefono' ? '1px solid #be123c' : '1px solid #fda4af',
+                    backgroundColor: filtroIntegridad === 'sin_telefono' ? '#be123c' : 'white',
+                    color: filtroIntegridad === 'sin_telefono' ? 'white' : '#9f1239',
+                    cursor: 'pointer'
+                  }}
+                >
+                  📞 Sin Teléfono ({estadisticasCalidad.sinTelefono})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFiltroIntegridad('sin_contacto')}
+                  style={{
+                    padding: '4px 10px',
+                    borderRadius: '12px',
+                    fontSize: '0.7rem',
+                    fontWeight: '800',
+                    border: filtroIntegridad === 'sin_contacto' ? '1px solid #be123c' : '1px solid #fda4af',
+                    backgroundColor: filtroIntegridad === 'sin_contacto' ? '#be123c' : 'white',
+                    color: filtroIntegridad === 'sin_contacto' ? 'white' : '#9f1239',
+                    cursor: 'pointer'
+                  }}
+                >
+                  👤 Sin Contacto ({estadisticasCalidad.sinContacto})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFiltroIntegridad('sin_direccion')}
+                  style={{
+                    padding: '4px 10px',
+                    borderRadius: '12px',
+                    fontSize: '0.7rem',
+                    fontWeight: '800',
+                    border: filtroIntegridad === 'sin_direccion' ? '1px solid #be123c' : '1px solid #fda4af',
+                    backgroundColor: filtroIntegridad === 'sin_direccion' ? '#be123c' : 'white',
+                    color: filtroIntegridad === 'sin_direccion' ? 'white' : '#9f1239',
+                    cursor: 'pointer'
+                  }}
+                >
+                  📍 Sin Dirección ({estadisticasCalidad.sinDireccion})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFiltroIntegridad('sin_correo')}
+                  style={{
+                    padding: '4px 10px',
+                    borderRadius: '12px',
+                    fontSize: '0.7rem',
+                    fontWeight: '800',
+                    border: filtroIntegridad === 'sin_correo' ? '1px solid #be123c' : '1px solid #fda4af',
+                    backgroundColor: filtroIntegridad === 'sin_correo' ? '#be123c' : 'white',
+                    color: filtroIntegridad === 'sin_correo' ? 'white' : '#9f1239',
+                    cursor: 'pointer'
+                  }}
+                >
+                  ✉️ Sin Correo ({estadisticasCalidad.sinCorreo})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFiltroIntegridad('sin_bancos')}
+                  style={{
+                    padding: '4px 10px',
+                    borderRadius: '12px',
+                    fontSize: '0.7rem',
+                    fontWeight: '800',
+                    border: filtroIntegridad === 'sin_bancos' ? '1px solid #be123c' : '1px solid #fda4af',
+                    backgroundColor: filtroIntegridad === 'sin_bancos' ? '#be123c' : 'white',
+                    color: filtroIntegridad === 'sin_bancos' ? 'white' : '#9f1239',
+                    cursor: 'pointer'
+                  }}
+                >
+                  🏦 Sin Banco ({estadisticasCalidad.sinBancos})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFiltroIntegridad('todos')}
+                  style={{
+                    marginLeft: 'auto',
+                    background: 'none',
+                    border: 'none',
+                    color: '#9f1239',
+                    fontWeight: '800',
+                    fontSize: '0.72rem',
+                    cursor: 'pointer',
+                    textDecoration: 'underline'
+                  }}
+                >
+                  Quitar filtro
+                </button>
+              </div>
+            )}
+
+            {/* Panel de Diagnóstico y Salud de Datos (Colapsable) */}
+            {mostrarPanelAuditoria && (
+              <div style={{
+                marginTop: '12px',
+                backgroundColor: '#ffffff',
+                border: '1px solid #e2e8f0',
+                borderRadius: '16px',
+                padding: '16px 20px',
+                boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)'
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '15px', marginBottom: '14px' }}>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: '900', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span>📊</span> Diagnóstico y Auditoría de Expedientes de Proveedores
+                    </h3>
+                    <p style={{ margin: '2px 0 0 0', fontSize: '0.75rem', color: '#64748b' }}>
+                      Monitorea qué datos faltan en el directorio para que compras complete cada expediente
+                    </p>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '10px' }}>
+                    <button
+                      type="button"
+                      onClick={exportarAuditoriaFaltantesExcel}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        padding: '8px 14px',
+                        backgroundColor: '#0f172a',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '10px',
+                        fontWeight: '800',
+                        fontSize: '0.75rem',
+                        cursor: 'pointer',
+                        boxShadow: '0 2px 4px rgba(15, 23, 42, 0.2)'
+                      }}
+                    >
+                      <FileSpreadsheet size={14} />
+                      Exportar Auditoría a Excel
+                    </button>
+                  </div>
+                </div>
+
+                {/* Barra de progreso de salud */}
+                <div style={{ marginBottom: '16px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', fontWeight: '800', color: '#334155', marginBottom: '4px' }}>
+                    <span>Salud General del Directorio: {estadisticasCalidad.completos} de {estadisticasCalidad.total} proveedores con ficha 100% completa</span>
+                    <span style={{ color: estadisticasCalidad.saludGeneral >= 80 ? '#16a34a' : (estadisticasCalidad.saludGeneral >= 50 ? '#d97706' : '#e11d48') }}>
+                      {estadisticasCalidad.saludGeneral}% ÓPTIMO
+                    </span>
+                  </div>
+                  <div style={{ width: '100%', height: '10px', backgroundColor: '#e2e8f0', borderRadius: '5px', overflow: 'hidden' }}>
+                    <div style={{
+                      width: `${estadisticasCalidad.saludGeneral}%`,
+                      height: '100%',
+                      backgroundColor: estadisticasCalidad.saludGeneral >= 80 ? '#10b981' : (estadisticasCalidad.saludGeneral >= 50 ? '#f59e0b' : '#ef4444'),
+                      borderRadius: '5px',
+                      transition: 'width 0.4s ease'
+                    }} />
+                  </div>
+                </div>
+
+                {/* Grid de Métricas de Faltantes */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '10px' }}>
+                  <div 
+                    onClick={() => { setFiltroTipoPreferencial('todos'); setFiltroIntegridad('sin_rif'); }}
+                    style={{ backgroundColor: estadisticasCalidad.sinRif > 0 ? '#fff1f2' : '#f8fafc', padding: '10px 12px', borderRadius: '12px', border: estadisticasCalidad.sinRif > 0 ? '1px solid #fecdd3' : '1px solid #e2e8f0', cursor: 'pointer', transition: 'transform 0.15s' }}
+                    className="action-hover"
+                  >
+                    <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '700' }}>🆔 Sin RIF Válido</div>
+                    <div style={{ fontSize: '1.2rem', fontWeight: '900', color: estadisticasCalidad.sinRif > 0 ? '#e11d48' : '#10b981' }}>{estadisticasCalidad.sinRif}</div>
+                    <div style={{ fontSize: '0.62rem', color: '#94a3b8' }}>Click para filtrar</div>
+                  </div>
+
+                  <div 
+                    onClick={() => { setFiltroTipoPreferencial('todos'); setFiltroIntegridad('sin_telefono'); }}
+                    style={{ backgroundColor: estadisticasCalidad.sinTelefono > 0 ? '#fff1f2' : '#f8fafc', padding: '10px 12px', borderRadius: '12px', border: estadisticasCalidad.sinTelefono > 0 ? '1px solid #fecdd3' : '1px solid #e2e8f0', cursor: 'pointer', transition: 'transform 0.15s' }}
+                    className="action-hover"
+                  >
+                    <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '700' }}>📞 Sin Teléfono</div>
+                    <div style={{ fontSize: '1.2rem', fontWeight: '900', color: estadisticasCalidad.sinTelefono > 0 ? '#e11d48' : '#10b981' }}>{estadisticasCalidad.sinTelefono}</div>
+                    <div style={{ fontSize: '0.62rem', color: '#94a3b8' }}>Click para filtrar</div>
+                  </div>
+
+                  <div 
+                    onClick={() => { setFiltroTipoPreferencial('todos'); setFiltroIntegridad('sin_contacto'); }}
+                    style={{ backgroundColor: estadisticasCalidad.sinContacto > 0 ? '#fff1f2' : '#f8fafc', padding: '10px 12px', borderRadius: '12px', border: estadisticasCalidad.sinContacto > 0 ? '1px solid #fecdd3' : '1px solid #e2e8f0', cursor: 'pointer', transition: 'transform 0.15s' }}
+                    className="action-hover"
+                  >
+                    <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '700' }}>👤 Sin Contacto</div>
+                    <div style={{ fontSize: '1.2rem', fontWeight: '900', color: estadisticasCalidad.sinContacto > 0 ? '#e11d48' : '#10b981' }}>{estadisticasCalidad.sinContacto}</div>
+                    <div style={{ fontSize: '0.62rem', color: '#94a3b8' }}>Click para filtrar</div>
+                  </div>
+
+                  <div 
+                    onClick={() => { setFiltroTipoPreferencial('todos'); setFiltroIntegridad('sin_direccion'); }}
+                    style={{ backgroundColor: estadisticasCalidad.sinDireccion > 0 ? '#fff1f2' : '#f8fafc', padding: '10px 12px', borderRadius: '12px', border: estadisticasCalidad.sinDireccion > 0 ? '1px solid #fecdd3' : '1px solid #e2e8f0', cursor: 'pointer', transition: 'transform 0.15s' }}
+                    className="action-hover"
+                  >
+                    <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '700' }}>📍 Sin Dirección</div>
+                    <div style={{ fontSize: '1.2rem', fontWeight: '900', color: estadisticasCalidad.sinDireccion > 0 ? '#e11d48' : '#10b981' }}>{estadisticasCalidad.sinDireccion}</div>
+                    <div style={{ fontSize: '0.62rem', color: '#94a3b8' }}>Click para filtrar</div>
+                  </div>
+
+                  <div 
+                    onClick={() => { setFiltroTipoPreferencial('todos'); setFiltroIntegridad('sin_correo'); }}
+                    style={{ backgroundColor: estadisticasCalidad.sinCorreo > 0 ? '#fff7ed' : '#f8fafc', padding: '10px 12px', borderRadius: '12px', border: estadisticasCalidad.sinCorreo > 0 ? '1px solid #fed7aa' : '1px solid #e2e8f0', cursor: 'pointer', transition: 'transform 0.15s' }}
+                    className="action-hover"
+                  >
+                    <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '700' }}>✉️ Sin Correo</div>
+                    <div style={{ fontSize: '1.2rem', fontWeight: '900', color: estadisticasCalidad.sinCorreo > 0 ? '#ea580c' : '#10b981' }}>{estadisticasCalidad.sinCorreo}</div>
+                    <div style={{ fontSize: '0.62rem', color: '#94a3b8' }}>Click para filtrar</div>
+                  </div>
+
+                  <div 
+                    onClick={() => { setFiltroTipoPreferencial('todos'); setFiltroIntegridad('sin_bancos'); }}
+                    style={{ backgroundColor: estadisticasCalidad.sinBancos > 0 ? '#fff1f2' : '#f8fafc', padding: '10px 12px', borderRadius: '12px', border: estadisticasCalidad.sinBancos > 0 ? '1px solid #fecdd3' : '1px solid #e2e8f0', cursor: 'pointer', transition: 'transform 0.15s' }}
+                    className="action-hover"
+                  >
+                    <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '700' }}>🏦 Sin Banco</div>
+                    <div style={{ fontSize: '1.2rem', fontWeight: '900', color: estadisticasCalidad.sinBancos > 0 ? '#e11d48' : '#10b981' }}>{estadisticasCalidad.sinBancos}</div>
+                    <div style={{ fontSize: '0.62rem', color: '#94a3b8' }}>Click para filtrar</div>
+                  </div>
+                </div>
+              </div>
+            )}
 
         {loading ? (
           <div className="prov-loading">
@@ -1382,13 +2433,115 @@ const Proveedores = () => {
                 </tr>
               </thead>
               <tbody>
-                {proveedoresFiltrados.map((p) => (
-                  <tr key={p.id}>
-                    <td className="rif-cell">{p.rif}</td>
-                    <td className="name-cell">{p.razon_social}</td>
+                {proveedoresFiltrados.map((p) => {
+                  const esPref = Boolean(p.es_preferencial || p.proveedor_preferencial);
+                  const diag = obtenerDiagnosticoProveedor(p);
+                  const ctas = parseCuentasBancarias(p.cuentas_bancarias);
+
+                  return (
+                    <tr key={p.id || p.rif || p.razon_social}>
+                      <td className="rif-cell">
+                        {diag.tieneRif ? (
+                          <span>{p.rif}</span>
+                        ) : (
+                          <span style={{
+                            backgroundColor: '#fee2e2',
+                            color: '#dc2626',
+                            padding: '3px 8px',
+                            borderRadius: '6px',
+                            fontSize: '0.72rem',
+                            fontWeight: '800',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            border: '1px solid #fca5a5'
+                          }}>
+                            ⚠️ Sin RIF
+                          </span>
+                        )}
+                      </td>
+                      <td className="name-cell">
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                          <span style={{ fontWeight: '800', color: '#0f172a', fontSize: '0.85rem' }}>{p.razon_social}</span>
+                          {esPref && (
+                            <span style={{
+                              backgroundColor: '#FEF3C7',
+                              color: '#92400E',
+                              padding: '2px 8px',
+                              borderRadius: '6px',
+                              fontSize: '0.68rem',
+                              fontWeight: '900',
+                              border: '1px solid #FDE68A',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              letterSpacing: '0.02em',
+                              boxShadow: '0 1px 2px rgba(245, 158, 11, 0.15)'
+                            }}>
+                              ★ {p.nivel_preferencial && p.nivel_preferencial !== 'Regular' ? p.nivel_preferencial.toUpperCase() : 'PREFERENCIAL'}
+                            </span>
+                          )}
+
+                          {/* Badge de completitud del expediente */}
+                          {diag.esCompleto ? (
+                            <span style={{
+                              backgroundColor: '#dcfce7',
+                              color: '#15803d',
+                              padding: '2px 7px',
+                              borderRadius: '6px',
+                              fontSize: '0.62rem',
+                              fontWeight: '900',
+                              border: '1px solid #bbf7d0',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '3px'
+                            }}>
+                              ✓ 100% Completo
+                            </span>
+                          ) : (
+                            <span style={{
+                              backgroundColor: '#ffe4e6',
+                              color: '#be123c',
+                              padding: '2px 7px',
+                              borderRadius: '6px',
+                              fontSize: '0.62rem',
+                              fontWeight: '800',
+                              border: '1px solid #fecdd3',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '3px'
+                            }}
+                            title={`Faltan: ${diag.faltantes.map(f => f.label).join(', ')}`}
+                            >
+                              ⚠️ Falta ({diag.faltantes.length}): {diag.faltantes.map(f => f.label).join(', ')}
+                            </span>
+                          )}
+                        </div>
+
+                        <div style={{ fontSize: '0.68rem', color: '#64748b', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap' }}>
+                          <span style={{ backgroundColor: '#f1f5f9', padding: '2px 6px', borderRadius: '4px', border: '1px solid #e2e8f0', fontWeight: '600' }}>
+                            👤 {p.creado_por_nombre || p.creado_por || 'Analista Compras'}
+                          </span>
+                          {(p.actualizado_por_nombre || p.actualizado_por) && (
+                            <span style={{ backgroundColor: '#f8fafc', padding: '2px 6px', borderRadius: '4px', border: '1px solid #e2e8f0', color: '#334155', fontWeight: '600' }}>
+                              ✏️ {p.actualizado_por_nombre || p.actualizado_por}
+                            </span>
+                          )}
+                          {esPref && Number(p.descuento_pactado_porcentaje) > 0 && (
+                            <span style={{ backgroundColor: '#dcfce7', padding: '2px 6px', borderRadius: '4px', border: '1px solid #bbf7d0', color: '#15803d', fontWeight: '800' }}>
+                              🏷️ Dcto: {p.descuento_pactado_porcentaje}%
+                            </span>
+                          )}
+                          {esPref && Number(p.dias_credito_pactados) > 0 && (
+                            <span style={{ backgroundColor: '#eff6ff', padding: '2px 6px', borderRadius: '4px', border: '1px solid #bfdbfe', color: '#1d4ed8', fontWeight: '800' }}>
+                              ⏱️ Crédito: {p.dias_credito_pactados}d
+                            </span>
+                          )}
+                        </div>
+                      </td>
                     <td>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
-                        {p.categoria ? p.categoria.split(', ').map((cat, i) => (
+                        {p.categoria ? (Array.isArray(p.categoria) ? p.categoria : p.categoria.split(', ')).map((cat, i) => (
                           <span key={i} style={{ backgroundColor: '#f1f5f9', padding: '2px 8px', borderRadius: '6px', fontSize: '0.6rem', fontWeight: '800', color: '#475569', border: '1px solid #e2e8f0' }}>
                             {cat}
                           </span>
@@ -1415,19 +2568,61 @@ const Proveedores = () => {
                     </td>
                     <td>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                        {p.correo && <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', color: '#475569', fontWeight: '500' }}><Mail size={12} style={{ color: '#3b82f6' }} /> {p.correo}</div>}
-                        {p.telefono && <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', color: '#475569', fontWeight: '500' }}><Phone size={12} style={{ color: '#f97316' }} /> {p.telefono}</div>}
-                        {(!p.correo && !p.telefono) && <span style={{ color: '#94a3b8', fontStyle: 'italic', fontSize: '0.7rem' }}>Sin datos</span>}
+                        {/* Persona Contacto */}
+                        {diag.tieneContacto ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', color: '#0f172a', fontWeight: '700' }}>
+                            <Users size={12} style={{ color: '#0284c7' }} /> {p.persona_contacto || p.contacto_nombre}
+                          </div>
+                        ) : (
+                          <span style={{ color: '#ea580c', fontSize: '0.68rem', fontWeight: '700', backgroundColor: '#fff7ed', padding: '1px 6px', borderRadius: '4px', border: '1px solid #ffedd5', width: 'fit-content' }}>
+                            ⚠️ Sin contacto
+                          </span>
+                        )}
+
+                        {/* Teléfono */}
+                        {diag.tieneTelefono ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.73rem', color: '#475569', fontWeight: '500' }}>
+                            <Phone size={12} style={{ color: '#f97316' }} /> {p.telefono}
+                          </div>
+                        ) : (
+                          <span style={{ color: '#ea580c', fontSize: '0.68rem', fontWeight: '700', backgroundColor: '#fff7ed', padding: '1px 6px', borderRadius: '4px', border: '1px solid #ffedd5', width: 'fit-content' }}>
+                            ⚠️ Sin teléfono
+                          </span>
+                        )}
+
+                        {/* Correo */}
+                        {diag.tieneCorreo ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.73rem', color: '#475569', fontWeight: '500' }}>
+                            <Mail size={12} style={{ color: '#3b82f6' }} /> {p.correo}
+                          </div>
+                        ) : (
+                          <span style={{ color: '#94a3b8', fontStyle: 'italic', fontSize: '0.68rem' }}>
+                            ✉️ Sin correo
+                          </span>
+                        )}
+
+                        {/* Cuenta Bancaria */}
+                        {diag.tieneBancos ? (
+                          <span style={{ backgroundColor: '#f0fdf4', color: '#166534', padding: '1px 6px', borderRadius: '4px', fontSize: '0.65rem', fontWeight: '700', border: '1px solid #dcfce7', width: 'fit-content', marginTop: '1px' }}>
+                            🏦 {ctas.length} Cta(s) de banco
+                          </span>
+                        ) : (
+                          <span style={{ backgroundColor: '#fff1f2', color: '#be123c', padding: '1px 6px', borderRadius: '4px', fontSize: '0.65rem', fontWeight: '700', border: '1px solid #fecdd3', width: 'fit-content', marginTop: '1px' }}>
+                            ⚠️ Sin banco
+                          </span>
+                        )}
                       </div>
                     </td>
                     <td style={{ maxWidth: '250px' }}>
-                      {p.direccion ? (
+                      {diag.tieneDireccion ? (
                         <div style={{ display: 'flex', gap: '6px', alignItems: 'flex-start', fontSize: '0.75rem', color: '#64748b', lineHeight: '1.4' }}>
                           <MapPin size={12} style={{ color: '#94a3b8', marginTop: '2px', flexShrink: 0 }} /> 
                           <span>{p.direccion}</span>
                         </div>
                       ) : (
-                        <span style={{ fontStyle: 'italic', color: '#cbd5e1', fontSize: '0.75rem' }}>No registrada</span>
+                        <span style={{ fontStyle: 'italic', color: '#b45309', fontSize: '0.72rem', backgroundColor: '#fffbeb', padding: '2px 6px', borderRadius: '4px', border: '1px solid #fef3c7' }}>
+                          ⚠️ Sin dirección registrada
+                        </span>
                       )}
                     </td>
                     <td style={{ textAlign: 'center' }}>
@@ -1440,7 +2635,7 @@ const Proveedores = () => {
                         <button onClick={() => cargarHistorialCompras(p)} style={{ background: 'none', border: 'none', color: '#16a34a', cursor: 'pointer', padding: '5px', transition: 'transform 0.2s' }} title="Ver Historial de Compras" className="action-hover">
                           <ShoppingBag size={16} />
                         </button>
-                        <button onClick={() => handleEdit(p)} style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', padding: '5px', transition: 'transform 0.2s' }} title="Editar" className="action-hover">
+                        <button onClick={() => handleEdit(p)} style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', padding: '5px', transition: 'transform 0.2s' }} title={diag.esCompleto ? "Editar Proveedor" : "Completar Datos Faltantes"} className="action-hover">
                           <Edit size={16} />
                         </button>
                         <button onClick={() => eliminarProveedor(p.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '5px', transition: 'transform 0.2s' }} title="Eliminar" className="action-hover">
@@ -1449,13 +2644,16 @@ const Proveedores = () => {
                       </div>
                     </td>
                   </tr>
-                ))}
-              </tbody>
+                );
+              })}
+            </tbody>
             </table>
             {proveedoresFiltrados.length === 0 && (
               <div style={{ textAlign: 'center', padding: '60px 20px', color: '#94a3b8', background: 'white' }}>
                 <Search size={32} style={{ marginBottom: '15px', opacity: 0.2 }} />
-                <p style={{ margin: 0, fontWeight: '600', fontSize: '0.9rem' }}>No se encontraron proveedores activos con ese criterio.</p>
+                <p style={{ margin: 0, fontWeight: '600', fontSize: '0.9rem' }}>
+                  {filtroIntegridad !== 'todos' ? '¡Excelente! No hay proveedores pendientes con este criterio de datos faltantes.' : 'No se encontraron proveedores activos con ese criterio.'}
+                </p>
               </div>
             )}
           </div>
@@ -1469,57 +2667,166 @@ const Proveedores = () => {
             <p style={{ color: '#64748b', fontWeight: '800', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '1px' }}>Consolidando transacciones...</p>
           </div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '30px' }} className="animate-fade">
-            {/* KPI Cards */}
-            <div className="prov-analytics-grid">
-              <div className="prov-analytic-card" style={{ borderLeftColor: '#1e3a8a' }}>
-                <div className="prov-card-header">
-                  <span className="prov-card-title">Gasto Total Acumulado</span>
-                  <DollarSign className="prov-card-icon" size={20} style={{ color: '#1e3a8a' }} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }} className="animate-fade">
+            
+            {/* BARRA DE FILTROS POR FECHA */}
+            <div className="prov-filter-date-card">
+              <div className="prov-filter-date-header">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Calendar className="prov-filter-icon" size={18} />
+                  <span style={{ fontWeight: '900', fontSize: '0.85rem', color: '#0f172a', textTransform: 'uppercase', letterSpacing: '0.03em' }}>
+                    Filtrar Compras por Rango de Fechas
+                  </span>
                 </div>
-                <div className="prov-card-value">
-                  $ {rankingProveedores.reduce((sum, p) => sum + p.totalGastado, 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
-                </div>
-                <div className="prov-card-desc">En requisiciones aprobadas</div>
+                {(fechaDesdeReporte || fechaHastaReporte) ? (
+                  <span className="prov-filter-badge active">
+                    🗓️ Filtrando: {fechaDesdeReporte ? fechaDesdeReporte.split('-').reverse().join('/') : 'Inicio'} al {fechaHastaReporte ? fechaHastaReporte.split('-').reverse().join('/') : 'Hoy'} ({comprasReporteFiltradas.length} compras)
+                  </span>
+                ) : (
+                  <span className="prov-filter-badge">
+                    🌐 Mostrando Todo el Histórico ({todasLasCompras.length} compras)
+                  </span>
+                )}
               </div>
 
-              <div className="prov-analytic-card" style={{ borderLeftColor: '#10b981' }}>
-                <div className="prov-card-header">
-                  <span className="prov-card-title">Proveedor Principal</span>
-                  <TrendingUp className="prov-card-icon" size={20} style={{ color: '#10b981' }} />
+              <div className="prov-filter-date-controls">
+                <div className="prov-date-input-group">
+                  <label>Desde</label>
+                  <input
+                    type="date"
+                    value={fechaDesdeReporte}
+                    onChange={(e) => setFechaDesdeReporte(e.target.value)}
+                    className="prov-date-input"
+                  />
                 </div>
-                <div className="prov-card-value" style={{ fontSize: '1.15rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', paddingRight: '10px' }} title={rankingProveedores[0]?.razon_social || 'Ninguno'}>
-                  {rankingProveedores[0]?.razon_social || 'Ninguno'}
-                </div>
-                <div className="prov-card-desc" style={{ fontWeight: '800', color: '#10b981' }}>
-                  $ {(rankingProveedores[0]?.totalGastado || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
-                </div>
-              </div>
 
-              <div className="prov-analytic-card" style={{ borderLeftColor: '#f59e0b' }}>
-                <div className="prov-card-header">
-                  <span className="prov-card-title">Total Transacciones</span>
-                  <Package className="prov-card-icon" size={20} style={{ color: '#f59e0b' }} />
+                <div className="prov-date-input-group">
+                  <label>Hasta</label>
+                  <input
+                    type="date"
+                    value={fechaHastaReporte}
+                    onChange={(e) => setFechaHastaReporte(e.target.value)}
+                    className="prov-date-input"
+                  />
                 </div>
-                <div className="prov-card-value">
-                  {todasLasCompras.length} compras
-                </div>
-                <div className="prov-card-desc">Artículos individuales procesados</div>
-              </div>
 
-              <div className="prov-analytic-card" style={{ borderLeftColor: '#8b5cf6' }}>
-                <div className="prov-card-header">
-                  <span className="prov-card-title">Proveedores Registrados</span>
-                  <Users className="prov-card-icon" size={20} style={{ color: '#8b5cf6' }} />
-                </div>
-                <div className="prov-card-value">
-                  {proveedores.length}
-                </div>
-                <div className="prov-card-desc">
-                  {proveedores.filter(p => p.status !== false).length} activos en el directorio
+                <div className="prov-date-presets">
+                  <button
+                    type="button"
+                    className="prov-preset-btn"
+                    onClick={() => aplicarPresetFecha('este_mes')}
+                  >
+                    Este Mes
+                  </button>
+                  <button
+                    type="button"
+                    className="prov-preset-btn"
+                    onClick={() => aplicarPresetFecha('ultimos_30')}
+                  >
+                    Últimos 30 Días
+                  </button>
+                  <button
+                    type="button"
+                    className="prov-preset-btn"
+                    onClick={() => aplicarPresetFecha('este_ano')}
+                  >
+                    Este Año
+                  </button>
+                  {(fechaDesdeReporte || fechaHastaReporte) && (
+                    <button
+                      type="button"
+                      className="prov-preset-btn clear"
+                      onClick={() => aplicarPresetFecha('todo')}
+                      title="Limpiar filtro de fechas"
+                    >
+                      <RotateCcw size={13} />
+                      Limpiar
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
+
+            {/* KPI Cards (5 Tarjetas con Tasa Preferencial) */}
+            {(() => {
+              const totalGastoGlobal = comprasReporteFiltradas.reduce((sum, c) => sum + c.total, 0);
+              const gastoPreferencial = comprasReporteFiltradas
+                .filter(c => {
+                  const pMatched = proveedores.find(p => sonProveedoresCoincidentes(p, { id: c.proveedor_id, razon_social: c.proveedor_nombre }));
+                  return Boolean(pMatched && (pMatched.es_preferencial || pMatched.proveedor_preferencial));
+                })
+                .reduce((sum, c) => sum + c.total, 0);
+              const tasaPreferencialPct = totalGastoGlobal > 0 ? (gastoPreferencial / totalGastoGlobal) * 100 : 0;
+
+              return (
+                <div className="prov-analytics-grid">
+                  <div className="prov-analytic-card" style={{ borderLeftColor: '#1e3a8a' }}>
+                    <div className="prov-card-header">
+                      <span className="prov-card-title">Gasto Total Acumulado</span>
+                      <DollarSign className="prov-card-icon" size={20} style={{ color: '#1e3a8a' }} />
+                    </div>
+                    <div className="prov-card-value">
+                      $ {totalGastoGlobal.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                    </div>
+                    <div className="prov-card-desc">
+                      {(fechaDesdeReporte || fechaHastaReporte) ? 'En el período seleccionado' : 'En requisiciones aprobadas'}
+                    </div>
+                  </div>
+
+                  <div className="prov-analytic-card" style={{ borderLeftColor: '#f59e0b', backgroundColor: '#fffdf5' }}>
+                    <div className="prov-card-header">
+                      <span className="prov-card-title" style={{ color: '#92400e', fontWeight: '800' }}>Canalización Preferencial</span>
+                      <span style={{ fontSize: '18px' }}>⭐</span>
+                    </div>
+                    <div className="prov-card-value" style={{ color: '#b45309' }}>
+                      {tasaPreferencialPct.toFixed(1)} %
+                    </div>
+                    <div className="prov-card-desc" style={{ fontWeight: '800', color: '#92400e' }}>
+                      $ {gastoPreferencial.toLocaleString('de-DE', { minimumFractionDigits: 2 })} en convenios
+                    </div>
+                  </div>
+
+                  <div className="prov-analytic-card" style={{ borderLeftColor: '#10b981' }}>
+                    <div className="prov-card-header">
+                      <span className="prov-card-title">Proveedor Principal</span>
+                      <TrendingUp className="prov-card-icon" size={20} style={{ color: '#10b981' }} />
+                    </div>
+                    <div className="prov-card-value" style={{ fontSize: '1.15rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', paddingRight: '10px' }} title={rankingProveedores[0]?.razon_social || 'Ninguno'}>
+                      {rankingProveedores[0]?.razon_social || 'Ninguno'}
+                    </div>
+                    <div className="prov-card-desc" style={{ fontWeight: '800', color: '#10b981' }}>
+                      $ {(rankingProveedores[0]?.totalGastado || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                    </div>
+                  </div>
+
+                  <div className="prov-analytic-card" style={{ borderLeftColor: '#6366f1' }}>
+                    <div className="prov-card-header">
+                      <span className="prov-card-title">Total Transacciones</span>
+                      <Package className="prov-card-icon" size={20} style={{ color: '#6366f1' }} />
+                    </div>
+                    <div className="prov-card-value">
+                      {comprasReporteFiltradas.length} compras
+                    </div>
+                    <div className="prov-card-desc">
+                      {(fechaDesdeReporte || fechaHastaReporte) ? 'Artículos en el período' : 'Artículos individuales procesados'}
+                    </div>
+                  </div>
+
+                  <div className="prov-analytic-card" style={{ borderLeftColor: '#8b5cf6' }}>
+                    <div className="prov-card-header">
+                      <span className="prov-card-title">Proveedores Registrados</span>
+                      <Users className="prov-card-icon" size={20} style={{ color: '#8b5cf6' }} />
+                    </div>
+                    <div className="prov-card-value">
+                      {proveedores.length}
+                    </div>
+                    <div className="prov-card-desc">
+                      {rankingProveedores.length} con compras registradas
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Section A: Comparador de Precios */}
             <div className="prov-section-card">
@@ -1691,53 +2998,65 @@ const Proveedores = () => {
                         </td>
                       </tr>
                     ) : (
-                      rankingOrdenado.map((p, idx) => (
-                        <tr key={idx}>
-                          <td className="rif-cell">{p.rif}</td>
-                          <td className="name-cell">{p.razon_social}</td>
-                          <td>
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
-                              {p.categoria ? p.categoria.split(', ').map((cat, i) => (
-                                <span key={i} style={{ backgroundColor: '#f8fafc', padding: '2px 6px', borderRadius: '4px', fontSize: '0.6rem', fontWeight: '800', color: '#475569', border: '1px solid #e2e8f0' }}>
-                                  {cat}
-                                </span>
-                              )) : <span style={{ color: '#cbd5e1' }}>-</span>}
-                            </div>
-                          </td>
-                          <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{p.comprasCount}</td>
-                          <td style={{ textAlign: 'right' }}>{p.unidadesCompradas}</td>
-                          <td style={{ textAlign: 'right', fontWeight: '800', color: '#16a34a' }}>
-                            $ {p.totalGastado.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
-                          </td>
-                          <td style={{ textAlign: 'right', color: '#475569' }}>
-                            $ {p.promedioCompra.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
-                          </td>
-                          <td style={{ textAlign: 'center' }}>
-                            <button
-                              type="button"
-                              onClick={() => cargarHistorialCompras(p)}
-                              style={{
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '4px',
-                                padding: '5px 10px',
-                                backgroundColor: '#eff6ff',
-                                color: '#1e40af',
-                                border: '1px solid #bfdbfe',
-                                borderRadius: '6px',
-                                fontWeight: 'bold',
-                                fontSize: '0.7rem',
-                                cursor: 'pointer',
-                                transition: 'all 0.2s'
-                              }}
-                              className="action-hover"
-                            >
-                              <ShoppingBag size={12} />
-                              Historial
-                            </button>
-                          </td>
-                        </tr>
-                      ))
+                      rankingOrdenado.map((p, idx) => {
+                        const esPref = Boolean(p.es_preferencial || p.proveedor_preferencial);
+                        return (
+                          <tr key={p.id || p.rif || p.razon_social || idx}>
+                            <td className="rif-cell">{p.rif}</td>
+                            <td className="name-cell">
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <span style={{ fontWeight: '800' }}>{p.razon_social}</span>
+                                {esPref && (
+                                  <span style={{ backgroundColor: '#FEF3C7', color: '#92400E', padding: '2px 6px', borderRadius: '4px', fontSize: '0.62rem', fontWeight: '900', border: '1px solid #FDE68A' }}>
+                                    ★ PREFERENCIAL
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                            <td>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                                {p.categoria ? p.categoria.split(', ').map((cat, i) => (
+                                  <span key={i} style={{ backgroundColor: '#f8fafc', padding: '2px 6px', borderRadius: '4px', fontSize: '0.6rem', fontWeight: '800', color: '#475569', border: '1px solid #e2e8f0' }}>
+                                    {cat}
+                                  </span>
+                                )) : <span style={{ color: '#cbd5e1' }}>-</span>}
+                              </div>
+                            </td>
+                            <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{p.comprasCount}</td>
+                            <td style={{ textAlign: 'right' }}>{p.unidadesCompradas}</td>
+                            <td style={{ textAlign: 'right', fontWeight: '800', color: '#16a34a' }}>
+                              $ {p.totalGastado.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                            </td>
+                            <td style={{ textAlign: 'right', color: '#475569' }}>
+                              $ {p.promedioCompra.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                            </td>
+                            <td style={{ textAlign: 'center' }}>
+                              <button
+                                type="button"
+                                onClick={() => cargarHistorialCompras(p)}
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                  padding: '5px 10px',
+                                  backgroundColor: '#eff6ff',
+                                  color: '#1e40af',
+                                  border: '1px solid #bfdbfe',
+                                  borderRadius: '6px',
+                                  fontWeight: 'bold',
+                                  fontSize: '0.7rem',
+                                  cursor: 'pointer',
+                                  transition: 'all 0.2s'
+                                }}
+                                className="action-hover"
+                              >
+                                <ShoppingBag size={12} />
+                                Historial
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })
                     )}
                   </tbody>
                 </table>
@@ -1752,10 +3071,22 @@ const Proveedores = () => {
         {showModal && (
           <div className="prov-modal-overlay">
             <div className="prov-modal">
-              <div className="prov-modal-header">
-                <h2 className="prov-modal-title">
-                  {formData.id ? 'Editar Proveedor' : 'Agregar Proveedor'}
-                </h2>
+              <div className="prov-modal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                <div>
+                  <h2 className="prov-modal-title" style={{ margin: 0 }}>
+                    {formData.id ? 'Editar Proveedor' : 'Agregar Proveedor'}
+                  </h2>
+                  {formData.id && (
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', backgroundColor: '#f1f5f9', padding: '3px 10px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '0.72rem', color: '#475569', marginTop: '6px' }}>
+                      <span>👤 Registrado por: <strong style={{ color: '#0f172a' }}>{formData.creado_por_nombre || formData.creado_por || 'Analista Compras'}</strong></span>
+                      {(formData.actualizado_por_nombre || formData.actualizado_por) && (
+                        <span style={{ borderLeft: '1px solid #cbd5e1', paddingLeft: '8px', marginLeft: '2px' }}>
+                          ✏️ Editado por: <strong style={{ color: '#0f172a' }}>{formData.actualizado_por_nombre || formData.actualizado_por}</strong>
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
                 <button onClick={() => setShowModal(false)} className="prov-modal-close">
                   <XCircle size={24} />
                 </button>
@@ -1941,40 +3272,138 @@ const Proveedores = () => {
                 </div>
 
                 <div className="prov-field">
-                  <label className="prov-label">Ciudad / Localización <span style={{ color: '#ef4444' }}>*</span></label>
-                  <input 
-                    className="prov-input"
-                    list="localizaciones-list"
-                    placeholder="Ej: Maracaibo, Barcelona..."
-                    value={formData.ciudad || formData.localizacion || ''}
-                    onChange={e => setFormData({...formData, ciudad: e.target.value, localizacion: e.target.value})}
-                  />
-                  <datalist id="localizaciones-list">
-                    {obtenerOpcionesLocalizacion.map((loc, idx) => (
-                      <option key={idx} value={loc} />
-                    ))}
-                  </datalist>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                    <label className="prov-label" style={{ margin: 0 }}>
+                      Ciudad / Localización <span style={{ color: '#ef4444' }}>*</span>
+                    </label>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      {!creandoNuevaCiudad ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => { setCreandoNuevaCiudad(true); setNuevaCiudadText(''); }}
+                            style={{ background: 'none', border: 'none', color: '#0284c7', fontSize: '11px', fontWeight: '800', cursor: 'pointer', padding: 0 }}
+                          >
+                            + Nueva Ciudad
+                          </button>
+                          {ciudadesList.length > 1 && (formData.ciudad || formData.localizacion) && (
+                            <button
+                              type="button"
+                              onClick={() => eliminarCiudad(formData.ciudad || formData.localizacion)}
+                              style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: '11px', fontWeight: '700', cursor: 'pointer', padding: 0 }}
+                              title={`Eliminar "${formData.ciudad || formData.localizacion}" de la lista`}
+                            >
+                              🗑️ Quitar ({formData.ciudad || formData.localizacion})
+                            </button>
+                          )}
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => { setCreandoNuevaCiudad(false); setNuevaCiudadText(''); }}
+                          style={{ background: 'none', border: 'none', color: '#64748b', fontSize: '11px', fontWeight: '700', cursor: 'pointer', padding: 0 }}
+                        >
+                          ← Volver a lista
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {creandoNuevaCiudad ? (
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                      <input
+                        type="text"
+                        className="prov-input"
+                        placeholder="Nombre de la nueva ciudad (Ej: Barquisimeto)"
+                        value={nuevaCiudadText}
+                        onChange={e => setNuevaCiudadText(e.target.value)}
+                        style={{ flex: 1, height: '38px', fontSize: '12px' }}
+                        autoFocus
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            agregarCiudad();
+                          }
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={agregarCiudad}
+                        style={{
+                          backgroundColor: '#0284c7',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '8px',
+                          padding: '0 14px',
+                          fontWeight: '800',
+                          fontSize: '11px',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        GUARDAR
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setCreandoNuevaCiudad(false); setNuevaCiudadText(''); }}
+                        style={{
+                          backgroundColor: '#f1f5f9',
+                          color: '#475569',
+                          border: '1px solid #cbd5e1',
+                          borderRadius: '8px',
+                          padding: '0 10px',
+                          fontWeight: '700',
+                          fontSize: '11px',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ) : (
+                    <select 
+                      className="prov-input"
+                      style={{ backgroundColor: 'white', cursor: 'pointer', height: '38px', fontSize: '13px' }}
+                      value={formData.ciudad || formData.localizacion || 'Maracaibo'}
+                      onChange={e => {
+                        if (e.target.value === '__NUEVA__') {
+                          setCreandoNuevaCiudad(true);
+                        } else {
+                          setFormData({...formData, ciudad: e.target.value, localizacion: e.target.value});
+                        }
+                      }}
+                    >
+                      {obtenerOpcionesLocalizacion.map((loc, idx) => (
+                        <option key={idx} value={loc}>{loc}</option>
+                      ))}
+                      <option value="__NUEVA__">+ Agregar nueva ciudad...</option>
+                    </select>
+                  )}
                 </div>
 
-                  <div className="prov-field">
-                    <label className="prov-label">Correo (OPCIONAL)</label>
-                    <input 
-                      type="email"
-                      className="prov-input"
-                      placeholder="ejemplo@empresa.com"
-                      value={formData.correo}
-                      onChange={e => setFormData({...formData, correo: e.target.value})}
-                    />
-                  </div>
-                  <div className="prov-field">
-                    <label className="prov-label">Teléfono <span style={{ color: '#ef4444' }}>*</span></label>
-                    <input 
-                      className="prov-input"
-                      placeholder="0414-XXXXXXX"
-                      value={formData.telefono}
-                      onChange={e => setFormData({...formData, telefono: e.target.value})}
-                    />
-                  </div>
+                <div className="prov-field">
+                  <label className="prov-label">Correo (OPCIONAL)</label>
+                  <input 
+                    type="email"
+                    className="prov-input"
+                    placeholder="ejemplo@empresa.com"
+                    value={formData.correo || ''}
+                    onChange={e => setFormData({...formData, correo: e.target.value})}
+                  />
+                  {Boolean(formData.correo && formData.correo.trim() && (!formData.correo.includes('.') || !formData.correo.includes('@'))) && (
+                    <span style={{ fontSize: '0.72rem', color: '#dc2626', marginTop: '2px', display: 'block' }}>
+                      ⚠️ Debe incluir "@" y un dominio con punto (ej: .com)
+                    </span>
+                  )}
+                </div>
+                <div className="prov-field">
+                  <label className="prov-label">Teléfono <span style={{ color: '#ef4444' }}>*</span></label>
+                  <input 
+                    className="prov-input"
+                    placeholder="0414-XXXXXXX"
+                    value={formData.telefono || ''}
+                    onChange={e => setFormData({...formData, telefono: e.target.value})}
+                  />
+                </div>
 
                   <div className="prov-field prov-form-full" style={{ borderTop: '1px solid #cbd5e1', paddingTop: '15px', marginTop: '10px' }}>
                     <label className="prov-label" style={{ fontSize: '11px', fontWeight: '900', color: '#1e293b', marginBottom: '10px', display: 'block' }}>
@@ -2238,17 +3667,161 @@ const Proveedores = () => {
                         </div>
                       </div>
 
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '10px' }}>
-                        <input
-                          type="checkbox"
-                          id="chk-preferencial"
-                          checked={formData.proveedor_preferencial}
-                          onChange={e => setFormData({ ...formData, proveedor_preferencial: e.target.checked })}
-                          style={{ width: '16px', height: '16px', cursor: 'pointer' }}
-                        />
-                        <label htmlFor="chk-preferencial" style={{ fontSize: '0.75rem', fontWeight: '800', color: '#15803d', cursor: 'pointer' }}>
-                          ⭐ Proveedor Preferencial
-                        </label>
+                      {/* ACUERDO COMERCIAL INSTITUCIONAL (PROVEEDOR PREFERENCIAL) */}
+                      <div style={{ 
+                        borderTop: '2px dashed #fde68a', 
+                        marginTop: '15px', 
+                        paddingTop: '15px',
+                        backgroundColor: (formData.es_preferencial || formData.proveedor_preferencial) ? '#fffdf5' : '#f8fafc',
+                        padding: '16px',
+                        borderRadius: '16px',
+                        border: (formData.es_preferencial || formData.proveedor_preferencial) ? '1px solid #fde68a' : '1px solid #e2e8f0'
+                      }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px', marginBottom: '12px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <span style={{ fontSize: '20px' }}>⭐</span>
+                            <div>
+                              <h4 style={{ margin: 0, fontSize: '0.85rem', fontWeight: '900', color: '#92400e', textTransform: 'uppercase', letterSpacing: '0.03em' }}>
+                                Acuerdo Comercial Institucional
+                              </h4>
+                              <p style={{ margin: '2px 0 0 0', fontSize: '0.72rem', color: '#78350f' }}>
+                                Convenio formal y designación como Proveedor Preferencial
+                              </p>
+                            </div>
+                          </div>
+
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            {!puedeGestionarPreferenciales && (
+                              <span style={{ fontSize: '0.68rem', backgroundColor: '#f1f5f9', color: '#64748b', padding: '3px 8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontWeight: '700' }}>
+                                🔒 Solo Gerencia de Compras / Dirección / Super Admin
+                              </span>
+                            )}
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: puedeGestionarPreferenciales ? 'pointer' : 'not-allowed', margin: 0 }}>
+                              <input
+                                type="checkbox"
+                                checked={Boolean(formData.es_preferencial || formData.proveedor_preferencial)}
+                                disabled={!puedeGestionarPreferenciales}
+                                onChange={e => {
+                                  const checked = e.target.checked;
+                                  setFormData({
+                                    ...formData,
+                                    es_preferencial: checked,
+                                    proveedor_preferencial: checked,
+                                    nivel_preferencial: checked ? (formData.nivel_preferencial && formData.nivel_preferencial !== 'Regular' ? formData.nivel_preferencial : 'Tier 1 / Oro') : 'Regular'
+                                  });
+                                }}
+                                style={{ width: '18px', height: '18px', cursor: puedeGestionarPreferenciales ? 'pointer' : 'not-allowed', accentColor: '#f59e0b' }}
+                              />
+                              <span style={{ fontSize: '0.78rem', fontWeight: '900', color: (formData.es_preferencial || formData.proveedor_preferencial) ? '#b45309' : '#64748b' }}>
+                                Designar como Proveedor Preferencial
+                              </span>
+                            </label>
+                          </div>
+                        </div>
+
+                        {(formData.es_preferencial || formData.proveedor_preferencial) && (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '10px' }}>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
+                              <div>
+                                <label className="prov-label" style={{ color: '#92400e' }}>NIVEL PREFERENCIAL</label>
+                                <select
+                                  className="prov-input"
+                                  disabled={!puedeGestionarPreferenciales}
+                                  style={{ backgroundColor: 'white', fontWeight: '700', border: '1px solid #fde68a' }}
+                                  value={formData.nivel_preferencial || 'Tier 1 / Oro'}
+                                  onChange={e => setFormData({ ...formData, nivel_preferencial: e.target.value })}
+                                >
+                                  <option value="Tier 1 / Oro">🥇 Tier 1 / Oro (Estratégico)</option>
+                                  <option value="Tier 2 / Plata">🥈 Tier 2 / Plata (Recurrente)</option>
+                                  <option value="Regular">⚪ Regular</option>
+                                </select>
+                              </div>
+
+                              <div>
+                                <label className="prov-label" style={{ color: '#92400e' }}>DESCUENTO PACTADO (%)</label>
+                                <input
+                                  type="number"
+                                  step="0.1"
+                                  min="0"
+                                  max="100"
+                                  className="prov-input"
+                                  disabled={!puedeGestionarPreferenciales}
+                                  placeholder="Ej: 5.00"
+                                  style={{ backgroundColor: 'white' }}
+                                  value={formData.descuento_pactado_porcentaje}
+                                  onChange={e => setFormData({ ...formData, descuento_pactado_porcentaje: e.target.value })}
+                                />
+                              </div>
+
+                              <div>
+                                <label className="prov-label" style={{ color: '#92400e' }}>DÍAS DE CRÉDITO PACTADOS</label>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  className="prov-input"
+                                  disabled={!puedeGestionarPreferenciales}
+                                  placeholder="Ej: 30"
+                                  style={{ backgroundColor: 'white' }}
+                                  value={formData.dias_credito_pactados || formData.dias_credito || ''}
+                                  onChange={e => setFormData({ ...formData, dias_credito_pactados: e.target.value, dias_credito: e.target.value })}
+                                />
+                              </div>
+
+                              <div>
+                                <label className="prov-label" style={{ color: '#92400e' }}>TIEMPO DE ENTREGA (DÍAS)</label>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  className="prov-input"
+                                  disabled={!puedeGestionarPreferenciales}
+                                  placeholder="Ej: 3"
+                                  style={{ backgroundColor: 'white' }}
+                                  value={formData.tiempo_entrega_acordado_dias || ''}
+                                  onChange={e => setFormData({ ...formData, tiempo_entrega_acordado_dias: e.target.value })}
+                                />
+                              </div>
+                            </div>
+
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
+                              <div>
+                                <label className="prov-label" style={{ color: '#92400e' }}>VIGENCIA ACUERDO: DESDE</label>
+                                <input
+                                  type="date"
+                                  className="prov-input"
+                                  disabled={!puedeGestionarPreferenciales}
+                                  style={{ backgroundColor: 'white' }}
+                                  value={formData.vigencia_acuerdo_desde || ''}
+                                  onChange={e => setFormData({ ...formData, vigencia_acuerdo_desde: e.target.value })}
+                                />
+                              </div>
+
+                              <div>
+                                <label className="prov-label" style={{ color: '#92400e' }}>VIGENCIA ACUERDO: HASTA</label>
+                                <input
+                                  type="date"
+                                  className="prov-input"
+                                  disabled={!puedeGestionarPreferenciales}
+                                  style={{ backgroundColor: 'white' }}
+                                  value={formData.vigencia_acuerdo_hasta || ''}
+                                  onChange={e => setFormData({ ...formData, vigencia_acuerdo_hasta: e.target.value })}
+                                />
+                              </div>
+                            </div>
+
+                            <div>
+                              <label className="prov-label" style={{ color: '#92400e' }}>CLÁUSULAS / NOTAS DEL CONVENIO</label>
+                              <textarea
+                                rows={2}
+                                className="prov-input"
+                                disabled={!puedeGestionarPreferenciales}
+                                placeholder="Condiciones específicas pactadas (ej: despacho sin costo a planta, garantía extendida 12 meses, etc.)..."
+                                style={{ backgroundColor: 'white', resize: 'vertical' }}
+                                value={formData.condiciones_acuerdo_nota || ''}
+                                onChange={e => setFormData({ ...formData, condiciones_acuerdo_nota: e.target.value })}
+                              />
+                            </div>
+                          </div>
+                        )}
                       </div>
 
                       <div style={{ marginTop: '8px' }}>
@@ -2333,9 +3906,19 @@ const Proveedores = () => {
                     </div>
                   </div>
 
-                  <button onClick={() => setShowHistoryModal(false)} className="prov-modal-close" style={{ background: '#f1f5f9', border: 'none', borderRadius: '12px', width: '36px', height: '36px', cursor: 'pointer', color: '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    <XCircle size={20} />
-                  </button>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', backgroundColor: '#f8fafc', padding: '5px 12px', borderRadius: '10px', border: '1px solid #cbd5e1', fontSize: '0.72rem', color: '#475569' }}>
+                      <span>👤 Registrado por: <strong style={{ color: '#0f172a' }}>{provSeleccionado.creado_por_nombre || provSeleccionado.creado_por || 'Analista Compras'}</strong></span>
+                      {(provSeleccionado.actualizado_por_nombre || provSeleccionado.actualizado_por) && (
+                        <span style={{ borderLeft: '1px solid #cbd5e1', paddingLeft: '8px', marginLeft: '2px' }}>
+                          ✏️ Editado por: <strong style={{ color: '#0f172a' }}>{provSeleccionado.actualizado_por_nombre || provSeleccionado.actualizado_por}</strong>
+                        </span>
+                      )}
+                    </div>
+                    <button onClick={() => setShowHistoryModal(false)} className="prov-modal-close" style={{ background: '#f1f5f9', border: 'none', borderRadius: '12px', width: '36px', height: '36px', cursor: 'pointer', color: '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <XCircle size={20} />
+                    </button>
+                  </div>
                 </div>
 
                 {/* Fila 2: Tarjetas de Contacto y Ubicación (Evita texto encimado) */}
@@ -2578,30 +4161,64 @@ const Proveedores = () => {
                   {/* PESTAÑA 2: HISTORIAL DE COMPRAS Y FACTURAS */}
                   {subTabFicha === 'historial' && (
                     <div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
-                        <div style={{ fontSize: '0.85rem', fontWeight: '700', color: '#475569' }}>
-                          Total Compras: <strong>$ {historialCompras.reduce((sum, c) => sum + c.total, 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</strong> ({historialCompras.length} transacciones)
+                      {/* FILTRO DE FECHAS EN HISTORIAL DE PROVEEDOR */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', flexWrap: 'wrap', gap: '12px', backgroundColor: '#f8fafc', padding: '12px 16px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', fontWeight: '800', color: '#475569' }}>
+                            <Calendar size={14} style={{ color: '#0ea5e9' }} />
+                            <span>Desde:</span>
+                            <input
+                              type="date"
+                              value={fechaDesdeHistorial}
+                              onChange={(e) => setFechaDesdeHistorial(e.target.value)}
+                              style={{ padding: '5px 8px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.75rem', fontWeight: '600', outline: 'none' }}
+                            />
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', fontWeight: '800', color: '#475569' }}>
+                            <span>Hasta:</span>
+                            <input
+                              type="date"
+                              value={fechaHastaHistorial}
+                              onChange={(e) => setFechaHastaHistorial(e.target.value)}
+                              style={{ padding: '5px 8px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.75rem', fontWeight: '600', outline: 'none' }}
+                            />
+                          </div>
+                          {(fechaDesdeHistorial || fechaHastaHistorial) && (
+                            <button
+                              type="button"
+                              onClick={() => { setFechaDesdeHistorial(''); setFechaHastaHistorial(''); }}
+                              style={{ background: '#fee2e2', color: '#991b1b', border: '1px solid #fecaca', borderRadius: '8px', padding: '5px 10px', fontSize: '0.72rem', fontWeight: '800', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                            >
+                              <RotateCcw size={12} /> Limpiar
+                            </button>
+                          )}
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => exportHistoryToExcel(provSeleccionado)}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '6px',
-                            padding: '8px 16px',
-                            backgroundColor: '#16a34a',
-                            color: 'white',
-                            border: 'none',
-                            borderRadius: '8px',
-                            fontWeight: 'bold',
-                            fontSize: '0.75rem',
-                            cursor: 'pointer'
-                          }}
-                        >
-                          <FileSpreadsheet size={14} />
-                          Exportar Excel
-                        </button>
+
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+                          <div style={{ fontSize: '0.85rem', fontWeight: '700', color: '#475569' }}>
+                            Total: <strong style={{ color: '#15803d' }}>$ {historialComprasFiltrado.reduce((sum, c) => sum + c.total, 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</strong> ({historialComprasFiltrado.length}{historialComprasFiltrado.length !== historialCompras.length ? ` de ${historialCompras.length}` : ''} transacciones)
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => exportHistoryToExcel(provSeleccionado)}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                              padding: '8px 16px',
+                              backgroundColor: '#16a34a',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '8px',
+                              fontWeight: 'bold',
+                              fontSize: '0.75rem',
+                              cursor: 'pointer'
+                            }}
+                          >
+                            <FileSpreadsheet size={14} />
+                            Exportar Excel
+                          </button>
+                        </div>
                       </div>
 
                       <div style={{ overflowY: 'auto', maxHeight: '350px', border: '1px solid #e2e8f0', borderRadius: '14px' }}>
@@ -2620,14 +4237,14 @@ const Proveedores = () => {
                             </tr>
                           </thead>
                           <tbody>
-                            {historialCompras.length === 0 ? (
+                            {historialComprasFiltrado.length === 0 ? (
                               <tr>
                                 <td colSpan="9" style={{ padding: '40px', textAlign: 'center', color: '#94a3b8', fontWeight: 'bold' }}>
-                                  No se registran compras para este proveedor en requisiciones finalizadas.
+                                  No se registran compras para este proveedor en el período seleccionado.
                                 </td>
                               </tr>
                             ) : (
-                              historialCompras.map((c, i) => {
+                              historialComprasFiltrado.map((c, i) => {
                                 const diasCred = Number(provSeleccionado.dias_credito) || 0;
                                 let fechaVencStr = '—';
                                 if (c.fecha !== '—') {

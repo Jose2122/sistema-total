@@ -470,3 +470,117 @@
 .rm-stat-card.primary .rm-stat-icon {
   display: none !important;
 }
+
+/* --- TABS NAVEGACIÓN EN REPORTES --- */
+.rep-tab-nav {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 22px;
+  background: #f1f5f9;
+  padding: 5px;
+  border-radius: 14px;
+  border: 1px solid #e2e8f0;
+  width: fit-content;
+}
+
+.rep-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 18px;
+  border-radius: 10px;
+  border: none;
+  background: transparent;
+  color: #64748b;
+  font-size: 0.8rem;
+  font-weight: 800;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.rep-tab-btn:hover {
+  color: #0f172a;
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.rep-tab-btn.active {
+  background: white;
+  color: #0284c7;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  border: 1px solid #e2e8f0;
+}
+
+/* --- TABLA DE LEAD TIMES / SLA COMPRAS (EXACTA A LA REFERENCIA) --- */
+.sla-table-wrapper {
+  background: white;
+  border-radius: 18px;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+  overflow-x: auto;
+  max-height: 680px;
+}
+
+.sla-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.sla-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 15;
+  background-color: #1e293b;
+  color: #ffffff;
+  padding: 12px 10px;
+  font-size: 0.68rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-right: 1px solid #334155;
+  text-align: center;
+}
+
+.sla-table tbody tr {
+  border-bottom: 1px solid #f1f5f9;
+  transition: background-color 0.15s ease;
+}
+
+.sla-table tbody tr:hover {
+  background-color: #f8fafc;
+}
+
+.sla-table tbody td {
+  padding: 9px 10px;
+  color: #334155;
+  border-right: 1px solid #f1f5f9;
+}
+
+.sla-badge-te {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-weight: 800;
+  font-size: 0.7rem;
+}
+
+.sla-badge-te.fast {
+  background-color: #dcfce7;
+  color: #15803d;
+  border: 1px solid #bbf7d0;
+}
+
+.sla-badge-te.medium {
+  background-color: #fef3c7;
+  color: #b45309;
+  border: 1px solid #fde68a;
+}
+
+.sla-badge-te.slow {
+  background-color: #fee2e2;
+  color: #b91c1c;
+  border: 1px solid #fecaca;
+}

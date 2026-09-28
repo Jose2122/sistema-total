@@ -1921,7 +1921,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
 
       {/* MODAL DETALLES DE FACTURA */}
       {invoiceSeleccionada && (
-        <div className="liquidacion-modal-overlay">
+        <div className="liquidacion-modal-overlay" style={{ zIndex: 3000 }}>
           <div className="liquidacion-modal-card">
             <div className="liquidacion-modal-header">
               <h3>Factura: {invoiceSeleccionada.doc_numero} — {invoiceSeleccionada.proveedor_nombre}</h3>
@@ -2154,7 +2154,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
         const estatusPagoOdc = (odcPreviewSeleccionada.estatus_pago || odcPreviewSeleccionada.status_pago || 'PENDIENTE').toUpperCase();
 
         return (
-          <div className="liquidacion-modal-overlay" style={{ zIndex: 9999 }}>
+          <div className="liquidacion-modal-overlay" style={{ zIndex: 3000 }}>
             <div className="liquidacion-modal-card" style={{ maxWidth: '940px', width: '94%', maxHeight: '90vh', overflowY: 'auto', borderRadius: '24px', padding: '28px', backgroundColor: 'white' }}>
               
               {/* CABECERA DE MODAL */}
@@ -2517,7 +2517,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
 
       {/* MODAL REGISTRO DE ABONO */}
       {showAbonoModal && (
-        <div className="liquidacion-modal-overlay">
+        <div className="liquidacion-modal-overlay" style={{ zIndex: 10000 }}>
           <div className="liquidacion-modal-card form-abono">
             <div className="liquidacion-modal-header">
               <h3>{abonoForm.es_odc ? `Registrar Pago / Abono — ODC ${abonoForm.numero_odc || abonoForm.factura_num}` : `Registrar Abono de Factura: ${abonoForm.factura_num}`}</h3>

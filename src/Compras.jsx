@@ -6,7 +6,7 @@ import { supabase } from './supabaseClient';
 import toast from 'react-hot-toast';
 import { format } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Loader2, Upload, FileText, MessageSquare, Paperclip, Clock, CheckCircle2, AlertCircle, ShoppingBag, ChevronDown, X, Landmark } from 'lucide-react';
+import { Loader2, Upload, FileText, MessageSquare, Paperclip, Clock, CheckCircle2, AlertCircle, ShoppingBag, ChevronDown, X, Landmark, Trash2 } from 'lucide-react';
 import { getSemanaInfo, getSemanaInfoForWeek } from './utils/helpers';
 import { compressImage } from './utils/compressImage';
 import './Requisiciones.css';
@@ -548,6 +548,32 @@ const Compras = () => {
       setNuevoDestinoForm({ nombre: '', direccion: '', contacto_nombre: '', contacto_telefono: '' });
     } catch (err) {
       toast.error("Error al guardar destino: " + err.message);
+    }
+  };
+
+  const eliminarDestino = async (destinoId) => {
+    if (!destinoId) return;
+    const dest = destinosDespacho.find(d => String(d.id) === String(destinoId));
+    if (!dest) return;
+    if (!window.confirm(`¿Está seguro de eliminar el destino de despacho "${dest.nombre}"?`)) return;
+
+    try {
+      const { error } = await supabase
+        .from('destinos_despacho_predeterminados')
+        .delete()
+        .eq('id', destinoId);
+      if (error) throw error;
+      toast.success("Destino de despacho eliminado.");
+      setDestinosDespacho(prev => prev.filter(d => String(d.id) !== String(destinoId)));
+      if (String(odcForm.despachar_a_id) === String(destinoId)) {
+        setOdcForm(prev => ({
+          ...prev,
+          despachar_a_id: '',
+          despachar_a_direccion: ''
+        }));
+      }
+    } catch (err) {
+      toast.error("Error al eliminar destino: " + err.message);
     }
   };
 
@@ -5688,59 +5714,60 @@ const Compras = () => {
               <button onClick={() => setShowOdcModal(false)} style={{ border: 'none', background: '#f1f5f9', borderRadius: '50%', width: '32px', height: '32px', cursor: 'pointer', fontWeight: 'bold' }}>✕</button>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '20px' }}>
-              {/* Proveedor y Categoría */}
-              <div style={{ display: 'flex', gap: '12px' }}>
-                <div style={{ width: '45%' }}>
-                  <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#0ea5e9', display: 'block', marginBottom: '6px' }}>🔍 CATEGORÍA</label>
-                  <select
-                    className="input-tc"
-                    style={{ width: '100%', padding: '10px', fontWeight: '800', borderRadius: '8px', border: '1px solid #38bdf8', backgroundColor: '#f0f9ff', color: '#0284c7' }}
-                    value={filtroCatProvOdc}
-                    onChange={(e) => setFiltroCatProvOdc(e.target.value)}
-                  >
-                    <option value="TODAS">Todas ({proveedores.length})</option>
-                    {categoriasProveedoresOdc.map(cat => (
-                      <option key={cat} value={cat}>{cat}</option>
-                    ))}
-                  </select>
-                </div>
-                <div style={{ flex: 1 }}>
-                  <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '6px' }}>PROVEEDOR * ({proveedoresOdcFiltrados.length})</label>
-                  <select
-                    className="input-tc"
-                    style={{ width: '100%', padding: '10px', fontWeight: '700', borderRadius: '8px', border: '1px solid #cbd5e1' }}
-                    value={odcForm.proveedor_id}
-                    onChange={(e) => {
-                      const provId = e.target.value;
-                      const prov = proveedores.find(p => String(p.id) === String(provId));
-                      let defaultCtaStr = '';
-                      if (prov?.cuentas_bancarias) {
-                        let ctas = [];
-                        if (Array.isArray(prov.cuentas_bancarias)) ctas = prov.cuentas_bancarias;
-                        else if (typeof prov.cuentas_bancarias === 'string') {
-                          try { ctas = JSON.parse(prov.cuentas_bancarias); } catch { ctas = []; }
-                        }
-                        if (ctas.length > 0) {
-                          const c0 = ctas[0];
-                          defaultCtaStr = `${c0.banco || 'Banco'} (${c0.moneda || 'USD'}) - N° Cuenta: ${c0.nro_cuenta || 'N/A'} - Titular: ${c0.titular || 'N/A'} (${c0.rif || 'N/A'}) ${c0.tipo_cuenta ? `[${c0.tipo_cuenta}]` : ''}`;
-                        }
+            {/* Fila 1: Categoría, Proveedor, Cuenta Bancaria (Alineados en la misma base) */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.8fr 2.5fr', gap: '15px', alignItems: 'flex-end', marginBottom: '20px' }}>
+              {/* Categoría */}
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#0ea5e9', marginBottom: '6px' }}>🔍 CATEGORÍA</label>
+                <select
+                  className="input-tc"
+                  style={{ width: '100%', padding: '10px', fontWeight: '800', borderRadius: '8px', border: '1px solid #38bdf8', backgroundColor: '#f0f9ff', color: '#0284c7' }}
+                  value={filtroCatProvOdc}
+                  onChange={(e) => setFiltroCatProvOdc(e.target.value)}
+                >
+                  <option value="TODAS">Todas ({proveedores.length})</option>
+                  {categoriasProveedoresOdc.map(cat => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Proveedor */}
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569', marginBottom: '6px' }}>PROVEEDOR * ({proveedoresOdcFiltrados.length})</label>
+                <select
+                  className="input-tc"
+                  style={{ width: '100%', padding: '10px', fontWeight: '700', borderRadius: '8px', border: '1px solid #cbd5e1' }}
+                  value={odcForm.proveedor_id}
+                  onChange={(e) => {
+                    const provId = e.target.value;
+                    const prov = proveedores.find(p => String(p.id) === String(provId));
+                    let defaultCtaStr = '';
+                    if (prov?.cuentas_bancarias) {
+                      let ctas = [];
+                      if (Array.isArray(prov.cuentas_bancarias)) ctas = prov.cuentas_bancarias;
+                      else if (typeof prov.cuentas_bancarias === 'string') {
+                        try { ctas = JSON.parse(prov.cuentas_bancarias); } catch { ctas = []; }
                       }
-                      setOdcForm(prev => ({
-                        ...prev,
-                        proveedor_id: provId,
-                        cuenta_bancaria_proveedor: defaultCtaStr,
-                        tipo_pago: prov?.condicion_pago_defecto || prev.tipo_pago,
-                        dias_credito: prov?.dias_credito_habituales || prov?.dias_credito || 0
-                      }));
-                    }}
-                  >
-                    <option value="">Seleccione Proveedor...</option>
-                    {proveedoresOdcFiltrados.map(p => (
-                      <option key={p.id} value={p.id}>{p.razon_social} {p.rif ? `(${p.rif})` : ''}</option>
-                    ))}
-                  </select>
-                </div>
+                      if (ctas.length > 0) {
+                        const c0 = ctas[0];
+                        defaultCtaStr = `${c0.banco || 'Banco'} (${c0.moneda || 'USD'}) - N° Cuenta: ${c0.nro_cuenta || 'N/A'} - Titular: ${c0.titular || 'N/A'} (${c0.rif || 'N/A'}) ${c0.tipo_cuenta ? `[${c0.tipo_cuenta}]` : ''}`;
+                      }
+                    }
+                    setOdcForm(prev => ({
+                      ...prev,
+                      proveedor_id: provId,
+                      cuenta_bancaria_proveedor: defaultCtaStr,
+                      tipo_pago: prov?.condicion_pago_defecto || prev.tipo_pago,
+                      dias_credito: prov?.dias_credito_habituales || prov?.dias_credito || 0
+                    }));
+                  }}
+                >
+                  <option value="">Seleccione Proveedor...</option>
+                  {proveedoresOdcFiltrados.map(p => (
+                    <option key={p.id} value={p.id}>{p.razon_social} {p.rif ? `(${p.rif})` : ''}</option>
+                  ))}
+                </select>
               </div>
 
               {/* Cuenta Bancaria de Destino del Proveedor */}
@@ -5755,8 +5782,8 @@ const Compras = () => {
                 }
 
                 return (
-                  <div style={{ marginTop: '14px', marginBottom: '16px' }}>
-                    <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#0ea5e9', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column' }}>
+                    <label style={{ fontSize: '0.72rem', fontWeight: '800', color: '#0ea5e9', display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '6px' }}>
                       <Landmark size={14} /> CUENTA BANCARIA DE DESTINO PARA PAGO (PROVEEDOR)
                     </label>
                     <select
@@ -5782,7 +5809,10 @@ const Compras = () => {
                   </div>
                 );
               })()}
+            </div>
 
+            {/* Fila 2: Condición de Pago y Despachar a */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '20px' }}>
               {/* Tipo de Pago y Días Crédito */}
               <div style={{ display: 'flex', gap: '15px' }}>
                 <div style={{ flex: 1 }}>
@@ -5810,20 +5840,30 @@ const Compras = () => {
                   </div>
                 )}
               </div>
-            </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '20px' }}>
               {/* Despachar a */}
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
                   <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569' }}>DESPACHAR A *</label>
-                  <button
-                    type="button"
-                    onClick={() => setShowNuevoDestinoModal(true)}
-                    style={{ background: 'none', border: 'none', color: '#0ea5e9', fontSize: '0.75rem', fontWeight: '800', cursor: 'pointer' }}
-                  >
-                    + Nuevo Destino
-                  </button>
+                  <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                    {odcForm.despachar_a_id && (
+                      <button
+                        type="button"
+                        onClick={() => eliminarDestino(odcForm.despachar_a_id)}
+                        style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: '0.75rem', fontWeight: '800', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                        title="Eliminar este destino de entrega"
+                      >
+                        <Trash2 size={13} /> Eliminar Destino
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setShowNuevoDestinoModal(true)}
+                      style={{ background: 'none', border: 'none', color: '#0ea5e9', fontSize: '0.75rem', fontWeight: '800', cursor: 'pointer' }}
+                    >
+                      + Nuevo Destino
+                    </button>
+                  </div>
                 </div>
                 <select
                   className="input-tc"

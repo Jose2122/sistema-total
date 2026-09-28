@@ -1,0 +1,3682 @@
+[
+  {
+    "nombreOriginal": "TUMACA",
+    "proveedorId": 96,
+    "transacciones": 23,
+    "unidades": 182000.54,
+    "totalGastado": 71960.2916,
+    "requisiciones": [
+      "RR-OPE-26-0040",
+      "RR-OPE-26-0021",
+      "RR-ALM-26-0002",
+      "RR-OPE-26-0020",
+      "RR-OPE-26-0039",
+      "RR-OPE-26-0041",
+      "RR-OPE-26-0066",
+      "RR-OPE-26-0065",
+      "RR-ALM-26-0015",
+      "RR-ALM-26-0019",
+      "RR-OPE-26-0071",
+      "RR-OPE-26-0079",
+      "RR-ALM-26-0013",
+      "RR-ALM-26-0030"
+    ],
+    "itemsEjemplo": [
+      "FLETE DE SUMINISTRO DE GASOIL BASE BOSCA",
+      "Suministro de Gasoil Base Boscán",
+      "GASOIL PARA BASE MARACAIBO"
+    ]
+  },
+  {
+    "nombreOriginal": "LM INVERSIONES 2024 C.A",
+    "proveedorId": 13,
+    "transacciones": 77,
+    "unidades": 527,
+    "totalGastado": 49403.65,
+    "requisiciones": [
+      "RR-MTT-26-0068",
+      "RR-OPE-26-0017",
+      "RR-OPE-26-0025",
+      "RR-MTT-26-0061",
+      "RR-MTT-26-0055",
+      "RR-MTT-26-0166",
+      "RR-SVG-26-0008",
+      "RR-OPE-26-0016",
+      "RR-ALM-26-0005",
+      "RR-SVG-26-0006",
+      "RR-OPE-26-0007",
+      "RR-OPE-26-0009",
+      "RR-OPE-26-0114",
+      "RR-OPE-26-0023",
+      "RR-OPE-26-0094",
+      "RR-MTT-26-0056",
+      "RR-MTT-26-0161",
+      "RR-MTT-26-0115",
+      "RR-OPE-26-0013",
+      "RR-OPE-26-0047",
+      "RR-OPE-26-0113",
+      "RR-MTTO-26-0008",
+      "RR-MTTO-26-0013",
+      "RR-MTTO-26-0138",
+      "RR-SVG-26-0010",
+      "RR-OPE-26-0048",
+      "RR-SVG-26-0016",
+      "RR-MTTO-26-0331",
+      "RR-OPE-26-0108",
+      "RR-OPE-26-0171",
+      "RR-OPE-26-0111",
+      "RR-SSGG-26-0032",
+      "RR-MTT-26-0334",
+      "RR-MTTO-26-0397",
+      "RR-SSGG-26-0021",
+      "RR-OPE-26-0148"
+    ],
+    "itemsEjemplo": [
+      "BOLSAS DE ARENA ROJA",
+      "BOLSAS DE CAL PREPARADA",
+      "CUCHARA DE ALBAÑILERIA"
+    ]
+  },
+  {
+    "nombreOriginal": "SUINVERCONCA",
+    "proveedorId": 7,
+    "transacciones": 453,
+    "unidades": 12975,
+    "totalGastado": 42532.02999999998,
+    "requisiciones": [
+      "RR-OPE-26-0029",
+      "RR-OPE-26-0121",
+      "RR-MTT-26-0290",
+      "RR-OPE-26-0001",
+      "RR-OPE-26-0027",
+      "RR-SHA-26-0037",
+      "RR-OPE-26-0211",
+      "RR-ALM-26-0003",
+      "RR-MTTO-26-0254",
+      "RR-SHA-26-0020",
+      "RR-OPE-26-0043",
+      "RR-SHA-26-0039",
+      "RR-SHA-26-0003",
+      "RR-MTT-26-0179",
+      "RR-SHA-26-0018",
+      "RR-SHA-26-0021",
+      "RR-ADM-TG-26-0035",
+      "RR-SVG-26-0019",
+      "RR-SHA-26-0008",
+      "RR-OPE-26-0032",
+      "RR-SHA-26-0019",
+      "RR-OPE-26-0009",
+      "RR-OPE-26-0064",
+      "RR-SHA-26-0065",
+      "RR-SEG-26-0028",
+      "RR-ADM-TG-26-0036",
+      "RR-SHA-26-0010",
+      "RR-SHA-26-0049",
+      "RR-MTT-26-0108",
+      "RR-SHA-26-0033",
+      "RR-OPE-26-0042",
+      "RR-OPE-26-0117",
+      "RR-SHA-26-0030",
+      "RR-SHA-26-0046",
+      "RR-CMP-26-0013",
+      "RR-SEG-26-0057",
+      "RR-OPE-26-0060",
+      "RR-SHA-26-0045",
+      "RR-MTT-26-0168",
+      "RR-SHA-26-0047",
+      "RR-SHA-26-0040",
+      "RR-SEG-26-0119",
+      "RR-MTT-26-0178",
+      "RR-SHA-26-0005",
+      "RR-SHA-26-0070",
+      "RR-SHA-26-0071",
+      "RR-OPE-26-0034",
+      "RR-MTT-26-0225",
+      "RR-SVG-26-0003",
+      "RR-SHA-26-0048",
+      "RR-SHA-26-0002",
+      "RR-OPE-26-0097",
+      "RR-SSGG-26-0009",
+      "RR-OPE-26-0006",
+      "RR-SHA-26-0042",
+      "RR-MTT-26-0279",
+      "RR-SEG-26-0002",
+      "RR-SEG-26-0003",
+      "RR-MTT-26-0227",
+      "RR-OPE-26-0062",
+      "RR-SHA-26-0057",
+      "RR-MTT-26-0336",
+      "RR-MTT-26-0047",
+      "RR-OPE-26-0130",
+      "RR-OPE-26-0119",
+      "RR-MTT-26-0222",
+      "RR-OPE-26-0075",
+      "RR-OPE-26-0135",
+      "RR-MTT-26-0277",
+      "RR-SHA-26-0050",
+      "RR-MTT-26-0280",
+      "RR-OPE-26-0070",
+      "RR-SVG-26-0025",
+      "RR-SEG-26-0034",
+      "RR-SEG-26-0001",
+      "RR-SEG-26-0011",
+      "RR-OPE-26-0024",
+      "RR-SEG-26-0029",
+      "RR-SEG-26-0021",
+      "RR-SHA-26-0090",
+      "RR-OPE-26-0205",
+      "RR-MTTO-26-0476",
+      "RR-OPE-26-0026",
+      "RR-SHA-26-0009",
+      "RR-SHA-26-0098",
+      "RR-MTT-26-0206",
+      "RR-SHA-26-0086",
+      "RR-ALM-26-0023",
+      "RR-CMP-26-0014",
+      "RR-OPE-26-0118",
+      "RR-SEG-26-0019",
+      "RR-SHA-26-0067",
+      "RR-ALM-26-0012",
+      "RR-SVG-26-0033",
+      "RR-OPE-26-0074",
+      "RR-SEG-26-0027",
+      "RR-MTTO-26-0046",
+      "RR-OPE-26-0145",
+      "RR-MTTO-26-0049",
+      "RR-MTTO-26-0032",
+      "RR-SHA-26-0079",
+      "RR-SHA-26-0100",
+      "RR-SEG-26-0015",
+      "RR-MTTO-26-0033",
+      "RR-MTTO-26-0067",
+      "RR-OPE-26-0014",
+      "RR-MTTO-26-0232",
+      "RR-MTTO-26-0034",
+      "RR-MTTO-26-0181",
+      "RR-SHA-26-0087",
+      "RR-SEG-26-0046",
+      "RR-OPE-26-0137",
+      "RR-MTTO-26-0066",
+      "RR-SEG-26-0007",
+      "RR-SEG-26-0010",
+      "RR-SHA-26-0001",
+      "RR-SEG-26-0051",
+      "RR-OPE-26-0151",
+      "RR-CMP-26-0015",
+      "RR-SHA-26-0099",
+      "RR-SHA-26-0081",
+      "RR-SEG-26-0009",
+      "RR-SHA-26-0004",
+      "RR-OPE-26-0110",
+      "RR-SEG-26-0036",
+      "RR-SEG-26-0030",
+      "RR-ALM-26-0022",
+      "RR-SEG-26-0018",
+      "RR-SHA-26-0012",
+      "RR-SHA-26-0095",
+      "RR-MTTO-26-0198"
+    ],
+    "itemsEjemplo": [
+      "SPRAY BLANCO",
+      "PINTURA DE ESMALTE VERDE ESMERALDA",
+      "PINTURA DE ALUMINIO DE  175"
+    ]
+  },
+  {
+    "nombreOriginal": "BATOR",
+    "proveedorId": 173,
+    "transacciones": 5,
+    "unidades": 27,
+    "totalGastado": 32737,
+    "requisiciones": [
+      "RR-MTT-26-0259",
+      "RR-MTT-26-0272"
+    ],
+    "itemsEjemplo": [
+      "GRADUACIÓN DE LA VÁLVULA 4 VÍAS, MONTAJE",
+      "ACEITE LUBRICANTE 15W40 DIESEL INCA CI-4",
+      "ACEITE HIDRÁULICO HIDRAINCA AW-38"
+    ]
+  },
+  {
+    "nombreOriginal": "MACK DE VENEZUELA",
+    "proveedorId": 70,
+    "transacciones": 24,
+    "unidades": 32,
+    "totalGastado": 28675.070000000003,
+    "requisiciones": [
+      "RR-MTT-26-0117",
+      "RR-MTT-26-0118",
+      "RR-MTT-26-0159",
+      "RR-MTT-26-0206",
+      "RR-MTTO-26-0128"
+    ],
+    "itemsEjemplo": [
+      "ENGINE COMPLETE",
+      "MOVIL DELVAC MX 15W40 PAILA (18,9L)",
+      "KIT FILTROS MP8"
+    ]
+  },
+  {
+    "nombreOriginal": "GRUA HIDRAULICAS",
+    "proveedorId": 105,
+    "transacciones": 7,
+    "unidades": 7,
+    "totalGastado": 25550,
+    "requisiciones": [
+      "RR-MTTO-26-0337",
+      "RR-MTT-26-0160",
+      "RR-MTT-26-0329",
+      "RR-MTTO-26-0141"
+    ],
+    "itemsEjemplo": [
+      "LATONERIA Y PINTURA DE GRUA P&H 75 TON",
+      "REPARARCION DEL SISTEMA HIDRAHULICO",
+      "REPARRACION DEL MOTOR DE GRUA"
+    ]
+  },
+  {
+    "nombreOriginal": "RUEDAS LA MUNDIAL",
+    "proveedorId": 147,
+    "transacciones": 14,
+    "unidades": 62,
+    "totalGastado": 16565.54,
+    "requisiciones": [
+      "RR-MTT-26-0245",
+      "RR-MTT-26-0211",
+      "RR-MTT-26-0354",
+      "RR-MTT-26-0353",
+      "RR-MTTO-26-0005",
+      "RR-MTT-26-0331",
+      "RR-MTT-26-0240",
+      "RR-MTTO-26-0082",
+      "RR-MTT-26-0332",
+      "RR-MTT-26-0346",
+      "RR-MTT-26-0288",
+      "RR-MTTO-26-0007",
+      "RR-MTTO-26-0079",
+      "RR-MTT-26-0246"
+    ],
+    "itemsEjemplo": [
+      "CAUCHO 295/80/R22.5 MIXTO",
+      "CAUCHO 235/75/R15 LISOS",
+      "CAUCHO 315/80/R22.5 MIXTO"
+    ]
+  },
+  {
+    "nombreOriginal": "DOMOSA MAQUINARIA",
+    "proveedorId": 131,
+    "transacciones": 1,
+    "unidades": 1,
+    "totalGastado": 15300,
+    "requisiciones": [
+      "RR-SVG-26-0021"
+    ],
+    "itemsEjemplo": [
+      "PLANTA ELECTRICA"
+    ]
+  },
+  {
+    "nombreOriginal": "SERTEQUIM",
+    "proveedorId": 152,
+    "transacciones": 2,
+    "unidades": 14,
+    "totalGastado": 14300,
+    "requisiciones": [
+      "RR-OPE-26-0031",
+      "RR-OPE-26-0033"
+    ],
+    "itemsEjemplo": [
+      "DESENGRASANTE (HEAVY DUTY) ",
+      "DESENGRASANTE (HEAVY DUTY)"
+    ]
+  },
+  {
+    "nombreOriginal": "MULTISERVICIOS DANY & MANUEL C.A.",
+    "proveedorId": 55,
+    "transacciones": 84,
+    "unidades": 277,
+    "totalGastado": 13048,
+    "requisiciones": [
+      "RR-MTT-26-0116",
+      "RR-MTT-26-0130",
+      "RR-MTT-26-0037",
+      "RR-MTT-26-0001",
+      "RR-MTT-26-0079",
+      "RR-MTT-26-0204",
+      "RR-MTT-26-0281",
+      "RR-MTT-26-0226",
+      "RR-MTT-26-0273",
+      "RR-MTT-26-0278",
+      "RR-MTT-26-0266",
+      "RR-MTTO-26-0055",
+      "RR-MTT-26-0276",
+      "RR-MTTO-26-0040",
+      "RR-MTTO-26-0360",
+      "RR-MTTO-26-0326",
+      "RR-MTTO-26-0041",
+      "RR-MTTO-26-0160",
+      "RR-MTTO-26-0155",
+      "RR-MTTO-26-0470",
+      "RR-MTTO-26-0038",
+      "RR-MTT-26-0368",
+      "RR-MTTO-26-0039",
+      "RR-MTTO-26-0467",
+      "RR-MTTO-26-0111",
+      "RR-MTTO-26-0498",
+      "RR-MTTO-26-0212",
+      "RR-MTTO-26-0466",
+      "RR-MTTO-26-0344"
+    ],
+    "itemsEjemplo": [
+      "MTS DE MANGUERA FERRULEADA",
+      "AUXILIO VIAL POR EL CARRO CHOCADO, CAMBI",
+      "MANGUERA DE 6.20 DE 3/8 DE PRESION DE AC"
+    ]
+  },
+  {
+    "nombreOriginal": "DISTRIBUIDORA PRIETO, C.A.",
+    "proveedorId": 287,
+    "transacciones": 5,
+    "unidades": 83,
+    "totalGastado": 11185,
+    "requisiciones": [
+      "RR-OPE-26-0136",
+      "RR-OPE-26-0112"
+    ],
+    "itemsEjemplo": [
+      "PINTURA POLIURETANO INTERTHANNE 990 ROJA",
+      "SOLVENTES ",
+      "PINTURA INTERTHANNE 990 ROJO RAL 3001 A+"
+    ]
+  },
+  {
+    "nombreOriginal": "ENARGER",
+    "proveedorId": 288,
+    "transacciones": 2,
+    "unidades": 2,
+    "totalGastado": 10960,
+    "requisiciones": [
+      "RR-MTTO-26-0306",
+      "RR-OPE-26-0116"
+    ],
+    "itemsEjemplo": [
+      "MONTAJE DE EVAPORADOR NUEVO, REEMPLAZO D",
+      "SERVICIO DE DESCOQUIZADO DEL HORNO F-353"
+    ]
+  },
+  {
+    "nombreOriginal": "TIRE KINGDOM MULTISERVICIOS",
+    "proveedorId": 133,
+    "transacciones": 6,
+    "unidades": 32,
+    "totalGastado": 8854.2,
+    "requisiciones": [
+      "RR-MTT-26-0182",
+      "RR-MTT-26-0260",
+      "RR-MTT-26-0127",
+      "RR-MTT-26-0177",
+      "RR-MTTO-26-0192",
+      "RR-MTTO-26-0062"
+    ],
+    "itemsEjemplo": [
+      "CAUCHO 295/80/R 22.5 MIXTO",
+      "CAUCHO 295/80/R22.5 MIXTO",
+      "CAUCHO 295/80/R22.5"
+    ]
+  },
+  {
+    "nombreOriginal": "TORNILLOS 2000, C.A",
+    "proveedorId": 12,
+    "transacciones": 172,
+    "unidades": 1532,
+    "totalGastado": 7666.199999999998,
+    "requisiciones": [
+      "RR-MTT-26-0153",
+      "RR-MTT-26-0067",
+      "RR-MTTO-26-0081",
+      "RR-OPE-26-0003",
+      "RR-ALM-26-0003",
+      "RR-OPE-26-0131",
+      "RR-MTT-26-0021",
+      "RR-MTT-26-0106",
+      "RR-MTT-26-0066",
+      "RR-OPE-26-0035",
+      "RR-OPE-26-0197",
+      "RR-MTT-26-0097",
+      "RR-SEG-26-0028",
+      "RR-MTT-26-0109",
+      "RR-ALM-26-0009",
+      "RR-SVG-26-0011",
+      "RR-MTTO-26-0172",
+      "RR-OPE-26-0169",
+      "RR-MTTO-26-0122",
+      "RR-MTTO-26-0017",
+      "RR-MTTO-26-0060",
+      "RR-OPE-26-0103",
+      "RR-MTT-26-0150",
+      "RR-MTTO-26-0346",
+      "RR-MTTO-26-0027",
+      "RR-MTT-26-0165",
+      "RR-MTT-26-0339",
+      "RR-MTTO-26-0008",
+      "RR-MTT-26-0206",
+      "RR-MTTO-26-0094",
+      "RR-SSGG-26-0016",
+      "RR-MTTO-26-0185",
+      "RR-MTTO-26-0004",
+      "RR-MTTO-26-0019",
+      "RR-MTTO-26-0001",
+      "RR-MTTO-26-0006",
+      "RR-MTTO-26-0302",
+      "RR-MTTO-26-0085",
+      "RR-MTT-26-0333",
+      "RR-OPE-26-0048",
+      "RR-MTTO-26-0061",
+      "RR-MTTO-26-0029",
+      "RR-SSGG-26-0012",
+      "RR-SSGG-26-0004",
+      "RR-SSGG-26-0005",
+      "RR-MTTO-26-0104",
+      "RR-OPE-26-0125",
+      "RR-MTT-26-0369",
+      "RR-MTT-26-0334",
+      "RR-SSGG-26-0010"
+    ],
+    "itemsEjemplo": [
+      "PINTURA SPRAY AEROSOL GRIS BRILLANTE",
+      "ROLLO DE TEIPE",
+      "LLAVE DE PASO DE 2\""
+    ]
+  },
+  {
+    "nombreOriginal": "IWECOTECH",
+    "proveedorId": 43,
+    "transacciones": 29,
+    "unidades": 44,
+    "totalGastado": 6571.6699998,
+    "requisiciones": [
+      "RR-MTTO-26-0021",
+      "RR-SHA-26-0029",
+      "RR-SHA-26-0031",
+      "RR-MTT-26-0271",
+      "RR-MTTO-26-0010",
+      "RR-SHA-26-0022",
+      "RR-SEG-26-0014",
+      "RR-MTT-26-0165",
+      "RR-ADM-TG-26-0040",
+      "RR-SHA-26-0084",
+      "RR-MTT-26-0206",
+      "RR-MTT-26-0344",
+      "RR-MTT-26-0324",
+      "RR-SHA-26-0088",
+      "RR-MTTO-26-0038",
+      "RR-SEG-26-0026",
+      "RR-MTT-26-0316"
+    ],
+    "itemsEjemplo": [
+      "CALIBRACIÓN DE VÁLVULA DE SEGURIDAD",
+      "CERTIFICACION VACUUM PLACA A82CO4S",
+      "CERTIFICACION VACUUM"
+    ]
+  },
+  {
+    "nombreOriginal": "FERREMATERIALES FL INVERSIONES C.A",
+    "proveedorId": 203,
+    "transacciones": 15,
+    "unidades": 324,
+    "totalGastado": 6494.08,
+    "requisiciones": [
+      "RR-OPE-26-0114",
+      "RR-OPE-26-0085",
+      "RR-SVG-26-0029",
+      "RR-OPE-26-0084",
+      "RR-SVG-26-0024",
+      "RR-MTT-26-0323",
+      "RR-SVG-26-0034",
+      "RR-OPE-26-0092",
+      "RR-SVG-26-0001"
+    ],
+    "itemsEjemplo": [
+      "ZIKADUR 32 ",
+      "REGULADOR DE AIRE CON FILTRO DE 1/2 PULG",
+      "CEMENTO "
+    ]
+  },
+  {
+    "nombreOriginal": "CAUCHO VERITAS C.A",
+    "proveedorId": 270,
+    "transacciones": 4,
+    "unidades": 24,
+    "totalGastado": 5988,
+    "requisiciones": [
+      "RR-MTTO-26-0119",
+      "RR-MTTO-26-0123",
+      "RR-MTTO-26-0121",
+      "RR-MTTO-26-0124"
+    ],
+    "itemsEjemplo": [
+      "CAUCHOS 295 80/ 22.5 MIXTO",
+      "CAUCHOS 215/75/R16",
+      "CAUCHOS 295/80/R22.5 MIXTO PARA BATEA"
+    ]
+  },
+  {
+    "nombreOriginal": "MEGA SERVICE 1122",
+    "proveedorId": 75,
+    "transacciones": 38,
+    "unidades": 102,
+    "totalGastado": 5853.9,
+    "requisiciones": [
+      "RR-MTT-26-0080",
+      "RR-MTT-26-0326"
+    ],
+    "itemsEjemplo": [
+      "MANO DE OBRA",
+      "SELLOS DE VALVULAS",
+      "GUIA DE VALVULAS"
+    ]
+  },
+  {
+    "nombreOriginal": "FILTROS Y PODRUCTOS INDUSTRIALES",
+    "proveedorId": 89,
+    "transacciones": 27,
+    "unidades": 187,
+    "totalGastado": 5576.76,
+    "requisiciones": [
+      "RR-MTT-26-0089",
+      "RR-MTT-26-0086",
+      "RR-MTT-26-0312",
+      "RR-MTT-26-0315",
+      "RR-MTT-26-0317",
+      "RR-MTT-26-0318",
+      "RR-MTTO-26-0180",
+      "RR-MTT-26-0319",
+      "RR-MTT-26-0311"
+    ],
+    "itemsEjemplo": [
+      "CORREA A-42 PARA STOCK",
+      "FILTRO DE COMBUSTIBLE SECUNDARIO 33216",
+      "FILTRO DE COMBUSTIBLE PRIMARIO 33219"
+    ]
+  },
+  {
+    "nombreOriginal": "MULTIREPUESTOS EBENEZER M & F . C.A",
+    "proveedorId": 76,
+    "transacciones": 58,
+    "unidades": 109.1,
+    "totalGastado": 5502.5960000000005,
+    "requisiciones": [
+      "RR-MTT-26-0029",
+      "RR-MTT-26-0028",
+      "RR-MTTO-26-0100",
+      "RR-MTTO-26-0117",
+      "RR-MTTO-26-0112",
+      "RR-MTTO-26-0478",
+      "RR-MTT-26-0313",
+      "RR-MTTO-26-0116",
+      "RR-MTTO-26-0011",
+      "RR-MTT-26-0310",
+      "RR-MTTO-26-0402",
+      "RR-MTTO-26-0422",
+      "RR-MTT-26-0357",
+      "RR-MTTO-26-0113",
+      "RR-MTT-26-0356",
+      "RR-MTTO-26-0404",
+      "RR-MTTO-26-0101",
+      "RR-MTTO-26-0428"
+    ],
+    "itemsEjemplo": [
+      "CINTURON DE SEGURIDAD MACK CERTIFICADO",
+      "ALFONFRA HYUNDAI",
+      "RELOJ DE PRESION DE ACEITE CON TUBERIA 0"
+    ]
+  },
+  {
+    "nombreOriginal": "IMPORTADORA DE CAUCHO",
+    "proveedorId": 253,
+    "transacciones": 4,
+    "unidades": 18,
+    "totalGastado": 4892,
+    "requisiciones": [
+      "RR-MTTO-26-0025",
+      "RR-MTTO-26-0068",
+      "RR-MTTO-26-0078",
+      "RR-MTTO-26-0077"
+    ],
+    "itemsEjemplo": [
+      "CAUCHO 215/75/R16",
+      "CAUCHO 315/80/R22.5 MIXTO",
+      "CAUCHOS 295/80/R22.5 MIXTO"
+    ]
+  },
+  {
+    "nombreOriginal": "EMPRESA NACIONAL DE MWCANICA, C.A. ( EMNAMECA ) AUTO REFRIGERACION",
+    "proveedorId": 39,
+    "transacciones": 10,
+    "unidades": 10,
+    "totalGastado": 4831.21,
+    "requisiciones": [
+      "RR-MTT-26-0101",
+      "RR-MTT-26-0137",
+      "RR-MTTO-26-0449",
+      "RR-MTT-26-0126",
+      "RR-MTT-26-0207",
+      "RR-MTT-26-0338",
+      "RR-MTTO-26-0207",
+      "RR-MTTO-26-0262",
+      "RR-MTTO-26-0169",
+      "RR-MTTO-26-0103"
+    ],
+    "itemsEjemplo": [
+      "SERVICIO AL EVAPORADOR, SERVICIO AL COND",
+      "REPARACION DE SISTEMA ELÉCTRICO DE AIRE ",
+      "2 MOTOR VENTILADOR NUEVO DE 24 VOLTIOS, "
+    ]
+  },
+  {
+    "nombreOriginal": "RENSER ORIENTE,C.A",
+    "proveedorId": 117,
+    "transacciones": 4,
+    "unidades": 5,
+    "totalGastado": 4370.03,
+    "requisiciones": [
+      "RR-SHA-26-0016",
+      "RR-SEG-26-0013",
+      "RR-SHA-26-0053",
+      "RR-SEG-26-0070"
+    ],
+    "itemsEjemplo": [
+      "DETECTOR MULTIGAS ",
+      "CERTIFICACION DE DETECTORES DE 4 GASES",
+      "DETECTORES DE 4 GASES"
+    ]
+  },
+  {
+    "nombreOriginal": "MANGUERAS Y CONEXIONES DEL LAGO",
+    "proveedorId": 254,
+    "transacciones": 79,
+    "unidades": 116.5,
+    "totalGastado": 4347.989999999999,
+    "requisiciones": [
+      "RR-MTT-26-0282",
+      "RR-MTTO-26-0137",
+      "RR-MTTO-26-0143",
+      "RR-MTTO-26-0110",
+      "RR-OPE-26-0104",
+      "RR-MTTO-26-0201",
+      "RR-OPE-26-0107",
+      "RR-MTTO-26-0194",
+      "RR-MTTO-26-0144",
+      "RR-OPE-26-0106",
+      "RR-MTTO-26-0163",
+      "RR-MTTO-26-0097",
+      "RR-MTT-26-0320",
+      "RR-MTTO-26-0355"
+    ],
+    "itemsEjemplo": [
+      "MANGUERA AZUL DE 2\"",
+      "MANGUERA OND. 11 GASILINERA 3/8",
+      "MANG IND A110 P/RADIADOR 4\""
+    ]
+  },
+  {
+    "nombreOriginal": "SERVICIOS DE GRUAS RM C A",
+    "proveedorId": 11,
+    "transacciones": 5,
+    "unidades": 5,
+    "totalGastado": 4290,
+    "requisiciones": [
+      "RR-MTT-26-0042",
+      "RR-MTT-26-0274",
+      "RR-MTT-26-0044",
+      "RR-MTT-26-0104",
+      "RR-MTTO-26-0031"
+    ],
+    "itemsEjemplo": [
+      "TRASLADO DE GRUA BARCELONA A MARACAIBO",
+      "TRASLADO DE CAMIONETA TIUNA DESDE ZINA I",
+      "TRASLADO DE GRUA DESDE TALLER EN LA POLA"
+    ]
+  },
+  {
+    "nombreOriginal": "GWM",
+    "proveedorId": 78,
+    "transacciones": 32,
+    "unidades": 36,
+    "totalGastado": 4188.740000000001,
+    "requisiciones": [
+      "RR-MTT-26-0230",
+      "RR-MTT-26-0144",
+      "RR-MTT-26-0228",
+      "RR-MTT-26-0145",
+      "RR-MTT-26-0119",
+      "RR-MTT-26-0143",
+      "RR-MTT-26-0149",
+      "RR-ADM-MCB-26-0002",
+      "RR-MTT-26-0229",
+      "RR-MTT-26-0148",
+      "RR-MTT-26-0146",
+      "RR-MTT-26-0142",
+      "RR-MTT-26-0296",
+      "RR-MTTO-26-0001",
+      "RR-MTTO-26-0145",
+      "RR-MTTO-26-0224",
+      "RR-MTT-26-0231",
+      "RR-MTTO-26-0222",
+      "RR-MTTO-26-0217",
+      "RR-MTTO-26-0219"
+    ],
+    "itemsEjemplo": [
+      "MANTENIMIENTO PREVENTIVO PARA CAMIONETA ",
+      "CAMBIO DE ACEITE Y FILTRO",
+      "PATABRISAS DELANTERO"
+    ]
+  },
+  {
+    "nombreOriginal": "ASOCIACION COOPERATIVA SOLUCIONES GENERALES EMPRESARIALES R.L",
+    "proveedorId": 281,
+    "transacciones": 1,
+    "unidades": 10,
+    "totalGastado": 3800,
+    "requisiciones": [
+      "RR-ADM-TG-26-0015"
+    ],
+    "itemsEjemplo": [
+      "SERVICIO DE CAMIÓN FULLER CON COMBUSTIBL"
+    ]
+  },
+  {
+    "nombreOriginal": "SUMINISTROS WILLY S.A",
+    "proveedorId": 190,
+    "transacciones": 5,
+    "unidades": 7,
+    "totalGastado": 3636.94,
+    "requisiciones": [
+      "RR-MTT-26-0268",
+      "RR-MTTO-26-0261",
+      "RR-MTT-26-0050"
+    ],
+    "itemsEjemplo": [
+      "SUMINISTRO DE CORREA MULTICANAL DE 8\" CO",
+      "SUMINISTRO DE CORREA EN V",
+      "FABRICACIÓN E INSTALACIÓN DE SOPORTE PAR"
+    ]
+  },
+  {
+    "nombreOriginal": "MANGUERAS PERIJA, C.A.",
+    "proveedorId": 1,
+    "transacciones": 18,
+    "unidades": 87,
+    "totalGastado": 3412.5399999999995,
+    "requisiciones": [
+      "RR-MTT-26-0186",
+      "RR-MTTO-26-0083",
+      "RR-MTTO-26-0065",
+      "RR-OPE-26-0008",
+      "RR-MTT-26-0171",
+      "RR-MTT-26-0184",
+      "RR-ALM-26-0006",
+      "RR-MTTO-26-0152",
+      "RR-OPE-26-0055",
+      "RR-MTT-26-0183",
+      "RR-MTTO-26-0061",
+      "RR-OPE-26-0090"
+    ],
+    "itemsEjemplo": [
+      "MANGUERA HIDRAULICA R2 1/2\" X 0,96 MTS C",
+      "MANGUERA HIDRAULICA R2 1/2\" X 0,41 MTS C",
+      "CONEXIÓN RÁPIDA TIPO CODO DE 3/8 A 1/2 D"
+    ]
+  },
+  {
+    "nombreOriginal": "TALLER EL PINGUINO, C.A.",
+    "proveedorId": 25,
+    "transacciones": 24,
+    "unidades": 2062.46,
+    "totalGastado": 3406.6083999999996,
+    "requisiciones": [
+      "RR-MTT-26-0053",
+      "RR-MTT-26-0054",
+      "RR-MTT-26-0112",
+      "RR-MTT-26-0076",
+      "RR-MTT-26-0255",
+      "RR-MTT-26-0077",
+      "RR-MTT-26-0027",
+      "RR-MTT-26-0162",
+      "RR-MTTO-26-0248",
+      "RR-MTT-26-0254",
+      "RR-MTTO-26-0096",
+      "RR-MTTO-26-0174",
+      "RR-MTTO-26-0327",
+      "RR-ALM-26-0013",
+      "RR-MTTO-26-0150"
+    ],
+    "itemsEjemplo": [
+      "MECANIZAR Y FABRICAR ROSCA DE PINTILLA",
+      "REPARACION DE PIEZAS DE PISTOLA",
+      "MECANIZAR PIEZAS DE ALUMINIO PARA BOMBA "
+    ]
+  },
+  {
+    "nombreOriginal": "ALVAREZ ALVAREZ & ASOCIADOSS",
+    "proveedorId": 179,
+    "transacciones": 4,
+    "unidades": 5,
+    "totalGastado": 3299,
+    "requisiciones": [
+      "RR-RRH-26-0004",
+      "RR-MTT-26-0348",
+      "RR-MTT-26-0206"
+    ],
+    "itemsEjemplo": [
+      "PROCESP LABORAL- ETAPA PROBATORIA -ASUNT",
+      "PROCESO LABORAL- ETAPA APROBATORIA-ASUNT",
+      "CODOS DE 1\""
+    ]
+  },
+  {
+    "nombreOriginal": "SIPHECA – SUMINISTROS INDUSTRIALES PÉREZ HERRERA, C.A.",
+    "proveedorId": 248,
+    "transacciones": 10,
+    "unidades": 93,
+    "totalGastado": 3151.3500000000004,
+    "requisiciones": [
+      "RR-SHA-26-0082",
+      "RR-SHA-26-0064",
+      "RR-SEG-26-0086",
+      "RR-SHA-26-0078",
+      "RR-SHA-26-0095"
+    ],
+    "itemsEjemplo": [
+      "CALZADO DE SEGURIDAD MEDIA CAÑA",
+      "ESLINGAS TIPO Y CON ESLONGACION PARA REP",
+      "ARNES CORPORAL TRES ANILLOS CERTIFICADO "
+    ]
+  },
+  {
+    "nombreOriginal": "LUIS ANGEL MONCADA",
+    "proveedorId": 187,
+    "transacciones": 13,
+    "unidades": 56,
+    "totalGastado": 3061.502,
+    "requisiciones": [
+      "RR-MTT-26-0267",
+      "RR-MTT-26-0269",
+      "RR-MTTO-26-0149",
+      "RR-MTT-26-0209",
+      "RR-MTT-26-0362"
+    ],
+    "itemsEjemplo": [
+      "FABRICACIÓN DE 4 NIPLES A MEDIDA",
+      "SUMINISTRO DE 16 PERNOS CON TUERCAS DE 7",
+      "FABRICACIÓN DE 2 EMPACADURAS DE 8\" PARA "
+    ]
+  },
+  {
+    "nombreOriginal": "SOPORTE DE ADMINISTRACION Y OPERACIONAL (SIRCOP)",
+    "proveedorId": 33,
+    "transacciones": 6,
+    "unidades": 83,
+    "totalGastado": 2934,
+    "requisiciones": [
+      "RR-SHA-26-0025",
+      "RR-SHA-26-0026",
+      "RR-SHA-26-0027",
+      "RR-SHA-26-0075",
+      "RR-OPE-26-0088",
+      "RR-LYT-26-0001"
+    ],
+    "itemsEjemplo": [
+      "MONITOREO GPSA JUNIO",
+      "MONITOREO GPS JUNIO",
+      "MONITOREO MENSUAL DE GPS MES JUNIO"
+    ]
+  },
+  {
+    "nombreOriginal": "PAPELERIA ESTEVA EL TRANSITO C A",
+    "proveedorId": 14,
+    "transacciones": 70,
+    "unidades": 1880,
+    "totalGastado": 2846.7900000000004,
+    "requisiciones": [
+      "RR-EST-26-0002",
+      "RR-ADM-TG-26-0018",
+      "RR-OPE-26-0063",
+      "RR-CMP-26-0011",
+      "RR-SHA-26-0076",
+      "RR-OPE-26-0058",
+      "RR-OPE-26-0080",
+      "RR-MTT-26-0110",
+      "RR-OPE-26-0044",
+      "RR-CMP-26-0017",
+      "RR-SHA-26-0097",
+      "RR-SHA-26-0093"
+    ],
+    "itemsEjemplo": [
+      "CALCULADORA 12 DIGITOS DE MESA",
+      "RESMAS DE PAPEL TAMAÑO CARTA.",
+      "TABLA DE APOYO"
+    ]
+  },
+  {
+    "nombreOriginal": "SUFILCA 2025",
+    "proveedorId": 102,
+    "transacciones": 22,
+    "unidades": 81,
+    "totalGastado": 2825.68,
+    "requisiciones": [
+      "RR-MTTO-26-0354",
+      "RR-MTTO-26-0195",
+      "RR-MTT-26-0131",
+      "RR-MTTO-26-0080",
+      "RR-MTTO-26-0093",
+      "RR-MTT-26-0206",
+      "RR-MTT-26-0309",
+      "RR-MTTO-26-0016",
+      "RR-MTTO-26-0030",
+      "RR-MTT-26-0361",
+      "RR-MTTO-26-0092",
+      "RR-MTTO-26-0132",
+      "RR-MTTO-26-0176"
+    ],
+    "itemsEjemplo": [
+      "TAMBOR DE ACEITE HIDRALUB 68",
+      "ROLINERAS 6204",
+      "SELLOS 3/4"
+    ]
+  },
+  {
+    "nombreOriginal": "FAVEMOCA",
+    "proveedorId": 271,
+    "transacciones": 2,
+    "unidades": 29,
+    "totalGastado": 2800,
+    "requisiciones": [
+      "RR-ALM-26-0011"
+    ],
+    "itemsEjemplo": [
+      "ESTANTES METALICOS 2.20 MTX X 0.92 MTS X",
+      "FLETE DE TRASLADO DE ESTANTES "
+    ]
+  },
+  {
+    "nombreOriginal": "SUPER TECHOS ( OJEDA)",
+    "proveedorId": 120,
+    "transacciones": 1,
+    "unidades": 1100,
+    "totalGastado": 2750,
+    "requisiciones": [
+      "RR-OPE-26-0052"
+    ],
+    "itemsEjemplo": [
+      "GANCHO PARA TECHO SEGUN MUESTRA (INCLUYE"
+    ]
+  },
+  {
+    "nombreOriginal": "REPUESTOS & ELECTRONICOS RUHAMA, C.A",
+    "proveedorId": 18,
+    "transacciones": 24,
+    "unidades": 375,
+    "totalGastado": 2749,
+    "requisiciones": [
+      "RR-MTT-26-0069",
+      "RR-MTT-26-0125",
+      "RR-MTT-26-0152",
+      "RR-MTT-26-0005",
+      "RR-MTT-26-0132",
+      "RR-MTT-26-0088",
+      "RR-MTTO-26-0152",
+      "RR-MTTO-26-0108",
+      "RR-MTT-26-0213",
+      "RR-MTTO-26-0153",
+      "RR-MTT-26-0335",
+      "RR-MTT-26-0360",
+      "RR-ADM-TG-26-0028"
+    ],
+    "itemsEjemplo": [
+      "SWITCH CAMBIO DE LUZ DE PIE UNIVERSAL PA",
+      "PAR DE BOMBILLO LED 9006 PARA CHUTO MACK",
+      "PAR DE CONECTORES PARA LUCES LED 9006 PA"
+    ]
+  },
+  {
+    "nombreOriginal": "FERREINVERSIONES LEO C.A",
+    "proveedorId": 67,
+    "transacciones": 21,
+    "unidades": 240,
+    "totalGastado": 2732.11,
+    "requisiciones": [
+      "RR-OPE-26-0001",
+      "RR-SVG-26-0006",
+      "RR-SVG-26-0009",
+      "RR-OPE-26-0049",
+      "RR-OPE-26-0051",
+      "RR-OPE-26-0050"
+    ],
+    "itemsEjemplo": [
+      "CEMENTO GRIS",
+      "ESTILOSA 350 GRS",
+      "PEGA BLANCA"
+    ]
+  },
+  {
+    "nombreOriginal": "GRUPO MULTIMODAL C,A",
+    "proveedorId": 116,
+    "transacciones": 6,
+    "unidades": 6,
+    "totalGastado": 2594.0299999999997,
+    "requisiciones": [
+      "RR-MTT-26-0158",
+      "RR-MTT-26-0157",
+      "RR-MTT-26-0156",
+      "RR-MTT-26-0176",
+      "RR-MTTO-26-0024",
+      "RR-MTTO-26-0022"
+    ],
+    "itemsEjemplo": [
+      "CAMBIO DE ACEITE Y FILTRO",
+      "FILTRO DE AIRE AP-2877S PARA CAMIÓN 350 "
+    ]
+  },
+  {
+    "nombreOriginal": "MULTISERVICIOS DIVICA",
+    "proveedorId": 40,
+    "transacciones": 7,
+    "unidades": 24,
+    "totalGastado": 2577.34,
+    "requisiciones": [
+      "RR-MTT-26-0080",
+      "RR-MTTO-26-0117",
+      "RR-MTT-26-0038",
+      "RR-MTTO-26-0404",
+      "RR-MTTO-26-0428"
+    ],
+    "itemsEjemplo": [
+      "FILTRO DE GASOIL PRIMARIO",
+      "BARRA DE DIRECCION CORTA MITSUBISHI CANT",
+      "VÁLVULA DE SEGURIDAD PARA SOBREPRESION D"
+    ]
+  },
+  {
+    "nombreOriginal": "JGR AUTODIST, C.A",
+    "proveedorId": 297,
+    "transacciones": 1,
+    "unidades": 1,
+    "totalGastado": 2252.95,
+    "requisiciones": [
+      "RR-MTT-26-0307"
+    ],
+    "itemsEjemplo": [
+      "ACEITE 5W30 SINTETICO MARCA: WOLF"
+    ]
+  },
+  {
+    "nombreOriginal": "MEGAWRAPS, C.A.",
+    "proveedorId": 32,
+    "transacciones": 13,
+    "unidades": 19,
+    "totalGastado": 2187.92,
+    "requisiciones": [
+      "RR-MTT-26-0282",
+      "RR-MTT-26-0223",
+      "RR-MTT-26-0081",
+      "RR-MTT-26-0220",
+      "RR-SHA-26-0072",
+      "RR-MTT-26-0275",
+      "RR-MTTO-26-0047",
+      "RR-MTT-26-0350"
+    ],
+    "itemsEjemplo": [
+      "MANGUERA TRANSPARENTE 1/2\"",
+      "CONEX D339 FITIN KFPS 06X06",
+      "OMPRESION Y ROTULACION  DE CAMIONETAS CO"
+    ]
+  },
+  {
+    "nombreOriginal": "BRIAN J ZAMBRANO M.",
+    "proveedorId": 130,
+    "transacciones": 10,
+    "unidades": 12,
+    "totalGastado": 2124.3199999999997,
+    "requisiciones": [
+      "RR-OPE-26-0054",
+      "RR-MTT-26-0224",
+      "RR-MTT-26-0215",
+      "RR-MTT-26-0348",
+      "RR-MTTO-26-0003"
+    ],
+    "itemsEjemplo": [
+      "INDICADOR DE NIVEL",
+      "STOP MICA ORIGINAL DFSK C1 PAR ",
+      "JIR DE BUJES SUPERIOR"
+    ]
+  },
+  {
+    "nombreOriginal": "LA CASA DEL CAMION SUR",
+    "proveedorId": 87,
+    "transacciones": 6,
+    "unidades": 14,
+    "totalGastado": 1930.2,
+    "requisiciones": [
+      "RR-MTT-26-0043",
+      "RR-MTT-26-0244",
+      "RR-MTT-26-0322",
+      "RR-MTT-26-0031",
+      "RR-MTT-26-0124",
+      "RR-MTTO-26-0131"
+    ],
+    "itemsEjemplo": [
+      "BOMBIN DE TRANSFERENCIA PARA MOTOR MACK ",
+      "COMPRA DE SILENCIADOR",
+      "KIT DE EMBRAGUE 14 X 2 BRONCE AMORTIGUAD"
+    ]
+  },
+  {
+    "nombreOriginal": "LA TIENDA DEL PINTOR",
+    "proveedorId": 79,
+    "transacciones": 15,
+    "unidades": 38,
+    "totalGastado": 1829,
+    "requisiciones": [
+      "RR-SSGG-26-0030",
+      "RR-OPE-26-0211",
+      "RR-SVG-26-0004",
+      "RR-SSGG-26-0009",
+      "RR-SSGG-26-0001",
+      "RR-OPE-26-0205",
+      "RR-MTTO-26-0476",
+      "RR-SSGG-26-0003",
+      "RR-ALM-26-0023",
+      "RR-OPE-26-0118",
+      "RR-MTTO-26-0049"
+    ],
+    "itemsEjemplo": [
+      "CUÑETES PINTURA BLANCO CAUCHO",
+      "PINTURA EN ESMALTE DE 175 ºC",
+      "CUÑETE PINTURA BLANCA"
+    ]
+  },
+  {
+    "nombreOriginal": "CAUCHOS TRIPLE",
+    "proveedorId": 143,
+    "transacciones": 3,
+    "unidades": 10,
+    "totalGastado": 1779.98,
+    "requisiciones": [
+      "RR-MTT-26-0085",
+      "RR-MTT-26-0251",
+      "RR-MTT-26-0016"
+    ],
+    "itemsEjemplo": [
+      "CAUCHO 265/75/R16 WINDFORCE II6T",
+      "CAUCHOS 215 75R17.5",
+      "CAUCHO 255/70/R16 DE PISTA (SIN TACOS)"
+    ]
+  },
+  {
+    "nombreOriginal": "A&H SUPPLY.C.A",
+    "proveedorId": 54,
+    "transacciones": 48,
+    "unidades": 167,
+    "totalGastado": 1713.3900000000003,
+    "requisiciones": [
+      "RR-MTT-26-0063",
+      "RR-MTT-26-0062",
+      "RR-OPE-26-0015",
+      "RR-MTT-26-0248",
+      "RR-MTT-26-0348",
+      "RR-MTTO-26-0142",
+      "RR-MTT-26-0206",
+      "RR-MTT-26-0253",
+      "RR-MTTO-26-0014",
+      "RR-OPE-26-0033",
+      "RR-SSGG-26-0018",
+      "RR-MTT-26-0060",
+      "RR-MTTO-26-0269"
+    ],
+    "itemsEjemplo": [
+      "CODO DE 45° DE 2\"",
+      "NIPLE 2\" DE 6CM DE LARGO",
+      "TAPONES MACHO DE 2\""
+    ]
+  },
+  {
+    "nombreOriginal": "COMPRESORES EL 4, C.A.",
+    "proveedorId": 19,
+    "transacciones": 11,
+    "unidades": 96,
+    "totalGastado": 1519,
+    "requisiciones": [
+      "RR-MTT-26-0113",
+      "RR-MTT-26-0295",
+      "RR-MTT-26-0185",
+      "RR-MTTO-26-0084",
+      "RR-MTTO-26-0106"
+    ],
+    "itemsEjemplo": [
+      "CONEXION 69F 1/4 X 1/8 PRESTOLOCK",
+      "CONEXION 69F 4X2 PRESTOLOCK",
+      "TEE 64F 1/4 PRESTOLOCK"
+    ]
+  },
+  {
+    "nombreOriginal": "JOSE DAVID RICO CARRERO",
+    "proveedorId": 31,
+    "transacciones": 6,
+    "unidades": 6,
+    "totalGastado": 1500,
+    "requisiciones": [
+      "RR-MTT-26-0059"
+    ],
+    "itemsEjemplo": [
+      "TRABAJO EN  TORNO",
+      "RODAMIENTOS",
+      "ESTOPERAS"
+    ]
+  },
+  {
+    "nombreOriginal": "ASERRADERO ORENSE",
+    "proveedorId": 275,
+    "transacciones": 2,
+    "unidades": 40,
+    "totalGastado": 1470,
+    "requisiciones": [
+      "RR-ALM-26-0004"
+    ],
+    "itemsEjemplo": [
+      "COMPRA DE ESTIBAS PARA ORDENAMIENTO Y AL"
+    ]
+  },
+  {
+    "nombreOriginal": "LUBRICANTES Y RESPUESTOS LA 15, C.A",
+    "proveedorId": 92,
+    "transacciones": 2,
+    "unidades": 2,
+    "totalGastado": 1400,
+    "requisiciones": [
+      "RR-MTTO-26-0354",
+      "RR-MTT-26-0128"
+    ],
+    "itemsEjemplo": [
+      "TAMBOR DE ACEITE HIDRALUB 68",
+      "REPARACIÓN DE SILENCIADOR DE ESCAPE DE C"
+    ]
+  },
+  {
+    "nombreOriginal": "FENIX TRAILERS",
+    "proveedorId": 256,
+    "transacciones": 4,
+    "unidades": 5,
+    "totalGastado": 1385,
+    "requisiciones": [
+      "RR-MTTO-26-0148",
+      "RR-MTT-26-0243",
+      "RR-MTT-26-0242",
+      "RR-MTT-26-0241"
+    ],
+    "itemsEjemplo": [
+      "BOMBA ELÉCTRICA DE AGUA PARA VACUUM",
+      "ACOPLE DE GOMA FLEXIBLE DE 4 AGUJEROS PA",
+      "ACOPLE DE GOMA FLEXIBLE PARA VACUUM DE 4"
+    ]
+  },
+  {
+    "nombreOriginal": "REPRESENTACIONES FERRELECTRICA, C.A.",
+    "proveedorId": 30,
+    "transacciones": 32,
+    "unidades": 491,
+    "totalGastado": 1309.36,
+    "requisiciones": [
+      "RR-SVG-26-0026",
+      "RR-OPE-26-0082",
+      "RR-OPE-26-0084",
+      "RR-OPE-26-0069",
+      "RR-OPE-26-0068",
+      "RR-OPE-26-0083",
+      "RR-OPE-26-0081"
+    ],
+    "itemsEjemplo": [
+      "CUÑETE PINTURA BLANCA CAUCHO",
+      "TIRRO VERDE 1:",
+      "BLOQUE DE 15 BLANCO "
+    ]
+  },
+  {
+    "nombreOriginal": "SIGONZ1,C.A",
+    "proveedorId": 261,
+    "transacciones": 7,
+    "unidades": 19,
+    "totalGastado": 1307,
+    "requisiciones": [
+      "RR-MTT-26-0314",
+      "RR-MTTO-26-0126"
+    ],
+    "itemsEjemplo": [
+      "SERVICIO Y REPARACIO DE RADIADOR DE CATE",
+      "KIT DE EMPAQUE DE BOMBA",
+      "VALVULAS"
+    ]
+  },
+  {
+    "nombreOriginal": "BLANCA NIEVES ALONSO CASTRO",
+    "proveedorId": 63,
+    "transacciones": 69,
+    "unidades": 128,
+    "totalGastado": 1297,
+    "requisiciones": [
+      "RR-MTT-26-0001",
+      "RR-MTT-26-0007",
+      "RR-MTT-26-0082",
+      "RR-MTT-26-0013",
+      "RR-MTT-26-0302",
+      "RR-MTT-26-0072",
+      "RR-MTTO-26-0054",
+      "RR-MTT-26-0093",
+      "RR-MTT-26-0173",
+      "RR-MTT-26-0094",
+      "RR-MTT-26-0175",
+      "RR-MTT-26-0058",
+      "RR-MTT-26-0008",
+      "RR-MTT-26-0170",
+      "RR-MTT-26-0014",
+      "RR-MTT-26-0015",
+      "RR-MTT-26-0098",
+      "RR-MTT-26-0167",
+      "RR-MTT-26-0099",
+      "RR-MTT-26-0100",
+      "RR-MTT-26-0057",
+      "RR-MTT-26-0020",
+      "RR-MTT-26-0084",
+      "RR-MTT-26-0299",
+      "RR-MTT-26-0172",
+      "RR-MTTO-26-0241",
+      "RR-MTT-26-0238",
+      "RR-MTTO-26-0052",
+      "RR-MTTO-26-0246",
+      "RR-MTTO-26-0050",
+      "RR-MTTO-26-0237",
+      "RR-MTTO-26-0051",
+      "RR-MTT-26-0237",
+      "RR-MTT-26-0303",
+      "RR-MTT-26-0297",
+      "RR-MTT-26-0234",
+      "RR-MTT-26-0235",
+      "RR-MTT-26-0236",
+      "RR-MTT-26-0239",
+      "RR-MTT-26-0298",
+      "RR-MTT-26-0301",
+      "RR-MTTO-26-0249",
+      "RR-MTT-26-0300",
+      "RR-MTTO-26-0053",
+      "RR-MTTO-26-0229",
+      "RR-MTTO-26-0058",
+      "RR-MTTO-26-0059",
+      "RR-MTTO-26-0057",
+      "RR-MTTO-26-0242",
+      "RR-MTTO-26-0056",
+      "RR-MTTO-26-0226",
+      "RR-MTTO-26-0251",
+      "RR-MTTO-26-0227",
+      "RR-MTTO-26-0230",
+      "RR-MTTO-26-0239",
+      "RR-MTTO-26-0240",
+      "RR-MTTO-26-0244"
+    ],
+    "itemsEjemplo": [
+      "MONTAJE Y DESMONTAJE",
+      "REPARACIÓN, COLOCACIÓN DE PARCHE CALIENT",
+      "REPARACIÓN DE FUGA EN PULMÓN DE ASIENTO"
+    ]
+  },
+  {
+    "nombreOriginal": "CENTRO PIRITU INN C.A",
+    "proveedorId": 215,
+    "transacciones": 6,
+    "unidades": 42,
+    "totalGastado": 1295,
+    "requisiciones": [
+      "RR-ADM-TG-26-0031"
+    ],
+    "itemsEjemplo": [
+      "HOSPEDAJE PARA PERSONAL FORÁNEO REQUERID"
+    ]
+  },
+  {
+    "nombreOriginal": "HERMACO",
+    "proveedorId": 104,
+    "transacciones": 12,
+    "unidades": 12,
+    "totalGastado": 1216.49,
+    "requisiciones": [
+      "RR-MTT-26-0163"
+    ],
+    "itemsEjemplo": [
+      "MANO DE OBRA REPARARCION DE EQUIPO DE PI",
+      "24F-967 KIT REPARACION DE BOMBA XTREME 2",
+      "171-941 RESORTE DE FILTRO / PULMON 238-6"
+    ]
+  },
+  {
+    "nombreOriginal": "AUTO PARTES EH, C.A",
+    "proveedorId": 8,
+    "transacciones": 16,
+    "unidades": 47,
+    "totalGastado": 1215,
+    "requisiciones": [
+      "RR-MTT-26-0010",
+      "RR-MTTO-26-0188",
+      "RR-MTT-26-0096",
+      "RR-MTTO-26-0209",
+      "RR-MTT-26-0095",
+      "RR-MTT-26-0071",
+      "RR-MTT-26-0337",
+      "RR-MTTO-26-0003",
+      "RR-MTT-26-0256",
+      "RR-MTTO-26-0002",
+      "RR-MTT-26-0257",
+      "RR-MTTO-26-0109",
+      "RR-MTTO-26-0189"
+    ],
+    "itemsEjemplo": [
+      "INYECTOR PARA CAMIONETA DFSK D1 AÑO 2024",
+      "BOBINA PARA CAMIONETA DFSK D1",
+      "FLASHER 12V DE 3 PATAS DE LUZ INTERMITEN"
+    ]
+  },
+  {
+    "nombreOriginal": "TOTAL CLEAN",
+    "proveedorId": 62,
+    "transacciones": 7,
+    "unidades": 34,
+    "totalGastado": 1212.2,
+    "requisiciones": [
+      "RR-MTTO-26-0335",
+      "RR-MTT-26-0003",
+      "RR-MTTO-26-0168",
+      "RR-SHA-26-0051",
+      "RR-MTTO-26-0158",
+      "RR-MTT-26-0263",
+      "RR-MTTO-26-0157"
+    ],
+    "itemsEjemplo": [
+      "POLIURETANO",
+      "RELAY 24V PARA STOCK",
+      "BAJANTE 5\" MAS CODO SEGUN MUESTRA "
+    ]
+  },
+  {
+    "nombreOriginal": "INVERSIONES RAMIREZ",
+    "proveedorId": 139,
+    "transacciones": 25,
+    "unidades": 132,
+    "totalGastado": 1202.25,
+    "requisiciones": [
+      "RR-SVG-26-0017",
+      "RR-OPE-26-0048",
+      "RR-MTTO-26-0197",
+      "RR-MTTO-26-0199",
+      "RR-MTTO-26-0196",
+      "RR-SSGG-26-0014"
+    ],
+    "itemsEjemplo": [
+      "BOMBILLO LED MAFI DOMO INDUSTRIAL",
+      "CAJA DE HERRAMIENTA GRANDE 16\"(40 A 43 C",
+      "DETECTOR DE VOLTAJE TIPO LAPIZ "
+    ]
+  },
+  {
+    "nombreOriginal": "TALLERES JUNIOR HERNANDEZ",
+    "proveedorId": 170,
+    "transacciones": 13,
+    "unidades": 13,
+    "totalGastado": 1196,
+    "requisiciones": [
+      "RR-MTT-26-0205",
+      "RR-MTTO-26-0048",
+      "RR-MTT-26-0208"
+    ],
+    "itemsEjemplo": [
+      "KIT DE FUSIBLE Y TERMINALES",
+      "FLAS ELECTRICO ORIGINAL",
+      "MANO DE OBRA DEL CIRCUITO DEL SISTEMA DE"
+    ]
+  },
+  {
+    "nombreOriginal": "REGINA GAS",
+    "proveedorId": 119,
+    "transacciones": 4,
+    "unidades": 9,
+    "totalGastado": 1170,
+    "requisiciones": [
+      "RR-MTT-26-0102",
+      "RR-SHA-26-0066",
+      "RR-MTTO-26-0161"
+    ],
+    "itemsEjemplo": [
+      "RECARGA DE BOMBONA DE GAS",
+      "FORMACIÓN PERMISO DE TRABAJO ",
+      "LOGÍSTICA DE TRANSPORTE POR 3 DÍAS "
+    ]
+  },
+  {
+    "nombreOriginal": "P & P DISTRIBUIDORA C.A.",
+    "proveedorId": 134,
+    "transacciones": 4,
+    "unidades": 4,
+    "totalGastado": 1151.5,
+    "requisiciones": [
+      "RR-MTT-26-0045",
+      "RR-MTT-26-0133",
+      "RR-MTT-26-0202",
+      "RR-MTT-26-0201"
+    ],
+    "itemsEjemplo": [
+      "BOMBA DE TRANSFERENCIA DE COMBUSTIBLE PA",
+      "KIT DE EMPAQUE SUPERIOR PARA MOTOR CATER",
+      "BOMBIN AUXILIAR PARA MOTOR CATERPILLA C1"
+    ]
+  },
+  {
+    "nombreOriginal": "LUBRICAUCHOS ZULIA C.A",
+    "proveedorId": 350,
+    "transacciones": 1,
+    "unidades": 1,
+    "totalGastado": 1120,
+    "requisiciones": [
+      "RR-MTTO-26-0354"
+    ],
+    "itemsEjemplo": [
+      "TAMBOR DE VALVULINA 80W-90"
+    ]
+  },
+  {
+    "nombreOriginal": "INPRESORA MARCELA",
+    "proveedorId": 185,
+    "transacciones": 3,
+    "unidades": 64,
+    "totalGastado": 1060,
+    "requisiciones": [
+      "RR-ALM-26-0008",
+      "RR-OPE-26-0134",
+      "RR-OPE-26-0162"
+    ],
+    "itemsEjemplo": [
+      "TALONARIOS DE MOVIMIENTOS DE RECURSOS. I",
+      "TRAPOS ESTERILIZADOS ",
+      "TALONARIOS SERVITICKETS CAMIONES DE VACI"
+    ]
+  },
+  {
+    "nombreOriginal": "ALIRIO JOSE HUERTA OLIVARES  TU TAPICERIA",
+    "proveedorId": 26,
+    "transacciones": 9,
+    "unidades": 16,
+    "totalGastado": 1048,
+    "requisiciones": [
+      "RR-MTT-26-0151",
+      "RR-MTT-26-0034",
+      "RR-MTT-26-0052",
+      "RR-MTT-26-0291",
+      "RR-MTT-26-0111",
+      "RR-MTT-26-0214",
+      "RR-MTTO-26-0045",
+      "RR-MTT-26-0060"
+    ],
+    "itemsEjemplo": [
+      "REPARARCION DE GOMA ESPUMA TANTO DEL ESP",
+      "COMBIO DE DOS PIEZAS EN SEMICUERO Y REPA",
+      "REPARACION DE GIMA ESPUMA, ESPALDAR DE 2"
+    ]
+  },
+  {
+    "nombreOriginal": "CAUCHOS SORA C.A",
+    "proveedorId": 211,
+    "transacciones": 2,
+    "unidades": 2,
+    "totalGastado": 1010,
+    "requisiciones": [
+      "RR-ADM-TG-26-0005",
+      "RR-ADM-TG-26-0033"
+    ],
+    "itemsEjemplo": [
+      "CAMBIO DE ACEITE Y FILTRO MÁS BORNES DE ",
+      "MANTENIMIENTO PREVENTIVO PARA LA CAMIONE"
+    ]
+  },
+  {
+    "nombreOriginal": "SUVALCAR, C.A",
+    "proveedorId": 71,
+    "transacciones": 5,
+    "unidades": 9,
+    "totalGastado": 1007.08,
+    "requisiciones": [
+      "RR-MTT-26-0091",
+      "RR-MTT-26-0012",
+      "RR-MTT-26-0011",
+      "RR-MTT-26-0090",
+      "RR-MTT-26-0123"
+    ],
+    "itemsEjemplo": [
+      "PALANCA DE CAMBIO DE LUCES DE CRUCES PAR",
+      "VÁLVULA DE DRENAJE MANUAL PARA TANQUE DE",
+      "VÁLVULA DE DRENAJE MANUAL TANQUE DE AIRE"
+    ]
+  },
+  {
+    "nombreOriginal": "METALURGICA INDUSTRIAL MARACAIBO C.A ( MEINMACA)",
+    "proveedorId": 218,
+    "transacciones": 1,
+    "unidades": 1,
+    "totalGastado": 1000,
+    "requisiciones": [
+      "RR-MTT-26-0330"
+    ],
+    "itemsEjemplo": [
+      "SUMINISTROS Y FABRICACION PARA CABINA HI"
+    ]
+  },
+  {
+    "nombreOriginal": "FILTROS Y LUBRICANTES EL PUENTE C.A.",
+    "proveedorId": 20,
+    "transacciones": 7,
+    "unidades": 13,
+    "totalGastado": 990.2,
+    "requisiciones": [
+      "RR-MTT-26-0064",
+      "RR-MTT-26-0065",
+      "RR-MTT-26-0232",
+      "RR-MTT-26-0233",
+      "RR-MTTO-26-0036"
+    ],
+    "itemsEjemplo": [
+      "FILTRO SEPARADOR O TRAMPA DE AGUA PARA C",
+      "FILTROS DE ACEITE 51810 AK ",
+      "FILTRO DE ACEITE 51675 F"
+    ]
+  },
+  {
+    "nombreOriginal": "JHONNY VALBUENA",
+    "proveedorId": 27,
+    "transacciones": 10,
+    "unidades": 65,
+    "totalGastado": 965.75,
+    "requisiciones": [
+      "RR-MTT-26-0022",
+      "RR-MTT-26-0217",
+      "RR-MTT-26-0216",
+      "RR-MTTO-26-0334",
+      "RR-MTTO-26-0179"
+    ],
+    "itemsEjemplo": [
+      "MONTAJE Y DESMONTAJE DE CAUCHO",
+      "MONTAJE DE CAUCHOS",
+      "VALVULAS"
+    ]
+  },
+  {
+    "nombreOriginal": "INVERSIONES NC, C.A.",
+    "proveedorId": 10,
+    "transacciones": 1,
+    "unidades": 1,
+    "totalGastado": 950,
+    "requisiciones": [
+      "RR-MTT-26-0271"
+    ],
+    "itemsEjemplo": [
+      "TRABAJO Y MECANIZADO EN TORNO"
+    ]
+  },
+  {
+    "nombreOriginal": "DON JUAN MULTISERVICIOS ELETRO MECANICA",
+    "proveedorId": 77,
+    "transacciones": 5,
+    "unidades": 5,
+    "totalGastado": 890,
+    "requisiciones": [
+      "RR-MTTO-26-0009",
+      "RR-MTT-26-0039",
+      "RR-MTT-26-0041",
+      "RR-MTT-26-0304",
+      "RR-MTT-26-0237"
+    ],
+    "itemsEjemplo": [
+      "INSTALACION DE CABLEADO ELECTRICO Y ADAP",
+      "MONTAJE Y DESMONTAJE DE ARRANQUE, RESICI",
+      "INSTALACION DE CABLES DEL RAMAL ELECTRIC"
+    ]
+  },
+  {
+    "nombreOriginal": "TRAPO ZULIA",
+    "proveedorId": 186,
+    "transacciones": 3,
+    "unidades": 48,
+    "totalGastado": 860,
+    "requisiciones": [
+      "RR-OPE-26-0031",
+      "RR-OPE-26-0033",
+      "RR-MTT-26-0250"
+    ],
+    "itemsEjemplo": [
+      "SACO DE TRAPOS ESTERILIZADO",
+      "SACOS DE TRAPO"
+    ]
+  },
+  {
+    "nombreOriginal": "LUBRICANTES MORANCA",
+    "proveedorId": 307,
+    "transacciones": 30,
+    "unidades": 30,
+    "totalGastado": 840,
+    "requisiciones": [
+      "RR-MTTO-26-0323",
+      "RR-MTTO-26-0320",
+      "RR-MTTO-26-0319",
+      "RR-MTTO-26-0316",
+      "RR-MTTO-26-0324",
+      "RR-MTTO-26-0321"
+    ],
+    "itemsEjemplo": [
+      "LAVADO DE CHASIS",
+      "LAVADO DE MOTOR",
+      "ENGRASE"
+    ]
+  },
+  {
+    "nombreOriginal": "JEOVANNY JIMENEZ",
+    "proveedorId": 82,
+    "transacciones": 10,
+    "unidades": 16,
+    "totalGastado": 818,
+    "requisiciones": [
+      "RR-MTT-26-0141",
+      "RR-MTTO-26-0129",
+      "RR-MTTO-26-0250"
+    ],
+    "itemsEjemplo": [
+      "POTE DE LIGA DE FRENO",
+      "KIT DE BOMBA DE FRENOS",
+      "MANO DE OBRA"
+    ]
+  },
+  {
+    "nombreOriginal": "ROESVO C,A",
+    "proveedorId": 274,
+    "transacciones": 4,
+    "unidades": 7,
+    "totalGastado": 790.03,
+    "requisiciones": [
+      "RR-MTT-26-0284",
+      "RR-SEG-26-0033"
+    ],
+    "itemsEjemplo": [
+      "50X70X10 ESTOPERA",
+      "SET 230 RODAMIENTO",
+      "415023 RODAMIENTO"
+    ]
+  },
+  {
+    "nombreOriginal": "SUMISTRO &SERVICIOS INTEGRAL SSI",
+    "proveedorId": 118,
+    "transacciones": 17,
+    "unidades": 17,
+    "totalGastado": 765,
+    "requisiciones": [
+      "RR-MTT-26-0197",
+      "RR-MTT-26-0191",
+      "RR-MTT-26-0195",
+      "RR-MTT-26-0196",
+      "RR-MTT-26-0190",
+      "RR-MTT-26-0189",
+      "RR-MTT-26-0199",
+      "RR-MTT-26-0194",
+      "RR-MTT-26-0193",
+      "RR-MTT-26-0192",
+      "RR-MTT-26-0262"
+    ],
+    "itemsEjemplo": [
+      "COMBO BALANCEO, ALINEACIÓN Y ROTACIÓN DE",
+      "COMBO DE BALANCEO, ALINEACIÓN Y ROTACIÓN",
+      "BANDAS DE FRENOS DE MANO"
+    ]
+  },
+  {
+    "nombreOriginal": "ACRRILICOS FRAN COLORS C.A",
+    "proveedorId": 171,
+    "transacciones": 6,
+    "unidades": 16,
+    "totalGastado": 754.92,
+    "requisiciones": [
+      "RR-MTT-26-0283",
+      "RR-MTT-26-0060"
+    ],
+    "itemsEjemplo": [
+      "GALONES DE PINTURA 2K ",
+      "GALON DE REDUCTOR ",
+      "GALON DE THINER SELLADO"
+    ]
+  },
+  {
+    "nombreOriginal": "TELCOM JPS",
+    "proveedorId": 100,
+    "transacciones": 10,
+    "unidades": 17,
+    "totalGastado": 742.22,
+    "requisiciones": [
+      "RR-OPE-26-0046",
+      "RR-MTT-26-0087",
+      "RR-ADM-MCB-26-0001",
+      "RR-OPE-26-0096",
+      "RR-EST-26-0009",
+      "RR-ALM-26-0014",
+      "RR-OPE-26-0080",
+      "RR-OPE-26-0045"
+    ],
+    "itemsEjemplo": [
+      "IMPRESORA MULTIFUNCIONAL EPSON L3250 TIN",
+      "MOUSE",
+      "TECLADO"
+    ]
+  },
+  {
+    "nombreOriginal": "EMBRAGUES Y BOMBAS ZULIA, C.A EMBOZULCA",
+    "proveedorId": 80,
+    "transacciones": 4,
+    "unidades": 4,
+    "totalGastado": 710,
+    "requisiciones": [
+      "RR-MTT-26-0140",
+      "RR-MTTO-26-0037",
+      "RR-MTTO-26-0042",
+      "RR-MTT-26-0358"
+    ],
+    "itemsEjemplo": [
+      "REPARACION DE BOMBA DE AGUA PARA CAMIONE",
+      "REPARACION DE CROCHE, CAMBIO DE 2 RODAMI",
+      "REPARACION BOMBA DE AGUA DE CAMION MACK "
+    ]
+  },
+  {
+    "nombreOriginal": "ALFONSO GREGORIO ARENDS CEBALLOS",
+    "proveedorId": 268,
+    "transacciones": 1,
+    "unidades": 1,
+    "totalGastado": 700.27,
+    "requisiciones": [
+      "RR-OPE-26-0102"
+    ],
+    "itemsEjemplo": [
+      "LOW BOYD ALQUILADO PARA TRASLADO DE GRUA"
+    ]
+  },
+  {
+    "nombreOriginal": "HIDROBOMBAS SUR , C. A",
+    "proveedorId": 49,
+    "transacciones": 7,
+    "unidades": 7,
+    "totalGastado": 695.3,
+    "requisiciones": [
+      "RR-MTT-26-0051",
+      "RR-MTT-26-0289",
+      "RR-MTTO-26-0206"
+    ],
+    "itemsEjemplo": [
+      "PUNTILLA CORTA ",
+      "BOMBA DE INYECCION",
+      "ACEITE DIESEL"
+    ]
+  },
+  {
+    "nombreOriginal": "CENTRO EDICIÓN INTEGRAL C.A",
+    "proveedorId": 273,
+    "transacciones": 2,
+    "unidades": 60,
+    "totalGastado": 660,
+    "requisiciones": [
+      "RR-ADM-TG-26-0032"
+    ],
+    "itemsEjemplo": [
+      "GORRAS PERSONALIZADAS DE TOTAL CLEAN .",
+      "VASOS PERSONALIZADAS DE TOTAL CLEAN ."
+    ]
+  },
+  {
+    "nombreOriginal": "LA PODEROSA 323 R.S",
+    "proveedorId": 56,
+    "transacciones": 3,
+    "unidades": 4,
+    "totalGastado": 659.98,
+    "requisiciones": [
+      "RR-MTT-26-0074",
+      "RR-MTTO-26-0342",
+      "RR-MTTO-26-0277"
+    ],
+    "itemsEjemplo": [
+      "BATERÍA DE 1250 AMP DE TORNILLOS",
+      "BATERIA DE 900 AMPERIOS, SERIAL 4B26F10A",
+      "BATERIA DE 900 AMP DE BORNE"
+    ]
+  },
+  {
+    "nombreOriginal": "MOTORES DEL LAGO, C.A",
+    "proveedorId": 233,
+    "transacciones": 1,
+    "unidades": 1,
+    "totalGastado": 630,
+    "requisiciones": [
+      "RR-MTT-26-0347"
+    ],
+    "itemsEjemplo": [
+      "PARABRISAS DELANTERO"
+    ]
+  },
+  {
+    "nombreOriginal": "PRO SAFETY D&G C.A",
+    "proveedorId": 6,
+    "transacciones": 5,
+    "unidades": 315,
+    "totalGastado": 614.6,
+    "requisiciones": [
+      "RR-SEG-26-0091"
+    ],
+    "itemsEjemplo": [
+      "GUANTES CARNAZA",
+      "GUANTES CAROLINA",
+      "GUANTE DE NEOPRENO"
+    ]
+  },
+  {
+    "nombreOriginal": "LA PODEROSA 323",
+    "proveedorId": 145,
+    "transacciones": 4,
+    "unidades": 4,
+    "totalGastado": 609.98,
+    "requisiciones": [
+      "RR-MTT-26-0341",
+      "RR-MTT-26-0188",
+      "RR-MTT-26-0107",
+      "RR-MTT-26-0121"
+    ],
+    "itemsEjemplo": [
+      "BATERIA DE 900 AMP DE BORNES",
+      "BATERÍA DE 900 AMP DE BORNES",
+      "BATERIA 4D "
+    ]
+  },
+  {
+    "nombreOriginal": "EMPRESA NACIONAL DE MECANICA , C.A.",
+    "proveedorId": 15,
+    "transacciones": 2,
+    "unidades": 2,
+    "totalGastado": 582,
+    "requisiciones": [
+      "RR-MTT-26-0004",
+      "RR-MTT-26-0238"
+    ],
+    "itemsEjemplo": [
+      "REPARACIÓN DE AIRE ACONDICIONADO",
+      "REPARACIÓN DE CAUCHO, COLOCACIÓN DE PARC"
+    ]
+  },
+  {
+    "nombreOriginal": "GRUPO MULTIMODAL, C.A.",
+    "proveedorId": 353,
+    "transacciones": 1,
+    "unidades": 1,
+    "totalGastado": 566.5,
+    "requisiciones": [
+      "RR-MTTO-26-0312"
+    ],
+    "itemsEjemplo": [
+      "MANTENIMIENTO PREVENTIVO, CAMBIO DE FILT"
+    ]
+  },
+  {
+    "nombreOriginal": "HUBY CONNECT",
+    "proveedorId": 269,
+    "transacciones": 2,
+    "unidades": 3,
+    "totalGastado": 560,
+    "requisiciones": [
+      "RR-SVG-26-0035"
+    ],
+    "itemsEjemplo": [
+      "RAUTER TP LINK Wi-fi 6 Ax3000 DECO X50",
+      "RAUTER XPON GIGABIT TP-LINK"
+    ]
+  },
+  {
+    "nombreOriginal": "LANPRO SYSTEMS C.A",
+    "proveedorId": 180,
+    "transacciones": 1,
+    "unidades": 10,
+    "totalGastado": 552,
+    "requisiciones": [
+      "RR-ALM-26-0010"
+    ],
+    "itemsEjemplo": [
+      "CARTUCHOS PARA ETIQUETADORA BRADY 3/4\""
+    ]
+  },
+  {
+    "nombreOriginal": "TELERED TECHNOLOGY , C.A",
+    "proveedorId": 262,
+    "transacciones": 2,
+    "unidades": 2,
+    "totalGastado": 535,
+    "requisiciones": [
+      "RR-SVG-26-0018"
+    ],
+    "itemsEjemplo": [
+      "MINI UPS",
+      "UPS 700W"
+    ]
+  },
+  {
+    "nombreOriginal": "HILDA COLINA",
+    "proveedorId": 264,
+    "transacciones": 4,
+    "unidades": 14,
+    "totalGastado": 518,
+    "requisiciones": [
+      "RR-EST-26-0014"
+    ],
+    "itemsEjemplo": [
+      "habitacion del hotel",
+      "transporte del hotel a la planta",
+      "comida"
+    ]
+  },
+  {
+    "nombreOriginal": "TORNOS LOS VILLASMILES",
+    "proveedorId": 176,
+    "transacciones": 2,
+    "unidades": 150,
+    "totalGastado": 516,
+    "requisiciones": [
+      "RR-OPE-26-0067"
+    ],
+    "itemsEjemplo": [
+      "PLATINAS DE 2 HUECOS (SEGUN MUESTRA)",
+      "PLATINAS DE 4 HUECOS (SEGUN MUESTRA)"
+    ]
+  },
+  {
+    "nombreOriginal": "JAVIER E. NAVA FACCINI",
+    "proveedorId": 34,
+    "transacciones": 6,
+    "unidades": 6,
+    "totalGastado": 503.64,
+    "requisiciones": [
+      "RR-SVG-26-0020",
+      "RR-SVG-26-0002"
+    ],
+    "itemsEjemplo": [
+      "SERVICIO Y MANTENIMIENTO A/A OFICINA SIH",
+      "REPARACION TARJETA A/A SIHAO",
+      "SERVICIO MANTENIMIENTO A/A LABORALES Y E"
+    ]
+  },
+  {
+    "nombreOriginal": "FABIO BAVUSO",
+    "proveedorId": 210,
+    "transacciones": 1,
+    "unidades": 1,
+    "totalGastado": 500,
+    "requisiciones": [
+      "RR-ADM-TG-26-0002"
+    ],
+    "itemsEjemplo": [
+      "APERTURA DE CAJA CHICA PARA CUBRIR GASTO"
+    ]
+  },
+  {
+    "nombreOriginal": "MINIMARKET PALMERA RECORD, C.A",
+    "proveedorId": 22,
+    "transacciones": 1,
+    "unidades": 1,
+    "totalGastado": 490,
+    "requisiciones": [
+      "RR-MTT-26-0350"
+    ],
+    "itemsEjemplo": [
+      "MANO DE OBRA"
+    ]
+  },
+  {
+    "nombreOriginal": "DENNIS RAMIREZ MACHADO",
+    "proveedorId": 81,
+    "transacciones": 9,
+    "unidades": 9,
+    "totalGastado": 485,
+    "requisiciones": [
+      "RR-MTT-26-0135",
+      "RR-MTT-26-0136",
+      "RR-MTT-26-0134",
+      "RR-MTTO-26-0461",
+      "RR-MTTO-26-0462",
+      "RR-MTTO-26-0459"
+    ],
+    "itemsEjemplo": [
+      "REPARACIÓN DE MOTOR DE ARRANQUE",
+      "ALTERNADOR DE 12 VOLTIOS BOSS ",
+      "SERVICIO DE ALTERNADOR "
+    ]
+  },
+  {
+    "nombreOriginal": "Desconocido",
+    "proveedorId": null,
+    "transacciones": 6,
+    "unidades": 17,
+    "totalGastado": 481,
+    "requisiciones": [
+      "RR-OPE-26-0028",
+      "RR-ADM-TG-26-0021"
+    ],
+    "itemsEjemplo": [
+      "PINTURA ESMLATE AMARILLO",
+      "PINTURA ALUMINIO DE BAJA 175",
+      "THINNER"
+    ]
+  },
+  {
+    "nombreOriginal": "RODAMIENTOS RODRIGUEZ, C.A (RODRICA)",
+    "proveedorId": 42,
+    "transacciones": 5,
+    "unidades": 6,
+    "totalGastado": 478.90000000000003,
+    "requisiciones": [
+      "RR-MTT-26-0017",
+      "RR-MTT-26-0200",
+      "RR-MTT-26-0001",
+      "RR-MTT-26-0198"
+    ],
+    "itemsEjemplo": [
+      "CRUCETA N° SD7162 PARA MACK GRANITE PARA",
+      "RODAMIENTO SET 251",
+      "RODAMIENTO SET 45"
+    ]
+  },
+  {
+    "nombreOriginal": "WENDY LINARES",
+    "proveedorId": 192,
+    "transacciones": 4,
+    "unidades": 8,
+    "totalGastado": 477.97,
+    "requisiciones": [
+      "RR-SHA-26-0017",
+      "RR-MTTO-26-0172",
+      "RR-SVG-26-0014",
+      "RR-SSGG-26-0005"
+    ],
+    "itemsEjemplo": [
+      "2 METRO DE ETIQUETAS DE PUNTO DE PELLIZC",
+      "MECHA P/HIERRO BRONCE 3/8\"",
+      "MOTOSIERRA"
+    ]
+  },
+  {
+    "nombreOriginal": "RAMON S. TORTOZA A.",
+    "proveedorId": 99,
+    "transacciones": 1,
+    "unidades": 1,
+    "totalGastado": 456,
+    "requisiciones": [
+      "RR-SHA-26-0011"
+    ],
+    "itemsEjemplo": [
+      "CERTIFICACION DE OPERADORES DE CESTA"
+    ]
+  },
+  {
+    "nombreOriginal": "LUICIDIO SEGUNDO HERNANDEZ RAMIREZ",
+    "proveedorId": 370,
+    "transacciones": 1,
+    "unidades": 1,
+    "totalGastado": 456,
+    "requisiciones": [
+      "RR-SEG-26-0114"
+    ],
+    "itemsEjemplo": [
+      "CERTIFICACIÓN TRABAJOS EN ALTURAS"
+    ]
+  },
+  {
+    "nombreOriginal": "TRUMELTARCA",
+    "proveedorId": 309,
+    "transacciones": 1,
+    "unidades": 1,
+    "totalGastado": 450.5,
+    "requisiciones": [
+      "RR-CMP-26-0024"
+    ],
+    "itemsEjemplo": [
+      "Aplicacion de sandblasting en laminas"
+    ]
+  },
+  {
+    "nombreOriginal": "FABIO DE CASTRO (FC)",
+    "proveedorId": 35,
+    "transacciones": 3,
+    "unidades": 3,
+    "totalGastado": 443.34000000000003,
+    "requisiciones": [
+      "RR-SVG-26-0005",
+      "RR-SVG-26-0023",
+      "RR-MTTO-26-0028"
+    ],
+    "itemsEjemplo": [
+      "TRANFORMADOR ILUMINED TE 0707 12V 400W",
+      "TRANSFORMADOR 110v a 12v",
+      "INSTALACION DE CABLES DE CONTROL PLANTA "
+    ]
+  },
+  {
+    "nombreOriginal": "DAKA",
+    "proveedorId": 255,
+    "transacciones": 1,
+    "unidades": 1,
+    "totalGastado": 431,
+    "requisiciones": [
+      "RR-SVG-26-0032"
+    ],
+    "itemsEjemplo": [
+      "KIT ANTENA FIJA STARLINK"
+    ]
+  },
+  {
+    "nombreOriginal": "FERRE EQUIPOS MORENO",
+    "proveedorId": 293,
+    "transacciones": 1,
+    "unidades": 20,
+    "totalGastado": 420,
+    "requisiciones": [
+      "RR-OPE-26-0124"
+    ],
+    "itemsEjemplo": [
+      "TUBOS PARA ANDAMIOS DE 6MTS"
+    ]
+  },
+  {
+    "nombreOriginal": "LA CASA DE LAS GUAYAS 2025 .C.A.",
+    "proveedorId": 259,
+    "transacciones": 2,
+    "unidades": 8,
+    "totalGastado": 411,
+    "requisiciones": [
+      "RR-MTTO-26-0070",
+      "RR-MTTO-26-0071"
+    ],
+    "itemsEjemplo": [
+      "GUAYA DE ACELERACION DE 3 METROS PARA VA",
+      "GUAYA DE ACELERACION DE 5 METROS PARA SU"
+    ]
+  },
+  {
+    "nombreOriginal": "EMPACADURAS INDUSTRIALES DE VENEZUELA C.A.",
+    "proveedorId": 193,
+    "transacciones": 5,
+    "unidades": 33,
+    "totalGastado": 392.86,
+    "requisiciones": [
+      "RR-OPE-26-0091",
+      "RR-OPE-26-0077"
+    ],
+    "itemsEjemplo": [
+      "EMPACADURA FLEXITALICA 2 \" X 150 PSI",
+      "EMPACADURA FLEXITALICA 6 \" X 150 PSI",
+      "EMPACADURAS FLEXITALICAS 6\"X150"
+    ]
+  },
+  {
+    "nombreOriginal": "MARCOS JUNIOR HERNANDEZ",
+    "proveedorId": 101,
+    "transacciones": 9,
+    "unidades": 17,
+    "totalGastado": 391,
+    "requisiciones": [
+      "RR-MTT-26-0129",
+      "RR-MTT-26-0164"
+    ],
+    "itemsEjemplo": [
+      "KIT DE RODAMIENTOS DELANTEROS ORIGINALES",
+      "MANO DE OBRA",
+      "REPRARCION Y CONFIGURARCION DE ELECTROVE"
+    ]
+  },
+  {
+    "nombreOriginal": "AGROPETS C.A",
+    "proveedorId": 230,
+    "transacciones": 1,
+    "unidades": 1,
+    "totalGastado": 383,
+    "requisiciones": [
+      "RR-ADM-TG-26-0019"
+    ],
+    "itemsEjemplo": [
+      "GASTOS MÉDICOS DE OPERACIÓN DE CANINO."
+    ]
+  },
+  {
+    "nombreOriginal": "IWOSA HIERRO ACERO FERRETERIA",
+    "proveedorId": 347,
+    "transacciones": 1,
+    "unidades": 2,
+    "totalGastado": 376.8,
+    "requisiciones": [
+      "RR-OPE-26-0204"
+    ],
+    "itemsEjemplo": [
+      "MALLA ROMBOIDAL 1,40 MTS DE ANCHO X 6 MT"
+    ]
+  },
+  {
+    "nombreOriginal": "VE_ONE C.A",
+    "proveedorId": 277,
+    "transacciones": 1,
+    "unidades": 6,
+    "totalGastado": 375.9,
+    "requisiciones": [
+      "RR-ADM-TG-26-0039"
+    ],
+    "itemsEjemplo": [
+      "MINI UPS 20MAH REQUERIDOS PARA LA COLABO"
+    ]
+  },
+  {
+    "nombreOriginal": "INVERSIONES JF MURO JOSE FRANCISCO MURO MENZEL F.P",
+    "proveedorId": 249,
+    "transacciones": 12,
+    "unidades": 64,
+    "totalGastado": 329,
+    "requisiciones": [
+      "RR-MTTO-26-0069",
+      "RR-MTTO-26-0139"
+    ],
+    "itemsEjemplo": [
+      "MTS DE CABLE #12",
+      "TERMINALES DE OJO",
+      "TERMINALES H/M"
+    ]
+  },
+  {
+    "nombreOriginal": "FARMAEXPRESS C2",
+    "proveedorId": 142,
+    "transacciones": 25,
+    "unidades": 144,
+    "totalGastado": 327.31000000000006,
+    "requisiciones": [
+      "RR-CMP-26-0009",
+      "RR-CMP-26-0005",
+      "RR-SHA-26-0052",
+      "RR-CMP-26-0020"
+    ],
+    "itemsEjemplo": [
+      "8 KG CAFE",
+      "6 KG Azucar ",
+      "5 KG Gatarina "
+    ]
+  },
+  {
+    "nombreOriginal": "EFA SISTEMAS C,A",
+    "proveedorId": 86,
+    "transacciones": 2,
+    "unidades": 6,
+    "totalGastado": 323.82,
+    "requisiciones": [
+      "RR-MTT-26-0138",
+      "RR-EST-26-0017"
+    ],
+    "itemsEjemplo": [
+      "ADAPTADOR WIFI DUAL USB PARA PC",
+      "MINI UPS 8000/10000 Mh"
+    ]
+  },
+  {
+    "nombreOriginal": "MANTENIMIENTOS Y METALNICAS JML C.A",
+    "proveedorId": 284,
+    "transacciones": 1,
+    "unidades": 1,
+    "totalGastado": 323.4,
+    "requisiciones": [
+      "RR-ADM-TG-26-0042"
+    ],
+    "itemsEjemplo": [
+      "LQUILER DE HERRAMIENTAS PARA MECANICA LO"
+    ]
+  },
+  {
+    "nombreOriginal": "PLASTISURCA",
+    "proveedorId": 38,
+    "transacciones": 1,
+    "unidades": 1,
+    "totalGastado": 320,
+    "requisiciones": [
+      "RR-OPE-26-0129"
+    ],
+    "itemsEjemplo": [
+      "PLASTICO NEGRO 3.00 MTS DE ANCHO X 150 M"
+    ]
+  },
+  {
+    "nombreOriginal": "COFTAH",
+    "proveedorId": 371,
+    "transacciones": 1,
+    "unidades": 1,
+    "totalGastado": 320,
+    "requisiciones": [
+      "RR-SEG-26-0116"
+    ],
+    "itemsEjemplo": [
+      "FORMACION AMBIENTA"
+    ]
+  },
+  {
+    "nombreOriginal": "JONATHAN ANDRADE",
+    "proveedorId": 24,
+    "transacciones": 2,
+    "unidades": 8,
+    "totalGastado": 310.20000000000005,
+    "requisiciones": [
+      "RR-OPE-26-0011",
+      "RR-CMP-26-0012"
+    ],
+    "itemsEjemplo": [
+      "MAUSE INALAMBRICO RECARGABLE",
+      "6 UPS Mant y sustit de bateria "
+    ]
+  },
+  {
+    "nombreOriginal": "LULO SAFTWARE, C.A.",
+    "proveedorId": 17,
+    "transacciones": 2,
+    "unidades": 2,
+    "totalGastado": 300,
+    "requisiciones": [
+      "RR-EST-26-0004"
+    ],
+    "itemsEjemplo": [
+      "ACTIVACION ADICIONAL DE SISTEMA DE ELABO"
+    ]
+  },
+  {
+    "nombreOriginal": "JOSE TIRADO CARVAJAL",
+    "proveedorId": 279,
+    "transacciones": 1,
+    "unidades": 2,
+    "totalGastado": 300,
+    "requisiciones": [
+      "RR-ADM-TG-26-0030"
+    ],
+    "itemsEjemplo": [
+      "EXÁMENES MÉDICOS DE PERSONAL PARA NUEVO "
+    ]
+  },
+  {
+    "nombreOriginal": "LA CASA DEL CAMION",
+    "proveedorId": 251,
+    "transacciones": 5,
+    "unidades": 7,
+    "totalGastado": 297.71999999999997,
+    "requisiciones": [
+      "RR-MTT-26-0286"
+    ],
+    "itemsEjemplo": [
+      "STOP TRASERO DERECHO ISUZU 12V/24V",
+      "STOP TRASERO IZQUIERDO ISUZU 12V/24V",
+      "RELOJ VOLTIMETRO (12VOLT) LYC"
+    ]
+  },
+  {
+    "nombreOriginal": "LA CASA DEL CAMION, C.A",
+    "proveedorId": 358,
+    "transacciones": 4,
+    "unidades": 7,
+    "totalGastado": 289,
+    "requisiciones": [
+      "RR-MTTO-26-0191",
+      "RR-MTT-26-0040",
+      "RR-MTTO-26-0509",
+      "RR-MTTO-26-0426"
+    ],
+    "itemsEjemplo": [
+      "BOMBIN CEBADOR PARA CAMION 350 CANTER FU",
+      "MODULO DE FRENO PARA VACUUM PARA STOCK D",
+      "STOP TRASERO JAC 1061"
+    ]
+  },
+  {
+    "nombreOriginal": "INVERSIONES CHACHI C.A",
+    "proveedorId": 290,
+    "transacciones": 2,
+    "unidades": 2,
+    "totalGastado": 283,
+    "requisiciones": [
+      "RR-OPE-26-0161",
+      "RR-MTTO-26-0184"
+    ],
+    "itemsEjemplo": [
+      "REEMPLAZO PARA TOLDO PARA CUADRILLA EN B",
+      "STOP MAZDA BT 50 (PAR)"
+    ]
+  },
+  {
+    "nombreOriginal": "SUPLI LUB C.A",
+    "proveedorId": 115,
+    "transacciones": 16,
+    "unidades": 63.7,
+    "totalGastado": 275.52119999999996,
+    "requisiciones": [
+      "RR-MTT-26-0187",
+      "RR-MTT-26-0075",
+      "RR-MTTO-26-0165",
+      "RR-MTT-26-0261"
+    ],
+    "itemsEjemplo": [
+      "MANGUERA DE 1/4",
+      "CONEXIÓN 1/4X1/4",
+      "FERRUL DE 1/4"
+    ]
+  },
+  {
+    "nombreOriginal": "GERALDIN DEL CARMEN GONZALEZ GONZALEZ",
+    "proveedorId": 363,
+    "transacciones": 2,
+    "unidades": 2,
+    "totalGastado": 261.7,
+    "requisiciones": [
+      "RR-SEG-26-0109",
+      "RR-SEG-26-0117"
+    ],
+    "itemsEjemplo": [
+      "PAGO DE FACTURA FORMACIÓN ESPACIO CONFIN",
+      "REFRIGERIO CURSO CONDUCCION FLOTA PESADA"
+    ]
+  },
+  {
+    "nombreOriginal": "EURO ENRIQUE GONZALEZ GONZALEZ ( ELETROMECANICA AUTOMOTRIZ )",
+    "proveedorId": 60,
+    "transacciones": 1,
+    "unidades": 1,
+    "totalGastado": 250,
+    "requisiciones": [
+      "RR-MTT-26-0048"
+    ],
+    "itemsEjemplo": [
+      "INSTALACIÓN DE CONVERTIDOR DE 24V A 12V "
+    ]
+  },
+  {
+    "nombreOriginal": "SUPER CAUCHOS G.M C.A",
+    "proveedorId": 68,
+    "transacciones": 10,
+    "unidades": 21,
+    "totalGastado": 236.8,
+    "requisiciones": [
+      "RR-MTT-26-0030",
+      "RR-MTT-26-0026",
+      "RR-MTT-26-0359",
+      "RR-MTTO-26-0095"
+    ],
+    "itemsEjemplo": [
+      "ALINEACIÓN",
+      "BALANCEO DE CAUCHO R16",
+      "ROTACIÓN DE CAUCHO"
+    ]
+  },
+  {
+    "nombreOriginal": "MARIA DEL CHIQUINQUIRA GONZALEZ GONZALEZ",
+    "proveedorId": 16,
+    "transacciones": 7,
+    "unidades": 7,
+    "totalGastado": 233,
+    "requisiciones": [
+      "RR-SHA-26-0007",
+      "RR-SHA-26-0006",
+      "RR-SHA-26-0069",
+      "RR-SEG-26-0031",
+      "RR-SHA-26-0068",
+      "RR-SEG-26-0042",
+      "RR-SEG-26-0005"
+    ],
+    "itemsEjemplo": [
+      "REFRIGERIO PARA LA CHARLA DE SEGURIDAD D",
+      "CHARLA DE SEGURIDAD ",
+      "PAGO FACTURA REFRIGERIO CHARLA "
+    ]
+  },
+  {
+    "nombreOriginal": "INSAVICA",
+    "proveedorId": 137,
+    "transacciones": 2,
+    "unidades": 2,
+    "totalGastado": 230,
+    "requisiciones": [
+      "RR-OPE-26-0056",
+      "RR-OPE-26-0115"
+    ],
+    "itemsEjemplo": [
+      "TOLDO ",
+      "TOLDO PLEGABLE DE LONA IMPERMEABLE DE 3X"
+    ]
+  },
+  {
+    "nombreOriginal": "JORGE MORENO VENTA Y REPARACION DE TODO TIPO DE RADIADORRES",
+    "proveedorId": 318,
+    "transacciones": 1,
+    "unidades": 1,
+    "totalGastado": 220,
+    "requisiciones": [
+      "RR-MTTO-26-0356"
+    ],
+    "itemsEjemplo": [
+      "SERVICIO DE RADIADOR DE ALUMINIO GRANDE,"
+    ]
+  },
+  {
+    "nombreOriginal": "VENE-TRUCK",
+    "proveedorId": 97,
+    "transacciones": 7,
+    "unidades": 12,
+    "totalGastado": 219.58999999999997,
+    "requisiciones": [
+      "RR-MTT-26-0154",
+      "RR-MTT-26-0219",
+      "RR-MTTO-26-0214",
+      "RR-MTT-26-0174",
+      "RR-MTTO-26-0187",
+      "RR-MTTO-26-0164"
+    ],
+    "itemsEjemplo": [
+      "BOMBINTML NPR",
+      "BAMBIN SUP NPR",
+      "GOMA SOPORTE DE PUENTE CARDAN PARA CAMIÓ"
+    ]
+  },
+  {
+    "nombreOriginal": "ELCA TELECOMUNICACIONES,CA",
+    "proveedorId": 138,
+    "transacciones": 1,
+    "unidades": 1,
+    "totalGastado": 210.53,
+    "requisiciones": [
+      "RR-OPE-26-0072"
+    ],
+    "itemsEjemplo": [
+      "BATERIA PARA RADIO PORTATIL PRO 7550 MOT"
+    ]
+  },
+  {
+    "nombreOriginal": "MANGUERAS MIGUEL C.A",
+    "proveedorId": 366,
+    "transacciones": 1,
+    "unidades": 2,
+    "totalGastado": 210,
+    "requisiciones": [
+      "RR-ALM-26-0032"
+    ],
+    "itemsEjemplo": [
+      "BOMBA PARA SURTIDOR DE GASOIL"
+    ]
+  },
+  {
+    "nombreOriginal": "TRAIGA SU ENVASE 2023",
+    "proveedorId": 250,
+    "transacciones": 4,
+    "unidades": 170,
+    "totalGastado": 198,
+    "requisiciones": [
+      "RR-CMP-26-0016",
+      "RR-OPE-26-0033",
+      "RR-MTT-26-0334"
+    ],
+    "itemsEjemplo": [
+      "CLORO 20 LTS",
+      "JABON LIQUIDO 40 LTS",
+      "JABON LIQUIDO VERDE"
+    ]
+  },
+  {
+    "nombreOriginal": "TODO FRENOS DEL SUR",
+    "proveedorId": 219,
+    "transacciones": 2,
+    "unidades": 2,
+    "totalGastado": 192,
+    "requisiciones": [
+      "RR-MTT-26-0305",
+      "RR-MTT-26-0308"
+    ],
+    "itemsEjemplo": [
+      "ROLINERA DELANTERA IZQUIERDA",
+      "REPARACIÓN DE FRENOS"
+    ]
+  },
+  {
+    "nombreOriginal": "INVERSIONES LIDER",
+    "proveedorId": 244,
+    "transacciones": 2,
+    "unidades": 32,
+    "totalGastado": 190.72,
+    "requisiciones": [
+      "RR-SVG-26-0025"
+    ],
+    "itemsEjemplo": [
+      "AZUCAR",
+      "CAFE DE 500G"
+    ]
+  },
+  {
+    "nombreOriginal": "J.A. SISTEMAS",
+    "proveedorId": 189,
+    "transacciones": 5,
+    "unidades": 8,
+    "totalGastado": 190,
+    "requisiciones": [
+      "RR-EST-26-0009"
+    ],
+    "itemsEjemplo": [
+      "Router Dahua Gigabite Wifi 6 AX3000.",
+      "Conector RJ-45 Cat.6.",
+      "Cable UTP Cat. 6 Indoor 20Mts. Aprox. (0"
+    ]
+  },
+  {
+    "nombreOriginal": "MASTER TRUCKS",
+    "proveedorId": 125,
+    "transacciones": 3,
+    "unidades": 4,
+    "totalGastado": 177.54,
+    "requisiciones": [
+      "RR-MTT-26-0083",
+      "RR-MTT-26-0073",
+      "RR-MTTO-26-0166"
+    ],
+    "itemsEjemplo": [
+      "INTERRUPTOR DE REVERSA PARA CAJA FULLER ",
+      "TUBO PARA BOMBA DE AGUA DE CHUTO MACK GR"
+    ]
+  },
+  {
+    "nombreOriginal": "SIGASMAT C.A",
+    "proveedorId": 272,
+    "transacciones": 1,
+    "unidades": 1,
+    "totalGastado": 175,
+    "requisiciones": [
+      "RR-ADM-TG-26-0034"
+    ],
+    "itemsEjemplo": [
+      "BRAGA TALLA 38 PARA IGNACIO NAVA."
+    ]
+  },
+  {
+    "nombreOriginal": "STANDARDLRON C.A",
+    "proveedorId": 317,
+    "transacciones": 1,
+    "unidades": 50,
+    "totalGastado": 175,
+    "requisiciones": [
+      "RR-OPE-26-0142"
+    ],
+    "itemsEjemplo": [
+      "ABRAZADERAS GIRATORIA "
+    ]
+  },
+  {
+    "nombreOriginal": "AGROINDUSTRI AAA 2016, C.A.",
+    "proveedorId": 197,
+    "transacciones": 1,
+    "unidades": 2,
+    "totalGastado": 166,
+    "requisiciones": [
+      "RR-SVG-26-0030"
+    ],
+    "itemsEjemplo": [
+      "SACOS DE COMIDA MASCOTAS"
+    ]
+  },
+  {
+    "nombreOriginal": "GIGAHERTZ STORE",
+    "proveedorId": 164,
+    "transacciones": 4,
+    "unidades": 8,
+    "totalGastado": 163,
+    "requisiciones": [
+      "RR-CMP-26-0010",
+      "RR-EST-26-0011",
+      "RR-MTT-26-0060"
+    ],
+    "itemsEjemplo": [
+      "Monitor de 24 Pulgadas",
+      "Pendrive de 128 GB",
+      "COPIA DE CILINDRO"
+    ]
+  },
+  {
+    "nombreOriginal": "UNITED",
+    "proveedorId": 322,
+    "transacciones": 1,
+    "unidades": 1,
+    "totalGastado": 156,
+    "requisiciones": [
+      "RR-SEG-26-0050"
+    ],
+    "itemsEjemplo": [
+      "calibración de qeuipo manometro modelo 6"
+    ]
+  },
+  {
+    "nombreOriginal": "INVERSIONES MERLY",
+    "proveedorId": 110,
+    "transacciones": 2,
+    "unidades": 2,
+    "totalGastado": 155,
+    "requisiciones": [
+      "RR-CMP-26-0002"
+    ],
+    "itemsEjemplo": [
+      "escritorio",
+      "silla chicago"
+    ]
+  },
+  {
+    "nombreOriginal": "MANGCOR,C.A",
+    "proveedorId": 234,
+    "transacciones": 1,
+    "unidades": 12,
+    "totalGastado": 150,
+    "requisiciones": [
+      "RR-OPE-26-0073"
+    ],
+    "itemsEjemplo": [
+      "ABRAZADERA DE 122 - 130 W1 PARA MANGUERA"
+    ]
+  },
+  {
+    "nombreOriginal": "FABRIEMPACUES",
+    "proveedorId": 276,
+    "transacciones": 3,
+    "unidades": 6,
+    "totalGastado": 140,
+    "requisiciones": [
+      "RR-MTTO-26-0074"
+    ],
+    "itemsEjemplo": [
+      "CABULIN 1/4",
+      "CABULIN 3/8",
+      "CABULIN 1/2"
+    ]
+  },
+  {
+    "nombreOriginal": "ELECTRO SERVICIOS GUAYANA",
+    "proveedorId": 198,
+    "transacciones": 2,
+    "unidades": 2,
+    "totalGastado": 136,
+    "requisiciones": [
+      "RR-ADM-TG-26-0006"
+    ],
+    "itemsEjemplo": [
+      "PITO DE RETROCESO CON INSTALACION"
+    ]
+  },
+  {
+    "nombreOriginal": "EXTINTORES TOTAL",
+    "proveedorId": 327,
+    "transacciones": 4,
+    "unidades": 8,
+    "totalGastado": 130,
+    "requisiciones": [
+      "RR-SEG-26-0008",
+      "RR-SEG-26-0012"
+    ],
+    "itemsEjemplo": [
+      "RECARGA DE EXTINTORES DE 10 LBS",
+      "RECARGA DE EXTINTORES DE 20 LBS",
+      "extintores de 10 lbs"
+    ]
+  },
+  {
+    "nombreOriginal": "GOMAS FRANCO C.A",
+    "proveedorId": 221,
+    "transacciones": 2,
+    "unidades": 2,
+    "totalGastado": 129.2,
+    "requisiciones": [
+      "RR-MTT-26-0321"
+    ],
+    "itemsEjemplo": [
+      "RECTIFICACION DE VOLANTE UN LADO",
+      "RECTIFICADO DE PUERTA LOS DOA LADOS"
+    ]
+  },
+  {
+    "nombreOriginal": "TODO FRENO DEL SUR",
+    "proveedorId": 166,
+    "transacciones": 3,
+    "unidades": 5.6,
+    "totalGastado": 120.5012,
+    "requisiciones": [
+      "RR-MTT-26-0265",
+      "RR-MTT-26-0261",
+      "RR-MTTO-26-0327"
+    ],
+    "itemsEjemplo": [
+      "GRADUACIÓN DE FRENOS",
+      "MANGUERA DE 1/4\"",
+      "MECANIZACION DE POLEA"
+    ]
+  },
+  {
+    "nombreOriginal": "WL DISEÑO & SUBLIMACION",
+    "proveedorId": 299,
+    "transacciones": 1,
+    "unidades": 24,
+    "totalGastado": 120,
+    "requisiciones": [
+      "RR-SHA-26-0094"
+    ],
+    "itemsEjemplo": [
+      "TAZAS SUBLIMADAS CON DISEÑO DE LA CAMPAÑ"
+    ]
+  },
+  {
+    "nombreOriginal": "EQUIPAMIENTO TECNOLOGICO C.A",
+    "proveedorId": 333,
+    "transacciones": 1,
+    "unidades": 1,
+    "totalGastado": 115,
+    "requisiciones": [
+      "RR-MTTO-26-0151"
+    ],
+    "itemsEjemplo": [
+      "DISCO DURO EXTERNO CON CONEXION USB DE 1"
+    ]
+  },
+  {
+    "nombreOriginal": "AUTOMAX SUR",
+    "proveedorId": 321,
+    "transacciones": 3,
+    "unidades": 4,
+    "totalGastado": 112,
+    "requisiciones": [
+      "RR-MTTO-26-0368"
+    ],
+    "itemsEjemplo": [
+      "MTS DE CABLE 2/0 ROJO",
+      "MTS DE CABLE 2/0 NEGRO",
+      "TERMINAL 2/0"
+    ]
+  },
+  {
+    "nombreOriginal": "PASTELITOS DON KIKE C.A.",
+    "proveedorId": 301,
+    "transacciones": 4,
+    "unidades": 57,
+    "totalGastado": 110.6,
+    "requisiciones": [
+      "RR-SEG-26-0056"
+    ],
+    "itemsEjemplo": [
+      "COMBO DE PASTELES ",
+      "AREPA CON PROTEÍNA ",
+      "MOROCHOS CON PROTEÍNA"
+    ]
+  },
+  {
+    "nombreOriginal": "PROYECTOS Y SERVICIOS AGAPE",
+    "proveedorId": 257,
+    "transacciones": 2,
+    "unidades": 2,
+    "totalGastado": 107,
+    "requisiciones": [
+      "RR-MTTO-26-0063"
+    ],
+    "itemsEjemplo": [
+      "VIDRIO CLARO 5MM 180X50, PISA VIDRIO, 4 ",
+      "CERRADURA Y MANILLA MOVIL"
+    ]
+  },
+  {
+    "nombreOriginal": "OXIGENOS ELY ACOSTA 2024,C.A.",
+    "proveedorId": 64,
+    "transacciones": 3,
+    "unidades": 3,
+    "totalGastado": 106.63,
+    "requisiciones": [
+      "RR-MTT-26-0249",
+      "RR-MTT-26-0103",
+      "RR-MTTO-26-0018"
+    ],
+    "itemsEjemplo": [
+      "RECARGA DE BOMBONA DE OXIGENO"
+    ]
+  },
+  {
+    "nombreOriginal": "DISTRIBUCIONES L.H",
+    "proveedorId": 235,
+    "transacciones": 3,
+    "unidades": 18,
+    "totalGastado": 105.78,
+    "requisiciones": [
+      "RR-MTT-26-0294"
+    ],
+    "itemsEjemplo": [
+      "POTE DE LIMPIA CONTACTO ELÉCTRICO",
+      "POTE DE FORMULA MECÁNICA",
+      "POTE DE LIMPIA CARBURADOR"
+    ]
+  },
+  {
+    "nombreOriginal": "SERVICIOS DELIANY PAOLA ALVARADO GERARDO",
+    "proveedorId": 278,
+    "transacciones": 2,
+    "unidades": 2,
+    "totalGastado": 103,
+    "requisiciones": [
+      "RR-MTTO-26-0268",
+      "RR-ALM-26-0016"
+    ],
+    "itemsEjemplo": [
+      "PLIEGO DE ETIQUETAS EN VINIL BLANCO BRIL",
+      "ETIQUETAS VARIAS DE DIFERENTES TAMAÑOS  "
+    ]
+  },
+  {
+    "nombreOriginal": "EMPRENDIMIENTO JESUS BRIÑEZ MC SERVICE",
+    "proveedorId": 345,
+    "transacciones": 3,
+    "unidades": 3,
+    "totalGastado": 102.56,
+    "requisiciones": [
+      "RR-OPE-26-0156",
+      "RR-OPE-26-0188"
+    ],
+    "itemsEjemplo": [
+      "BATERIA PARA LAPTOP HP ELITEBOOK 840 G3 ",
+      "CARGADOR LAPTOP HP GRIS ORIGINAL 4.5*3MM"
+    ]
+  },
+  {
+    "nombreOriginal": "INDRINA CARVAJALINO",
+    "proveedorId": 98,
+    "transacciones": 3,
+    "unidades": 22,
+    "totalGastado": 99.88,
+    "requisiciones": [
+      "RR-SHA-26-0035"
+    ],
+    "itemsEjemplo": [
+      "ALMUERZOS",
+      "DESAYUNOS",
+      "REFRESCOS DE DOS LITROS"
+    ]
+  },
+  {
+    "nombreOriginal": "SUSEINCA23",
+    "proveedorId": 332,
+    "transacciones": 2,
+    "unidades": 2,
+    "totalGastado": 97,
+    "requisiciones": [
+      "RR-MTTO-26-0267"
+    ],
+    "itemsEjemplo": [
+      "SERVICIO DE REPARRCION, CALIBRACION, CER",
+      "FABRICACION DEL DIEL A MANOMETRO"
+    ]
+  },
+  {
+    "nombreOriginal": "EMCAR S.A",
+    "proveedorId": 285,
+    "transacciones": 1,
+    "unidades": 6,
+    "totalGastado": 90,
+    "requisiciones": [
+      "RR-MTTO-26-0175"
+    ],
+    "itemsEjemplo": [
+      "35.45.06 PACKING UFP"
+    ]
+  },
+  {
+    "nombreOriginal": "AIR MAX COMPRESORES C.A,",
+    "proveedorId": 296,
+    "transacciones": 3,
+    "unidades": 9,
+    "totalGastado": 90,
+    "requisiciones": [
+      "RR-MTTO-26-0204",
+      "RR-MTT-26-0060"
+    ],
+    "itemsEjemplo": [
+      "VALVULAS DE SEGURIDAD",
+      "COPIA DE CILINDRO",
+      "COPIAS DE LLAVE"
+    ]
+  },
+  {
+    "nombreOriginal": "INVERSIONES LOS DESIGNIOS DE DIOS C.A",
+    "proveedorId": 69,
+    "transacciones": 1,
+    "unidades": 1,
+    "totalGastado": 89,
+    "requisiciones": [
+      "RR-MTT-26-0120"
+    ],
+    "itemsEjemplo": [
+      "TUBO DE INYECCION"
+    ]
+  },
+  {
+    "nombreOriginal": "ISABELA TODO FARIAS F.P",
+    "proveedorId": 283,
+    "transacciones": 1,
+    "unidades": 1,
+    "totalGastado": 89,
+    "requisiciones": [
+      "RR-ADM-TG-26-0038"
+    ],
+    "itemsEjemplo": [
+      "SERVICIO Y MANTENIMIENTO DE IMPRESORA CA"
+    ]
+  },
+  {
+    "nombreOriginal": "LUSELAGO",
+    "proveedorId": 245,
+    "transacciones": 1,
+    "unidades": 1,
+    "totalGastado": 88,
+    "requisiciones": [
+      "RR-MTTO-26-0015"
+    ],
+    "itemsEjemplo": [
+      "CAJA DE ACEITE 10W30 SHELL HELIX"
+    ]
+  },
+  {
+    "nombreOriginal": "FERETERIA ELECTRICA INDUSTRIAL. C.A.",
+    "proveedorId": 41,
+    "transacciones": 2,
+    "unidades": 2,
+    "totalGastado": 80,
+    "requisiciones": [
+      "RR-MTT-26-0342",
+      "RR-OPE-26-0010"
+    ],
+    "itemsEjemplo": [
+      "SERVICIO, REPARACIÓN Y REEMPLAZO DE TAPA",
+      "INDICADOR DE NIVEL "
+    ]
+  },
+  {
+    "nombreOriginal": "SIMVECA",
+    "proveedorId": 295,
+    "transacciones": 1,
+    "unidades": 4,
+    "totalGastado": 80,
+    "requisiciones": [
+      "RR-MTTO-26-0203"
+    ],
+    "itemsEjemplo": [
+      "MANOMETRO DIAL 21/2 1//4 ABAJO 0-200 PSI"
+    ]
+  },
+  {
+    "nombreOriginal": "TECNICA DE MANTENIMIENTO INTEGRAL, C.A.",
+    "proveedorId": 196,
+    "transacciones": 2,
+    "unidades": 2,
+    "totalGastado": 80,
+    "requisiciones": [
+      "RR-MTT-26-0325",
+      "RR-SEG-26-0051"
+    ],
+    "itemsEjemplo": [
+      "PUESTA EN SITIO E INSTALACION DE BLANTA ",
+      "Bota media caña talla 42"
+    ]
+  },
+  {
+    "nombreOriginal": "IDV MULTISERVICIOS C,A",
+    "proveedorId": 291,
+    "transacciones": 1,
+    "unidades": 2,
+    "totalGastado": 80,
+    "requisiciones": [
+      "RR-OPE-26-0132"
+    ],
+    "itemsEjemplo": [
+      "ZIKADUR32 CON SU COMPONENTE B"
+    ]
+  },
+  {
+    "nombreOriginal": "AP TRUCK C.A",
+    "proveedorId": 260,
+    "transacciones": 2,
+    "unidades": 2,
+    "totalGastado": 74,
+    "requisiciones": [
+      "RR-ADM-TG-26-0027"
+    ],
+    "itemsEjemplo": [
+      "Bombín de croché de liga superior",
+      "1 litro de liga para frenos"
+    ]
+  },
+  {
+    "nombreOriginal": "FERRETERIA RONACA",
+    "proveedorId": 313,
+    "transacciones": 1,
+    "unidades": 1,
+    "totalGastado": 71.5,
+    "requisiciones": [
+      "RR-OPE-26-0149"
+    ],
+    "itemsEjemplo": [
+      "HOJILLA PARA CORTATUBO "
+    ]
+  },
+  {
+    "nombreOriginal": "INVERSIONES MADERAS ADIDAS C.A.",
+    "proveedorId": 302,
+    "transacciones": 1,
+    "unidades": 2,
+    "totalGastado": 63,
+    "requisiciones": [
+      "RR-SSGG-26-0015"
+    ],
+    "itemsEjemplo": [
+      "BARNIZ CAOBA CLARO"
+    ]
+  },
+  {
+    "nombreOriginal": "ZOOM",
+    "proveedorId": 163,
+    "transacciones": 1,
+    "unidades": 1,
+    "totalGastado": 62.41,
+    "requisiciones": [
+      "RR-CMP-26-0004"
+    ],
+    "itemsEjemplo": [
+      "envio de repuestos"
+    ]
+  },
+  {
+    "nombreOriginal": "JONATHAN GUERRA - EL VERDADERO SABOR ZULIANO C.A",
+    "proveedorId": 231,
+    "transacciones": 1,
+    "unidades": 1,
+    "totalGastado": 62.24,
+    "requisiciones": [
+      "RR-ADM-TG-26-0022"
+    ],
+    "itemsEjemplo": [
+      "REFRIGERIO PARA PERSONAL POR REUNIÓN DE "
+    ]
+  },
+  {
+    "nombreOriginal": "MANGUERAS Y CONEXIONES DEL LAGO C.A",
+    "proveedorId": 348,
+    "transacciones": 2,
+    "unidades": 10,
+    "totalGastado": 61.6,
+    "requisiciones": [
+      "RR-MTTO-26-0026"
+    ],
+    "itemsEjemplo": [
+      "TEE DE BRONCE DE 1/4",
+      "TEE DE BRONCE DE 1/2"
+    ]
+  },
+  {
+    "nombreOriginal": "SIVECA",
+    "proveedorId": 129,
+    "transacciones": 1,
+    "unidades": 3,
+    "totalGastado": 60,
+    "requisiciones": [
+      "RR-MTT-26-0181"
+    ],
+    "itemsEjemplo": [
+      "RELOJ DE PRESION DE AIRE DE 0 A 200 PSI"
+    ]
+  },
+  {
+    "nombreOriginal": "SOLUCIONES QUIMICAS VENEZOLANAS C.A (SOLQUIVEN)",
+    "proveedorId": 222,
+    "transacciones": 1,
+    "unidades": 20,
+    "totalGastado": 57.400000000000006,
+    "requisiciones": [
+      "RR-SHA-26-0050"
+    ],
+    "itemsEjemplo": [
+      "LITROS DE JABON LIQUIDO"
+    ]
+  },
+  {
+    "nombreOriginal": "LIDER EXPRESSS",
+    "proveedorId": 232,
+    "transacciones": 2,
+    "unidades": 2,
+    "totalGastado": 57,
+    "requisiciones": [
+      "RR-SHA-26-0098"
+    ],
+    "itemsEjemplo": [
+      "HARINA PAN BULTO ",
+      "JABON EN POLVO"
+    ]
+  },
+  {
+    "nombreOriginal": "KARIBBEAN",
+    "proveedorId": 191,
+    "transacciones": 6,
+    "unidades": 7,
+    "totalGastado": 52.55,
+    "requisiciones": [
+      "RR-MTT-26-0019",
+      "RR-MTT-26-0340",
+      "RR-MTT-26-0018",
+      "RR-MTTO-26-0167",
+      "RR-MTTO-26-0105"
+    ],
+    "itemsEjemplo": [
+      "CORREA B-60 COMPRESOR DE AIRE ACONDICION",
+      "CORREA DE ALTERNADOR A-64",
+      "CORREA DE COMPRESOR A-45"
+    ]
+  },
+  {
+    "nombreOriginal": "SERRUDO",
+    "proveedorId": 103,
+    "transacciones": 1,
+    "unidades": 1,
+    "totalGastado": 50,
+    "requisiciones": [
+      "RR-OPE-26-0010"
+    ],
+    "itemsEjemplo": [
+      "INDICADOR DE NIVEL "
+    ]
+  },
+  {
+    "nombreOriginal": "MATERIALES  ELECTRICOS ZULIA C.A.",
+    "proveedorId": 267,
+    "transacciones": 2,
+    "unidades": 5,
+    "totalGastado": 49,
+    "requisiciones": [
+      "RR-MTTO-26-0125",
+      "RR-MTTO-26-0114"
+    ],
+    "itemsEjemplo": [
+      "ZAPATICO DE COBRE L-125#4-1/0AWG (IXV)",
+      "LAMINA BAQUELIRA DE 50 X 50"
+    ]
+  },
+  {
+    "nombreOriginal": "YOANNY JOSEFINA URDANETA BARRIOS REPARACIONES DE TRASPLANTE VENTA DE TRIPAS CAUCHOS DE CARRUCHA COSTRUCCION Y ALGO MAS",
+    "proveedorId": 61,
+    "transacciones": 1,
+    "unidades": 2,
+    "totalGastado": 48,
+    "requisiciones": [
+      "RR-MTT-26-0114"
+    ],
+    "itemsEjemplo": [
+      "PIEZAS SUELTAS DE 3\" HIENA"
+    ]
+  },
+  {
+    "nombreOriginal": "INVERSIONES GARCIAS RIVAS C.A",
+    "proveedorId": 236,
+    "transacciones": 1,
+    "unidades": 12,
+    "totalGastado": 48,
+    "requisiciones": [
+      "RR-OPE-26-0053"
+    ],
+    "itemsEjemplo": [
+      "Envase Plástico Galon 3.78 Litros Con Ta"
+    ]
+  },
+  {
+    "nombreOriginal": "VENTA DE MATERIALES E INSUMOS ELECTRICOS",
+    "proveedorId": 37,
+    "transacciones": 1,
+    "unidades": 4,
+    "totalGastado": 44.6,
+    "requisiciones": [
+      "RR-MTT-26-0292"
+    ],
+    "itemsEjemplo": [
+      "ZAPATICO COBRE L-125 #4-1/0AWG (IXV)"
+    ]
+  },
+  {
+    "nombreOriginal": "SERVICIOS CATERPILLAR CHENRRYS ZARRAGA",
+    "proveedorId": 132,
+    "transacciones": 1,
+    "unidades": 1,
+    "totalGastado": 32.5,
+    "requisiciones": [
+      "RR-MTT-26-0033"
+    ],
+    "itemsEjemplo": [
+      "BOMBIN AUXILIAR PARA MOTOR CATERPILLA C1"
+    ]
+  },
+  {
+    "nombreOriginal": "ALKOSTO",
+    "proveedorId": 247,
+    "transacciones": 1,
+    "unidades": 25,
+    "totalGastado": 31.25,
+    "requisiciones": [
+      "RR-SHA-26-0098"
+    ],
+    "itemsEjemplo": [
+      "PAPAS (MEDIO SACO DE PAPAS)"
+    ]
+  },
+  {
+    "nombreOriginal": "MI TAXI",
+    "proveedorId": 246,
+    "transacciones": 1,
+    "unidades": 2,
+    "totalGastado": 30,
+    "requisiciones": [
+      "RR-SEG-26-0004"
+    ],
+    "itemsEjemplo": [
+      "TAXI"
+    ]
+  },
+  {
+    "nombreOriginal": "HOGARZONE",
+    "proveedorId": 209,
+    "transacciones": 1,
+    "unidades": 1,
+    "totalGastado": 30,
+    "requisiciones": [
+      "RR-OPE-26-0061"
+    ],
+    "itemsEjemplo": [
+      "CAFETERA DE 12 TASAS"
+    ]
+  },
+  {
+    "nombreOriginal": "INVERSIONES RAMIREZ C.A",
+    "proveedorId": 360,
+    "transacciones": 1,
+    "unidades": 3,
+    "totalGastado": 30,
+    "requisiciones": [
+      "RR-SSGG-26-0047"
+    ],
+    "itemsEjemplo": [
+      "HERRAJES DE POSETAS"
+    ]
+  },
+  {
+    "nombreOriginal": "RODAMIENTO RODAGRO",
+    "proveedorId": 258,
+    "transacciones": 1,
+    "unidades": 1,
+    "totalGastado": 25,
+    "requisiciones": [
+      "RR-MTTO-26-0098"
+    ],
+    "itemsEjemplo": [
+      "SUICH CATERPILLAR"
+    ]
+  },
+  {
+    "nombreOriginal": "BRIAN J. ZAMBRANO M",
+    "proveedorId": 168,
+    "transacciones": 1,
+    "unidades": 1,
+    "totalGastado": 25,
+    "requisiciones": [
+      "RR-MTTO-26-0003"
+    ],
+    "itemsEjemplo": [
+      "MANILLA ZNA COMPUERTA TRAS"
+    ]
+  },
+  {
+    "nombreOriginal": "MULTI DEPORTES",
+    "proveedorId": 204,
+    "transacciones": 1,
+    "unidades": 1,
+    "totalGastado": 24,
+    "requisiciones": [
+      "RR-SHA-26-0092"
+    ],
+    "itemsEjemplo": [
+      "PELOTA DE VOLEIBOL PARA DONACION"
+    ]
+  },
+  {
+    "nombreOriginal": "DALIA JOSEFINA HERRERA CANDURI",
+    "proveedorId": 311,
+    "transacciones": 1,
+    "unidades": 1,
+    "totalGastado": 20,
+    "requisiciones": [
+      "RR-ADM-TG-26-0044"
+    ],
+    "itemsEjemplo": [
+      "SELLO PAAR EL SREL VIS ZACARIAS PETROPIA"
+    ]
+  },
+  {
+    "nombreOriginal": "INVERMACO C.A",
+    "proveedorId": 224,
+    "transacciones": 1,
+    "unidades": 1,
+    "totalGastado": 20,
+    "requisiciones": [
+      "RR-OPE-26-0086"
+    ],
+    "itemsEjemplo": [
+      "CAFETERA ELECTRICA DE 6 TAZAS "
+    ]
+  },
+  {
+    "nombreOriginal": "FARMATODO",
+    "proveedorId": 298,
+    "transacciones": 1,
+    "unidades": 2,
+    "totalGastado": 20,
+    "requisiciones": [
+      "RR-OPE-26-0044"
+    ],
+    "itemsEjemplo": [
+      "LIMPIADOR DE PIZARRA EXPO"
+    ]
+  },
+  {
+    "nombreOriginal": "INVERSIONES LM 2024",
+    "proveedorId": 238,
+    "transacciones": 1,
+    "unidades": 1,
+    "totalGastado": 16,
+    "requisiciones": [
+      "RR-MTT-26-0348"
+    ],
+    "itemsEjemplo": [
+      "SACO DE CEMENTO BLANCO"
+    ]
+  },
+  {
+    "nombreOriginal": "RONECAR REPUESTO",
+    "proveedorId": 286,
+    "transacciones": 1,
+    "unidades": 2,
+    "totalGastado": 16,
+    "requisiciones": [
+      "RR-MTTO-26-0177"
+    ],
+    "itemsEjemplo": [
+      "ORRING DE 4\" PARA COMPRESOR JUROP"
+    ]
+  },
+  {
+    "nombreOriginal": "PTYECTOS Y SERVICIOS AGAPE",
+    "proveedorId": 257,
+    "transacciones": 1,
+    "unidades": 1,
+    "totalGastado": 15.78,
+    "requisiciones": [
+      "RR-MTT-26-0206"
+    ],
+    "itemsEjemplo": [
+      "CINCEL PUNTA PLANA"
+    ]
+  },
+  {
+    "nombreOriginal": "INDRINA CARVAJALINP ALMUERZOS",
+    "proveedorId": 128,
+    "transacciones": 1,
+    "unidades": 2,
+    "totalGastado": 14.36,
+    "requisiciones": [
+      "RR-SHA-26-0013"
+    ],
+    "itemsEjemplo": [
+      "ALMUERZOS"
+    ]
+  },
+  {
+    "nombreOriginal": "FERREINVERSIONES LEO",
+    "proveedorId": 126,
+    "transacciones": 2,
+    "unidades": 12,
+    "totalGastado": 11,
+    "requisiciones": [
+      "RR-OPE-26-0051",
+      "RR-OPE-26-0050"
+    ],
+    "itemsEjemplo": [
+      "CUCHARA DE ALBAÑILERIA",
+      " ARENA ROJA"
+    ]
+  },
+  {
+    "nombreOriginal": "REGOCAR, SA",
+    "proveedorId": 265,
+    "transacciones": 1,
+    "unidades": 6,
+    "totalGastado": 6,
+    "requisiciones": [
+      "RR-MTT-26-0139"
+    ],
+    "itemsEjemplo": [
+      "TAPON DE GOMA PARA TUBERÍA DE ENFRIAMIEN"
+    ]
+  }
+]

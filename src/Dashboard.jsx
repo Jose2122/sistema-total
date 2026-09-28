@@ -594,7 +594,7 @@ function Dashboard() {
     if (seccionActiva === 'reportes') return <Reportes />;
     if (seccionActiva === 'reportesmaestro') return <ReportesMaestro />;
     if (seccionActiva === 'reporte_operaciones') return <ReporteOperaciones currentUser={usuario} />;
-    if (seccionActiva === 'proveedores') return <Proveedores />;
+    if (seccionActiva === 'proveedores') return <Proveedores currentUser={usuario} />;
     if (seccionActiva === 'administracion') return <Administracion />;
     if (seccionActiva === 'atributos') return <Atributos />;
     if (seccionActiva === 'almacen') return <Almacen />;
