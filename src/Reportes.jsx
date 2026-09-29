@@ -346,19 +346,54 @@ const Reportes = () => {
           const ultimaCompra = compras.length > 0 ? compras[compras.length - 1] : null;
           const fechaCompra = ultimaCompra?.fecha ? ultimaCompra.fecha.split('T')[0] : (doc.status_compra === 'Completado' ? (fechaEmision || null) : null);
 
-          // Cálculo de TE Order Sys (días transcurridos)
+          // Cálculo de TE Order / SLA (días restantes en función de la asignación a compras)
           let teOrderSys = null;
-          const fechaBaseCalculo = asignacionGCompras || fechaAprobGteGtl || fechaEmision;
-          if (fechaBaseCalculo) {
-            const tInicio = new Date(fechaBaseCalculo + 'T00:00:00');
-            if (fechaCompra) {
-              const tFin = new Date(fechaCompra + 'T00:00:00');
-              const diffTime = tFin - tInicio;
-              teOrderSys = Math.max(0, Math.round(diffTime / (1000 * 60 * 60 * 24)));
-            } else {
-              const tHoy = new Date();
-              const diffTime = tHoy - tInicio;
-              teOrderSys = Math.max(0, Math.round(diffTime / (1000 * 60 * 60 * 24)));
+          let teOrderLabel = '—';
+          let teBadgeClass = 'unassigned';
+
+          const fechaBaseAsignacion = asignacionGCompras || (doc.asignado_a || doc.asignado_nombre ? (doc.f_aprobacion_general || doc.fecha_emision) : null);
+
+          if (!fechaBaseAsignacion && !doc.asignado_a && !doc.asignado_nombre) {
+            teOrderSys = null;
+            teOrderLabel = 'Sin Asignar';
+            teBadgeClass = 'unassigned';
+          } else {
+            const fechaRefInicio = fechaBaseAsignacion || doc.f_aprobacion_general || doc.fecha_emision;
+            if (fechaRefInicio) {
+              const tInicio = new Date(fechaRefInicio + 'T00:00:00');
+              const diasSla = doc.prioridad === 'Emergencia' ? 2 : 5;
+              const tLimite = doc.fecha_limite_compra 
+                ? new Date(doc.fecha_limite_compra.split('T')[0] + 'T00:00:00') 
+                : new Date(tInicio.getTime() + (diasSla * 24 * 60 * 60 * 1000));
+
+              if (statusText === 'Comprado') {
+                const tCompra = fechaCompra ? new Date(fechaCompra + 'T00:00:00') : tLimite;
+                const diffDias = Math.round((tLimite - tCompra) / (1000 * 60 * 60 * 24));
+                teOrderSys = diffDias;
+                if (diffDias >= 0) {
+                  teBadgeClass = 'fast';
+                  teOrderLabel = diffDias === 0 ? '✅ A tiempo' : `✅ +${diffDias}d a favor`;
+                } else {
+                  teBadgeClass = 'slow';
+                  teOrderLabel = `🔴 Retraso (${diffDias}d)`;
+                }
+              } else {
+                // Pendiente o Parcial
+                const tHoy = new Date();
+                tHoy.setHours(0, 0, 0, 0);
+                const diffDias = Math.round((tLimite - tHoy) / (1000 * 60 * 60 * 24));
+                teOrderSys = diffDias;
+                if (diffDias > 2) {
+                  teBadgeClass = 'fast';
+                  teOrderLabel = `🟢 ${diffDias} ${diffDias === 1 ? 'día restante' : 'días restantes'}`;
+                } else if (diffDias >= 0) {
+                  teBadgeClass = 'medium';
+                  teOrderLabel = diffDias === 0 ? '🟡 Vence hoy' : `🟡 ${diffDias} ${diffDias === 1 ? 'día restante' : 'días restantes'}`;
+                } else {
+                  teBadgeClass = 'slow';
+                  teOrderLabel = `🔴 Vencido (${Math.abs(diffDias)}d)`;
+                }
+              }
             }
           }
 
@@ -388,6 +423,8 @@ const Reportes = () => {
             fechaAprobGteGtl: fechaAprobGteGtl,
             asignacionGCompras: asignacionGCompras,
             teOrderSys: teOrderSys,
+            teOrderLabel: teOrderLabel,
+            teBadgeClass: teBadgeClass,
             teOrderProveedor: teOrderProveedor,
             fechaEntregaAlmacen: fechaEntregaAlmacen,
             solicitante: doc.solicitante || '—',
@@ -418,6 +455,8 @@ const Reportes = () => {
             fechaAprobGteGtl: doc.f_aprobacion_general ? doc.f_aprobacion_general.split('T')[0] : fecha,
             asignacionGCompras: fecha,
             teOrderSys: 0,
+            teOrderLabel: 'Directo',
+            teBadgeClass: 'fast',
             teOrderProveedor: 0,
             fechaEntregaAlmacen: '',
             solicitante: doc.responsable_nombre || '—',
@@ -1107,7 +1146,7 @@ const Reportes = () => {
       'FECHA',
       'Fecha Aprob Gte Gtl',
       'Asignacion G Compras',
-      'TE Order (SUM Lapso Tiempo Gestion Segun Sys)',
+      'TE Order (Días Restantes SLA)',
       'TE Order Segun Proveedor',
       'Fecha Entrega Almacen',
       'SOLICITANTE',
@@ -1139,7 +1178,7 @@ const Reportes = () => {
         r.fecha ? new Date(r.fecha + 'T12:00:00') : '—',
         r.fechaAprobGteGtl ? new Date(r.fechaAprobGteGtl + 'T12:00:00') : '—',
         r.asignacionGCompras ? new Date(r.asignacionGCompras + 'T12:00:00') : '—',
-        r.teOrderSys !== null ? r.teOrderSys : '—',
+        r.teOrderLabel || (r.teOrderSys !== null ? r.teOrderSys : '—'),
         r.teOrderProveedor > 0 ? r.teOrderProveedor : '—',
         r.fechaEntregaAlmacen ? new Date(r.fechaEntregaAlmacen + 'T12:00:00') : '—',
         r.solicitante,
@@ -1333,8 +1372,8 @@ const Reportes = () => {
         <div className="rm-stats-grid" style={{ marginBottom: '30px' }}>
           <div className="rm-stat-card primary" style={{ borderLeftColor: '#0ea5e9' }}>
             <div className="rm-stat-info">
-              <label>⏱️ Tiempo Promedio Gestión (Sys)</label>
-              <h3>{slaKpis.promedioSys} Días</h3>
+              <label>⏱️ Promedio Días Restantes SLA</label>
+              <h3>{slaKpis.promedioSys > 0 ? `+${slaKpis.promedioSys} Días` : `${slaKpis.promedioSys} Días`}</h3>
             </div>
           </div>
 
@@ -1732,7 +1771,7 @@ const Reportes = () => {
                 <th style={{ minWidth: '100px' }}>FECHA</th>
                 <th style={{ minWidth: '130px' }}>Fecha Aprob Gte Gtl</th>
                 <th style={{ minWidth: '140px' }}>Asignación G Compras</th>
-                <th style={{ minWidth: '180px' }}>TE Order (SUM Lapso Gestión Sys)</th>
+                <th style={{ minWidth: '180px' }}>TE Order (Días Restantes SLA)</th>
                 <th style={{ minWidth: '160px' }}>TE Order Según Prov.</th>
                 <th style={{ minWidth: '130px' }}>Fecha Entrega Almacén</th>
                 <th style={{ minWidth: '150px', textAlign: 'left' }}>SOLICITANTE</th>
@@ -1754,10 +1793,6 @@ const Reportes = () => {
                 </tr>
               ) : (
                 slaRows.map((r, idx) => {
-                  let teBadgeClass = 'fast';
-                  if (r.teOrderSys > 7) teBadgeClass = 'slow';
-                  else if (r.teOrderSys > 3) teBadgeClass = 'medium';
-
                   return (
                     <tr key={`${r.correlativo}-${idx}`}>
                       <td style={{ textAlign: 'center', fontWeight: '900', color: '#1e40af', backgroundColor: '#f8fafc' }}>
@@ -1792,9 +1827,9 @@ const Reportes = () => {
                         {r.asignacionGCompras ? r.asignacionGCompras.split('-').reverse().join('/') : '—'}
                       </td>
                       <td style={{ textAlign: 'center' }}>
-                        {r.teOrderSys !== null ? (
-                          <span className={`sla-badge-te ${teBadgeClass}`}>
-                            ⏱️ {r.teOrderSys} {r.teOrderSys === 1 ? 'día' : 'días'}
+                        {r.teOrderLabel && r.teOrderLabel !== '—' ? (
+                          <span className={`sla-badge-te ${r.teBadgeClass || 'fast'}`}>
+                            {r.teOrderLabel}
                           </span>
                         ) : (
                           <span style={{ color: '#94a3b8' }}>—</span>

@@ -584,3 +584,9 @@
   color: #b91c1c;
   border: 1px solid #fecaca;
 }
+
+.sla-badge-te.unassigned {
+  background-color: #f1f5f9;
+  color: #64748b;
+  border: 1px solid #cbd5e1;
+}

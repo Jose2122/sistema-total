@@ -105,6 +105,11 @@ const OrdenesCompra = ({ currentUser }) => {
   const [editandoTerminos, setEditandoTerminos] = useState(false);
   const [textoTerminos, setTextoTerminos] = useState('');
   const [guardandoTerminos, setGuardandoTerminos] = useState(false);
+
+  // Edición de Observaciones de la ODC
+  const [editandoObservaciones, setEditandoObservaciones] = useState(false);
+  const [textoObservaciones, setTextoObservaciones] = useState('');
+  const [guardandoObservaciones, setGuardandoObservaciones] = useState(false);
   
   // Imprimir / PDF ref
   const printRef = useRef(null);
@@ -168,7 +173,7 @@ const OrdenesCompra = ({ currentUser }) => {
       while (keepReq) {
         const { data: chunk, error: reqErr } = await supabase
           .from('requisiciones')
-          .select('id, correlativo_req, solicitante, gerencia, items')
+          .select('id, correlativo_req, solicitante, gerencia, centro_costo')
           .range(pageReq * 1000, (pageReq + 1) * 1000 - 1);
         if (reqErr) {
           console.error("Error al cargar catálogo de requisiciones:", reqErr);
@@ -186,6 +191,9 @@ const OrdenesCompra = ({ currentUser }) => {
       (reqsData || []).forEach(r => {
         if (r.id !== undefined && r.id !== null) {
           reqMap[String(r.id)] = r;
+          reqMap[Number(r.id)] = r;
+          reqMap[`REQ-${r.id}`] = r;
+          reqMap[`REQ-${String(r.id).padStart(3, '0')}`] = r;
         }
         if (r.correlativo_req) {
           const cTrim = String(r.correlativo_req).trim();
@@ -221,8 +229,12 @@ const OrdenesCompra = ({ currentUser }) => {
 
       const mapeadas = (data || []).map(o => {
         const prov = provMap[String(o.proveedor_id)];
-        const reqObj = reqMap[String(o.requisicion_id)] || 
-                       (o.requisicion_id ? reqMap[String(o.requisicion_id).trim().toUpperCase()] : null) ||
+        const cleanReqId = o.requisicion_id ? String(o.requisicion_id).trim() : '';
+        const numOnlyReqId = cleanReqId.replace(/^REQ-?/i, '').trim();
+
+        const reqObj = reqMap[cleanReqId] || 
+                       reqMap[cleanReqId.toUpperCase()] ||
+                       reqMap[numOnlyReqId] ||
                        (o.numero_req ? reqMap[String(o.numero_req).trim().toUpperCase()] : null) || 
                        (o.correlativo_req ? reqMap[String(o.correlativo_req).trim().toUpperCase()] : null) || 
                        (o.requisicion_correlativo ? reqMap[String(o.requisicion_correlativo).trim().toUpperCase()] : null);
@@ -237,7 +249,16 @@ const OrdenesCompra = ({ currentUser }) => {
         const ciudadVal = o.proveedor_ciudad || prov?.ciudad || prov?.localizacion || 'N/A';
         const direccionVal = o.proveedor_direccion || prov?.direccion || 'N/A';
 
-        const correlativoReq = reqObj?.correlativo_req || o.numero_req || o.correlativo_req || o.requisicion_correlativo || (o.requisicion_id && String(o.requisicion_id).startsWith('REQ-') ? o.requisicion_id : null);
+        const correlativoReq = reqObj?.correlativo_req || 
+                               (o.requisicion_correlativo && !String(o.requisicion_correlativo).startsWith('REQ-') ? o.requisicion_correlativo : null) ||
+                               (o.correlativo_req && !String(o.correlativo_req).startsWith('REQ-') ? o.correlativo_req : null) ||
+                               (o.numero_req && !String(o.numero_req).startsWith('REQ-') ? o.numero_req : null) ||
+                               reqObj?.correlativo_req ||
+                               o.requisicion_correlativo ||
+                               o.correlativo_req ||
+                               o.numero_req ||
+                               (cleanReqId && !cleanReqId.match(/^\d+$/) && !cleanReqId.startsWith('REQ-') ? cleanReqId : null);
+
         const reqIdResolved = reqObj?.id ? String(reqObj.id) : (o.requisicion_id && !String(o.requisicion_id).includes('-') ? String(o.requisicion_id) : null);
 
         return {
@@ -250,7 +271,8 @@ const OrdenesCompra = ({ currentUser }) => {
           proveedor_direccion: direccionVal,
           fecha_despacho: o.fecha_despacho || o.fecha_emision || 'N/A',
           requisicion_correlativo: correlativoReq,
-          requisicion_obj: reqObj || null
+          requisicion_obj: reqObj || null,
+          solicitante: (reqObj?.solicitante && (!o.solicitante || o.solicitante === 'Total Clean C.A.')) ? reqObj.solicitante : (o.solicitante || reqObj?.solicitante || 'Total Clean C.A.')
         };
       });
       setOrdenes(mapeadas);
@@ -268,7 +290,7 @@ const OrdenesCompra = ({ currentUser }) => {
       try {
         const { data: provData } = await supabase
           .from('proveedores')
-          .select('razon_social, rif, persona_contacto, contacto_nombre, ciudad, localizacion, direccion')
+          .select('razon_social, rif, persona_contacto, contacto_nombre, ciudad, localizacion, direccion, cuentas_bancarias')
           .eq('id', odcCompleta.proveedor_id)
           .maybeSingle();
         if (provData) {
@@ -281,18 +303,74 @@ const OrdenesCompra = ({ currentUser }) => {
           odcCompleta.proveedor_contacto = odcCompleta.proveedor_contacto || provData.persona_contacto || provData.contacto_nombre || 'N/A';
           odcCompleta.proveedor_ciudad = odcCompleta.proveedor_ciudad || provData.ciudad || provData.localizacion || 'N/A';
           odcCompleta.proveedor_direccion = odcCompleta.proveedor_direccion || provData.direccion || 'N/A';
+
+          if (!odcCompleta.datos_bancarios && !odcCompleta.cuenta_bancaria && provData.cuentas_bancarias) {
+            let ctas = [];
+            if (Array.isArray(provData.cuentas_bancarias)) ctas = provData.cuentas_bancarias;
+            else if (typeof provData.cuentas_bancarias === 'string') {
+              try { ctas = JSON.parse(provData.cuentas_bancarias); } catch { ctas = []; }
+            }
+            if (ctas.length > 0) {
+              const c0 = ctas[0];
+              odcCompleta.datos_bancarios = `${c0.banco || 'Banco'} (${c0.moneda || 'USD'}) - N° ${c0.nro_cuenta || 'N/A'} - Titular: ${c0.titular || 'N/A'} (${c0.rif || 'N/A'})`;
+            }
+          }
         }
       } catch (e) {
         console.error("Error al obtener datos del proveedor:", e);
       }
     }
+
+    // Resolver requisición exacta si no tiene el correlativo textual cargado
+    if (odcCompleta.requisicion_id || odcCompleta.numero_req || odcCompleta.requisicion_correlativo) {
+      try {
+        const rawSearch = odcCompleta.requisicion_id || odcCompleta.numero_req || odcCompleta.requisicion_correlativo;
+        const numOnly = String(rawSearch).replace(/^REQ-?/i, '').trim();
+
+        let foundReq = (requisicionesList || []).find(r => 
+          String(r.id) === String(rawSearch) ||
+          String(r.id) === numOnly ||
+          (r.correlativo_req && String(r.correlativo_req).trim().toUpperCase() === String(rawSearch).trim().toUpperCase())
+        );
+
+        if (!foundReq || !foundReq.correlativo_req) {
+          let q = supabase.from('requisiciones').select('id, correlativo_req, solicitante, gerencia, centro_costo, items');
+          if (!isNaN(Number(numOnly)) && Number(numOnly) > 0) {
+            q = q.or(`id.eq.${Number(numOnly)},correlativo_req.eq.${rawSearch}`);
+          } else {
+            q = q.eq('correlativo_req', rawSearch);
+          }
+          const { data: dbReq } = await q.maybeSingle();
+          if (dbReq) foundReq = dbReq;
+        }
+
+        if (foundReq) {
+          odcCompleta.requisicion_obj = foundReq;
+          odcCompleta.requisicion_correlativo = foundReq.correlativo_req || odcCompleta.requisicion_correlativo;
+          if (foundReq.solicitante && (!odcCompleta.solicitante || odcCompleta.solicitante === 'Total Clean C.A.')) {
+            odcCompleta.solicitante = foundReq.solicitante;
+          }
+          if (foundReq.centro_costo || foundReq.obra) {
+            odcCompleta.destino_despacho = foundReq.centro_costo || foundReq.obra;
+          }
+        }
+      } catch (e) {
+        console.error("Error al buscar requisición vinculada:", e);
+      }
+    }
+
     const defaultGlobalTerms = localStorage.getItem('odc_global_default_terms') || "Precios incluyen entrega en el sitio de destino especificado. Mercancía sujeta a inspección de calidad y conteo físico.";
     const terminosActuales = odcCompleta.terminos_condiciones || localStorage.getItem(`odc_terms_${odcCompleta.id}`) || defaultGlobalTerms;
     odcCompleta.terminos_condiciones = terminosActuales;
 
+    const obsActuales = odcCompleta.observaciones || localStorage.getItem(`odc_obs_${odcCompleta.id}`) || '';
+    odcCompleta.observaciones = obsActuales;
+
     setOdcSeleccionada(odcCompleta);
     setTextoTerminos(terminosActuales);
+    setTextoObservaciones(obsActuales);
     setEditandoTerminos(false);
+    setEditandoObservaciones(false);
     setModalOpen(true);
     setLoadingItems(true);
     try {
@@ -338,6 +416,32 @@ const OrdenesCompra = ({ currentUser }) => {
     }
   };
 
+  const guardarObservacionesOdc = async (nuevoTexto) => {
+    if (!odcSeleccionada) return;
+    setGuardandoObservaciones(true);
+    try {
+      try {
+        await supabase
+          .from('ordenes_compra')
+          .update({ observaciones: nuevoTexto })
+          .eq('id', odcSeleccionada.id);
+      } catch (e) {
+        console.warn("Actualización DB observaciones:", e.message);
+      }
+      localStorage.setItem(`odc_obs_${odcSeleccionada.id}`, nuevoTexto);
+      const odcActualizada = { ...odcSeleccionada, observaciones: nuevoTexto };
+      setOdcSeleccionada(odcActualizada);
+      setOrdenes(prev => prev.map(o => o.id === odcSeleccionada.id ? odcActualizada : o));
+      setEditandoObservaciones(false);
+      toast.success("Observaciones de la ODC actualizadas con éxito.");
+    } catch (err) {
+      console.error("Error al guardar observaciones:", err);
+      toast.error("Error al guardar observaciones: " + err.message);
+    } finally {
+      setGuardandoObservaciones(false);
+    }
+  };
+
   const guardarTerminosPredeterminados = (nuevoTexto) => {
     localStorage.setItem('odc_global_default_terms', nuevoTexto);
     toast.success("Establecido como ley/condición predeterminada global para nuevas ODC.");
@@ -369,7 +473,7 @@ const OrdenesCompra = ({ currentUser }) => {
       while (keepReq) {
         const { data: chunk, error: reqErr2 } = await supabase
           .from('requisiciones')
-          .select('id, correlativo_req, solicitante, gerencia, items, created_at')
+          .select('id, correlativo_req, solicitante, gerencia, centro_costo, items, created_at')
           .order('created_at', { ascending: false })
           .range(pageReq * 1000, (pageReq + 1) * 1000 - 1);
         if (reqErr2) {
@@ -459,6 +563,7 @@ const OrdenesCompra = ({ currentUser }) => {
         tasa_cambio: odc.tasa_cambio || odc.tasa_bcv || 1,
         destino_despacho: odc.destino_despacho || odc.despachar_a_direccion || 'Galpones Riese - Av. Los Haticos',
         terminos_condiciones: odc.terminos_condiciones || "Precios incluyen entrega en el sitio de destino especificado. Mercancía sujeta a inspección de calidad y conteo físico.",
+        observaciones: odc.observaciones || localStorage.getItem(`odc_obs_${odc.id}`) || '',
         aplica_iva: aplicaIva,
         porcentaje_iva: pctIva || 16
       });
@@ -710,10 +815,6 @@ const OrdenesCompra = ({ currentUser }) => {
       toast.error("Debe ingresar la Fecha de Cotización del Proveedor.");
       return;
     }
-    if (!editOdcTarget.fecha_despacho) {
-      toast.error("Debe ingresar la Fecha Estimada de Despacho.");
-      return;
-    }
     if (editOdcTarget.tipo_pago === 'CREDITO') {
       const dias = parseInt(editOdcTarget.dias_credito, 10);
       if (isNaN(dias) || dias <= 0) {
@@ -766,6 +867,7 @@ const OrdenesCompra = ({ currentUser }) => {
         datos_bancarios: editOdcTarget.datos_bancarios || editOdcTarget.cuenta_bancaria || null,
         cuenta_bancaria: editOdcTarget.datos_bancarios || editOdcTarget.cuenta_bancaria || null,
         terminos_condiciones: editOdcTarget.terminos_condiciones || null,
+        observaciones: editOdcTarget.observaciones || null,
         subtotal: subtotalEdit,
         iva_porcentaje: porcentajeIvaEdit,
         porcentaje_iva: porcentajeIvaEdit,
@@ -774,13 +876,32 @@ const OrdenesCompra = ({ currentUser }) => {
         total_general: totalGeneralEdit
       };
 
-      // 1. Actualizar ordenes_compra
-      const { error: errUpdate } = await supabase
-        .from('ordenes_compra')
-        .update(payloadOdc)
-        .eq('id', editOdcTarget.id);
+      // 1. Actualizar ordenes_compra (con fallback en caso de que la columna observaciones no esté en DB)
+      let errUpdate = null;
+      try {
+        const { error } = await supabase
+          .from('ordenes_compra')
+          .update(payloadOdc)
+          .eq('id', editOdcTarget.id);
+        errUpdate = error;
+      } catch (e) {
+        errUpdate = e;
+      }
 
-      if (errUpdate) throw errUpdate;
+      if (errUpdate && errUpdate.message && errUpdate.message.toLowerCase().includes('observaciones')) {
+        const { observaciones, ...payloadSinObs } = payloadOdc;
+        const { error: retryErr } = await supabase
+          .from('ordenes_compra')
+          .update(payloadSinObs)
+          .eq('id', editOdcTarget.id);
+        if (retryErr) throw retryErr;
+      } else if (errUpdate) {
+        throw errUpdate;
+      }
+
+      if (editOdcTarget.observaciones !== undefined) {
+        localStorage.setItem(`odc_obs_${editOdcTarget.id}`, editOdcTarget.observaciones || '');
+      }
 
       // 2. Eliminar items antiguos de esta ODC
       const { error: errDel } = await supabase
@@ -1112,7 +1233,7 @@ const OrdenesCompra = ({ currentUser }) => {
     });
   };
 
-  // Generación de PDF Formato Oficial F-ADM-01-2
+  // Generación de PDF Formato Oficial F-ADM-01-2 (3 Copias en un solo documento)
   const exportarPDF_F_ADM_01_2 = async () => {
     if (!odcSeleccionada) return;
     if (!esUsuarioCompras) {
@@ -1121,243 +1242,434 @@ const OrdenesCompra = ({ currentUser }) => {
     }
 
     try {
-      toast.loading("Generando documento oficial F-ADM-01-2...", { id: 'pdf-odc' });
+      toast.loading("Generando documento oficial de Orden de Compra (3 copias)...", { id: 'pdf-odc' });
       const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
       const pageWidth = doc.internal.pageSize.getWidth();
       const pageHeight = doc.internal.pageSize.getHeight();
-
-      // Encabezado Estilo Imagen 3 (Izquierda)
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(16);
-      doc.text("Orden de Compra", 14, 16);
-
-      doc.setFontSize(12);
-      doc.text(`No. ${odcSeleccionada.numero_odc ? odcSeleccionada.numero_odc.replace('ODC-2026-', '') : '000000'}`, 14, 22);
-
-      // Logo y Datos Institucionales Total Clean (Derecha - Posicionamiento dinámico sin solapamiento)
       const logoImg = await cargarImagenLogo();
-      let headerTextY = 22;
-      let lineY = 37;
 
-      if (logoImg) {
-        const logoW = 38;
-        const logoH = (logoImg.height / logoImg.width) * logoW;
-        doc.addImage(logoImg, 'PNG', pageWidth - 14 - logoW, 5, logoW, logoH);
-        headerTextY = Math.max(5 + logoH + 3, 21);
-      }
-
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(8);
-      doc.text("RIF: J-30365668-7", pageWidth - 14, headerTextY, { align: 'right' });
-      
-      doc.setFont("helvetica", "italic");
-      doc.setFontSize(6.2);
-      doc.text("Dirección Fiscal: AV 61 ENTRE CALLE 147 Y TAPÓN PARCELA CI-19 SECTOR I,", pageWidth - 14, headerTextY + 3.8, { align: 'right' });
-      doc.text("LOCAL GALPÓN NRO 147-113, ZONA INDUSTRIAL DE MARACAIBO SUR.", pageWidth - 14, headerTextY + 6.8, { align: 'right' });
-      doc.text("Tel. 0261-7651143 - Fax. 0261-7652555 | Cel. 0414-6245550 / 0414-8101155", pageWidth - 14, headerTextY + 9.8, { align: 'right' });
-
-      lineY = headerTextY + 12.5;
-
-      // Línea divisora
-      doc.setLineWidth(0.6);
-      doc.setDrawColor(0);
-      doc.line(14, lineY, pageWidth - 14, lineY);
-
-      // Tabla 1: DATOS DEL PROVEEDOR (Sin líneas internas de división, con marco exterior y espaciado limpio)
-      const rawDestino = odcSeleccionada.destino_despacho || odcSeleccionada.despachar_a_direccion || 'Galpones Riese - Av. Los Haticos';
-      const destinoObraLimpio = rawDestino.replace(/\s*-\s*null/gi, '').replace(/null/gi, '').trim();
-
-      const tablaProvHead = [[
-        { content: 'DATOS DEL PROVEEDOR', colSpan: 2, styles: { halign: 'center', fontStyle: 'bolditalic', fillColor: [241, 245, 249], textColor: [0, 0, 0], fontSize: 9 } }
-      ]];
-      const tablaProvBody = [
-        [`Nombre: ${odcSeleccionada.proveedor_nombre || 'N/A'}`, `Contacto: ${odcSeleccionada.proveedor_contacto || 'N/A'}`],
-        [`Dirección: ${odcSeleccionada.proveedor_direccion || 'N/A'}`, `Nit: ${odcSeleccionada.proveedor_nit || odcSeleccionada.proveedor_rif || 'N/A'}`],
-        [`Teléfono: ${odcSeleccionada.proveedor_telefono || 'N/A'}`, `País: ${odcSeleccionada.proveedor_pais || 'Venezuela'}`],
-        [`Rif: ${odcSeleccionada.proveedor_rif || 'N/A'}`, `Fecha de Despacho: ${odcSeleccionada.fecha_despacho || odcSeleccionada.fecha_emision || 'N/A'}`],
-        [`Ciudad: ${odcSeleccionada.proveedor_ciudad || 'N/A'}`, `Forma de Pago: ${odcSeleccionada.tipo_pago === 'CREDITO' ? `Divisas ${odcSeleccionada.moneda || 'USD'} (Crédito ${odcSeleccionada.dias_credito}d)` : `Divisas ${odcSeleccionada.moneda || 'USD'}`}`],
-        [`Despachar a: Total Clean`, ``],
-        [`Solicitado por: Total Clean C.A.`, ``],
-        [`Destino a Obra: ${destinoObraLimpio}`, ``]
+      const copias = [
+        "original para el cliente",
+        "Copia para cuenta por pagar",
+        "copia para control de compras"
       ];
 
-      autoTable(doc, {
-        startY: lineY + 3,
-        head: tablaProvHead,
-        body: tablaProvBody,
-        theme: 'plain',
-        styles: { 
-          fontSize: 8, 
-          cellPadding: { top: 2.2, bottom: 2.2, left: 4, right: 4 }, 
-          textColor: [0, 0, 0], 
-          lineWidth: 0
-        },
-        columnStyles: {
-          0: { cellWidth: 100 },
-          1: { cellWidth: 86 }
+      let rawReqOrigen = odcSeleccionada.requisicion_correlativo || 
+                         odcSeleccionada.requisicion_obj?.correlativo_req || 
+                         odcSeleccionada.numero_req || 
+                         odcSeleccionada.correlativo_req;
+
+      if (!rawReqOrigen || rawReqOrigen.startsWith('REQ-') || !isNaN(Number(rawReqOrigen))) {
+        const numOnly = String(odcSeleccionada.requisicion_id || '').replace(/^REQ-?/i, '').trim();
+        const found = (requisicionesList || []).find(r => 
+          String(r.id) === numOnly || 
+          (r.correlativo_req && String(r.correlativo_req).trim().toUpperCase() === String(odcSeleccionada.requisicion_id || '').trim().toUpperCase())
+        );
+        if (found?.correlativo_req) {
+          rawReqOrigen = found.correlativo_req;
         }
-      });
-
-      // Marco contenedor exterior sin divisiones internas
-      const tablaProvEndY = doc.lastAutoTable.finalY;
-      doc.setDrawColor(0);
-      doc.setLineWidth(0.3);
-      doc.rect(14, lineY + 3, pageWidth - 28, tablaProvEndY - (lineY + 3));
-      doc.line(14, lineY + 11, pageWidth - 14, lineY + 11);
-
-      // Tabla 2: Renglones / Ítems de la ODC
-      const itemsHead = [["Item", "Descripción / Especificación Técnica", "Cantidad", "Unidad", "Precio Unit.", "Total ($)"]];
-      const itemsBody = odcItems.map((it, idx) => [
-        (idx + 1).toString(),
-        it.descripcion || 'Sin descripción',
-        Number(it.cantidad || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 }),
-        it.unidad || 'UNID',
-        Number(it.precio_unitario || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 }),
-        Number(it.total_fila || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })
-      ]);
-
-      autoTable(doc, {
-        startY: tablaProvEndY + 4,
-        head: itemsHead,
-        body: itemsBody,
-        theme: 'grid',
-        styles: { fontSize: 8, cellPadding: 3, textColor: [0, 0, 0], lineWidth: 0.1, lineColor: [0, 0, 0] },
-        headStyles: { fillColor: [241, 245, 249], textColor: [0, 0, 0], fontStyle: 'bold', halign: 'center', lineWidth: 0.1, lineColor: [0, 0, 0] },
-        columnStyles: {
-          0: { halign: 'center', cellWidth: 12 },
-          1: { cellWidth: 90 },
-          2: { halign: 'right', cellWidth: 20 },
-          3: { halign: 'center', cellWidth: 16 },
-          4: { halign: 'right', cellWidth: 24 },
-          5: { halign: 'right', cellWidth: 26 }
-        }
-      });
-
-      let finalY = doc.lastAutoTable.finalY + 4;
-
-      // Resumen de Totales y Términos Comerciales
-      doc.setFontSize(8);
-      doc.setFont("helvetica", "bold");
-      doc.text("Términos & Condiciones Comerciales / Leyes:", 14, finalY + 4);
-      doc.setFont("helvetica", "normal");
-      const splitTerms = doc.splitTextToSize(odcSeleccionada.terminos_condiciones || "Precios incluyen entrega en el sitio de destino especificado. Mercancía sujeta a inspección de calidad y conteo físico.", 110);
-      doc.text(splitTerms, 14, finalY + 8);
-
-      const ctaPagoPdf = odcSeleccionada.datos_bancarios || odcSeleccionada.cuenta_bancaria || null;
-      if (ctaPagoPdf) {
-        doc.setFont("helvetica", "bold");
-        doc.text("Datos Bancarios de Destino para Pago:", 14, finalY + 20);
-        doc.setFont("helvetica", "normal");
-        const splitCta = doc.splitTextToSize(ctaPagoPdf, 110);
-        doc.text(splitCta, 14, finalY + 24);
       }
 
-      // Tabla de Cuadro de Totales (A la derecha)
+      if (!rawReqOrigen || rawReqOrigen === 'null') {
+        rawReqOrigen = odcSeleccionada.requisicion_id ? (String(odcSeleccionada.requisicion_id).startsWith('REQ-') ? odcSeleccionada.requisicion_id : `REQ-${odcSeleccionada.requisicion_id}`) : 'N/A';
+      }
+
+      const rawDestino = odcSeleccionada.requisicion_obj?.centro_costo || 
+                         odcSeleccionada.requisicion_obj?.obra || 
+                         odcSeleccionada.destino_despacho || 
+                         odcSeleccionada.despachar_a_direccion || 
+                         'Galpones Riese - Av. Los Haticos';
+      const destinoObraLimpio = String(rawDestino || '').replace(/\s*-\s*null/gi, '').replace(/null/gi, '').trim() || 'Galpones Riese - Av. Los Haticos';
+
+      const solicitanteNombre = odcSeleccionada.requisicion_obj?.solicitante || 
+                                odcSeleccionada.solicitante || 
+                                odcSeleccionada.solicitado_por || 
+                                'Total Clean C.A.';
+
+      const fechaEmisionStr = odcSeleccionada.fecha_emision 
+        ? new Date(odcSeleccionada.fecha_emision).toLocaleDateString('es-VE') 
+        : (odcSeleccionada.created_at ? new Date(odcSeleccionada.created_at).toLocaleDateString('es-VE') : new Date().toLocaleDateString('es-VE'));
+
+      const fechaCotizacionStr = odcSeleccionada.fecha_cotizacion 
+        ? new Date(odcSeleccionada.fecha_cotizacion).toLocaleDateString('es-VE') 
+        : '';
+
+      const monedaCode = odcSeleccionada.moneda || 'USD';
+      const formaPagoTexto = odcSeleccionada.tipo_pago === 'CREDITO'
+        ? `Crédito (${odcSeleccionada.dias_credito || 0} días)`
+        : 'Contado';
+
       const subtotal = Number(odcSeleccionada.subtotal || 0);
-      const percentageIva = Number(odcSeleccionada.porcentaje_iva || 16);
-      const montoIva = subtotal * (percentageIva / 100);
-      const totalGeneral = Number(odcSeleccionada.total_general || subtotal + montoIva);
+      const percentageIva = Number(odcSeleccionada.porcentaje_iva !== undefined && odcSeleccionada.porcentaje_iva !== null ? odcSeleccionada.porcentaje_iva : (odcSeleccionada.iva_porcentaje || 16));
+      const montoIva = odcSeleccionada.iva_monto !== undefined && odcSeleccionada.iva_monto !== null 
+        ? Number(odcSeleccionada.iva_monto) 
+        : (subtotal * (percentageIva / 100));
+      const totalGeneral = Number(odcSeleccionada.total_general || (subtotal + montoIva));
 
-      doc.rect(pageWidth - 75, finalY, 61, 24);
-      doc.setFont("helvetica", "normal");
-      doc.text("Sub-Total:", pageWidth - 72, finalY + 6);
-      doc.text(`$ ${subtotal.toLocaleString('de-DE', { minimumFractionDigits: 2 })}`, pageWidth - 16, finalY + 6, { align: 'right' });
+      const correlativoNum = odcSeleccionada.numero_odc 
+        ? odcSeleccionada.numero_odc.replace('ODC-2026-', '').replace('ODC-', '') 
+        : '000106';
 
-      doc.text(`IVA (${percentageIva}%):`, pageWidth - 72, finalY + 12);
-      doc.text(`$ ${montoIva.toLocaleString('de-DE', { minimumFractionDigits: 2 })}`, pageWidth - 16, finalY + 12, { align: 'right' });
+      copias.forEach((copiaLabel, pageIndex) => {
+        if (pageIndex > 0) {
+          doc.addPage();
+        }
 
-      doc.setFont("helvetica", "bold");
-      doc.text("TOTAL GENERAL:", pageWidth - 72, finalY + 19);
-      doc.text(`$ ${totalGeneral.toLocaleString('de-DE', { minimumFractionDigits: 2 })}`, pageWidth - 16, finalY + 19, { align: 'right' });
+        const marginX = 12;
+        const usableWidth = pageWidth - (marginX * 2);
 
-      // Bloque de Firmas (Anclado al Pie de Página)
-      const cardWidth = (pageWidth - 28 - 16) / 3;
-      const cardHeight = 32;
-      const bottomFooterMargin = 12;
-      let sigY = pageHeight - bottomFooterMargin - cardHeight;
+        // --- ENCABEZADO SUPERIOR ---
+        // Izquierda: Título y Correlativo en Rojo
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(16.5);
+        doc.setTextColor(30, 58, 138); // Azul corporativo
+        doc.text("Orden de Compra", marginX, 9.5);
 
-      // Si el cuadro de totales o términos colisiona con el pie de página
-      if (finalY + 26 > sigY) {
-        doc.addPage();
-        sigY = pageHeight - bottomFooterMargin - cardHeight;
-      }
+        doc.setFontSize(13.5);
+        doc.setTextColor(220, 38, 38); // Rojo
+        doc.text(`No. ${correlativoNum}`, marginX, 15.0);
 
-      // Helper para renderizar recuadros de firma estilo Imagen 1
-      const drawSigCard = (xPos, title, name, role, isSigned, dateStr) => {
-        doc.setDrawColor(0);
-        doc.setLineWidth(0.3);
-        doc.roundedRect(xPos, sigY, cardWidth, cardHeight, 2, 2);
+        // Derecha: Logo y Datos de Empresa
+        let headerTextY = 10.5;
+        if (logoImg) {
+          const logoW = 32;
+          const logoH = (logoImg.height / logoImg.width) * logoW;
+          doc.addImage(logoImg, 'PNG', pageWidth - marginX - logoW, 3.5, logoW, logoH);
+          headerTextY = 3.5 + logoH + 1.2;
+        }
 
-        doc.setFontSize(7.5);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8.2);
+        doc.setTextColor(15, 23, 42);
+        doc.text("TOTAL CLEAN C.A.", pageWidth - marginX, headerTextY, { align: 'right' });
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(5.4);
+        doc.text("Dirección Fiscal: AV 61 ENTRE CALLE 147 Y TAPÓN PARCELA CI-19 SECTOR I,", pageWidth - marginX, headerTextY + 2.8, { align: 'right' });
+        doc.text("LOCAL GALPÓN NRO 147-113, ZONA INDUSTRIAL DE MARACAIBO SUR.", pageWidth - marginX, headerTextY + 5.0, { align: 'right' });
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(6.2);
+        doc.text("Telf.: 0414-8101155 / 0414-643-1203", pageWidth - marginX, headerTextY + 7.4, { align: 'right' });
+        doc.text("R.I.F.: J-30365868-7", pageWidth - marginX, headerTextY + 9.8, { align: 'right' });
+
+        const barY = Math.max(headerTextY + 12.5, 24.0);
+
+        // --- REQUISICIÓN DE ORIGEN ENCIMA DE FECHA ---
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(7.8);
+        doc.setTextColor(30, 58, 138);
+        doc.text("Requisición:", marginX, barY - 1.5);
         doc.setFont("helvetica", "bold");
         doc.setTextColor(15, 23, 42);
-        doc.text(title, xPos + cardWidth / 2, sigY + 5, { align: 'center' });
+        doc.text(`${rawReqOrigen}`, marginX + 16.5, barY - 1.5);
 
-        doc.setDrawColor(203, 213, 225);
-        doc.setLineWidth(0.2);
-        doc.line(xPos + 4, sigY + 7, xPos + cardWidth - 4, sigY + 7);
+        // --- BARRA DE METADATOS ---
+        doc.setDrawColor(30, 58, 138);
+        doc.setLineWidth(0.3);
+        doc.setFillColor(248, 250, 252);
+        doc.rect(marginX, barY, usableWidth, 6.8, 'FD');
 
-        if (isSigned) {
+        doc.setFontSize(7.8);
+        const colW = usableWidth / 4;
+        
+        // Col 1: Fecha
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(30, 58, 138);
+        doc.text("Fecha:", marginX + 2, barY + 4.6);
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(0);
+        doc.text(fechaEmisionStr, marginX + 12, barY + 4.6);
+        doc.line(marginX + colW, barY, marginX + colW, barY + 6.8);
+
+        // Col 2: Cotización
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(30, 58, 138);
+        doc.text("Cotización:", marginX + colW + 2, barY + 4.6);
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(0);
+        doc.text(odcSeleccionada.cotizacion_ref || '', marginX + colW + 18, barY + 4.6);
+        doc.line(marginX + colW * 2, barY, marginX + colW * 2, barY + 6.8);
+
+        // Col 3: Aprobada por (Vacío para llenado manual)
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(30, 58, 138);
+        doc.text("Aprobada por:", marginX + colW * 2 + 2, barY + 4.6);
+        doc.line(marginX + colW * 3, barY, marginX + colW * 3, barY + 6.8);
+
+        // Col 4: Fecha de Cotización
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(30, 58, 138);
+        doc.text("Fecha Cotiz.:", marginX + colW * 3 + 2, barY + 4.6);
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(0);
+        doc.text(fechaCotizacionStr || '', marginX + colW * 3 + 19, barY + 4.6);
+
+        // --- BANNER DATOS DEL PROVEEDOR ---
+        const bannerY = barY + 7.8;
+        doc.setFillColor(241, 245, 249);
+        doc.rect(marginX, bannerY, usableWidth, 5.2, 'FD');
+        doc.setFont("helvetica", "bolditalic");
+        doc.setFontSize(8.5);
+        doc.setTextColor(30, 58, 138);
+        doc.text("DATOS DEL PROVEEDOR", marginX + (usableWidth / 2), bannerY + 3.7, { align: 'center' });
+
+        // --- TABLA DE DATOS DEL PROVEEDOR ---
+        const datosBancariosTexto = odcSeleccionada.datos_bancarios || odcSeleccionada.cuenta_bancaria || 'Ver datos bancarios registrados';
+        const provDataY = bannerY + 5.2;
+        const tablaProvBody = [
+          [`Nombre: ${odcSeleccionada.proveedor_nombre || 'N/A'}`, `Contacto: ${odcSeleccionada.proveedor_contacto || 'N/A'}`],
+          [`Dirección: ${odcSeleccionada.proveedor_direccion || 'N/A'}`, `País: ${odcSeleccionada.proveedor_pais || 'Venezuela'}`],
+          [`Teléfono: ${odcSeleccionada.proveedor_telefono || 'N/A'}`, `Fecha de Despacho:`],
+          [`R.I.F.: ${odcSeleccionada.proveedor_rif || 'N/A'}`, `Forma de Pago: ${formaPagoTexto}`],
+          [`Ciudad: ${odcSeleccionada.proveedor_ciudad || 'N/A'}`, `Cuenta / Pago Prov: ${datosBancariosTexto}`],
+          [`Despachar a: ${odcSeleccionada.despachar_a || 'Total Clean C.A.'}`, ``],
+          [`Solicitado por: ${solicitanteNombre}`, ``],
+          [`Destino a obra: ${destinoObraLimpio}`, ``]
+        ];
+
+        autoTable(doc, {
+          startY: provDataY,
+          margin: { left: marginX, right: marginX },
+          body: tablaProvBody,
+          theme: 'plain',
+          styles: {
+            fontSize: 7.8,
+            cellPadding: { top: 1.1, bottom: 1.1, left: 3, right: 3 },
+            textColor: [0, 0, 0],
+            lineWidth: 0
+          },
+          columnStyles: {
+            0: { cellWidth: usableWidth * 0.54 },
+            1: { cellWidth: usableWidth * 0.46 }
+          }
+        });
+
+        const tablaProvEndY = doc.lastAutoTable.finalY;
+        doc.setDrawColor(30, 58, 138);
+        doc.setLineWidth(0.3);
+        doc.rect(marginX, provDataY, usableWidth, tablaProvEndY - provDataY);
+
+        // --- TABLA DE RENGLONES / ITEMS (CON COLUMNA UNID) ---
+        const itemsHead = [["CANT.", "UNID.", "DESCRIPCIÓN", "PRECIO UNITARIO", "TOTAL"]];
+        const itemsBody = (odcItems && odcItems.length > 0)
+          ? odcItems.map(it => [
+              Number(it.cantidad || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 }),
+              it.unidad || 'UNID',
+              it.descripcion || 'Sin descripción',
+              Number(it.precio_unitario || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 }),
+              Number(it.total_fila || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })
+            ])
+          : [["1.00", "UNID", "Renglón general de compra", Number(subtotal).toLocaleString('de-DE', { minimumFractionDigits: 2 }), Number(subtotal).toLocaleString('de-DE', { minimumFractionDigits: 2 })]];
+
+        autoTable(doc, {
+          startY: tablaProvEndY + 2.5,
+          margin: { left: marginX, right: marginX },
+          head: itemsHead,
+          body: itemsBody,
+          theme: 'grid',
+          styles: { fontSize: 8.0, cellPadding: 2.0, textColor: [0, 0, 0], lineWidth: 0.2, lineColor: [30, 58, 138] },
+          headStyles: { fillColor: [241, 245, 249], textColor: [30, 58, 138], fontStyle: 'bold', halign: 'center', fontSize: 8.2, lineWidth: 0.2, lineColor: [30, 58, 138] },
+          columnStyles: {
+            0: { halign: 'center', cellWidth: 16 },
+            1: { halign: 'center', cellWidth: 15 },
+            2: { cellWidth: usableWidth - 16 - 15 - 32 - 32 },
+            3: { halign: 'right', cellWidth: 32 },
+            4: { halign: 'right', cellWidth: 32 }
+          }
+        });
+
+        let itemsEndY = doc.lastAutoTable.finalY;
+
+        // --- CUADRO DE TOTALES (SUB-TOTAL, IVA, TOTAL SIN DECIR USD) ---
+        const totBoxW = 68;
+        const totBoxH = 15.5;
+        const totBoxX = pageWidth - marginX - totBoxW;
+        const totBoxY = itemsEndY;
+
+        doc.setDrawColor(30, 58, 138);
+        doc.setLineWidth(0.3);
+        doc.rect(totBoxX, totBoxY, totBoxW, totBoxH);
+
+        doc.setFontSize(7.8);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(0);
+        doc.text("Sub-Total:", totBoxX + 2.5, totBoxY + 4.2);
+        doc.setFont("helvetica", "normal");
+        doc.text(subtotal.toLocaleString('de-DE', { minimumFractionDigits: 2 }), pageWidth - marginX - 3, totBoxY + 4.2, { align: 'right' });
+
+        doc.setFont("helvetica", "bold");
+        doc.text(`IVA ${percentageIva}%:`, totBoxX + 2.5, totBoxY + 8.6);
+        doc.setFont("helvetica", "normal");
+        doc.text(montoIva.toLocaleString('de-DE', { minimumFractionDigits: 2 }), pageWidth - marginX - 3, totBoxY + 8.6, { align: 'right' });
+
+        doc.line(totBoxX, totBoxY + 10.2, pageWidth - marginX, totBoxY + 10.2);
+        doc.setFont("helvetica", "bold");
+        doc.text("TOTAL:", totBoxX + 2.5, totBoxY + 13.8);
+        doc.text(totalGeneral.toLocaleString('de-DE', { minimumFractionDigits: 2 }), pageWidth - marginX - 3, totBoxY + 13.8, { align: 'right' });
+
+        // --- BLOQUE INFERIOR SIEMPRE EN LA PARTE DE ABAJO (FIJO AL PIE) ---
+        const bottomBlockTopY = Math.max(totBoxY + totBoxH + 2.5, pageHeight - 69);
+
+        // 1. Aviso de Documentos Exigidos
+        doc.setFont("helvetica", "italic");
+        doc.setFontSize(6.8);
+        doc.setTextColor(30, 58, 138);
+        doc.text("Favor comunicarnos de inmediato si existen problemas para el despacho exacto esta orden, Enviar los siguientes documentos:", marginX, bottomBlockTopY + 2.0);
+
+        // 2. Checklist de Documentos Exigidos
+        const docBoxY = bottomBlockTopY + 3.0;
+        const docBoxH = 9.5;
+        doc.setDrawColor(30, 58, 138);
+        doc.setLineWidth(0.3);
+        doc.setFillColor(255, 255, 255);
+        doc.rect(marginX, docBoxY, usableWidth, docBoxH, 'FD');
+
+        const docColW = usableWidth / 4;
+        const docCols = [
+          { title: "Nota de Entrega" },
+          { title: "Factura" },
+          { title: "Con. de Embarque:" },
+          { title: "Otros:" }
+        ];
+
+        docCols.forEach((dCol, dIdx) => {
+          const dX = marginX + (dIdx * docColW);
+          if (dIdx > 0) {
+            doc.line(dX, docBoxY, dX, docBoxY + docBoxH);
+          }
+          doc.setFont("helvetica", "bold");
+          doc.setFontSize(7.4);
+          doc.setTextColor(30, 58, 138);
+          doc.text(dCol.title, dX + (docColW / 2), docBoxY + 3.2, { align: 'center' });
+
+          doc.setFont("helvetica", "normal");
+          doc.setFontSize(6.4);
+          doc.setTextColor(0);
+          doc.text("No. _________  Copias: ____", dX + (docColW / 2), docBoxY + 7.2, { align: 'center' });
+        });
+
+        // 3. Leyes y Condiciones Comerciales
+        const terminosBoxY = docBoxY + docBoxH + 1.6;
+        const terminosBoxH = 9.0;
+        doc.setDrawColor(30, 58, 138);
+        doc.setLineWidth(0.3);
+        doc.rect(marginX, terminosBoxY, usableWidth, terminosBoxH);
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(7.0);
+        doc.setTextColor(30, 58, 138);
+        doc.text("Leyes, Términos & Condiciones Comerciales:", marginX + 2.5, terminosBoxY + 3.0);
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(6.4);
+        doc.setTextColor(0);
+        const textoTerminosStr = odcSeleccionada.terminos_condiciones || "Precios incluyen entrega en el sitio de destino especificado. Mercancía sujeta a inspección de calidad y conteo físico.";
+        const splitTerms = doc.splitTextToSize(textoTerminosStr, usableWidth - 5);
+        doc.text(splitTerms, marginX + 2.5, terminosBoxY + 6.3);
+
+        // 4. Campo de Observaciones
+        const obsBoxY = terminosBoxY + terminosBoxH + 1.6;
+        const obsBoxH = 11.5;
+        doc.setDrawColor(30, 58, 138);
+        doc.setLineWidth(0.3);
+        doc.rect(marginX, obsBoxY, usableWidth, obsBoxH);
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(7.4);
+        doc.setTextColor(30, 58, 138);
+        doc.text("OBSERVACIONES", marginX + (usableWidth / 2), obsBoxY + 3.2, { align: 'center' });
+
+        const textoObs = odcSeleccionada.observaciones || "";
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(6.6);
+        doc.setTextColor(0);
+        if (textoObs.trim()) {
+          const splitObs = doc.splitTextToSize(textoObs, usableWidth - 6);
+          doc.text(splitObs, marginX + 3, obsBoxY + 6.8);
+        } else {
+          doc.setDrawColor(226, 232, 240);
+          doc.line(marginX + 4, obsBoxY + 6.8, marginX + usableWidth - 4, obsBoxY + 6.8);
+          doc.line(marginX + 4, obsBoxY + 9.5, marginX + usableWidth - 4, obsBoxY + 9.5);
+        }
+
+        // 5. Cuadros de Firmas / Elaboradores (Compactos)
+        const sigY = obsBoxY + obsBoxH + 1.6;
+        const sigH = 18.5;
+        const sigW = usableWidth / 3;
+
+        const compradorNombre = odcSeleccionada.comprador_nombre || currentUser?.nombre || 'José';
+
+        // 1. Elaborado por
+        doc.setDrawColor(30, 58, 138);
+        doc.setLineWidth(0.3);
+        doc.rect(marginX, sigY, sigW, sigH);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(7.2);
+        doc.setTextColor(30, 58, 138);
+        doc.text("Elaborado por (nombre y firma)", marginX + sigW / 2, sigY + 3.2, { align: 'center' });
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(6.2);
+        doc.text("Departamento de Compras", marginX + sigW / 2, sigY + 6.0, { align: 'center' });
+        doc.line(marginX + 6, sigY + 12.0, marginX + sigW - 6, sigY + 12.0);
+        doc.setFontSize(6.2);
+        doc.text(compradorNombre, marginX + sigW / 2, sigY + 15.8, { align: 'center' });
+
+        // 2. Revisado y avalado por Ricardo Herrera
+        doc.rect(marginX + sigW, sigY, sigW, sigH);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(7.2);
+        doc.text("Revisado y avalado por (nombre y firma)", marginX + sigW + sigW / 2, sigY + 3.2, { align: 'center' });
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(6.2);
+        doc.text("Gerente de Compras", marginX + sigW + sigW / 2, sigY + 6.0, { align: 'center' });
+        doc.line(marginX + sigW + 6, sigY + 12.0, marginX + sigW * 2 - 6, sigY + 12.0);
+        doc.setFontSize(6.2);
+        doc.text("Ricardo Herrera (Gerente de Compras)", marginX + sigW + sigW / 2, sigY + 15.8, { align: 'center' });
+
+        // 3. Autorizado por Carlos Vega
+        doc.rect(marginX + sigW * 2, sigY, sigW, sigH);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(7.2);
+        doc.text("Autorizado por (nombre y firma)", marginX + sigW * 2 + sigW / 2, sigY + 3.2, { align: 'center' });
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(6.2);
+        doc.text("Personal Autorizado", marginX + sigW * 2 + sigW / 2, sigY + 6.0, { align: 'center' });
+
+        if (odcSeleccionada.carlos_firma_digital_activa) {
           doc.setFillColor(240, 253, 244);
           doc.setDrawColor(22, 101, 52);
-          doc.setLineWidth(0.3);
-          doc.roundedRect(xPos + 4, sigY + 9, cardWidth - 8, 20, 1.5, 1.5, 'FD');
-
-          doc.setFontSize(7.2);
+          doc.roundedRect(marginX + sigW * 2 + 3, sigY + 7.5, sigW - 6, 9.2, 1, 1, 'FD');
           doc.setFont("helvetica", "bold");
+          doc.setFontSize(5.6);
           doc.setTextColor(4, 120, 87);
-          doc.text("FIRMADO Y APROBADO", xPos + cardWidth / 2, sigY + 14, { align: 'center' });
-
-          doc.setFontSize(6.8);
-          doc.setFont("helvetica", "bold");
-          doc.setTextColor(15, 118, 110);
-          doc.text(`${name} (${role})`, xPos + cardWidth / 2, sigY + 19, { align: 'center' });
-
-          doc.setFontSize(5.8);
-          doc.setFont("helvetica", "normal");
-          doc.setTextColor(21, 128, 61);
-          doc.text(dateStr, xPos + cardWidth / 2, sigY + 24, { align: 'center' });
+          doc.text("FIRMADO DIGITALMENTE", marginX + sigW * 2 + sigW / 2, sigY + 11.0, { align: 'center' });
+          doc.setFontSize(5.2);
+          doc.text("Carlos Vega (Gerencia General)", marginX + sigW * 2 + sigW / 2, sigY + 14.8, { align: 'center' });
         } else {
-          doc.setDrawColor(0);
-          doc.setLineWidth(0.2);
-          doc.line(xPos + 6, sigY + 20, xPos + cardWidth - 6, sigY + 20);
-
-          doc.setFontSize(7.2);
-          doc.setFont("helvetica", "bold");
-          doc.setTextColor(0);
-          doc.text(name, xPos + cardWidth / 2, sigY + 25, { align: 'center' });
-          doc.setFontSize(6);
-          doc.setFont("helvetica", "normal");
-          doc.setTextColor(100);
-          doc.text(`(${role})`, xPos + cardWidth / 2, sigY + 29, { align: 'center' });
+          doc.line(marginX + sigW * 2 + 6, sigY + 12.0, marginX + usableWidth - 6, sigY + 12.0);
+          doc.setFontSize(6.2);
+          doc.text("Carlos Vega (Gerencia General)", marginX + sigW * 2 + sigW / 2, sigY + 15.8, { align: 'center' });
         }
-        doc.setTextColor(0);
-      };
 
-      // 1. Elaborado Por (Comprador - Firma Escrita)
-      const compradorNombre = odcSeleccionada.comprador_nombre || currentUser?.nombre || 'Comprador Gestor';
-      drawSigCard(14, "ELABORADO POR", compradorNombre, "Departamento de Compras", false, "");
+        // Texto pie a la derecha: "Verificado datos de compra por proveedor"
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(7.2);
+        doc.setTextColor(30, 58, 138);
+        doc.text("Verificado datos de compra por proveedor", pageWidth - marginX, sigY + sigH + 3.8, { align: 'right' });
 
-      // 2. Revisado y Avalado Por (Ricardo Herrera - Firma Escrita)
-      const gerenteComprasNombre = odcSeleccionada.gerente_compras_nombre || "Ricardo Herrera";
-      drawSigCard(14 + cardWidth + 8, "REVISADO Y AVALADO POR", gerenteComprasNombre, "Gerente de Compras", false, "");
-
-      // 3. Aprobado Por (Carlos Vega - Gerente General)
-      const fCarlosStr = odcSeleccionada.carlos_firma_fecha 
-        ? new Date(odcSeleccionada.carlos_firma_fecha).toLocaleString('es-ES') 
-        : new Date().toLocaleString('es-ES');
-      drawSigCard(14 + (cardWidth + 8) * 2, "APROBADO POR", "Carlos Vega", "Gerencia General", Boolean(odcSeleccionada.carlos_firma_digital_activa), fCarlosStr);
-
-      // Pie de Página
-      doc.setFontSize(6.5);
-      doc.setTextColor(100);
-      doc.text("Copia Controlada - Documento Oficial de Procesamiento de Compras | TOTAL CLEAN C.A. Formato F-ADM-01-2", pageWidth / 2, pageHeight - 6, { align: 'center' });
+        // --- IDENTIFICADOR DE COPIA EN EL PIE DE PÁGINA (ESTILIZADO Y ELEGANTE) ---
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8.8);
+        doc.setTextColor(30, 58, 138);
+        doc.text(`— ${copiaLabel.toUpperCase()} —`, pageWidth / 2, pageHeight - 5.0, { align: 'center' });
+      });
 
       doc.save(`Orden_Compra_${odcSeleccionada.numero_odc || 'ODC'}.pdf`);
-      toast.success("Documento F-ADM-01-2 generado con éxito", { id: 'pdf-odc' });
+      toast.success("Documento oficial (3 copias) generado con éxito.", { id: 'pdf-odc' });
     } catch (err) {
       console.error("Error al exportar PDF de ODC:", err);
-      toast.error("Error al generar PDF de la ODC", { id: 'pdf-odc' });
+      toast.error("Error al generar PDF de la ODC: " + err.message, { id: 'pdf-odc' });
     }
   };
 
@@ -1540,7 +1852,7 @@ const OrdenesCompra = ({ currentUser }) => {
                       {odc.proveedor_nombre || 'N/A'}
                     </td>
                     <td style={{ padding: '14px 16px', fontWeight: '600', color: '#0f172a' }}>
-                      {odc.requisicion_correlativo || (odc.requisicion_id ? `REQ-${odc.requisicion_id}` : 'N/A')}
+                      {odc.requisicion_correlativo || odc.requisicion_obj?.correlativo_req || odc.numero_req || (odc.requisicion_id ? (String(odc.requisicion_id).startsWith('REQ-') ? odc.requisicion_id : `REQ-${odc.requisicion_id}`) : 'N/A')}
                     </td>
                     <td style={{ padding: '14px 16px' }}>
                       <span style={{ 
@@ -1797,6 +2109,48 @@ const OrdenesCompra = ({ currentUser }) => {
               </div>
             )}
 
+            {/* Panel de Edición de Observaciones de la ODC */}
+            <div style={{ backgroundColor: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '16px', padding: '16px 20px', marginBottom: '16px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                <span style={{ fontWeight: '800', color: '#0f172a', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <FileText size={16} color="#0ea5e9" /> Observaciones de la Órden de Compra
+                </span>
+                <button 
+                  type="button" 
+                  onClick={() => setEditandoObservaciones(!editandoObservaciones)}
+                  style={{ padding: '6px 12px', fontSize: '0.75rem', fontWeight: '700', borderRadius: '8px', border: '1px solid #cbd5e1', backgroundColor: 'white', cursor: 'pointer' }}
+                >
+                  {editandoObservaciones ? 'Ocultar Editor' : '✏️ Editar Observaciones'}
+                </button>
+              </div>
+
+              {editandoObservaciones ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <textarea
+                    rows={3}
+                    style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: '1px solid #0ea5e9', fontSize: '0.8rem', fontFamily: 'inherit', resize: 'vertical' }}
+                    value={textoObservaciones}
+                    onChange={(e) => setTextoObservaciones(e.target.value)}
+                    placeholder="Escriba aquí las observaciones especiales para esta orden de compra..."
+                  />
+                  <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      disabled={guardandoObservaciones}
+                      onClick={() => guardarObservacionesOdc(textoObservaciones)}
+                      style={{ padding: '6px 16px', fontSize: '0.75rem', fontWeight: '800', backgroundColor: '#0ea5e9', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}
+                    >
+                      {guardandoObservaciones ? 'Guardando...' : '💾 Guardar Observaciones'}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ fontSize: '0.8rem', color: '#334155', lineHeight: '1.4' }}>
+                  {odcSeleccionada.observaciones || <span style={{ color: '#94a3b8', fontStyle: 'italic' }}>Sin observaciones registradas (se mostrarán líneas para llenado manual).</span>}
+                </div>
+              )}
+            </div>
+
             {/* Panel de Edición de Leyes y Condiciones Comerciales */}
             <div style={{ backgroundColor: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '16px', padding: '16px 20px', marginBottom: '24px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
@@ -1846,56 +2200,88 @@ const OrdenesCompra = ({ currentUser }) => {
               )}
             </div>
 
-            {/* HOJA IMPRIMIBLE F-ADM-01-2 */}
+            {/* HOJA IMPRIMIBLE F-ADM-01-2 (Formato Físico de Referencia) */}
             <div ref={printRef} className="f-adm-01-2-sheet f-adm-sheet-printable">
               
-              {/* Header Imprimible - Estilo Imagen 3 */}
+              {/* Header Imprimible */}
               <div className="f-adm-header-img3">
                 <div className="f-adm-header-left">
                   <h1 className="f-adm-title">Orden de Compra</h1>
                   <div className="f-adm-no">
-                    No. {odcSeleccionada.numero_odc ? odcSeleccionada.numero_odc.replace('ODC-2026-', '') : '000000'}
+                    No. {odcSeleccionada.numero_odc ? odcSeleccionada.numero_odc.replace('ODC-2026-', '').replace('ODC-', '') : '000106'}
                   </div>
                 </div>
 
                 <div className="f-adm-header-right">
                   <img src="/logo.png" alt="TOTAL CLEAN" className="f-adm-logo-img3" onError={(e) => { e.target.style.display = 'none'; }} />
-                  <div className="f-adm-rif-img3">J-30365668-7</div>
-                  <div className="f-adm-company-details-img3">
-                    <strong>Dirección Fiscal:</strong> {DIRECCION_FISCAL_OFICIAL}<br/>
-                    Tel. 0261-7651143 - Fax. 0261-7652555 | Cel. 0414-6245550 / 0414-8101155
-                  </div>
+                  <div className="f-adm-company-name-img3">TOTAL CLEAN C.A.</div>
+                  <div className="f-adm-company-details-img3" style={{ fontSize: '0.62rem', maxWidth: '380px', lineHeight: '1.2' }}>Dirección Fiscal: AV 61 ENTRE CALLE 147 Y TAPÓN PARCELA CI-19 SECTOR I, LOCAL GALPÓN NRO 147-113, ZONA INDUSTRIAL DE MARACAIBO SUR.</div>
+                  <div className="f-adm-company-details-img3" style={{ fontWeight: '800' }}>Telf.: 0414-8101155 / 0414-643-1203</div>
+                  <div className="f-adm-rif-img3">R.I.F.: J-30365868-7</div>
                 </div>
               </div>
 
               <hr className="f-adm-divider" />
 
-              {/* Sección DATOS DEL PROVEEDOR (Estilo Referencia Imagen) */}
+              {/* Requisición de Origen justo encima de Fecha */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px', fontSize: '0.80rem' }}>
+                <strong style={{ color: '#1e3a8a' }}>Requisición:</strong>
+                <strong style={{ color: '#0f172a' }}>
+                  {odcSeleccionada.requisicion_correlativo || 
+                   odcSeleccionada.requisicion_obj?.correlativo_req || 
+                   ((requisicionesList || []).find(r => String(r.id) === String(odcSeleccionada.requisicion_id || '').replace(/^REQ-?/i, '') || (r.correlativo_req && String(r.correlativo_req).trim().toUpperCase() === String(odcSeleccionada.requisicion_id || '').trim().toUpperCase()))?.correlativo_req) ||
+                   odcSeleccionada.numero_req || 
+                   (odcSeleccionada.requisicion_id ? (String(odcSeleccionada.requisicion_id).startsWith('REQ-') ? odcSeleccionada.requisicion_id : `REQ-${odcSeleccionada.requisicion_id}`) : 'N/A')}
+                </strong>
+              </div>
+
+              {/* Barra de Metadatos */}
+              <div className="f-adm-metadata-bar">
+                <div className="f-adm-meta-item">
+                  <span className="f-adm-meta-label">Fecha:</span>
+                  <span className="f-adm-meta-val">
+                    {odcSeleccionada.fecha_emision ? new Date(odcSeleccionada.fecha_emision).toLocaleDateString('es-VE') : (odcSeleccionada.created_at ? new Date(odcSeleccionada.created_at).toLocaleDateString('es-VE') : new Date().toLocaleDateString('es-VE'))}
+                  </span>
+                </div>
+                <div className="f-adm-meta-item">
+                  <span className="f-adm-meta-label">Cotización:</span>
+                  <span className="f-adm-meta-val">{odcSeleccionada.cotizacion_ref || ''}</span>
+                </div>
+                <div className="f-adm-meta-item">
+                  <span className="f-adm-meta-label">Aprobada por:</span>
+                  <span className="f-adm-meta-val"></span>
+                </div>
+                <div className="f-adm-meta-item">
+                  <span className="f-adm-meta-label">Fecha Cotiz.:</span>
+                  <span className="f-adm-meta-val">
+                    {odcSeleccionada.fecha_cotizacion ? new Date(odcSeleccionada.fecha_cotizacion).toLocaleDateString('es-VE') : 'N/A'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Sección DATOS DEL PROVEEDOR */}
               <div className="f-adm-section-header-datos-prov">
                 DATOS DEL PROVEEDOR
               </div>
               <table className="f-adm-table-datos-prov">
                 <tbody>
                   <tr>
-                    <td style={{ width: '55%', padding: '10px 14px', lineHeight: '1.6' }}>
-                      <div style={{ marginBottom: '6px', backgroundColor: '#e0f2fe', padding: '4px 8px', borderRadius: '6px', border: '1px solid #bae6fd', display: 'inline-block' }}>
-                        <strong style={{ color: '#0369a1' }}>Requisición Origen:</strong> <span style={{ color: '#0369a1', fontWeight: '800' }}>{odcSeleccionada.requisicion_correlativo || (odcSeleccionada.requisicion_id ? `REQ-${odcSeleccionada.requisicion_id}` : 'N/A')}</span>
-                      </div>
-                      <div style={{ marginBottom: '4px' }}><strong>Nombre:</strong> {odcSeleccionada.proveedor_nombre || 'N/A'}</div>
-                      <div style={{ marginBottom: '4px' }}><strong>Dirección:</strong> {odcSeleccionada.proveedor_direccion || 'N/A'}</div>
-                      <div style={{ marginBottom: '4px' }}><strong>Teléfono:</strong> {odcSeleccionada.proveedor_telefono || 'N/A'}</div>
-                      <div style={{ marginBottom: '4px' }}><strong>Rif:</strong> {odcSeleccionada.proveedor_rif || 'N/A'}</div>
-                      <div style={{ marginBottom: '4px' }}><strong>Ciudad:</strong> {odcSeleccionada.proveedor_ciudad || 'N/A'}</div>
-                      <div style={{ marginBottom: '4px' }}><strong>Despachar a:</strong> Total Clean</div>
-                      <div style={{ marginBottom: '4px' }}><strong>Solicitado por:</strong> Total Clean C.A.</div>
-                      <div><strong>Destino a Obra:</strong> {(odcSeleccionada.destino_despacho || odcSeleccionada.despachar_a_direccion || 'Galpones Riese - Av. Los Haticos').replace(/\s*-\s*null/gi, '').replace(/null/gi, '').trim()}</div>
+                    <td style={{ width: '56%', padding: '6px 10px', lineHeight: '1.45' }}>
+                      <div><strong>Nombre:</strong> {odcSeleccionada.proveedor_nombre || 'N/A'}</div>
+                      <div><strong>Dirección:</strong> {odcSeleccionada.proveedor_direccion || 'N/A'}</div>
+                      <div><strong>Teléfono:</strong> {odcSeleccionada.proveedor_telefono || 'N/A'}</div>
+                      <div><strong>R.I.F.:</strong> {odcSeleccionada.proveedor_rif || 'N/A'}</div>
+                      <div><strong>Ciudad:</strong> {odcSeleccionada.proveedor_ciudad || 'N/A'}</div>
+                      <div><strong>Despachar a:</strong> {odcSeleccionada.despachar_a || 'Total Clean C.A.'}</div>
+                      <div><strong>Solicitado por:</strong> {odcSeleccionada.requisicion_obj?.solicitante || odcSeleccionada.solicitante || odcSeleccionada.solicitado_por || 'Total Clean C.A.'}</div>
+                      <div><strong>Destino a obra:</strong> {(odcSeleccionada.requisicion_obj?.centro_costo || odcSeleccionada.requisicion_obj?.obra || odcSeleccionada.destino_despacho || odcSeleccionada.despachar_a_direccion || 'Galpones Riese - Av. Los Haticos').replace(/\s*-\s*null/gi, '').replace(/null/gi, '').trim()}</div>
                     </td>
-                    <td style={{ width: '45%', padding: '10px 14px', lineHeight: '1.6' }}>
-                      <div style={{ marginBottom: '4px' }}><strong>Contacto:</strong> {odcSeleccionada.proveedor_contacto || 'N/A'}</div>
-                      <div style={{ marginBottom: '4px' }}><strong>Nit:</strong> {odcSeleccionada.proveedor_nit || odcSeleccionada.proveedor_rif || 'N/A'}</div>
-                      <div style={{ marginBottom: '4px' }}><strong>País:</strong> {odcSeleccionada.proveedor_pais || 'Venezuela'}</div>
-                      <div style={{ marginBottom: '8px' }}><strong>Fecha de Despacho:</strong> {odcSeleccionada.fecha_despacho || odcSeleccionada.fecha_emision || 'N/A'}</div>
-                      <div><strong>Forma de Pago:</strong> {odcSeleccionada.tipo_pago === 'CREDITO' ? `Divisas ${odcSeleccionada.moneda || 'USD'} (Crédito ${odcSeleccionada.dias_credito}d)` : `Divisas ${odcSeleccionada.moneda || 'USD'}`}</div>
+                    <td style={{ width: '44%', padding: '6px 10px', lineHeight: '1.45' }}>
+                      <div><strong>Contacto:</strong> {odcSeleccionada.proveedor_contacto || 'N/A'}</div>
+                      <div><strong>País:</strong> {odcSeleccionada.proveedor_pais || 'Venezuela'}</div>
+                      <div><strong>Fecha de Despacho:</strong> </div>
+                      <div><strong>Forma de Pago:</strong> {odcSeleccionada.tipo_pago === 'CREDITO' ? `Crédito (${odcSeleccionada.dias_credito || 0} días)` : 'Contado'}</div>
+                      <div><strong>Cuenta / Pago Prov:</strong> {odcSeleccionada.datos_bancarios || odcSeleccionada.cuenta_bancaria || 'Ver datos bancarios registrados'}</div>
                     </td>
                   </tr>
                 </tbody>
@@ -1905,108 +2291,156 @@ const OrdenesCompra = ({ currentUser }) => {
               <table className="f-adm-table">
                 <thead>
                   <tr>
-                    <th style={{ width: '6%', textStyle: 'center' }}>Item</th>
-                    <th style={{ width: '50%' }}>Descripción / Especificación Técnica</th>
-                    <th style={{ width: '12%', textAlign: 'right' }}>Cantidad</th>
-                    <th style={{ width: '10%', textAlign: 'center' }}>Unidad</th>
-                    <th style={{ width: '11%', textAlign: 'right' }}>P. Unit ($)</th>
-                    <th style={{ width: '11%', textAlign: 'right' }}>Total ($)</th>
+                    <th style={{ width: '10%', textAlign: 'center' }}>CANT.</th>
+                    <th style={{ width: '10%', textAlign: 'center' }}>UNID.</th>
+                    <th style={{ width: '46%' }}>DESCRIPCIÓN</th>
+                    <th style={{ width: '17%', textAlign: 'right' }}>PRECIO UNITARIO</th>
+                    <th style={{ width: '17%', textAlign: 'right' }}>TOTAL</th>
                   </tr>
                 </thead>
                 <tbody>
                   {loadingItems ? (
                     <tr>
-                      <td colSpan="6" style={{ textAlign: 'center', padding: '20px', color: '#64748b' }}>Cargando renglones...</td>
+                      <td colSpan="5" style={{ textAlign: 'center', padding: '20px', color: '#64748b' }}>Cargando renglones...</td>
                     </tr>
-                  ) : odcItems.map((it, idx) => (
+                  ) : (odcItems && odcItems.length > 0) ? odcItems.map((it, idx) => (
                     <tr key={it.id || idx}>
-                      <td style={{ textAlign: 'center', fontWeight: 'bold' }}>{idx + 1}</td>
-                      <td>{it.descripcion}</td>
-                      <td style={{ textAlign: 'right' }}>{Number(it.cantidad || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
+                      <td style={{ textAlign: 'center', fontWeight: 'bold' }}>{Number(it.cantidad || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
                       <td style={{ textAlign: 'center' }}>{it.unidad || 'UNID'}</td>
-                      <td style={{ textAlign: 'right' }}>$ {Number(it.precio_unitario || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
-                      <td style={{ textAlign: 'right', fontWeight: 'bold' }}>$ {Number(it.total_fila || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
+                      <td>{it.descripcion || 'Sin descripción'}</td>
+                      <td style={{ textAlign: 'right' }}>{Number(it.precio_unitario || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
+                      <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{Number(it.total_fila || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
                     </tr>
-                  ))}
+                  )) : (
+                    <tr>
+                      <td style={{ textAlign: 'center', fontWeight: 'bold' }}>1.00</td>
+                      <td style={{ textAlign: 'center' }}>UNID</td>
+                      <td>Renglón general de compra</td>
+                      <td style={{ textAlign: 'right' }}>{Number(odcSeleccionada.subtotal || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
+                      <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{Number(odcSeleccionada.subtotal || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
 
-              {/* Totales y Términos */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '20px', marginTop: '10px' }}>
-                <div style={{ flex: 1, fontSize: '0.75rem', lineHeight: '1.4' }}>
-                  <strong>Términos & Condiciones Comerciales / Leyes:</strong>
-                  <p style={{ margin: '4px 0 0 0', color: '#334155' }}>
-                    {odcSeleccionada.terminos_condiciones || "Los precios indicados en esta órden de compra son firmes e incluyen entrega en el sitio de despacho. Mercancía sujeta a revisión física y de calidad."}
-                  </p>
-                </div>
-                <div style={{ width: '240px', border: '1px solid #000', padding: '8px 12px', fontSize: '0.8rem', borderRadius: '4px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                    <span>Sub-Total:</span>
-                    <strong>$ {Number(odcSeleccionada.subtotal || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</strong>
+              {/* Totales alineados a la derecha */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '10px' }}>
+                <div style={{ width: '260px', border: '1.5px solid #1e3a8a', padding: '8px 12px', fontSize: '0.85rem', borderRadius: '4px', backgroundColor: '#f8fafc' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3px' }}>
+                    <span style={{ fontWeight: '700', color: '#1e3a8a' }}>Sub-Total:</span>
+                    <strong>{Number(odcSeleccionada.subtotal || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</strong>
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                    <span>IVA ({odcSeleccionada.porcentaje_iva || 16}%):</span>
-                    <span>$ {(Number(odcSeleccionada.subtotal || 0) * ((odcSeleccionada.porcentaje_iva || 16) / 100)).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3px' }}>
+                    <span style={{ fontWeight: '700', color: '#1e3a8a' }}>IVA {odcSeleccionada.porcentaje_iva !== undefined ? odcSeleccionada.porcentaje_iva : 16}%:</span>
+                    <span>{(Number(odcSeleccionada.iva_monto !== undefined && odcSeleccionada.iva_monto !== null ? odcSeleccionada.iva_monto : ((Number(odcSeleccionada.subtotal || 0)) * ((odcSeleccionada.porcentaje_iva || 16) / 100)))).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span>
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #000', paddingTop: '4px', fontSize: '0.85rem' }}>
-                    <strong>TOTAL GENERAL:</strong>
-                    <strong style={{ color: '#000' }}>$ {Number(odcSeleccionada.total_general || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</strong>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1.5px solid #1e3a8a', paddingTop: '4px', fontSize: '0.90rem' }}>
+                    <strong style={{ color: '#1e3a8a' }}>TOTAL:</strong>
+                    <strong style={{ color: '#0f172a' }}>{Number(odcSeleccionada.total_general || ((Number(odcSeleccionada.subtotal || 0)) * 1.16)).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</strong>
                   </div>
                 </div>
               </div>
 
-              {/* Matriz de Firmas 3-Vías F-ADM-01-2 (Estilo Imagen 1) */}
-              <div className="f-adm-signatures-container">
+              {/* Checklist de Documentos Exigidos */}
+              <div className="f-adm-doc-notice">
+                Favor comunicarnos de inmediato si existen problemas para el despacho exacto esta orden, Enviar los siguientes documentos:
+              </div>
+              <div className="f-adm-doc-checklist-box">
+                <div className="f-adm-doc-col">
+                  <div className="f-adm-doc-title">Nota de Entrega</div>
+                  <div className="f-adm-doc-fields">No. _________ Copias: ____</div>
+                </div>
+                <div className="f-adm-doc-col">
+                  <div className="f-adm-doc-title">Factura</div>
+                  <div className="f-adm-doc-fields">No. _________ Copias: ____</div>
+                </div>
+                <div className="f-adm-doc-col">
+                  <div className="f-adm-doc-title">Con. de Embarque:</div>
+                  <div className="f-adm-doc-fields">No. _________ Copias: ____</div>
+                </div>
+                <div className="f-adm-doc-col">
+                  <div className="f-adm-doc-title">Otros:</div>
+                  <div className="f-adm-doc-fields">No. _________ Copias: ____</div>
+                </div>
+              </div>
+
+              {/* Cuadro de Leyes, Términos & Condiciones Comerciales */}
+              <div className="f-adm-terminos-box">
+                <div className="f-adm-terminos-title">Leyes, Términos & Condiciones Comerciales:</div>
+                <div className="f-adm-terminos-content">
+                  {odcSeleccionada.terminos_condiciones || "Precios incluyen entrega en el sitio de destino especificado. Mercancía sujeta a inspección de calidad y conteo físico."}
+                </div>
+              </div>
+
+              {/* Cuadro de Observaciones */}
+              <div className="f-adm-observaciones-box">
+                <div className="f-adm-observaciones-title">OBSERVACIONES</div>
+                <div className="f-adm-observaciones-content">
+                  {odcSeleccionada.observaciones ? odcSeleccionada.observaciones : (
+                    <div style={{ color: '#94a3b8', fontStyle: 'italic', textAlign: 'center', padding: '4px' }}>
+                      (Espacio reservado para observaciones manuscritas o notas del comprador)
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Matriz de Firmas 3-Vías F-ADM-01-2 (Compacta) */}
+              <div className="f-adm-signatures-container-compact">
                 
-                {/* 1. Comprador Gestor (Firma Manuscrita Escrita) */}
-                <div className="f-adm-signature-box-img1">
-                  <div className="f-adm-signature-title-img1">Elaborado Por</div>
-                  <div style={{ height: '55px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-                    <div style={{ width: '80%', borderBottom: '1px solid #000', marginTop: '15px' }}></div>
-                    <span style={{ fontSize: '0.72rem', fontWeight: '700', marginTop: '4px' }}>{odcSeleccionada.comprador_nombre || currentUser?.nombre || 'Comprador Gestor'}</span>
-                    <span style={{ fontSize: '0.6rem', color: '#64748b' }}>(Departamento de Compras)</span>
+                {/* 1. Comprador Gestor */}
+                <div className="f-adm-sig-box-compact">
+                  <div>
+                    <div className="f-adm-sig-header-compact">Elaborado por (nombre y firma)</div>
+                    <div className="f-adm-sig-sub-compact">Departamento de Compras</div>
+                  </div>
+                  <div className="f-adm-sig-name-compact">
+                    {odcSeleccionada.comprador_nombre || currentUser?.nombre || 'José'}
                   </div>
                 </div>
 
-                {/* 2. Ricardo Herrera - Gerente de Compras (Firma Manuscrita Escrita) */}
-                <div className="f-adm-signature-box-img1">
-                  <div className="f-adm-signature-title-img1">Revisado y Avalado Por</div>
-                  <div style={{ height: '55px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-                    <div style={{ width: '80%', borderBottom: '1px solid #000', marginTop: '15px' }}></div>
-                    <span style={{ fontSize: '0.72rem', fontWeight: '700', marginTop: '4px' }}>{odcSeleccionada.gerente_compras_nombre || 'Ricardo Herrera'}</span>
-                    <span style={{ fontSize: '0.6rem', color: '#64748b' }}>(Gerente de Compras)</span>
+                {/* 2. Ricardo Herrera - Gerente de Compras */}
+                <div className="f-adm-sig-box-compact">
+                  <div>
+                    <div className="f-adm-sig-header-compact">Revisado y avalado por (nombre y firma)</div>
+                    <div className="f-adm-sig-sub-compact">Gerente de Compras</div>
+                  </div>
+                  <div className="f-adm-sig-name-compact">
+                    Ricardo Herrera (Gerente de Compras)
                   </div>
                 </div>
 
                 {/* 3. Carlos Vega - Gerente General */}
-                <div className="f-adm-signature-box-img1">
-                  <div className="f-adm-signature-title-img1">Aprobado Por</div>
+                <div className="f-adm-sig-box-compact">
+                  <div>
+                    <div className="f-adm-sig-header-compact">Autorizado por (nombre y firma)</div>
+                    <div className="f-adm-sig-sub-compact">Personal Autorizado</div>
+                  </div>
                   {odcSeleccionada.carlos_firma_digital_activa ? (
-                    <div className="f-adm-digital-seal-img1">
-                      <div style={{ color: '#047857', fontWeight: '800', fontSize: '0.70rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', width: '100%', textAlign: 'center' }}>
-                        <ShieldCheck size={13} color="#047857" /> FIRMADO Y APROBADO
+                    <div className="f-adm-digital-seal-img1" style={{ padding: '4px' }}>
+                      <div style={{ color: '#047857', fontWeight: '800', fontSize: '0.62rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '3px' }}>
+                        <ShieldCheck size={11} color="#047857" /> FIRMADO DIGITALMENTE
                       </div>
-                      <div style={{ color: '#0f766e', fontWeight: '700', fontSize: '0.68rem', marginTop: '2px' }}>
+                      <div style={{ color: '#0f766e', fontWeight: '700', fontSize: '0.60rem' }}>
                         Carlos Vega (Gerencia General)
-                      </div>
-                      <div style={{ color: '#15803d', fontSize: '0.58rem', marginTop: '2px' }}>
-                        {odcSeleccionada.carlos_firma_fecha ? new Date(odcSeleccionada.carlos_firma_fecha).toLocaleString('es-ES') : 'Firma Digital Registrada'}
                       </div>
                     </div>
                   ) : (
-                    <div style={{ height: '55px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-                      <div style={{ width: '80%', borderBottom: '1px solid #000', marginTop: '15px' }}></div>
-                      <span style={{ fontSize: '0.72rem', fontWeight: '700', marginTop: '4px' }}>Carlos Vega</span>
-                      <span style={{ fontSize: '0.6rem', color: '#64748b' }}>(Firma y Sello Manuscrito)</span>
+                    <div className="f-adm-sig-name-compact">
+                      Carlos Vega (Gerencia General)
                     </div>
                   )}
                 </div>
 
               </div>
 
-              {/* Pie de Documento */}
-              <div style={{ textAlign: 'center', fontSize: '0.65rem', color: '#64748b', marginTop: '16px' }}>
-                Formato Institucional F-ADM-01-2 | TOTAL CLEAN C.A. - Documento Oficial de Procesamiento de Compras
+              {/* Nota inferior a la derecha */}
+              <div className="f-adm-verified-prov-note">
+                Verificado datos de compra por proveedor
+              </div>
+
+              {/* Identificador de Copias al Pie */}
+              <div className="f-adm-copy-footer-label">
+                &mdash; ORIGINAL PARA EL CLIENTE &bull; COPIA PARA CUENTA POR PAGAR &bull; COPIA PARA CONTROL DE COMPRAS &mdash;
               </div>
 
             </div>
@@ -2151,7 +2585,7 @@ const OrdenesCompra = ({ currentUser }) => {
 
                     <div>
                       <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '4px' }}>
-                        RIF / NIT Proveedor
+                        RIF Proveedor
                       </label>
                       <input
                         type="text"
@@ -2445,18 +2879,33 @@ const OrdenesCompra = ({ currentUser }) => {
                   </div>
                 </div>
 
-                {/* Sección 4: Leyes, Términos & Condiciones */}
-                <div style={{ backgroundColor: '#f8fafc', padding: '18px 20px', borderRadius: '16px', border: '1px solid #e2e8f0' }}>
-                  <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '800', color: '#0f172a', marginBottom: '6px' }}>
-                    Leyes & Términos Comerciales Impresos en la ODC
-                  </label>
-                  <textarea
-                    rows={3}
-                    style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: '1px solid #cbd5e1', fontSize: '0.8rem', resize: 'vertical' }}
-                    value={editOdcTarget.terminos_condiciones || ''}
-                    onChange={(e) => setEditOdcTarget(prev => ({ ...prev, terminos_condiciones: e.target.value }))}
-                    placeholder="Términos y condiciones comerciales impresos..."
-                  />
+                {/* Sección 4: Observaciones, Leyes & Términos */}
+                <div style={{ backgroundColor: '#f8fafc', padding: '18px 20px', borderRadius: '16px', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '800', color: '#0f172a', marginBottom: '6px' }}>
+                      📝 Observaciones de la Órden de Compra
+                    </label>
+                    <textarea
+                      rows={2}
+                      style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: '1px solid #cbd5e1', fontSize: '0.8rem', resize: 'vertical' }}
+                      value={editOdcTarget.observaciones || ''}
+                      onChange={(e) => setEditOdcTarget(prev => ({ ...prev, observaciones: e.target.value }))}
+                      placeholder="Observaciones especiales, notas de entrega, instrucciones..."
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '800', color: '#0f172a', marginBottom: '6px' }}>
+                      ⚖️ Leyes & Términos Comerciales Impresos en la ODC
+                    </label>
+                    <textarea
+                      rows={2}
+                      style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: '1px solid #cbd5e1', fontSize: '0.8rem', resize: 'vertical' }}
+                      value={editOdcTarget.terminos_condiciones || ''}
+                      onChange={(e) => setEditOdcTarget(prev => ({ ...prev, terminos_condiciones: e.target.value }))}
+                      placeholder="Términos y condiciones comerciales impresos..."
+                    />
+                  </div>
                 </div>
 
                 {/* Botones de Acción Modal Edición */}
