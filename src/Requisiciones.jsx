@@ -421,7 +421,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
 
       if (error) throw error;
       if (data) {
-        let finalData = data;
+        let finalData = data.filter(r => !r.correlativo_req?.startsWith('SYS-'));
         const myRank = getRank(currentUser.rol);
 
         const historialMapeado = finalData.map(db => {

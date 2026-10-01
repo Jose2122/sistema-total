@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import { AnimatePresence } from 'framer-motion';
 import { getSemanaInfo } from './utils/helpers';
 import { compressImage } from './utils/compressImage';
+import { obtenerTodosProveedores } from './services/proveedoresService';
 import {
   Search,
   Eye,
@@ -322,11 +323,9 @@ const LiquidacionFacturas = ({ currentUser }) => {
       }
 
       // 3. Fetch proveedores to map types/categories
-      const { data: provData, error: provError } = await supabase
-        .from('proveedores')
-        .select('id, razon_social, categoria, rif');
-      if (!provError) {
-        setProveedores(provData || []);
+      const provData = await obtenerTodosProveedores();
+      if (provData) {
+        setProveedores(provData);
       }
 
       // 4. Fetch Órdenes de Compra (ODC) para sincronización con Cuentas por Pagar

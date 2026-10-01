@@ -9,6 +9,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Loader2, Upload, FileText, MessageSquare, Paperclip, Clock, CheckCircle2, AlertCircle, ShoppingBag, ChevronDown, X, Landmark, Trash2 } from 'lucide-react';
 import { getSemanaInfo, getSemanaInfoForWeek } from './utils/helpers';
 import { compressImage } from './utils/compressImage';
+import { obtenerTodosProveedores } from './services/proveedoresService';
 import './Requisiciones.css';
 import './ReportesMaestro.css';
 
@@ -878,12 +879,12 @@ const Compras = () => {
   }, [zuleikaPerfil]);
 
   const cargarProveedores = useCallback(async () => {
-    const { data, error } = await supabase
-      .from('proveedores')
-      .select('*')
-      .eq('status', true)
-      .order('razon_social', { ascending: true });
-    if (!error) setProveedores(data);
+    try {
+      const todos = await obtenerTodosProveedores();
+      setProveedores(todos || []);
+    } catch (err) {
+      console.error("Error cargando proveedores en Compras:", err);
+    }
   }, []);
 
   const cargarAnalistasCompras = useCallback(async () => {
@@ -1043,9 +1044,15 @@ const Compras = () => {
       })
       .subscribe();
 
+    const handleProvActualizados = () => {
+      cargarProveedores();
+    };
+    window.addEventListener('proveedores_actualizados', handleProvActualizados);
+
     return () => {
       supabase.removeChannel(channel);
       supabase.removeChannel(channelPresupuesto);
+      window.removeEventListener('proveedores_actualizados', handleProvActualizados);
     };
   }, [cargarRequisicionesAprobadas, cargarProveedores, cargarAnalistasCompras, cargarPresupuesto]);
 
@@ -2638,7 +2645,7 @@ const Compras = () => {
         pu: item.compra_actual_pu,
         metodo_pago: item.metodo_pago_actual || '$ / BS',
         proveedor_id: item.proveedor_seleccionado_id || null,
-        proveedor_nombre: proveedores.find(p => p.id === item.proveedor_seleccionado_id)?.razon_social || 'Desconocido',
+        proveedor_nombre: proveedores.find(p => String(p.id) === String(item.proveedor_seleccionado_id))?.razon_social || 'Desconocido',
         usuario_id: currentUser?.id,
         usuario_nombre: `${currentUser?.nombre} ${currentUser?.apellido}`,
         doc_tipo: overrideValues?.docTipo || item.doc_tipo_actual || 'FAC',
@@ -3220,7 +3227,7 @@ const Compras = () => {
             pu: r.compra_actual_pu,
             metodo_pago: r.metodo_pago_actual || '$ / BS',
             proveedor_id: r.proveedor_seleccionado_id || null,
-            proveedor_nombre: proveedores.find(p => p.id === r.proveedor_seleccionado_id)?.razon_social || 'Desconocido',
+            proveedor_nombre: proveedores.find(p => String(p.id) === String(r.proveedor_seleccionado_id))?.razon_social || 'Desconocido',
             usuario_id: currentUser?.id,
             usuario_nombre: `${currentUser?.nombre} ${currentUser?.apellido}`,
             doc_tipo: r.doc_tipo_actual,
@@ -4737,7 +4744,7 @@ const Compras = () => {
                                 className="input-tc focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
                                 style={{ flex: 1.2, minWidth: '90px', fontSize: '11px', padding: '4px', fontWeight: 'bold', border: '1px solid #cbd5e1', height: '32px' }}
                                 value={f.proveedor_seleccionado_id || ''}
-                                onChange={(e) => actualizarFila(f.id, 'proveedor_seleccionado_id', Number(e.target.value))}
+                                onChange={(e) => actualizarFila(f.id, 'proveedor_seleccionado_id', e.target.value)}
                                 onKeyDown={(e) => handleKeyDown(e, f.id, 'proveedor')}
                                 ref={el => { if (!inputRefs.current[f.id]) inputRefs.current[f.id] = {}; inputRefs.current[f.id].proveedor = el; }}
                                 disabled={f.cantidad_pendiente === 0 || f.anulado}

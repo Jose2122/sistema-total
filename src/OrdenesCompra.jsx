@@ -10,6 +10,7 @@ import {
   Building2, Truck, CreditCard, User, ChevronRight, RefreshCw, Lock,
   Edit2, Trash2, Save, Ban, Landmark
 } from 'lucide-react';
+import { obtenerTodosProveedores } from './services/proveedoresService';
 import './OrdenesCompra.css';
 
 const DIRECCION_FISCAL_OFICIAL = "AV 61 ENTRE CALLE 147 Y TAPÓN PARCELA CI-19 SECTOR I, LOCAL GALPÓN NRO 147-113, ZONA INDUSTRIAL DE MARACAIBO SUR.";
@@ -139,6 +140,11 @@ const OrdenesCompra = ({ currentUser }) => {
   useEffect(() => {
     cargarOrdenes();
 
+    const handleProvActualizados = () => {
+      cargarOrdenes();
+    };
+    window.addEventListener('proveedores_actualizados', handleProvActualizados);
+
     const channel = supabase
       .channel('ordenes_compra_realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'ordenes_compra' }, () => {
@@ -148,21 +154,24 @@ const OrdenesCompra = ({ currentUser }) => {
 
     return () => {
       supabase.removeChannel(channel);
+      window.removeEventListener('proveedores_actualizados', handleProvActualizados);
     };
   }, []);
 
   const cargarOrdenes = async () => {
     setLoading(true);
     try {
-      // 1. Cargar catálogo de proveedores de forma independiente
-      const { data: provsData } = await supabase
-        .from('proveedores')
-        .select('*');
+      // 1. Cargar catálogo de proveedores unificado
+      const provsData = await obtenerTodosProveedores();
+      setProveedoresList(provsData || []);
       
       const provMap = {};
       (provsData || []).forEach(p => {
         if (p.id !== undefined && p.id !== null) {
           provMap[String(p.id)] = p;
+        }
+        if (p.rif) {
+          provMap[p.rif.trim().toUpperCase()] = p;
         }
       });
 
@@ -460,10 +469,7 @@ const OrdenesCompra = ({ currentUser }) => {
 
     try {
       // 1. Cargar lista de proveedores para el selector
-      const { data: provs } = await supabase
-        .from('proveedores')
-        .select('*')
-        .order('razon_social', { ascending: true });
+      const provs = await obtenerTodosProveedores();
       setProveedoresList(provs || []);
 
       // 2. Cargar lista de requisiciones aprobadas/activas para vincular o importar renglones (Paginación completa)

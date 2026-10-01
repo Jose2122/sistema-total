@@ -413,6 +413,8 @@ const Reportes = () => {
           const totalEstimadoPuro = cantPedida * puEstimado;
           const totalItem = totalEjecutadoReal > 0 ? totalEjecutadoReal : totalEstimadoPuro;
 
+          const cantFaltante = Math.max(0, cantPedida - cantComprada);
+
           list.push({
             correlativo: doc.correlativo_req || `REQ-${String(doc.id).padStart(3, '0')}`,
             almacen: isAlmacen ? 'SÍ' : 'NO',
@@ -433,8 +435,9 @@ const Reportes = () => {
             centroCosto: doc.centro_costo || '—',
             monedaPago: monedaPago,
             status: statusText,
-            cantidadComprada: cantComprada,
             cantPedida: cantPedida,
+            cantidadComprada: cantComprada,
+            cantFaltante: cantFaltante,
             total: totalItem,
             idReal: doc.id,
             itemIdx: itemIdx
@@ -445,6 +448,7 @@ const Reportes = () => {
         const items = Array.isArray(doc.items) ? doc.items : [];
         items.forEach((item, itemIdx) => {
           const fecha = doc.fecha_emision ? doc.fecha_emision.split('T')[0] : '';
+          const cPed = Number(item.cant || 1);
           list.push({
             correlativo: doc.codigo_control || `TP-${String(doc.id).padStart(4, '0')}`,
             almacen: 'NO',
@@ -465,9 +469,10 @@ const Reportes = () => {
             centroCosto: item.cc || doc.centro_costo || '—',
             monedaPago: '$/BS',
             status: 'Comprado',
-            cantidadComprada: Number(item.cant || 1),
-            cantPedida: Number(item.cant || 1),
-            total: Number(item.total || (Number(item.cant || 1) * Number(item.pu || 0))),
+            cantPedida: cPed,
+            cantidadComprada: cPed,
+            cantFaltante: 0,
+            total: Number(item.total || (cPed * Number(item.pu || 0))),
             idReal: doc.id,
             itemIdx: itemIdx
           });
@@ -1129,7 +1134,7 @@ const Reportes = () => {
     const worksheet = workbook.addWorksheet('Lead Times & SLA');
 
     // Title Row
-    worksheet.mergeCells('A1:R1');
+    worksheet.mergeCells('A1:T1');
     const titleCell = worksheet.getCell('A1');
     titleCell.value = 'TOTAL CLEAN C.A. - REPORTE DE GESTIÓN Y LEAD TIMES DE COMPRAS (SLA)';
     titleCell.font = { name: 'Arial Black', size: 14, color: { argb: 'FFFFFFFF' } };
@@ -1155,7 +1160,9 @@ const Reportes = () => {
       'CENTRO DE COSTO',
       'MONEDA DE PAGO',
       'STATUS',
+      'CANTIDAD PEDIDA',
       'CANTIDAD COMPRADA',
+      'CANTIDAD FALTANTE',
       'TOTAL ($)'
     ];
     worksheet.addRow(headers);
@@ -1187,7 +1194,9 @@ const Reportes = () => {
         r.centroCosto,
         r.monedaPago,
         r.status,
+        r.cantPedida,
         r.cantidadComprada,
+        r.cantFaltante,
         r.total
       ]);
 
@@ -1202,7 +1211,9 @@ const Reportes = () => {
       if (typeof r.teOrderSys === 'number') row.getCell(8).numFmt = '#,##0';
       if (typeof r.teOrderProveedor === 'number') row.getCell(9).numFmt = '#,##0';
       row.getCell(17).numFmt = '#,##0';
-      row.getCell(18).numFmt = '"$"#,##0.00;[Red]"$"#,##0.00';
+      row.getCell(18).numFmt = '#,##0';
+      row.getCell(19).numFmt = '#,##0';
+      row.getCell(20).numFmt = '"$"#,##0.00;[Red]"$"#,##0.00';
 
       row.getCell(1).alignment = { horizontal: 'center' };
       row.getCell(2).alignment = { horizontal: 'center' };
@@ -1217,6 +1228,8 @@ const Reportes = () => {
       row.getCell(16).alignment = { horizontal: 'center' };
       row.getCell(17).alignment = { horizontal: 'right' };
       row.getCell(18).alignment = { horizontal: 'right' };
+      row.getCell(19).alignment = { horizontal: 'right' };
+      row.getCell(20).alignment = { horizontal: 'right' };
 
       row.eachCell(cell => {
         cell.border = {
@@ -1236,7 +1249,7 @@ const Reportes = () => {
       { width: 14 }, // FECHA
       { width: 18 }, // Fecha Aprob Gte Gtl
       { width: 20 }, // Asignacion G Compras
-      { width: 22 }, // TE Order (SUM Lapso Tiempo Gestion Segun Sys)
+      { width: 22 }, // TE Order (Días Restantes SLA)
       { width: 22 }, // TE Order Segun Proveedor
       { width: 20 }, // Fecha Entrega Almacen
       { width: 22 }, // SOLICITANTE
@@ -1245,18 +1258,20 @@ const Reportes = () => {
       { width: 22 }, // CENTRO DE COSTO
       { width: 16 }, // MONEDA DE PAGO
       { width: 14 }, // STATUS
+      { width: 18 }, // CANTIDAD PEDIDA
       { width: 18 }, // CANTIDAD COMPRADA
+      { width: 18 }, // CANTIDAD FALTANTE
       { width: 18 }  // TOTAL ($)
     ];
 
     const lastRowNum = slaRows.length + 3;
-    worksheet.mergeCells(`A${lastRowNum}:Q${lastRowNum}`);
+    worksheet.mergeCells(`A${lastRowNum}:S${lastRowNum}`);
     const totalLabel = worksheet.getCell(`A${lastRowNum}`);
     totalLabel.value = 'TOTAL GENERAL ($):';
     totalLabel.font = { bold: true };
     totalLabel.alignment = { horizontal: 'right', vertical: 'middle' };
 
-    const totalVal = worksheet.getCell(`R${lastRowNum}`);
+    const totalVal = worksheet.getCell(`T${lastRowNum}`);
     totalVal.value = totalGastoSLA;
     totalVal.font = { bold: true, color: { argb: 'FF15803D' } };
     totalVal.numFmt = '"$"#,##0.00';
@@ -1780,14 +1795,16 @@ const Reportes = () => {
                 <th style={{ minWidth: '160px', textAlign: 'left' }}>CENTRO DE COSTO</th>
                 <th style={{ minWidth: '110px' }}>MONEDA DE PAGO</th>
                 <th style={{ minWidth: '100px' }}>STATUS</th>
+                <th style={{ minWidth: '100px', textAlign: 'right' }}>CANTIDAD PEDIDA</th>
                 <th style={{ minWidth: '110px', textAlign: 'right' }}>CANTIDAD COMPRADA</th>
+                <th style={{ minWidth: '110px', textAlign: 'right' }}>CANTIDAD FALTANTE</th>
                 <th style={{ minWidth: '120px', textAlign: 'right' }}>TOTAL ($)</th>
               </tr>
             </thead>
             <tbody>
               {slaRows.length === 0 ? (
                 <tr>
-                  <td colSpan="18" style={{ textAlign: 'center', padding: '60px', color: '#94a3b8', fontStyle: 'italic' }}>
+                  <td colSpan="20" style={{ textAlign: 'center', padding: '60px', color: '#94a3b8', fontStyle: 'italic' }}>
                     No se encontraron registros de adquisiciones con los filtros seleccionados.
                   </td>
                 </tr>
@@ -1879,8 +1896,14 @@ const Reportes = () => {
                           {r.status}
                         </span>
                       </td>
-                      <td style={{ textAlign: 'right', fontWeight: '900', color: '#0f172a' }}>
+                      <td style={{ textAlign: 'right', fontWeight: '800', color: '#475569' }}>
+                        {r.cantPedida}
+                      </td>
+                      <td style={{ textAlign: 'right', fontWeight: '900', color: '#16a34a' }}>
                         {r.cantidadComprada}
+                      </td>
+                      <td style={{ textAlign: 'right', fontWeight: '900', color: r.cantFaltante > 0 ? '#dc2626' : '#94a3b8' }}>
+                        {r.cantFaltante}
                       </td>
                       <td style={{ textAlign: 'right', fontWeight: '900', color: '#0ea5e9' }}>
                         $ {r.total.toLocaleString('de-DE', { minimumFractionDigits: 2 })}

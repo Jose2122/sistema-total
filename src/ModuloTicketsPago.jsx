@@ -10,6 +10,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { getSemanaInfo } from './utils/helpers';
 import { compressImage } from './utils/compressImage';
+import { obtenerTodosProveedores } from './services/proveedoresService';
 import {
   Plus,
   ChevronDown,
@@ -774,7 +775,7 @@ const ModuloTicketsPago = () => {
       await cargarBancosDeOrigen();
 
       // 3.5 Fetch de Proveedores
-      const { data: pData } = await supabase.from('proveedores').select('*').eq('status', true).order('razon_social', { ascending: true });
+      const pData = await obtenerTodosProveedores();
       if (pData) setProveedores(pData);
 
       // Fetch de Centros de Costo y Clasificaciones

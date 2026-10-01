@@ -17,9 +17,20 @@ envContent.split('\n').forEach(line => {
 const supabase = createClient(env.VITE_SUPABASE_URL, env.VITE_SUPABASE_ANON_KEY);
 
 async function testFullFetch() {
-  const { data, error } = await supabase.from('requisiciones').select('id, correlativo_req, solicitante, gerencia, centro_costo, items').limit(1);
-  console.log("With items:", error ? error.message : "OK", data ? data[0] : null);
+  // Let's test insert without ID and with numeric ID and string ID
+  const test1 = { razon_social: 'TEST 1', rif: 'J-11111111-1' };
+  const res1 = await supabase.from('proveedores').insert([test1]).select();
+  console.log("Insert without ID:", res1);
+
+  const test2 = { id: 999999, razon_social: 'TEST 2', rif: 'J-22222222-2' };
+  const res2 = await supabase.from('proveedores').insert([test2]).select();
+  console.log("Insert with int ID:", res2);
+
+  const test3 = { id: 'PROV-9999', razon_social: 'TEST 3', rif: 'J-33333333-3' };
+  const res3 = await supabase.from('proveedores').insert([test3]).select();
+  console.log("Insert with string ID:", res3);
 }
 
 testFullFetch();
+
 

@@ -1,9 +1,33 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from './supabaseClient';
-import { Loader2, Plus, Search, Mail, Phone, MapPin, XCircle, Edit, Trash2, ShoppingBag, FileSpreadsheet, Users, BarChart3, TrendingUp, DollarSign, Package, ChevronUp, ChevronDown, Calendar, Filter, RotateCcw, AlertTriangle, CheckCircle2, ShieldAlert, FileText } from 'lucide-react';
+import { 
+  Loader2, Plus, Search, Mail, Phone, MapPin, XCircle, Edit, Trash2, 
+  ShoppingBag, FileSpreadsheet, Users, BarChart3, TrendingUp, DollarSign, 
+  Package, ChevronUp, ChevronDown, Calendar, Filter, RotateCcw, AlertTriangle, 
+  CheckCircle2, ShieldAlert, FileText, Clock, History, ArrowRight, Copy, 
+  Check, Sparkles, ExternalLink 
+} from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
+import { 
+  normalizarNombreEmpresa, 
+  sonProveedoresCoincidentes, 
+  parseCuentasBancarias, 
+  getStoredSrm, 
+  saveStoredSrm, 
+  normalizarProveedor, 
+  obtenerTodosProveedores, 
+  guardarProveedorService, 
+  eliminarProveedorService,
+  obtenerHistorialModificacionesProveedores,
+  eliminarEntradaHistorialProveedor,
+  limpiarHistorialModificacionesProveedores,
+  actualizarEntradaHistorialProveedor,
+  obtenerUsuarioActual,
+  deduplicarListaProveedores,
+  STORAGE_KEY_HISTORIAL_PROVEEDORES
+} from './services/proveedoresService';
 import './Proveedores.css';
 
 const LISTA_CATEGORIAS = [
@@ -28,8 +52,8 @@ const getStoredCiudades = () => {
 };
 
 const Proveedores = ({ currentUser }) => {
-  const usuarioActivo = currentUser || JSON.parse(localStorage.getItem('usuario_sesion') || localStorage.getItem('usuario') || '{}');
-  const nombreUsuarioActual = usuarioActivo?.nombre ? `${usuarioActivo.nombre} ${usuarioActivo.apellido || ''}`.trim() : (usuarioActivo?.correo || usuarioActivo?.email || 'Analista');
+  const usuarioActivo = obtenerUsuarioActual(currentUser);
+  const nombreUsuarioActual = usuarioActivo?.nombre || 'Analista Compras';
 
   const [proveedores, setProveedores] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -45,7 +69,11 @@ const Proveedores = ({ currentUser }) => {
   const [filtroTipoPreferencial, setFiltroTipoPreferencial] = useState('todos'); // 'todos' | 'preferenciales' | 'regulares'
   const [filtroIntegridad, setFiltroIntegridad] = useState('todos'); // 'todos' | 'incompletos' | 'completos' | 'sin_rif' | 'sin_telefono' | 'sin_contacto' | 'sin_direccion' | 'sin_correo' | 'sin_bancos'
   const [mostrarPanelAuditoria, setMostrarPanelAuditoria] = useState(false);
-  const [tabActiva, setTabActiva] = useState('directorio');
+  const [tabActiva, setTabActiva] = useState('directorio'); // 'directorio' | 'modificaciones' | 'reportes'
+  const [historialModificaciones, setHistorialModificaciones] = useState([]);
+  const [busquedaHistorial, setBusquedaHistorial] = useState('');
+  const [filtroTipoModificacion, setFiltroTipoModificacion] = useState('todos'); // 'todos' | 'RIF_ACTUALIZADO' | 'CONTACTO_ACTUALIZADO' | 'CUENTAS_BANCARIAS' | 'CONVENIO_SRM' | 'REGISTRO_NUEVO'
+  const [rifCopiado, setRifCopiado] = useState(null);
   const [loadingReportes, setLoadingReportes] = useState(false);
   const [todasLasCompras, setTodasLasCompras] = useState([]);
   const [busquedaProducto, setBusquedaProducto] = useState('');
@@ -54,6 +82,19 @@ const Proveedores = ({ currentUser }) => {
   const [fechaDesdeHistorial, setFechaDesdeHistorial] = useState('');
   const [fechaHastaHistorial, setFechaHastaHistorial] = useState('');
   const [sortConfig, setSortConfig] = useState({ key: 'totalGastado', direction: 'descending' });
+  const [showEditHistoryModal, setShowEditHistoryModal] = useState(false);
+  const [editingHistoryItem, setEditingHistoryItem] = useState(null);
+  const [historyEditForm, setHistoryEditForm] = useState({
+    usuario_nombre: '',
+    usuario_correo: '',
+    fecha: '',
+    etiqueta: '',
+    tipo_cambio: '',
+    razon_social: '',
+    rif: '',
+    nota_admin: ''
+  });
+
 
   const rolLimpio = String(usuarioActivo?.rol || usuarioActivo?.cargo || '').toLowerCase().trim();
   const correoLimpio = String(usuarioActivo?.correo || usuarioActivo?.email || '').toLowerCase().trim();
@@ -88,62 +129,6 @@ const Proveedores = ({ currentUser }) => {
     nombreLimpio.includes('ricardo') ||
     nombreLimpio.includes('carlos')
   );
-
-  const normalizarNombreEmpresa = (str) => {
-    if (!str || typeof str !== 'string') return '';
-    return str
-      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-      .toUpperCase()
-      .replace(/[.,\-_/\\()&]/g, ' ')
-      .replace(/\b(C\s*A|S\s*A|S\s*R\s*L|C\s*P\s*A|E\s*I\s*R\s*L|LLC|INC|GMBH|COMPANIA ANONIMA|SOCIEDAD ANONIMA|C\s*POR\s*A)\b/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-  };
-
-  const sonProveedoresCoincidentes = (provObjOrNameA, provObjOrNameB) => {
-    if (!provObjOrNameA || !provObjOrNameB) return false;
-
-    const idA = typeof provObjOrNameA === 'object' ? provObjOrNameA?.id : null;
-    const idB = typeof provObjOrNameB === 'object' ? provObjOrNameB?.id : null;
-    if (idA && idB && String(idA) === String(idB)) return true;
-
-    const rifA = typeof provObjOrNameA === 'object' ? (provObjOrNameA?.rif || '').replace(/[^0-9A-Z]/gi, '') : '';
-    const rifB = typeof provObjOrNameB === 'object' ? (provObjOrNameB?.rif || '').replace(/[^0-9A-Z]/gi, '') : '';
-    if (rifA && rifB && rifA.length >= 6 && rifA === rifB) return true;
-
-    const nameA = typeof provObjOrNameA === 'object' ? (provObjOrNameA?.razon_social || provObjOrNameA?.nombre || '') : String(provObjOrNameA);
-    const nameB = typeof provObjOrNameB === 'object' ? (provObjOrNameB?.razon_social || provObjOrNameB?.nombre || '') : String(provObjOrNameB);
-
-    const cleanA = normalizarNombreEmpresa(nameA);
-    const cleanB = normalizarNombreEmpresa(nameB);
-
-    if (!cleanA || !cleanB) return false;
-    if (cleanA === cleanB) return true;
-
-    if (cleanA.length >= 5 && cleanB.length >= 5) {
-      if (cleanA.includes(cleanB) || cleanB.includes(cleanA)) {
-        const minLen = Math.min(cleanA.length, cleanB.length);
-        const maxLen = Math.max(cleanA.length, cleanB.length);
-        if (minLen / maxLen >= 0.65) return true;
-      }
-    }
-
-    return false;
-  };
-
-  const parseCuentasBancarias = (ctas) => {
-    if (!ctas) return [];
-    if (Array.isArray(ctas)) return ctas;
-    if (typeof ctas === 'string') {
-      try {
-        const parsed = JSON.parse(ctas);
-        return Array.isArray(parsed) ? parsed : [];
-      } catch {
-        return [];
-      }
-    }
-    return [];
-  };
 
   const ejecutarOperacionSegura = async (esEdicion, idProveedor, payloadInicial) => {
     let currentPayload = { ...payloadInicial };
@@ -255,184 +240,10 @@ const Proveedores = ({ currentUser }) => {
   const [subTabFicha, setSubTabFicha] = useState('credito'); // 'credito' | 'historial' | 'evaluacion'
   const [guardandoSrmProv, setGuardandoSrmProv] = useState(false);
 
-  const getStoredSrm = (provId, provRif) => {
-    try {
-      const key = `prov_srm_${provId || provRif}`;
-      const raw = localStorage.getItem(key);
-      if (raw) return JSON.parse(raw);
-    } catch {
-      return null;
-    }
-    return null;
-  };
-
-  const saveStoredSrm = (provId, provRif, data) => {
-    try {
-      const key = `prov_srm_${provId || provRif}`;
-      localStorage.setItem(key, JSON.stringify(data));
-    } catch {
-      // ignore
-    }
-  };
-
-  const normalizarProveedor = (p) => {
-    if (!p) return null;
-    const localSrm = getStoredSrm(p.id, p.rif) || {};
-    const ctas = parseCuentasBancarias(p.cuentas_bancarias || localSrm.cuentas_bancarias);
-    const limite = Number(p.monto_limite_credito || p.limite_credito || localSrm.monto_limite_credito || 0);
-    const dias = Number(p.dias_credito || p.dias_credito_habituales || localSrm.dias_credito || 0);
-    const contacto = p.persona_contacto || p.contacto_nombre || localSrm.persona_contacto || '';
-    const contactoAdmin = p.contacto_administrativo || p.persona_contacto_admin || localSrm.contacto_administrativo || '';
-    const ciudad = p.ciudad || p.localizacion || localSrm.ciudad || 'Maracaibo';
-    const direccion = p.direccion || localSrm.direccion || '';
-    const telefono = p.telefono || localSrm.telefono || '';
-    const correo = p.correo || localSrm.correo || '';
-    const observaciones = p.observaciones_negociacion || localSrm.observaciones_negociacion || '';
-    const califPrecio = p.calificacion_precio ?? localSrm.calificacion_precio ?? 5;
-    const califCumplimiento = p.calificacion_cumplimiento ?? localSrm.calificacion_cumplimiento ?? 5;
-    const esPref = Boolean(p.es_preferencial ?? p.proveedor_preferencial ?? localSrm.es_preferencial ?? localSrm.proveedor_preferencial ?? false);
-    const nivelPref = p.nivel_preferencial || localSrm.nivel_preferencial || (esPref ? 'Tier 1 / Oro' : 'Regular');
-    const descPactado = Number(p.descuento_pactado_porcentaje ?? localSrm.descuento_pactado_porcentaje ?? 0);
-    const diasCredPactados = Number(p.dias_credito_pactados ?? localSrm.dias_credito_pactados ?? dias ?? 0);
-    const tiempoEntrega = p.tiempo_entrega_acordado_dias ?? localSrm.tiempo_entrega_acordado_dias ?? null;
-    const vigenciaDesde = p.vigencia_acuerdo_desde || localSrm.vigencia_acuerdo_desde || '';
-    const vigenciaHasta = p.vigencia_acuerdo_hasta || localSrm.vigencia_acuerdo_hasta || '';
-    const condicionesNota = p.condiciones_acuerdo_nota || localSrm.condiciones_acuerdo_nota || '';
-    const creadoPor = p.creado_por || localSrm.creado_por || '';
-    const creadoPorNombre = p.creado_por_nombre || localSrm.creado_por_nombre || '';
-    const actualizadoPor = p.actualizado_por || localSrm.actualizado_por || '';
-    const actualizadoPorNombre = p.actualizado_por_nombre || localSrm.actualizado_por_nombre || '';
-
-    return {
-      ...p,
-      monto_limite_credito: limite,
-      limite_credito: limite,
-      dias_credito: dias,
-      dias_credito_habituales: dias,
-      persona_contacto: contacto,
-      contacto_nombre: contacto,
-      contacto_administrativo: contactoAdmin,
-      ciudad: ciudad,
-      localizacion: ciudad,
-      direccion: direccion,
-      telefono: telefono,
-      correo: correo,
-      cuentas_bancarias: ctas,
-      observaciones_negociacion: observaciones,
-      calificacion_precio: califPrecio,
-      calificacion_cumplimiento: califCumplimiento,
-      es_preferencial: esPref,
-      proveedor_preferencial: esPref,
-      nivel_preferencial: nivelPref,
-      descuento_pactado_porcentaje: descPactado,
-      dias_credito_pactados: diasCredPactados,
-      tiempo_entrega_acordado_dias: tiempoEntrega,
-      vigencia_acuerdo_desde: vigenciaDesde,
-      vigencia_acuerdo_hasta: vigenciaHasta,
-      condiciones_acuerdo_nota: condicionesNota,
-      creado_por: creadoPor,
-      creado_por_nombre: creadoPorNombre,
-      actualizado_por: actualizadoPor,
-      actualizado_por_nombre: actualizadoPorNombre
-    };
-  };
-
   const obtenerProveedores = async () => {
     setLoading(true);
     try {
-      // 1. Cargar proveedores registrados en Supabase
-      let supabaseProvs = [];
-      try {
-        const { data, error } = await supabase
-          .from('proveedores')
-          .select('*')
-          .order('razon_social', { ascending: true });
-        if (!error && Array.isArray(data)) {
-          supabaseProvs = data;
-        }
-      } catch (err) {
-        console.warn('Error al consultar tabla proveedores de Supabase:', err);
-      }
-
-      // 2. Cargar proveedores guardados localmente
-      let localProvs = [];
-      try {
-        const stored = localStorage.getItem('local_proveedores_registrados');
-        if (stored) {
-          localProvs = JSON.parse(stored);
-        }
-      } catch (err) {
-        console.warn('Error leyendo local_proveedores_registrados:', err);
-      }
-
-      // 3. Cargar proveedores históricos de requisiciones
-      let historicosReqs = [];
-      try {
-        const { data: reqs, error: reqsError } = await supabase
-          .from('requisiciones')
-          .select('items, correlativo_req, fecha_emision');
-        
-        if (!reqsError && reqs) {
-          const mapaHist = new Map();
-          reqs.forEach(r => {
-            const items = Array.isArray(r.items) ? r.items : [];
-            items.forEach(it => {
-              const hist = Array.isArray(it.historial_compras) ? it.historial_compras : [];
-              hist.forEach(h => {
-                if (h.tipo === 'JUSTIFICACION' || h.tipo === 'ANULACION') return;
-                const nombreLimpio = (h.proveedor_nombre || '').trim();
-                if (nombreLimpio) {
-                  const key = normalizarNombreEmpresa(nombreLimpio);
-                  if (key && !mapaHist.has(key)) {
-                    mapaHist.set(key, {
-                      id: h.proveedor_id || `HIST-${key.substring(0, 15)}`,
-                      razon_social: nombreLimpio,
-                      rif: h.proveedor_rif || '',
-                      persona_contacto: h.contacto || '',
-                      contacto_nombre: h.contacto || '',
-                      telefono: h.telefono || '',
-                      correo: h.correo || '',
-                      localizacion: h.ciudad || 'Maracaibo',
-                      ciudad: h.ciudad || 'Maracaibo',
-                      direccion: h.direccion || '',
-                      categoria: h.categoria || 'OTROS',
-                      status: true,
-                      es_historico: true
-                    });
-                  }
-                }
-              });
-            });
-          });
-          historicosReqs = Array.from(mapaHist.values());
-        }
-      } catch (err) {
-        console.warn('Error extrayendo proveedores históricos:', err);
-      }
-
-      // 4. Fusionar todo con precedencia: Históricos < Supabase < Locales
-      const mapaFinal = new Map();
-
-      historicosReqs.forEach(p => {
-        const key = normalizarNombreEmpresa(p.razon_social) || (p.rif ? p.rif.replace(/[^0-9A-Z]/gi, '') : p.id);
-        mapaFinal.set(key, p);
-      });
-
-      supabaseProvs.forEach(p => {
-        const key = normalizarNombreEmpresa(p.razon_social) || (p.rif ? p.rif.replace(/[^0-9A-Z]/gi, '') : p.id);
-        mapaFinal.set(key, { ...(mapaFinal.get(key) || {}), ...p });
-      });
-
-      localProvs.forEach(p => {
-        const key = normalizarNombreEmpresa(p.razon_social) || (p.rif ? p.rif.replace(/[^0-9A-Z]/gi, '') : p.id);
-        mapaFinal.set(key, { ...(mapaFinal.get(key) || {}), ...p });
-      });
-
-      const todos = Array.from(mapaFinal.values()).map(p => normalizarProveedor(p));
-
-      // Ordenar alfabéticamente por razón social
-      todos.sort((a, b) => (a.razon_social || '').localeCompare(b.razon_social || '', 'es'));
-
+      const todos = await obtenerTodosProveedores();
       setProveedores(todos);
     } catch (error) {
       console.error('Error fetching suppliers:', error);
@@ -441,6 +252,7 @@ const Proveedores = ({ currentUser }) => {
       setLoading(false);
     }
   };
+
   const obtenerBancos = async () => {
     try {
       const { data, error } = await supabase
@@ -469,7 +281,283 @@ const Proveedores = ({ currentUser }) => {
   useEffect(() => {
     obtenerProveedores();
     obtenerBancos();
+    cargarHistorialModificaciones();
+
+    const handleActualizacion = () => {
+      obtenerProveedores();
+      cargarHistorialModificaciones();
+    };
+
+    const handleHistorialActualizado = () => {
+      cargarHistorialModificaciones();
+    };
+
+    window.addEventListener('proveedores_actualizados', handleActualizacion);
+    window.addEventListener('historial_proveedores_actualizado', handleHistorialActualizado);
+    return () => {
+      window.removeEventListener('proveedores_actualizados', handleActualizacion);
+      window.removeEventListener('historial_proveedores_actualizado', handleHistorialActualizado);
+    };
   }, []);
+
+  const cargarHistorialModificaciones = () => {
+    const list = obtenerHistorialModificacionesProveedores();
+    setHistorialModificaciones(list);
+  };
+
+  const handleEliminarRegistroHistorial = (id, e) => {
+    if (e) e.stopPropagation();
+    toast((t) => (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        <p style={{ margin: 0, fontSize: '0.85rem', fontWeight: '700', color: '#1e293b' }}>
+          ¿Eliminar este registro del historial?
+        </p>
+        <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+          <button 
+            onClick={() => {
+              toast.dismiss(t.id);
+              eliminarEntradaHistorialProveedor(id);
+              setHistorialModificaciones(prev => prev.filter(item => item.id !== id));
+              toast.success("Registro eliminado del historial");
+            }}
+            style={{ padding: '4px 12px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}
+          >
+            ELIMINAR
+          </button>
+          <button onClick={() => toast.dismiss(t.id)} style={{ padding: '4px 12px', background: '#f1f5f9', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '0.8rem' }}>CANCELAR</button>
+        </div>
+      </div>
+    ), { duration: 4000 });
+  };
+
+  const handleLimpiarTodoElHistorial = () => {
+    if (historialModificaciones.length === 0) {
+      return toast.error("El historial ya está vacío.");
+    }
+    toast((t) => (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        <p style={{ margin: 0, fontSize: '0.85rem', fontWeight: '800', color: '#991b1b' }}>
+          ⚠️ ¿Vaciar todo el historial de modificaciones?
+        </p>
+        <p style={{ margin: 0, fontSize: '0.75rem', color: '#64748b' }}>
+          Se eliminarán todos los registros de prueba acumulados en esta sección.
+        </p>
+        <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+          <button 
+            onClick={() => {
+              toast.dismiss(t.id);
+              limpiarHistorialModificacionesProveedores();
+              setHistorialModificaciones([]);
+              toast.success("Historial de modificaciones vaciado con éxito");
+            }}
+            style={{ padding: '6px 14px', backgroundColor: '#dc2626', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}
+          >
+            VACIAR TODO
+          </button>
+          <button onClick={() => toast.dismiss(t.id)} style={{ padding: '6px 12px', background: '#f1f5f9', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '0.8rem' }}>CANCELAR</button>
+        </div>
+      </div>
+    ), { duration: 6000 });
+  };
+
+  const handleAbrirEditarHistorial = (item, e) => {
+    if (e) e.stopPropagation();
+    setEditingHistoryItem(item);
+    
+    let formattedDate = '';
+    try {
+      const d = new Date(item.fecha);
+      if (!isNaN(d.getTime())) {
+        const pad = (n) => String(n).padStart(2, '0');
+        formattedDate = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      }
+    } catch {
+      // ignore
+    }
+
+    setHistoryEditForm({
+      usuario_nombre: item.usuario_nombre || '',
+      usuario_correo: item.usuario_correo || '',
+      fecha: formattedDate || new Date().toISOString().slice(0, 16),
+      etiqueta: item.etiqueta || '',
+      tipo_cambio: item.tipo_cambio || 'MODIFICACION_GENERAL',
+      razon_social: item.razon_social || '',
+      rif: item.rif || '',
+      nota_admin: item.nota_admin || ''
+    });
+    setShowEditHistoryModal(true);
+  };
+
+  const handleGuardarEdicionHistorial = (e) => {
+    e.preventDefault();
+    if (!editingHistoryItem) return;
+
+    if (!historyEditForm.usuario_nombre.trim()) {
+      return toast.error("El nombre del responsable no puede estar vacío");
+    }
+
+    const payload = {
+      usuario_nombre: historyEditForm.usuario_nombre.trim(),
+      usuario_correo: historyEditForm.usuario_correo.trim(),
+      fecha: historyEditForm.fecha ? new Date(historyEditForm.fecha).toISOString() : editingHistoryItem.fecha,
+      etiqueta: historyEditForm.etiqueta.trim() || editingHistoryItem.etiqueta,
+      tipo_cambio: historyEditForm.tipo_cambio,
+      razon_social: historyEditForm.razon_social.trim() || editingHistoryItem.razon_social,
+      rif: historyEditForm.rif.trim().toUpperCase() || editingHistoryItem.rif,
+      nota_admin: historyEditForm.nota_admin.trim()
+    };
+
+    const actualizada = actualizarEntradaHistorialProveedor(editingHistoryItem.id, payload);
+    setHistorialModificaciones(actualizada);
+    toast.success("Registro de modificación actualizado correctamente");
+    setShowEditHistoryModal(false);
+    setEditingHistoryItem(null);
+  };
+
+  const copiarAlPortapapeles = (texto, id) => {
+    if (!texto || texto === 'Sin RIF') return;
+    try {
+      navigator.clipboard.writeText(texto);
+      setRifCopiado(id);
+      toast.success(`RIF "${texto}" copiado al portapapeles`);
+      setTimeout(() => setRifCopiado(null), 2500);
+    } catch {
+      toast.success(`RIF: ${texto}`);
+    }
+  };
+
+  const exportHistorialModificacionesToExcel = async () => {
+    if (historialFiltrado.length === 0) {
+      toast.error("No hay modificaciones registradas para exportar.");
+      return;
+    }
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Historial de Modificaciones');
+
+    worksheet.mergeCells('A1:F1');
+    const titleCell = worksheet.getCell('A1');
+    titleCell.value = 'TOTAL CLEAN C.A. - HISTORIAL DE MODIFICACIONES Y ACTUALIZACIÓN DE PROVEEDORES';
+    titleCell.font = { name: 'Arial Black', size: 12, color: { argb: 'FFFFFFFF' } };
+    titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4338CA' } };
+    titleCell.alignment = { vertical: 'middle', horizontal: 'center' };
+    worksheet.getRow(1).height = 42;
+
+    const headers = [
+      'FECHA Y HORA',
+      'RAZÓN SOCIAL',
+      'RIF',
+      'TIPO DE EVENTO',
+      'DETALLE DE MODIFICACIONES (ANTES ➔ DESPUÉS)',
+      'RESPONSABLE'
+    ];
+    worksheet.addRow(headers);
+    const headerRow = worksheet.getRow(2);
+    headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+    headerRow.alignment = { horizontal: 'center', vertical: 'middle' };
+    worksheet.getRow(2).height = 28;
+
+    historialFiltrado.forEach(item => {
+      const fechaFmt = new Date(item.fecha).toLocaleString('es-VE', { 
+        year: 'numeric', month: '2-digit', day: '2-digit', 
+        hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true 
+      });
+
+      const detalleTexto = (item.cambios || []).map(c => `${c.campo}: "${c.antes}" ➔ "${c.despues}"`).join(' | ');
+
+      const row = worksheet.addRow([
+        fechaFmt,
+        item.razon_social,
+        item.rif || 'Sin RIF',
+        item.etiqueta || item.tipo_cambio,
+        detalleTexto,
+        `${item.usuario_nombre || 'Analista'} (${item.usuario_correo || ''})`
+      ]);
+
+      row.getCell(1).alignment = { horizontal: 'center' };
+      row.getCell(3).alignment = { horizontal: 'center' };
+      row.getCell(4).alignment = { horizontal: 'center' };
+
+      if (item.tipo_cambio === 'RIF_ACTUALIZADO') {
+        row.getCell(4).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0E7FF' } };
+        row.getCell(4).font = { color: { argb: 'FF4338CA' }, bold: true };
+      } else if (item.tipo_cambio === 'CUENTAS_BANCARIAS') {
+        row.getCell(4).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDCFCE7' } };
+        row.getCell(4).font = { color: { argb: 'FF15803D' }, bold: true };
+      } else if (item.tipo_cambio === 'CONVENIO_SRM') {
+        row.getCell(4).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF3C7' } };
+        row.getCell(4).font = { color: { argb: 'FF92400E' }, bold: true };
+      }
+
+      row.eachCell(cell => {
+        cell.border = {
+          top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+          left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+          bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+          right: { style: 'thin', color: { argb: 'FFE2E8F0' } }
+        };
+      });
+    });
+
+    worksheet.columns = [
+      { width: 24 },
+      { width: 35 },
+      { width: 18 },
+      { width: 24 },
+      { width: 60 },
+      { width: 35 }
+    ];
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    saveAs(new Blob([buffer]), `Historial_Modificaciones_Proveedores_${new Date().toISOString().split('T')[0]}.xlsx`);
+    toast.success("Historial de modificaciones exportado a Excel.");
+  };
+
+  const historialFiltrado = useMemo(() => {
+    return (Array.isArray(historialModificaciones) ? historialModificaciones : []).filter(item => {
+      if (!item) return false;
+      if (busquedaHistorial.trim()) {
+        const q = busquedaHistorial.toLowerCase();
+        const matchNom = (item.razon_social || '').toLowerCase().includes(q);
+        const matchRif = (item.rif || '').toLowerCase().includes(q);
+        const matchUser = (item.usuario_nombre || '').toLowerCase().includes(q) || (item.usuario_correo || '').toLowerCase().includes(q);
+        const matchCambios = (Array.isArray(item.cambios) ? item.cambios : []).some(c => 
+          c && (
+            (c.campo || '').toLowerCase().includes(q) || 
+            (c.antes || '').toLowerCase().includes(q) || 
+            (c.despues || '').toLowerCase().includes(q)
+          )
+        );
+        if (!matchNom && !matchRif && !matchUser && !matchCambios) return false;
+      }
+
+      if (filtroTipoModificacion !== 'todos') {
+        if (item.tipo_cambio !== filtroTipoModificacion) return false;
+      }
+
+      return true;
+    });
+  }, [historialModificaciones, busquedaHistorial, filtroTipoModificacion]);
+
+  const statsHistorial = useMemo(() => {
+    let rifs = 0;
+    let contactos = 0;
+    let bancos = 0;
+    let srm = 0;
+    let nuevos = 0;
+
+    (Array.isArray(historialModificaciones) ? historialModificaciones : []).forEach(h => {
+      if (!h) return;
+      if (h.tipo_cambio === 'RIF_ACTUALIZADO') rifs++;
+      else if (h.tipo_cambio === 'CONTACTO_ACTUALIZADO') contactos++;
+      else if (h.tipo_cambio === 'CUENTAS_BANCARIAS') bancos++;
+      else if (h.tipo_cambio === 'CONVENIO_SRM') srm++;
+      else if (h.tipo_cambio === 'REGISTRO_NUEVO') nuevos++;
+    });
+
+    return { total: Array.isArray(historialModificaciones) ? historialModificaciones.length : 0, rifs, contactos, bancos, srm, nuevos };
+  }, [historialModificaciones]);
 
   const handleRifChange = (e) => {
     const input = e.target.value.toUpperCase();
@@ -510,7 +598,6 @@ const Proveedores = ({ currentUser }) => {
     e.preventDefault();
     
     // Validación de formato RIF: V/J/E/G seguido de 8 dígitos, con un noveno opcional
-    // Ejemplos válidos: J-12345678-0 o V-12345678
     const rifRegex = /^[VJEG]-\d{8}(-\d)?$/;
     if (!rifRegex.test(formData.rif)) {
       return toast.error('Formatos válidos: J-12345678-0 o V-12345678 (8 dígitos mínimos)');
@@ -548,9 +635,8 @@ const Proveedores = ({ currentUser }) => {
 
     setSaving(true);
     try {
-      const rifLimpio = formData.rif.trim().toUpperCase();
-      const idProveedor = formData.id || `PROV-${Date.now()}`;
       const esEdicion = Boolean(formData.id);
+      const rifLimpio = formData.rif.trim().toUpperCase();
 
       // Validación de duplicidad de RIF en la lista activa
       if (!esEdicion) {
@@ -560,125 +646,21 @@ const Proveedores = ({ currentUser }) => {
           return toast.error(`⚠️ El RIF ${rifLimpio} ya está registrado para "${yaExisteLocal.razon_social}".`);
         }
       } else {
-        const otroConMismoRif = proveedores.find(p => p.id !== formData.id && p.rif && p.rif.trim().toUpperCase() === rifLimpio);
+        const otroConMismoRif = proveedores.find(p => String(p.id) !== String(formData.id) && p.rif && p.rif.trim().toUpperCase() === rifLimpio);
         if (otroConMismoRif) {
           setSaving(false);
           return toast.error(`⚠️ El RIF ${rifLimpio} ya está registrado a otro proveedor ("${otroConMismoRif.razon_social}").`);
         }
       }
 
-      const emailUsuario = usuarioActivo?.correo || usuarioActivo?.email || 'Analista';
-      const nombreUsuario = nombreUsuarioActual || 'Analista';
+      const provGuardado = await guardarProveedorService(formData, usuarioActivo, nombreUsuarioActual);
 
-      const payload = {
-        id: idProveedor,
-        rif: rifLimpio,
-        razon_social: formData.razon_social.trim(),
-        persona_contacto: formData.persona_contacto?.trim() || '',
-        contacto_nombre: formData.persona_contacto?.trim() || '',
-        contacto_administrativo: formData.contacto_administrativo?.trim() || '',
-        ciudad: ciudadVal,
-        localizacion: ciudadVal,
-        correo: correoLimpio,
-        telefono: (formData.telefono || '').trim(),
-        direccion: (formData.direccion || '').trim(),
-        categoria: Array.isArray(formData.categoria) ? formData.categoria.join(', ') : (formData.categoria || 'OTROS'),
-        monto_limite_credito: Number(formData.monto_limite_credito) || 0,
-        limite_credito: Number(formData.monto_limite_credito) || 0,
-        dias_credito: Number(formData.dias_credito) || 0,
-        dias_credito_habituales: Number(formData.dias_credito) || 0,
-        condicion_pago_defecto: Number(formData.dias_credito) > 0 ? 'CREDITO' : 'CONTADO',
-        calificacion_precio: Number(formData.calificacion_precio) || 5,
-        calificacion_cumplimiento: Number(formData.calificacion_cumplimiento) || 5,
-        observaciones_negociacion: formData.observaciones_negociacion || '',
-        es_preferencial: Boolean(formData.es_preferencial || formData.proveedor_preferencial),
-        proveedor_preferencial: Boolean(formData.es_preferencial || formData.proveedor_preferencial),
-        nivel_preferencial: (formData.es_preferencial || formData.proveedor_preferencial) ? (formData.nivel_preferencial || 'Tier 1 / Oro') : 'Regular',
-        descuento_pactado_porcentaje: Number(formData.descuento_pactado_porcentaje) || 0,
-        dias_credito_pactados: Number(formData.dias_credito_pactados || formData.dias_credito) || 0,
-        tiempo_entrega_acordado_dias: formData.tiempo_entrega_acordado_dias ? Number(formData.tiempo_entrega_acordado_dias) : null,
-        vigencia_acuerdo_desde: formData.vigencia_acuerdo_desde || null,
-        vigencia_acuerdo_hasta: formData.vigencia_acuerdo_hasta || null,
-        condiciones_acuerdo_nota: formData.condiciones_acuerdo_nota || '',
-        status: formData.status !== undefined ? formData.status : true,
-        cuentas_bancarias: formData.cuentas_bancarias || [],
-        creado_por: esEdicion ? (formData.creado_por || emailUsuario) : emailUsuario,
-        creado_por_nombre: esEdicion ? (formData.creado_por_nombre || nombreUsuario) : nombreUsuario,
-        actualizado_por: emailUsuario,
-        actualizado_por_nombre: nombreUsuario,
-        created_at: esEdicion ? (formData.created_at || new Date().toISOString()) : new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      };
-
-      // Guardar en almacenamiento local persistente
-      try {
-        const localList = JSON.parse(localStorage.getItem('local_proveedores_registrados') || '[]');
-        let updatedList;
-        if (esEdicion) {
-          let replaced = false;
-          updatedList = localList.map(p => {
-            if (p.id === idProveedor || (p.rif && p.rif === rifLimpio)) {
-              replaced = true;
-              return payload;
-            }
-            return p;
-          });
-          if (!replaced) updatedList.unshift(payload);
-        } else {
-          const sinMismoRif = localList.filter(p => p.rif !== rifLimpio && p.id !== idProveedor);
-          updatedList = [payload, ...sinMismoRif];
-        }
-        localStorage.setItem('local_proveedores_registrados', JSON.stringify(updatedList));
-      } catch (e) {
-        console.warn("Error guardando en localStorage:", e);
-      }
-
-      // Guardar SRM en almacenamiento local
-      saveStoredSrm(idProveedor, rifLimpio, {
-        monto_limite_credito: Number(formData.monto_limite_credito) || 0,
-        limite_credito: Number(formData.monto_limite_credito) || 0,
-        dias_credito: Number(formData.dias_credito) || 0,
-        dias_credito_habituales: Number(formData.dias_credito) || 0,
-        persona_contacto: formData.persona_contacto || '',
-        contacto_administrativo: formData.contacto_administrativo || '',
-        ciudad: ciudadVal,
-        observaciones_negociacion: formData.observaciones_negociacion || '',
-        calificacion_precio: Number(formData.calificacion_precio) || 5,
-        calificacion_cumplimiento: Number(formData.calificacion_cumplimiento) || 5,
-        es_preferencial: payload.es_preferencial,
-        proveedor_preferencial: payload.proveedor_preferencial,
-        nivel_preferencial: payload.nivel_preferencial,
-        descuento_pactado_porcentaje: payload.descuento_pactado_porcentaje,
-        dias_credito_pactados: payload.dias_credito_pactados,
-        tiempo_entrega_acordado_dias: payload.tiempo_entrega_acordado_dias,
-        vigencia_acuerdo_desde: payload.vigencia_acuerdo_desde,
-        vigencia_acuerdo_hasta: payload.vigencia_acuerdo_hasta,
-        condiciones_acuerdo_nota: payload.condiciones_acuerdo_nota,
-        cuentas_bancarias: formData.cuentas_bancarias || [],
-        creado_por: payload.creado_por,
-        creado_por_nombre: payload.creado_por_nombre,
-        actualizado_por: payload.actualizado_por,
-        actualizado_por_nombre: payload.actualizado_por_nombre,
-        updated_at: new Date().toISOString()
-      });
-
-      // Actualizar estado de React inmediatamente para visualización instantánea
-      const normalizadoNuevo = normalizarProveedor(payload);
       setProveedores(prev => {
-        if (esEdicion) {
-          return prev.map(p => (p.id === idProveedor || (p.rif && p.rif === rifLimpio)) ? normalizadoNuevo : p);
-        } else {
-          const sinMismoRif = prev.filter(p => p.rif !== rifLimpio && p.id !== idProveedor);
-          return [normalizadoNuevo, ...sinMismoRif];
-        }
+        const listaActualizada = esEdicion
+          ? prev.map(p => sonProveedoresCoincidentes(p, provGuardado) ? provGuardado : p)
+          : [provGuardado, ...prev.filter(p => !sonProveedoresCoincidentes(p, provGuardado))];
+        return deduplicarListaProveedores(listaActualizada);
       });
-
-      // Intentar persistir en Supabase de forma segura en segundo plano
-      try {
-        await ejecutarOperacionSegura(esEdicion, esEdicion ? formData.id : null, payload);
-      } catch (errDb) {
-        console.warn("Aviso Supabase (guardado localmente activo):", errDb?.message || errDb);
-      }
 
       toast.success(esEdicion ? 'Proveedor actualizado con éxito' : 'Proveedor registrado con éxito');
       setShowModal(false);
@@ -688,7 +670,7 @@ const Proveedores = ({ currentUser }) => {
       if (error.code === '23505' || error.message?.includes('proveedores_rif_key') || error.message?.includes('duplicate key')) {
         toast.error(`⚠️ El RIF "${formData.rif}" ya se encuentra registrado. Verifique la lista de proveedores.`);
       } else {
-        toast.error('Error al guardar: ' + (error.message || 'Verifique la conexión con la base de datos'));
+        toast.error('Error al guardar: ' + (error.message || 'Verifique los datos'));
       }
     } finally {
       setSaving(false);
@@ -714,22 +696,8 @@ const Proveedores = ({ currentUser }) => {
 
   const ejecutarEliminacion = async (id) => {
     try {
-      try {
-        const localList = JSON.parse(localStorage.getItem('local_proveedores_registrados') || '[]');
-        const updated = localList.filter(p => p.id !== id);
-        localStorage.setItem('local_proveedores_registrados', JSON.stringify(updated));
-      } catch (e) {
-        console.warn('Error eliminando de localStorage:', e);
-      }
-
-      setProveedores(prev => prev.filter(p => p.id !== id));
-
-      try {
-        await supabase.from('proveedores').delete().eq('id', id);
-      } catch (err) {
-        console.warn('Aviso Supabase delete:', err);
-      }
-
+      await eliminarProveedorService(id);
+      setProveedores(prev => prev.filter(p => String(p.id) !== String(id)));
       toast.success('Proveedor eliminado');
     } catch (error) {
       toast.error('Error al eliminar: ' + error.message);
@@ -1502,6 +1470,8 @@ const Proveedores = ({ currentUser }) => {
     setTabActiva(tab);
     if (tab === 'reportes') {
       cargarDatosReportes();
+    } else if (tab === 'modificaciones') {
+      cargarHistorialModificaciones();
     }
   };
 
@@ -1692,9 +1662,11 @@ const Proveedores = ({ currentUser }) => {
   const categoriasUnicas = useMemo(() => {
     const cats = new Set();
     proveedores.forEach(p => {
-      if (p.categoria) {
-        const pCats = p.categoria.split(', ').filter(c => c);
-        pCats.forEach(c => cats.add(c.trim().toUpperCase()));
+      if (p && p.categoria) {
+        const catList = Array.isArray(p.categoria)
+          ? p.categoria
+          : (typeof p.categoria === 'string' ? p.categoria.split(', ') : [String(p.categoria)]);
+        catList.filter(Boolean).forEach(c => cats.add(String(c).trim().toUpperCase()));
       }
     });
     // Asegurar que las categorías de la lista y de sesión estén presentes
@@ -1921,16 +1893,65 @@ const Proveedores = ({ currentUser }) => {
   return (
     <div className="prov-container">
       <div className="prov-max-width">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '15px' }}>
           <div style={{ borderLeft: '6px solid #0ea5e9', paddingLeft: '16px' }}>
             <h1 style={{ margin: 0, color: '#0f172a', fontSize: '1.8rem', fontWeight: '900', fontFamily: 'Inter, sans-serif', letterSpacing: '-0.5px' }}>
               Módulo de Proveedores
             </h1>
             <p style={{ margin: '4px 0 0 0', color: '#64748b', fontSize: '0.9rem', fontWeight: '500', fontFamily: 'Inter, sans-serif' }}>
-              Gestión de cartera de proveedores de la empresa
+              Gestión de cartera, auditoría de cambios y convenios de la empresa
             </p>
           </div>
-          {tabActiva === 'directorio' && (
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+            {tabActiva === 'modificaciones' && (
+              <>
+                <button 
+                  onClick={handleLimpiarTodoElHistorial}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    backgroundColor: '#fff1f2',
+                    color: '#be123c',
+                    padding: '10px 16px',
+                    borderRadius: '12px',
+                    fontWeight: '800',
+                    fontSize: '0.75rem',
+                    textTransform: 'uppercase',
+                    border: '1px solid #fecdd3',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s'
+                  }}
+                  className="action-hover"
+                  title="Vaciar todo el historial de modificaciones de prueba"
+                >
+                  <Trash2 size={15} />
+                  Vaciar Historial
+                </button>
+
+                <button 
+                  onClick={exportHistorialModificacionesToExcel}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    backgroundColor: '#0f172a',
+                    color: 'white',
+                    padding: '10px 18px',
+                    borderRadius: '12px',
+                    fontWeight: '800',
+                    fontSize: '0.75rem',
+                    textTransform: 'uppercase',
+                    border: 'none',
+                    cursor: 'pointer',
+                    boxShadow: '0 4px 6px -1px rgba(15, 23, 42, 0.2)'
+                  }}
+                >
+                  <FileSpreadsheet size={16} />
+                  Exportar Historial
+                </button>
+              </>
+            )}
             <button 
               onClick={() => { resetForm(); setShowModal(true); }}
               className="prov-btn-new"
@@ -1938,7 +1959,7 @@ const Proveedores = ({ currentUser }) => {
               <Plus size={20} />
               Nuevo Proveedor
             </button>
-          )}
+          </div>
         </div>
 
         {/* Pestañas de Navegación */}
@@ -1948,7 +1969,30 @@ const Proveedores = ({ currentUser }) => {
             className={`prov-tab-btn ${tabActiva === 'directorio' ? 'active' : ''}`}
           >
             <Users size={16} />
-            Directorio de Proveedores
+            Directorio ({proveedores.length})
+          </button>
+          <button 
+            onClick={() => cambiarTab('modificaciones')} 
+            className={`prov-tab-btn ${tabActiva === 'modificaciones' ? 'active' : ''}`}
+            style={{
+              position: 'relative'
+            }}
+          >
+            <Clock size={16} />
+            Recientemente Modificados ({historialModificaciones.length})
+            {statsHistorial.rifs > 0 && (
+              <span style={{
+                backgroundColor: tabActiva === 'modificaciones' ? '#4338ca' : '#6366f1',
+                color: 'white',
+                fontSize: '0.65rem',
+                fontWeight: '900',
+                padding: '2px 7px',
+                borderRadius: '99px',
+                marginLeft: '4px'
+              }}>
+                🆔 {statsHistorial.rifs}
+              </span>
+            )}
           </button>
           <button 
             onClick={() => cambiarTab('reportes')} 
@@ -1959,7 +2003,7 @@ const Proveedores = ({ currentUser }) => {
           </button>
         </div>
 
-        {tabActiva === 'directorio' ? (
+        {tabActiva === 'directorio' && (
           <>
             {/* Buscador & Filtros Rápidos */}
             <div className="prov-search-wrapper" style={{ flexWrap: 'wrap', gap: '12px' }}>
@@ -2520,11 +2564,11 @@ const Proveedores = ({ currentUser }) => {
 
                         <div style={{ fontSize: '0.68rem', color: '#64748b', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap' }}>
                           <span style={{ backgroundColor: '#f1f5f9', padding: '2px 6px', borderRadius: '4px', border: '1px solid #e2e8f0', fontWeight: '600' }}>
-                            👤 {p.creado_por_nombre || p.creado_por || 'Analista Compras'}
+                            👤 {(p.creado_por_nombre && p.creado_por_nombre.toLowerCase() !== 'sistema') ? p.creado_por_nombre : (p.creado_por && p.creado_por.toLowerCase() !== 'sistema' ? p.creado_por : 'Analista Compras')}
                           </span>
                           {(p.actualizado_por_nombre || p.actualizado_por) && (
                             <span style={{ backgroundColor: '#f8fafc', padding: '2px 6px', borderRadius: '4px', border: '1px solid #e2e8f0', color: '#334155', fontWeight: '600' }}>
-                              ✏️ {p.actualizado_por_nombre || p.actualizado_por}
+                              ✏️ {(p.actualizado_por_nombre && p.actualizado_por_nombre.toLowerCase() !== 'sistema') ? p.actualizado_por_nombre : (p.actualizado_por && p.actualizado_por.toLowerCase() !== 'sistema' ? p.actualizado_por : 'Analista Compras')}
                             </span>
                           )}
                           {esPref && Number(p.descuento_pactado_porcentaje) > 0 && (
@@ -2659,7 +2703,381 @@ const Proveedores = ({ currentUser }) => {
           </div>
         )}
       </>
-    ) : (
+    )}
+
+    {/* SECCIÓN 2: HISTORIAL DE RECIENTEMENTE MODIFICADOS */}
+    {tabActiva === 'modificaciones' && (
+      <div className="prov-history-view">
+        {/* KPI Cards Strip */}
+        <div className="prov-history-kpi-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
+          <div 
+            className="prov-history-kpi-card rif"
+            onClick={() => setFiltroTipoModificacion(filtroTipoModificacion === 'RIF_ACTUALIZADO' ? 'todos' : 'RIF_ACTUALIZADO')}
+            style={{ cursor: 'pointer' }}
+            title="Click para filtrar por RIFs actualizados"
+          >
+            <div>
+              <div className="prov-history-kpi-title" style={{ color: '#4338ca' }}>🆔 RIFs Actualizados</div>
+              <div className="prov-history-kpi-val" style={{ color: '#3730a3' }}>{statsHistorial.rifs}</div>
+            </div>
+            <div style={{ fontSize: '24px' }}>🆔</div>
+          </div>
+
+          <div 
+            className="prov-history-kpi-card contacto"
+            onClick={() => setFiltroTipoModificacion(filtroTipoModificacion === 'CONTACTO_ACTUALIZADO' ? 'todos' : 'CONTACTO_ACTUALIZADO')}
+            style={{ cursor: 'pointer' }}
+            title="Click para filtrar por contactos"
+          >
+            <div>
+              <div className="prov-history-kpi-title" style={{ color: '#0369a1' }}>📞 Contacto / Teléfono</div>
+              <div className="prov-history-kpi-val" style={{ color: '#075985' }}>{statsHistorial.contactos}</div>
+            </div>
+            <div style={{ fontSize: '24px' }}>📞</div>
+          </div>
+
+          <div 
+            className="prov-history-kpi-card banco"
+            onClick={() => setFiltroTipoModificacion(filtroTipoModificacion === 'CUENTAS_BANCARIAS' ? 'todos' : 'CUENTAS_BANCARIAS')}
+            style={{ cursor: 'pointer' }}
+            title="Click para filtrar por cuentas bancarias"
+          >
+            <div>
+              <div className="prov-history-kpi-title" style={{ color: '#15803d' }}>🏦 Cuentas Bancarias</div>
+              <div className="prov-history-kpi-val" style={{ color: '#166534' }}>{statsHistorial.bancos}</div>
+            </div>
+            <div style={{ fontSize: '24px' }}>🏦</div>
+          </div>
+
+          <div 
+            className="prov-history-kpi-card srm"
+            onClick={() => setFiltroTipoModificacion(filtroTipoModificacion === 'CONVENIO_SRM' ? 'todos' : 'CONVENIO_SRM')}
+            style={{ cursor: 'pointer' }}
+            title="Click para filtrar por convenios SRM"
+          >
+            <div>
+              <div className="prov-history-kpi-title" style={{ color: '#92400e' }}>⭐ Convenios SRM</div>
+              <div className="prov-history-kpi-val" style={{ color: '#78350f' }}>{statsHistorial.srm}</div>
+            </div>
+            <div style={{ fontSize: '24px' }}>⭐</div>
+          </div>
+
+          <div 
+            className="prov-history-kpi-card nuevo"
+            onClick={() => setFiltroTipoModificacion(filtroTipoModificacion === 'REGISTRO_NUEVO' ? 'todos' : 'REGISTRO_NUEVO')}
+            style={{ cursor: 'pointer' }}
+            title="Click para filtrar por nuevos proveedores creados"
+          >
+            <div>
+              <div className="prov-history-kpi-title" style={{ color: '#059669' }}>✨ Proveedores Creados</div>
+              <div className="prov-history-kpi-val" style={{ color: '#047857' }}>{statsHistorial.nuevos}</div>
+            </div>
+            <div style={{ fontSize: '24px' }}>✨</div>
+          </div>
+        </div>
+
+        {/* Buscador y Filtros de Historial */}
+        <div className="prov-search-wrapper" style={{ flexWrap: 'wrap', gap: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, minWidth: '280px' }}>
+            <Search className="prov-search-icon" size={20} />
+            <input 
+              type="text"
+              placeholder="Buscar en historial por proveedor, RIF, usuario responsable o campo modificado..."
+              className="prov-search-input"
+              value={busquedaHistorial}
+              onChange={(e) => setBusquedaHistorial(e.target.value)}
+            />
+          </div>
+
+          {/* Botones de Filtro por Tipo de Evento */}
+          <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <button 
+              type="button"
+              onClick={() => setFiltroTipoModificacion('todos')}
+              style={{
+                padding: '8px 14px',
+                borderRadius: '20px',
+                fontSize: '0.75rem',
+                fontWeight: '800',
+                border: filtroTipoModificacion === 'todos' ? '1px solid #0f172a' : '1px solid #cbd5e1',
+                backgroundColor: filtroTipoModificacion === 'todos' ? '#0f172a' : '#f8fafc',
+                color: filtroTipoModificacion === 'todos' ? '#ffffff' : '#64748b',
+                cursor: 'pointer',
+                transition: 'all 0.2s'
+              }}
+            >
+              Todos ({historialModificaciones.length})
+            </button>
+
+            <button 
+              type="button"
+              onClick={() => setFiltroTipoModificacion('RIF_ACTUALIZADO')}
+              style={{
+                padding: '8px 14px',
+                borderRadius: '20px',
+                fontSize: '0.75rem',
+                fontWeight: '800',
+                border: filtroTipoModificacion === 'RIF_ACTUALIZADO' ? '1px solid #4338ca' : '1px solid #c7d2fe',
+                backgroundColor: filtroTipoModificacion === 'RIF_ACTUALIZADO' ? '#4338ca' : '#e0e7ff',
+                color: filtroTipoModificacion === 'RIF_ACTUALIZADO' ? '#ffffff' : '#3730a3',
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
+                transition: 'all 0.2s'
+              }}
+            >
+              🆔 RIFs ({statsHistorial.rifs})
+            </button>
+
+            <button 
+              type="button"
+              onClick={() => setFiltroTipoModificacion('CONTACTO_ACTUALIZADO')}
+              style={{
+                padding: '8px 14px',
+                borderRadius: '20px',
+                fontSize: '0.75rem',
+                fontWeight: '800',
+                border: filtroTipoModificacion === 'CONTACTO_ACTUALIZADO' ? '1px solid #0284c7' : '1px solid #bae6fd',
+                backgroundColor: filtroTipoModificacion === 'CONTACTO_ACTUALIZADO' ? '#0284c7' : '#e0e7ff',
+                color: filtroTipoModificacion === 'CONTACTO_ACTUALIZADO' ? '#ffffff' : '#0369a1',
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
+                transition: 'all 0.2s'
+              }}
+            >
+              📞 Contactos ({statsHistorial.contactos})
+            </button>
+
+            <button 
+              type="button"
+              onClick={() => setFiltroTipoModificacion('CUENTAS_BANCARIAS')}
+              style={{
+                padding: '8px 14px',
+                borderRadius: '20px',
+                fontSize: '0.75rem',
+                fontWeight: '800',
+                border: filtroTipoModificacion === 'CUENTAS_BANCARIAS' ? '1px solid #16a34a' : '1px solid #bbf7d0',
+                backgroundColor: filtroTipoModificacion === 'CUENTAS_BANCARIAS' ? '#16a34a' : '#dcfce7',
+                color: filtroTipoModificacion === 'CUENTAS_BANCARIAS' ? '#ffffff' : '#15803d',
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
+                transition: 'all 0.2s'
+              }}
+            >
+              🏦 Bancos ({statsHistorial.bancos})
+            </button>
+
+            <button 
+              type="button"
+              onClick={() => setFiltroTipoModificacion('CONVENIO_SRM')}
+              style={{
+                padding: '8px 14px',
+                borderRadius: '20px',
+                fontSize: '0.75rem',
+                fontWeight: '800',
+                border: filtroTipoModificacion === 'CONVENIO_SRM' ? '1px solid #d97706' : '1px solid #fde68a',
+                backgroundColor: filtroTipoModificacion === 'CONVENIO_SRM' ? '#d97706' : '#fef3c7',
+                color: filtroTipoModificacion === 'CONVENIO_SRM' ? '#ffffff' : '#92400e',
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
+                transition: 'all 0.2s'
+              }}
+            >
+              ⭐ SRM ({statsHistorial.srm})
+            </button>
+
+            <button 
+              type="button"
+              onClick={() => setFiltroTipoModificacion('REGISTRO_NUEVO')}
+              style={{
+                padding: '8px 14px',
+                borderRadius: '20px',
+                fontSize: '0.75rem',
+                fontWeight: '800',
+                border: filtroTipoModificacion === 'REGISTRO_NUEVO' ? '1px solid #059669' : '1px solid #a7f3d0',
+                backgroundColor: filtroTipoModificacion === 'REGISTRO_NUEVO' ? '#059669' : '#ecfdf5',
+                color: filtroTipoModificacion === 'REGISTRO_NUEVO' ? '#ffffff' : '#047857',
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
+                transition: 'all 0.2s'
+              }}
+            >
+              ✨ Creados ({statsHistorial.nuevos})
+            </button>
+          </div>
+        </div>
+
+        {/* Lista de Registros de Modificaciones */}
+        <div className="prov-history-stream">
+          {historialFiltrado.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '70px 20px', backgroundColor: 'white', borderRadius: '20px', border: '1px solid #e2e8f0', color: '#94a3b8' }}>
+              <History size={40} style={{ marginBottom: '12px', opacity: 0.3 }} />
+              <h3 style={{ margin: '0 0 6px 0', color: '#0f172a', fontSize: '1rem', fontWeight: '800' }}>No se encontraron modificaciones con ese criterio</h3>
+              <p style={{ margin: 0, fontSize: '0.8rem' }}>Las actualizaciones de RIFs, contactos, bancos y datos de proveedores se registrarán automáticamente aquí.</p>
+            </div>
+          ) : (
+            historialFiltrado.map((item) => {
+              const fechaObj = new Date(item.fecha);
+              const fechaLegible = !isNaN(fechaObj.getTime())
+                ? fechaObj.toLocaleString('es-VE', { 
+                    day: '2-digit', month: '2-digit', year: 'numeric',
+                    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true 
+                  })
+                : 'Fecha no disponible';
+
+              // Buscar proveedor correspondiente en la lista actual
+              const provActual = proveedores.find(p => sonProveedoresCoincidentes(p, { id: item.proveedor_id, razon_social: item.razon_social, rif: item.rif })) || item.proveedor_snapshot || { razon_social: item.razon_social, rif: item.rif, id: item.proveedor_id };
+
+              return (
+                <div key={item.id} className="prov-history-card">
+                  <div className="prov-history-card-header">
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      <span className={`prov-history-tag ${item.tipo_cambio || 'MODIFICACION_GENERAL'}`}>
+                        {item.etiqueta || '✏️ Modificación'}
+                      </span>
+                      <span style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: '700', backgroundColor: '#f8fafc', padding: '3px 8px', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
+                        🕒 {fechaLegible}
+                      </span>
+                    </div>
+
+                    <div className="prov-history-meta">
+                      <span style={{ backgroundColor: '#f1f5f9', padding: '3px 10px', borderRadius: '8px', border: '1px solid #e2e8f0', fontWeight: '700', color: '#334155' }}>
+                        👤 {item.usuario_nombre || 'Analista Compras'}
+                      </span>
+                      {item.usuario_correo && (
+                        <span style={{ color: '#94a3b8', fontSize: '0.7rem' }}>
+                          ({item.usuario_correo})
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="prov-history-body">
+                    <div className="prov-history-main-info">
+                      <div className="prov-history-name">
+                        <span>{item.razon_social}</span>
+                        {item.rif && item.rif !== 'Sin RIF' && (
+                          <div className="prov-history-rif-pill">
+                            <span>🆔 {item.rif}</span>
+                            <button
+                              type="button"
+                              className="prov-copy-btn"
+                              onClick={() => copiarAlPortapapeles(item.rif, item.id)}
+                              title="Copiar RIF"
+                            >
+                              {rifCopiado === item.id ? <Check size={13} style={{ color: '#16a34a' }} /> : <Copy size={13} />}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Caja de Diferencias Detalladas */}
+                      {Array.isArray(item.cambios) && item.cambios.length > 0 && (
+                        <div className="prov-diff-box">
+                          {item.cambios.map((c, idx) => (
+                            <div key={idx} className="prov-diff-item">
+                              <span className="prov-diff-field">🔸 {c.campo}:</span>
+                              {item.tipo_cambio === 'REGISTRO_NUEVO' ? (
+                                <span className={`prov-diff-after ${c.campo === 'RIF' ? 'rif-highlight' : ''}`}>
+                                  {c.despues || 'Vacío'}
+                                </span>
+                              ) : (
+                                <>
+                                  <span className="prov-diff-before">{c.antes || 'Vacío'}</span>
+                                  <span className="prov-diff-arrow">➔</span>
+                                  <span className={`prov-diff-after ${c.campo === 'RIF' ? 'rif-highlight' : ''}`}>
+                                    {c.despues || 'Vacío'}
+                                  </span>
+                                </>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Nota de Auditoría si existe */}
+                      {item.nota_admin && (
+                        <div style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: '8px', padding: '6px 10px', fontSize: '0.75rem', color: '#92400e', marginTop: '4px' }}>
+                          💬 <strong>Nota de Auditoría:</strong> {item.nota_admin}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="prov-history-actions">
+                      {esSuperAdmin && (
+                        <button
+                          type="button"
+                          className="prov-history-btn admin-edit"
+                          onClick={(e) => handleAbrirEditarHistorial(item, e)}
+                          title="Editar este registro de auditoría (Exclusivo Super Admin)"
+                        >
+                          <ShieldAlert size={14} style={{ color: '#d97706' }} />
+                          Editar Registro
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        className="prov-history-btn edit"
+                        onClick={() => handleEdit(provActual)}
+                        title="Editar este proveedor"
+                      >
+                        <Edit size={14} />
+                        Editar Ficha
+                      </button>
+                      <button
+                        type="button"
+                        className="prov-history-btn view"
+                        onClick={() => cargarHistorialCompras(provActual)}
+                        title="Ver ficha SRM y compras"
+                      >
+                        <ShoppingBag size={14} />
+                        Ver Ficha / SRM
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => handleEliminarRegistroHistorial(item.id, e)}
+                        style={{
+                          backgroundColor: '#fff1f2',
+                          color: '#be123c',
+                          border: '1px solid #fecdd3',
+                          borderRadius: '10px',
+                          padding: '7px 12px',
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '5px',
+                          fontSize: '0.75rem',
+                          fontWeight: '800',
+                          transition: 'all 0.15s'
+                        }}
+                        className="action-hover"
+                        title="Eliminar este registro del historial"
+                      >
+                        <Trash2 size={13} />
+                        Borrar
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+    )}
+
+    {/* SECCIÓN 3: ANÁLISIS Y REPORTES */}
+    {tabActiva === 'reportes' && (
       <div className="prov-reports-view">
         {loadingReportes ? (
           <div className="prov-loading">
@@ -3015,7 +3433,7 @@ const Proveedores = ({ currentUser }) => {
                             </td>
                             <td>
                               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
-                                {p.categoria ? p.categoria.split(', ').map((cat, i) => (
+                                {p.categoria ? (Array.isArray(p.categoria) ? p.categoria : (typeof p.categoria === 'string' ? p.categoria.split(', ') : [String(p.categoria)])).map((cat, i) => (
                                   <span key={i} style={{ backgroundColor: '#f8fafc', padding: '2px 6px', borderRadius: '4px', fontSize: '0.6rem', fontWeight: '800', color: '#475569', border: '1px solid #e2e8f0' }}>
                                     {cat}
                                   </span>
@@ -4375,7 +4793,7 @@ const Proveedores = ({ currentUser }) => {
                                 dias_credito: Number(provSeleccionado.dias_credito || provSeleccionado.dias_credito_habituales || 0),
                                 dias_credito_habituales: Number(provSeleccionado.dias_credito || provSeleccionado.dias_credito_habituales || 0)
                               };
-                              await ejecutarOperacionSegura(true, provSeleccionado.id, srmPayload);
+                              await guardarProveedorService({ ...provSeleccionado, ...srmPayload }, usuarioActivo, nombreUsuarioActual);
                               toast.success("Evaluación SRM y Acuerdos guardados con éxito.");
                               await obtenerProveedores();
                             } catch (err) {
@@ -4414,6 +4832,152 @@ const Proveedores = ({ currentUser }) => {
                   Cerrar Ficha
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+        {/* MODAL DE EDICIÓN DE AUDITORÍA Y MODIFICACIÓN (EXCLUSIVO SUPER ADMIN) */}
+        {showEditHistoryModal && editingHistoryItem && (
+          <div className="prov-modal-overlay" onClick={() => setShowEditHistoryModal(false)}>
+            <div className="prov-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '580px' }}>
+              <div className="prov-modal-header" style={{ borderBottom: '1px solid #e2e8f0', paddingBottom: '10px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <div style={{ backgroundColor: '#fef3c7', padding: '8px', borderRadius: '10px', border: '1px solid #fde68a' }}>
+                    <ShieldAlert size={22} style={{ color: '#d97706' }} />
+                  </div>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: '900', color: '#0f172a' }}>
+                      Editar Registro de Modificación
+                    </h3>
+                    <span style={{ fontSize: '0.75rem', color: '#d97706', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                      ★ Panel Exclusivo Super Administrador
+                    </span>
+                  </div>
+                </div>
+                <button className="prov-modal-close" onClick={() => setShowEditHistoryModal(false)} type="button">
+                  <XCircle size={20} />
+                </button>
+              </div>
+
+              <form onSubmit={handleGuardarEdicionHistorial} style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '14px 0 0 0', overflowY: 'auto' }}>
+                <div style={{ backgroundColor: '#f8fafc', padding: '10px 14px', borderRadius: '12px', border: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <span style={{ fontSize: '0.7rem', fontWeight: '800', color: '#64748b', textTransform: 'uppercase' }}>Proveedor Vinculado:</span>
+                    <div style={{ fontSize: '0.95rem', fontWeight: '900', color: '#1e3a8a', marginTop: '2px' }}>
+                      {editingHistoryItem.razon_social} {editingHistoryItem.rif && editingHistoryItem.rif !== 'Sin RIF' ? `(${editingHistoryItem.rif})` : ''}
+                    </div>
+                  </div>
+                  <span className={`prov-history-tag ${historyEditForm.tipo_cambio}`}>
+                    {historyEditForm.etiqueta || '✏️ Modificación'}
+                  </span>
+                </div>
+
+                <div className="prov-form-row">
+                  <div className="prov-form-group">
+                    <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#334155' }}>Persona / Responsable *</label>
+                    <input
+                      type="text"
+                      required
+                      value={historyEditForm.usuario_nombre}
+                      onChange={(e) => setHistoryEditForm({ ...historyEditForm, usuario_nombre: e.target.value })}
+                      placeholder="Ej: José Contreras"
+                      className="prov-input"
+                      style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
+                    />
+                  </div>
+                  <div className="prov-form-group">
+                    <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#334155' }}>Correo del Responsable</label>
+                    <input
+                      type="email"
+                      value={historyEditForm.usuario_correo}
+                      onChange={(e) => setHistoryEditForm({ ...historyEditForm, usuario_correo: e.target.value })}
+                      placeholder="Ej: jcontreras@totalclean.com"
+                      className="prov-input"
+                      style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
+                    />
+                  </div>
+                </div>
+
+                <div className="prov-form-row">
+                  <div className="prov-form-group">
+                    <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#334155' }}>Fecha y Hora del Evento *</label>
+                    <input
+                      type="datetime-local"
+                      required
+                      value={historyEditForm.fecha}
+                      onChange={(e) => setHistoryEditForm({ ...historyEditForm, fecha: e.target.value })}
+                      className="prov-input"
+                      style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
+                    />
+                  </div>
+                  <div className="prov-form-group">
+                    <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#334155' }}>Tipo de Evento</label>
+                    <select
+                      value={historyEditForm.tipo_cambio}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        let etiq = '✏️ Modificación General';
+                        if (val === 'RIF_ACTUALIZADO') etiq = '🆔 RIF Actualizado';
+                        else if (val === 'CONTACTO_ACTUALIZADO') etiq = '📞 Contacto Actualizado';
+                        else if (val === 'CUENTAS_BANCARIAS') etiq = '🏦 Cuentas Bancarias';
+                        else if (val === 'CONVENIO_SRM') etiq = '⭐ Convenio SRM';
+                        else if (val === 'REGISTRO_NUEVO') etiq = '✨ Proveedor Creado';
+                        setHistoryEditForm({ ...historyEditForm, tipo_cambio: val, etiqueta: etiq });
+                      }}
+                      className="prov-input"
+                      style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
+                    >
+                      <option value="RIF_ACTUALIZADO">🆔 RIF Actualizado</option>
+                      <option value="CONTACTO_ACTUALIZADO">📞 Contacto Actualizado</option>
+                      <option value="CUENTAS_BANCARIAS">🏦 Cuentas Bancarias</option>
+                      <option value="CONVENIO_SRM">⭐ Convenio SRM</option>
+                      <option value="REGISTRO_NUEVO">✨ Proveedor Creado</option>
+                      <option value="MODIFICACION_GENERAL">✏️ Modificación General</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="prov-form-group">
+                  <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#334155' }}>Etiqueta Visual</label>
+                  <input
+                    type="text"
+                    value={historyEditForm.etiqueta}
+                    onChange={(e) => setHistoryEditForm({ ...historyEditForm, etiqueta: e.target.value })}
+                    placeholder="Ej: 🆔 RIF Actualizado"
+                    className="prov-input"
+                    style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
+                  />
+                </div>
+
+                <div className="prov-form-group">
+                  <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#334155' }}>Nota / Justificación de Auditoría (Opcional)</label>
+                  <textarea
+                    rows={2}
+                    value={historyEditForm.nota_admin}
+                    onChange={(e) => setHistoryEditForm({ ...historyEditForm, nota_admin: e.target.value })}
+                    placeholder="Observaciones o correcciones realizadas por el Super Admin..."
+                    className="prov-input"
+                    style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.85rem', resize: 'vertical' }}
+                  />
+                </div>
+
+                <div className="prov-modal-actions" style={{ marginTop: '10px', display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                  <button
+                    type="button"
+                    className="prov-btn-cancel"
+                    onClick={() => setShowEditHistoryModal(false)}
+                    style={{ padding: '8px 18px', borderRadius: '8px', border: '1px solid #cbd5e1', backgroundColor: '#f8fafc', fontWeight: '700', fontSize: '0.8rem', cursor: 'pointer' }}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className="prov-btn-submit"
+                    style={{ padding: '8px 20px', borderRadius: '8px', border: 'none', background: 'linear-gradient(135deg, #d97706, #b45309)', color: 'white', fontWeight: '800', fontSize: '0.8rem', cursor: 'pointer', boxShadow: '0 2px 6px rgba(217, 119, 6, 0.3)' }}
+                  >
+                    Guardar Cambios
+                  </button>
+                </div>
+              </form>
             </div>
           </div>
         )}
