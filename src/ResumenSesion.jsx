@@ -218,6 +218,17 @@ const ResumenSesion = ({ currentUser, setActiveSeccion }) => {
         return Object.entries(stats).map(([status, count]) => ({ status, count }));
     }, [data.myReqs]);
 
+    const handleAbrirRequisicion = (req) => {
+        if (!req?.id) return;
+        sessionStorage.setItem('abrir_requisicion_id', req.id);
+        if (typeof setActiveSeccion === 'function') {
+            setActiveSeccion('requisiciones');
+        }
+        setTimeout(() => {
+            window.dispatchEvent(new CustomEvent('abrirRequisicionDeepLink', { detail: req.id }));
+        }, 150);
+    };
+
     if (loading) {
         return (
             <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', color: '#64748b' }}>
@@ -340,18 +351,36 @@ const ResumenSesion = ({ currentUser, setActiveSeccion }) => {
                         </div>
                         {data.pendingList && data.pendingList.length > 0 ? (
                             data.pendingList.map((req, idx) => (
-                                <div key={idx} style={{ 
-                                    display: 'flex', 
-                                    flexDirection: 'column', 
-                                    gap: '2px', 
-                                    padding: '6px 8px', 
-                                    borderRadius: '8px', 
-                                    backgroundColor: '#f8fafc',
-                                    border: '1px solid #f1f5f9'
-                                }}>
+                                <div 
+                                    key={idx} 
+                                    onClick={() => handleAbrirRequisicion(req)}
+                                    title="Haga clic para revisar y aprobar esta requisición"
+                                    style={{ 
+                                        display: 'flex', 
+                                        flexDirection: 'column', 
+                                        gap: '3px', 
+                                        padding: '8px 10px', 
+                                        borderRadius: '8px', 
+                                        backgroundColor: '#f8fafc',
+                                        border: '1px solid #e2e8f0',
+                                        cursor: 'pointer',
+                                        transition: 'all 0.15s ease',
+                                        boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
+                                    }}
+                                    onMouseEnter={(e) => {
+                                        e.currentTarget.style.backgroundColor = '#eff6ff';
+                                        e.currentTarget.style.borderColor = '#93c5fd';
+                                        e.currentTarget.style.transform = 'translateY(-1px)';
+                                    }}
+                                    onMouseLeave={(e) => {
+                                        e.currentTarget.style.backgroundColor = '#f8fafc';
+                                        e.currentTarget.style.borderColor = '#e2e8f0';
+                                        e.currentTarget.style.transform = 'none';
+                                    }}
+                                >
                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                        <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#1e293b' }}>
-                                            {req.correlativo_req || `REQ-${req.id.slice(0,5)}`}
+                                        <span style={{ fontSize: '0.78rem', fontWeight: '800', color: '#1e40af', textDecoration: 'underline', textUnderlineOffset: '2px' }}>
+                                            {req.correlativo_req || `REQ-${String(req.id).slice(0,5)}`}
                                         </span>
                                         <span style={{ 
                                             fontSize: '0.6rem', 
@@ -364,8 +393,13 @@ const ResumenSesion = ({ currentUser, setActiveSeccion }) => {
                                             {reqStatusLabels[req.estado_aprobacion] || req.estado_aprobacion}
                                         </span>
                                     </div>
-                                    <div style={{ fontSize: '0.7rem', color: '#64748b' }}>
-                                        Solicita: <span style={{ fontWeight: '600' }}>{req.solicitante}</span>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '2px' }}>
+                                        <div style={{ fontSize: '0.7rem', color: '#64748b' }}>
+                                            Solicita: <span style={{ fontWeight: '600', color: '#334155' }}>{req.solicitante}</span>
+                                        </div>
+                                        <span style={{ fontSize: '0.65rem', fontWeight: '700', color: '#2563eb' }}>
+                                            Aprobar →
+                                        </span>
                                     </div>
                                 </div>
                             ))
@@ -551,19 +585,37 @@ const ResumenSesion = ({ currentUser, setActiveSeccion }) => {
                         {activeActivityTab === 'mine' ? (
                             <>
                                 {data.myReqs.slice(0, 4).map((req, idx) => (
-                                    <div key={idx} style={{
-                                        display: 'flex',
-                                        flexDirection: 'column',
-                                        gap: '6px',
-                                        padding: '12px 14px',
-                                        borderRadius: '16px',
-                                        backgroundColor: '#f8fafc',
-                                        border: '1px solid #f1f5f9',
-                                        fontSize: '0.78rem'
-                                    }}>
+                                    <div 
+                                        key={idx} 
+                                        onClick={() => handleAbrirRequisicion(req)}
+                                        title="Haga clic para ver el detalle de esta requisición"
+                                        style={{
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            gap: '6px',
+                                            padding: '12px 14px',
+                                            borderRadius: '16px',
+                                            backgroundColor: '#f8fafc',
+                                            border: '1px solid #e2e8f0',
+                                            fontSize: '0.78rem',
+                                            cursor: 'pointer',
+                                            transition: 'all 0.15s ease',
+                                            boxShadow: '0 1px 2px rgba(0,0,0,0.02)'
+                                        }}
+                                        onMouseEnter={(e) => {
+                                            e.currentTarget.style.backgroundColor = '#eff6ff';
+                                            e.currentTarget.style.borderColor = '#93c5fd';
+                                            e.currentTarget.style.transform = 'translateY(-1px)';
+                                        }}
+                                        onMouseLeave={(e) => {
+                                            e.currentTarget.style.backgroundColor = '#f8fafc';
+                                            e.currentTarget.style.borderColor = '#e2e8f0';
+                                            e.currentTarget.style.transform = 'none';
+                                        }}
+                                    >
                                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                            <span style={{ fontWeight: '800', color: '#1e293b' }}>
-                                                {req.correlativo_req || `REQ-${req.id.slice(0,5)}`}
+                                            <span style={{ fontWeight: '800', color: '#1e40af', textDecoration: 'underline', textUnderlineOffset: '2px' }}>
+                                                {req.correlativo_req || `REQ-${String(req.id).slice(0,5)}`}
                                             </span>
                                             <span style={{ 
                                                 fontSize: '0.65rem', 
@@ -626,16 +678,34 @@ const ResumenSesion = ({ currentUser, setActiveSeccion }) => {
                             <>
                                 {data.otherReqs && data.otherReqs.length > 0 ? (
                                     data.otherReqs.map((req, idx) => (
-                                        <div key={idx} style={{ 
-                                            display: 'flex', 
-                                            flexDirection: 'column', 
-                                            gap: '6px',
-                                            padding: '12px 14px',
-                                            borderRadius: '16px',
-                                            backgroundColor: '#f8fafc',
-                                            border: '1px solid #f1f5f9',
-                                            fontSize: '0.78rem'
-                                        }}>
+                                        <div 
+                                            key={idx} 
+                                            onClick={() => handleAbrirRequisicion(req)}
+                                            title="Haga clic para ver el detalle de esta requisición"
+                                            style={{ 
+                                                display: 'flex', 
+                                                flexDirection: 'column', 
+                                                gap: '6px',
+                                                padding: '12px 14px',
+                                                borderRadius: '16px',
+                                                backgroundColor: '#f8fafc',
+                                                border: '1px solid #e2e8f0',
+                                                fontSize: '0.78rem',
+                                                cursor: 'pointer',
+                                                transition: 'all 0.15s ease',
+                                                boxShadow: '0 1px 2px rgba(0,0,0,0.02)'
+                                            }}
+                                            onMouseEnter={(e) => {
+                                                e.currentTarget.style.backgroundColor = '#eff6ff';
+                                                e.currentTarget.style.borderColor = '#93c5fd';
+                                                e.currentTarget.style.transform = 'translateY(-1px)';
+                                            }}
+                                            onMouseLeave={(e) => {
+                                                e.currentTarget.style.backgroundColor = '#f8fafc';
+                                                e.currentTarget.style.borderColor = '#e2e8f0';
+                                                e.currentTarget.style.transform = 'none';
+                                            }}
+                                        >
                                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                     <div style={{ 
@@ -644,8 +714,8 @@ const ResumenSesion = ({ currentUser, setActiveSeccion }) => {
                                                         borderRadius: '50%', 
                                                         backgroundColor: getStatusColor(req.estado_aprobacion) 
                                                     }}></div>
-                                                    <span style={{ fontWeight: '800', color: '#1e293b' }}>
-                                                        {req.correlativo_req || `REQ-${req.id.slice(0,5)}`}
+                                                    <span style={{ fontWeight: '800', color: '#1e40af', textDecoration: 'underline', textUnderlineOffset: '2px' }}>
+                                                        {req.correlativo_req || `REQ-${String(req.id).slice(0,5)}`}
                                                     </span>
                                                     <span style={{ fontSize: '0.7rem', color: '#64748b' }}>
                                                         • {req.solicitante}

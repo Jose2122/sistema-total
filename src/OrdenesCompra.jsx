@@ -11,6 +11,7 @@ import {
   Edit2, Trash2, Save, Ban, Landmark
 } from 'lucide-react';
 import { obtenerTodosProveedores } from './services/proveedoresService';
+import { safeSupabaseUpdate } from './utils/helpers';
 import './OrdenesCompra.css';
 
 const DIRECCION_FISCAL_OFICIAL = "AV 61 ENTRE CALLE 147 Y TAPÓN PARCELA CI-19 SECTOR I, LOCAL GALPÓN NRO 147-113, ZONA INDUSTRIAL DE MARACAIBO SUR.";
@@ -51,6 +52,17 @@ const OrdenesCompra = ({ currentUser }) => {
   const [requisicionesList, setRequisicionesList] = useState([]);
   const [sourceReqSelected, setSourceReqSelected] = useState(null);
   const [showReqItemsPicker, setShowReqItemsPicker] = useState(false);
+
+  // Modal y estado para Asignación de Prioridad y Aprobación de Precios de ODC
+  const [subtabPrioridad, setSubtabPrioridad] = useState('pendientes'); // 'pendientes' | 'aprobadas' | 'rechazadas' | 'todas'
+  const [modalPrioridadOpen, setModalPrioridadOpen] = useState(false);
+  const [odcPrioridadTarget, setOdcPrioridadTarget] = useState(null);
+  const [prioridadSeleccionada, setPrioridadSeleccionada] = useState(1); // 1 (Nivel 1) | 2 (Nivel 2)
+  const [mostrarRechazoInput, setMostrarRechazoInput] = useState(false);
+  const [motivoRechazoInput, setMotivoRechazoInput] = useState('');
+  const [itemsOdcPrioridad, setItemsOdcPrioridad] = useState([]);
+  const [loadingItemsPrioridad, setLoadingItemsPrioridad] = useState(false);
+  const [guardandoPrioridadOdc, setGuardandoPrioridadOdc] = useState(false);
 
   const categoriasDisponibles = useMemo(() => {
     const setCat = new Set();
@@ -130,12 +142,15 @@ const OrdenesCompra = ({ currentUser }) => {
   // Capacidad de Eliminación Exclusiva para Administrador Principal (José)
   const esAdminSuper = emailUser === 'jcontreras.totalclean@gmail.com' || currentUser?.esAdminReal || (currentUser?.rol || '').toUpperCase() === 'SUPERADMIN';
 
-  const esUsuarioCompras = esAdmin || deptoUser.includes('compra') || rolUser.includes('compra');
+  const esUsuarioCompras = esAdmin || deptoUser.includes('compra') || rolUser.includes('compra') || rolUser.includes('gerente de compras') || rolUser.includes('gerente compras');
 
   // Es Gerente General (Carlos Vega)
   const esCarlosVega = esAdmin || 
                        rolUser.includes('gerente general') || 
                        emailUser === 'cvega@totalclean.com.ve';
+
+  // Apartado Exclusivo de Asignación de Prioridad ODC (Super Admin, Gerente Compras, Carlos Vega)
+  const puedeAprobarPrioridadODC = esAdminSuper || esCarlosVega || esUsuarioCompras;
 
   useEffect(() => {
     cargarOrdenes();
@@ -182,7 +197,7 @@ const OrdenesCompra = ({ currentUser }) => {
       while (keepReq) {
         const { data: chunk, error: reqErr } = await supabase
           .from('requisiciones')
-          .select('id, correlativo_req, solicitante, gerencia, centro_costo')
+          .select('id, correlativo_req, solicitante, gerencia, centro_costo, prioridad, items')
           .range(pageReq * 1000, (pageReq + 1) * 1000 - 1);
         if (reqErr) {
           console.error("Error al cargar catálogo de requisiciones:", reqErr);
@@ -270,6 +285,45 @@ const OrdenesCompra = ({ currentUser }) => {
 
         const reqIdResolved = reqObj?.id ? String(reqObj.id) : (o.requisicion_id && !String(o.requisicion_id).includes('-') ? String(o.requisicion_id) : null);
 
+        const esPreferencial = Boolean(prov?.es_preferencial || prov?.proveedor_preferencial || o.proveedor_es_preferencial);
+        const reqPrioStr = String(reqObj?.prioridad || o.requisicion_prioridad || '').trim().toUpperCase();
+        const esEmergencia = reqPrioStr === 'EMERGENCIA' || reqPrioStr.includes('EMERGENCIA');
+        
+        const prioLocal = localStorage.getItem(`odc_prio_${o.id}`);
+        const prioStatusLocal = localStorage.getItem(`odc_prio_status_${o.id}`);
+        const prioUserLocal = localStorage.getItem(`odc_prio_user_${o.id}`);
+        const motivoRechazoLocal = localStorage.getItem(`odc_prio_motivo_${o.id}`);
+
+        const stOrden = String(o.estatus_orden || '').trim().toUpperCase();
+        const tieneRechazoEnComentario = typeof o.carlos_comentario_aprobacion === 'string' && o.carlos_comentario_aprobacion.startsWith('[RECHAZADO]:');
+
+        let estadoAprobacion = (o.estado_aprobacion_precio || prioStatusLocal || '').toLowerCase();
+        if (!estadoAprobacion) {
+          if (stOrden === 'APROBADA' || o.carlos_firma_digital_activa) {
+            estadoAprobacion = 'aprobado';
+          } else if (stOrden === 'RECHAZADA' || tieneRechazoEnComentario) {
+            estadoAprobacion = 'rechazado';
+          } else if (o.estatus_pago === 'PAGADO' || o.status_pago === 'PAGADO') {
+            estadoAprobacion = 'aprobado';
+          } else {
+            estadoAprobacion = 'pendiente';
+          }
+        }
+
+        let motivoRechazo = o.motivo_rechazo_compras || motivoRechazoLocal || null;
+        if (!motivoRechazo && tieneRechazoEnComentario) {
+          motivoRechazo = o.carlos_comentario_aprobacion.replace('[RECHAZADO]:', '').trim();
+        }
+
+        let prioridadPago = null;
+        if (o.prioridad_pago !== undefined && o.prioridad_pago !== null) {
+          prioridadPago = Number(o.prioridad_pago);
+        } else if (prioLocal) {
+          prioridadPago = Number(prioLocal);
+        } else if (estadoAprobacion === 'aprobado') {
+          prioridadPago = esEmergencia ? 1 : 2;
+        }
+
         return {
           ...o,
           requisicion_id: reqIdResolved || o.requisicion_id || (reqObj ? reqObj.id : null),
@@ -281,7 +335,15 @@ const OrdenesCompra = ({ currentUser }) => {
           fecha_despacho: o.fecha_despacho || o.fecha_emision || 'N/A',
           requisicion_correlativo: correlativoReq,
           requisicion_obj: reqObj || null,
-          solicitante: (reqObj?.solicitante && (!o.solicitante || o.solicitante === 'Total Clean C.A.')) ? reqObj.solicitante : (o.solicitante || reqObj?.solicitante || 'Total Clean C.A.')
+          solicitante: (reqObj?.solicitante && (!o.solicitante || o.solicitante === 'Total Clean C.A.')) ? reqObj.solicitante : (o.solicitante || reqObj?.solicitante || 'Total Clean C.A.'),
+          proveedor_es_preferencial: esPreferencial,
+          proveedor_nivel_preferencial: prov?.nivel_preferencial || (esPreferencial ? 'Tier 1 / Oro' : 'Regular'),
+          requisicion_prioridad: reqPrioStr || 'NORMAL',
+          requisicion_es_emergencia: esEmergencia,
+          estado_aprobacion_precio: estadoAprobacion,
+          prioridad_pago: prioridadPago,
+          aprobado_compras_por: o.aprobado_compras_por || o.aprobado_por_nombre || prioUserLocal || null,
+          motivo_rechazo_compras: motivoRechazo
         };
       });
       setOrdenes(mapeadas);
@@ -460,8 +522,13 @@ const OrdenesCompra = ({ currentUser }) => {
   // FUNCIONALIDAD DE EDICIÓN COMPLETA DE ORDEN DE COMPRA (ODC)
   // -------------------------------------------------------------
   const abrirModalEditarOdc = async (odc) => {
-    if (!esUsuarioCompras) {
-      toast.error("No tiene permisos para editar Órdenes de Compra.");
+    const puedeEditar = esUsuarioCompras || 
+                        odc.elaborado_por_id === currentUser?.id || 
+                        currentUser?.permisos?.['ordenes_compra'] || 
+                        currentUser?.permisos?.['compras'] || 
+                        esAdminSuper;
+    if (!puedeEditar) {
+      toast.error("No tiene permisos para editar esta Órden de Compra.");
       return;
     }
     setLoadingEditData(true);
@@ -879,34 +946,32 @@ const OrdenesCompra = ({ currentUser }) => {
         porcentaje_iva: porcentajeIvaEdit,
         iva_monto: montoIvaEdit,
         total: totalGeneralEdit,
-        total_general: totalGeneralEdit
+        total_general: totalGeneralEdit,
+        ...(editOdcTarget.estado_aprobacion_precio === 'rechazado' || editOdcTarget.estatus_orden === 'RECHAZADA' || localStorage.getItem(`odc_prio_status_${editOdcTarget.id}`) === 'rechazado' ? {
+          estado_aprobacion_precio: 'pendiente',
+          estatus_orden: 'EMITIDA',
+          motivo_rechazo_compras: null,
+          prioridad_pago: null,
+          carlos_comentario_aprobacion: null
+        } : {})
       };
 
-      // 1. Actualizar ordenes_compra (con fallback en caso de que la columna observaciones no esté en DB)
-      let errUpdate = null;
-      try {
-        const { error } = await supabase
-          .from('ordenes_compra')
-          .update(payloadOdc)
-          .eq('id', editOdcTarget.id);
-        errUpdate = error;
-      } catch (e) {
-        errUpdate = e;
-      }
+      const fueRechazadaPreviamente = editOdcTarget.estado_aprobacion_precio === 'rechazado' || 
+                                      editOdcTarget.estatus_orden === 'RECHAZADA' || 
+                                      localStorage.getItem(`odc_prio_status_${editOdcTarget.id}`) === 'rechazado';
 
-      if (errUpdate && errUpdate.message && errUpdate.message.toLowerCase().includes('observaciones')) {
-        const { observaciones, ...payloadSinObs } = payloadOdc;
-        const { error: retryErr } = await supabase
-          .from('ordenes_compra')
-          .update(payloadSinObs)
-          .eq('id', editOdcTarget.id);
-        if (retryErr) throw retryErr;
-      } else if (errUpdate) {
-        throw errUpdate;
-      }
+      // 1. Actualizar ordenes_compra con fallback automático de columnas
+      const { error: errUpdate } = await safeSupabaseUpdate(supabase, 'ordenes_compra', payloadOdc, 'id', editOdcTarget.id);
+      if (errUpdate) throw errUpdate;
 
       if (editOdcTarget.observaciones !== undefined) {
         localStorage.setItem(`odc_obs_${editOdcTarget.id}`, editOdcTarget.observaciones || '');
+      }
+
+      if (fueRechazadaPreviamente) {
+        localStorage.removeItem(`odc_prio_status_${editOdcTarget.id}`);
+        localStorage.removeItem(`odc_prio_motivo_${editOdcTarget.id}`);
+        localStorage.removeItem(`odc_prio_${editOdcTarget.id}`);
       }
 
       // 2. Eliminar items antiguos de esta ODC
@@ -998,7 +1063,11 @@ const OrdenesCompra = ({ currentUser }) => {
       }
 
       setShowEditModal(false);
-      toast.success(`Órden de Compra ${editOdcTarget.numero_odc} editada y actualizada con éxito.`);
+      if (fueRechazadaPreviamente) {
+        toast.success(`🎉 ODC ${editOdcTarget.numero_odc} modificada con éxito. Ha sido enviada nuevamente a revisión para su aprobación.`);
+      } else {
+        toast.success(`Órden de Compra ${editOdcTarget.numero_odc} editada y actualizada con éxito.`);
+      }
     } catch (err) {
       console.error("Error al guardar edición de ODC:", err);
       toast.error(`Error al guardar edición: ${err.message || 'Error en servidor'}`);
@@ -1147,6 +1216,211 @@ const OrdenesCompra = ({ currentUser }) => {
     } catch (err) {
       console.error("Error al eliminar ODC:", err);
       toast.error("Error al eliminar la Órden de Compra: " + err.message);
+    }
+  };
+
+  // =========================================================================
+  // GESTIÓN DE ASIGNACIÓN DE PRIORIDAD Y APROBACIÓN DE PRECIOS ODC
+  // =========================================================================
+
+  // Abrir Modal de Revisión y Aprobación de Prioridad ODC
+  const abrirModalAprobacionPrioridad = async (odc) => {
+    setOdcPrioridadTarget(odc);
+    setPrioridadSeleccionada(odc.prioridad_pago ? Number(odc.prioridad_pago) : (odc.requisicion_es_emergencia ? 1 : 2));
+    setMotivoRechazoInput(odc.motivo_rechazo_compras || '');
+    setMostrarRechazoInput(false);
+    setModalPrioridadOpen(true);
+    setLoadingItemsPrioridad(true);
+
+    try {
+      const { data: items, error } = await supabase
+        .from('ordenes_compra_items')
+        .select('*')
+        .eq('orden_compra_id', odc.id)
+        .order('item_numero', { ascending: true });
+
+      if (error) throw error;
+
+      let reqItems = [];
+      if (odc.requisicion_obj?.items) {
+        reqItems = parsearJsonSeguro(odc.requisicion_obj.items);
+      } else if (odc.requisicion_id) {
+        const cleanReqId = String(odc.requisicion_id).replace(/^REQ-?/i, '').trim();
+        const foundReq = (requisicionesList || []).find(r => 
+          String(r.id) === cleanReqId || 
+          String(r.id) === String(odc.requisicion_id) ||
+          (r.correlativo_req && String(r.correlativo_req).trim().toUpperCase() === String(odc.requisicion_id).trim().toUpperCase())
+        );
+        if (foundReq?.items) {
+          reqItems = parsearJsonSeguro(foundReq.items);
+        }
+      }
+
+      const itemsConComparativa = (items || []).map(it => {
+        const reqMatch = reqItems.find(r => 
+          (it.requisicion_item_id && String(r.id) === String(it.requisicion_item_id)) ||
+          (r.descripcion && it.descripcion && r.descripcion.trim().toLowerCase() === it.descripcion.trim().toLowerCase())
+        );
+
+        const puEstimado = reqMatch ? (parseFloat(reqMatch.pu || reqMatch.precio_estimado || reqMatch.costo_estimado || reqMatch.monto_estimado) || 0) : 0;
+        const puCotizado = parseFloat(it.precio_unitario) || 0;
+        const diffPu = puEstimado > 0 ? (puCotizado - puEstimado) : 0;
+        const diffPct = (puEstimado > 0 && diffPu !== 0) ? ((diffPu / puEstimado) * 100) : 0;
+
+        return {
+          ...it,
+          precio_estimado_req: puEstimado,
+          diferencia_pu: diffPu,
+          diferencia_pct: diffPct
+        };
+      });
+
+      setItemsOdcPrioridad(itemsConComparativa);
+    } catch (err) {
+      console.error("Error al cargar renglones para revisión de prioridad:", err);
+      toast.error("Error al cargar los renglones de la ODC");
+    } finally {
+      setLoadingItemsPrioridad(false);
+    }
+  };
+
+  // Aprobar Precio de Orden de Compra y Asignar Prioridad (Nivel 1 o 2)
+  const ejecutarAprobacionPrecioYPrioridad = async (nivel) => {
+    if (!odcPrioridadTarget) return;
+    const nivelFinal = Number(nivel || prioridadSeleccionada || 1);
+    if (nivelFinal !== 1 && nivelFinal !== 2) {
+      toast.error("Debe seleccionar un nivel de prioridad válido (Nivel 1 o Nivel 2).");
+      return;
+    }
+
+    setGuardandoPrioridadOdc(true);
+    try {
+      const nombreAprobador = `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim() || currentUser?.correo || 'Gerencia de Compras';
+      const fechaNow = new Date().toISOString();
+
+      const payload = {
+        estado_aprobacion_precio: 'aprobado',
+        estatus_orden: 'APROBADA',
+        prioridad_pago: nivelFinal,
+        aprobado_compras_por: nombreAprobador,
+        aprobado_por_nombre: nombreAprobador,
+        fecha_aprobacion_compras: fechaNow,
+        motivo_rechazo_compras: null,
+        carlos_comentario_aprobacion: null
+      };
+
+      const { error: resError } = await safeSupabaseUpdate(supabase, 'ordenes_compra', payload, 'id', odcPrioridadTarget.id);
+      if (resError) throw resError;
+
+      localStorage.setItem(`odc_prio_${odcPrioridadTarget.id}`, String(nivelFinal));
+      localStorage.setItem(`odc_prio_status_${odcPrioridadTarget.id}`, 'aprobado');
+      localStorage.setItem(`odc_prio_user_${odcPrioridadTarget.id}`, nombreAprobador);
+      localStorage.removeItem(`odc_prio_motivo_${odcPrioridadTarget.id}`);
+
+      const odcActualizada = {
+        ...odcPrioridadTarget,
+        ...payload
+      };
+
+      setOrdenes(prev => prev.map(o => o.id === odcPrioridadTarget.id ? odcActualizada : o));
+      if (odcSeleccionada && odcSeleccionada.id === odcPrioridadTarget.id) {
+        setOdcSeleccionada(odcActualizada);
+      }
+      setOdcPrioridadTarget(odcActualizada);
+      setModalPrioridadOpen(false);
+
+      toast.success(`🎉 ODC ${odcPrioridadTarget.numero_odc} APROBADA con Prioridad Nivel ${nivelFinal}. Ahora está disponible en Cuentas por Pagar.`);
+    } catch (err) {
+      console.error("Error al aprobar precio y prioridad ODC:", err);
+      toast.error(`Error al aprobar ODC: ${err.message || 'Error en servidor'}`);
+    } finally {
+      setGuardandoPrioridadOdc(false);
+    }
+  };
+
+  // Rechazar Orden de Compra con Motivo
+  const ejecutarRechazoPrecioODC = async () => {
+    if (!odcPrioridadTarget) return;
+    if (!motivoRechazoInput.trim()) {
+      toast.error("Debe ingresar el motivo de rechazo o ajustes necesarios para Compras.");
+      return;
+    }
+
+    setGuardandoPrioridadOdc(true);
+    try {
+      const nombreAprobador = `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim() || currentUser?.correo || 'Gerencia de Compras';
+      const fechaNow = new Date().toISOString();
+      const motivoLimpio = motivoRechazoInput.trim();
+
+      const payload = {
+        estado_aprobacion_precio: 'rechazado',
+        estatus_orden: 'EMITIDA',
+        prioridad_pago: null,
+        motivo_rechazo_compras: motivoLimpio,
+        carlos_comentario_aprobacion: `[RECHAZADO]: ${motivoLimpio}`,
+        aprobado_compras_por: nombreAprobador,
+        aprobado_por_nombre: nombreAprobador,
+        fecha_aprobacion_compras: fechaNow
+      };
+
+      const { error: resError } = await safeSupabaseUpdate(supabase, 'ordenes_compra', payload, 'id', odcPrioridadTarget.id);
+      if (resError) throw resError;
+
+      localStorage.setItem(`odc_prio_status_${odcPrioridadTarget.id}`, 'rechazado');
+      localStorage.setItem(`odc_prio_motivo_${odcPrioridadTarget.id}`, motivoLimpio);
+      localStorage.removeItem(`odc_prio_${odcPrioridadTarget.id}`);
+
+      const odcActualizada = {
+        ...odcPrioridadTarget,
+        ...payload
+      };
+
+      setOrdenes(prev => prev.map(o => o.id === odcPrioridadTarget.id ? odcActualizada : o));
+      if (odcSeleccionada && odcSeleccionada.id === odcPrioridadTarget.id) {
+        setOdcSeleccionada(odcActualizada);
+      }
+      setOdcPrioridadTarget(odcActualizada);
+      setModalPrioridadOpen(false);
+
+      toast.error(`❌ ODC ${odcPrioridadTarget.numero_odc} rechazada. Se devolvió a Compras para ajustes.`);
+    } catch (err) {
+      console.error("Error al rechazar ODC:", err);
+      toast.error(`Error al rechazar ODC: ${err.message || 'Error en servidor'}`);
+    } finally {
+      setGuardandoPrioridadOdc(false);
+    }
+  };
+
+  // Modificar Nivel de Prioridad en cualquier momento (Opción 3)
+  const cambiarNivelPrioridadDirecto = async (odc, nuevoNivel) => {
+    const nivelFinal = Number(nuevoNivel);
+    if (nivelFinal !== 1 && nivelFinal !== 2) return;
+
+    try {
+      const nombreAprobador = `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim() || currentUser?.correo || 'Gerencia de Compras';
+      const payload = {
+        prioridad_pago: nivelFinal,
+        estado_aprobacion_precio: 'aprobado',
+        estatus_orden: 'APROBADA',
+        aprobado_compras_por: nombreAprobador,
+        aprobado_por_nombre: nombreAprobador
+      };
+
+      const { error: resError } = await safeSupabaseUpdate(supabase, 'ordenes_compra', payload, 'id', odc.id);
+      if (resError) throw resError;
+
+      localStorage.setItem(`odc_prio_${odc.id}`, String(nivelFinal));
+      localStorage.setItem(`odc_prio_status_${odc.id}`, 'aprobado');
+
+      const odcActualizada = { ...odc, ...payload };
+      setOrdenes(prev => prev.map(o => o.id === odc.id ? odcActualizada : o));
+      if (odcSeleccionada && odcSeleccionada.id === odc.id) {
+        setOdcSeleccionada(odcActualizada);
+      }
+      toast.success(`Prioridad de ${odc.numero_odc} cambiada a Nivel ${nivelFinal}.`);
+    } catch (err) {
+      console.error("Error al cambiar prioridad:", err);
+      toast.error("Error al actualizar prioridad: " + err.message);
     }
   };
 
@@ -1679,6 +1953,28 @@ const OrdenesCompra = ({ currentUser }) => {
     }
   };
 
+  // Subconjuntos para conteo de Prioridad ODC
+  const odcsPendientesPrioridad = useMemo(() => {
+    return ordenes.filter(o => {
+      const st = (o.estado_aprobacion_precio || '').toLowerCase();
+      return st === 'pendiente' || (!st && o.estatus_pago !== 'PAGADO' && o.status_pago !== 'PAGADO');
+    });
+  }, [ordenes]);
+
+  const odcsAprobadasPrioridad = useMemo(() => {
+    return ordenes.filter(o => {
+      const st = (o.estado_aprobacion_precio || '').toLowerCase();
+      return st === 'aprobado' || (o.prioridad_pago !== null && o.prioridad_pago !== undefined);
+    });
+  }, [ordenes]);
+
+  const odcsRechazadasPrioridad = useMemo(() => {
+    return ordenes.filter(o => {
+      const st = (o.estado_aprobacion_precio || '').toLowerCase();
+      return st === 'rechazado';
+    });
+  }, [ordenes]);
+
   // Filtrado de la Lista de Órdenes
   const ordenesFiltradas = useMemo(() => {
     return ordenes.filter(o => {
@@ -1687,7 +1983,8 @@ const OrdenesCompra = ({ currentUser }) => {
                             (o.cotizacion_ref || '').toLowerCase().includes(busqueda.toLowerCase()) ||
                             (o.orden_pago_ref || '').toLowerCase().includes(busqueda.toLowerCase()) ||
                             (o.destino_despacho || '').toLowerCase().includes(busqueda.toLowerCase()) ||
-                            (o.comprador_nombre || '').toLowerCase().includes(busqueda.toLowerCase());
+                            (o.comprador_nombre || '').toLowerCase().includes(busqueda.toLowerCase()) ||
+                            (o.requisicion_correlativo || '').toLowerCase().includes(busqueda.toLowerCase());
 
       if (!matchBusqueda) return false;
 
@@ -1702,9 +1999,22 @@ const OrdenesCompra = ({ currentUser }) => {
         const sem = calcularSemaforoCredito(o);
         return sem.nivel === 'ambar' || sem.nivel === 'rojo';
       }
+      if (tabFiltro === 'prioridad') {
+        const st = (o.estado_aprobacion_precio || '').toLowerCase();
+        if (subtabPrioridad === 'pendientes') {
+          return st === 'pendiente' || (!st && o.estatus_pago !== 'PAGADO' && o.status_pago !== 'PAGADO');
+        }
+        if (subtabPrioridad === 'aprobadas') {
+          return st === 'aprobado' || (o.prioridad_pago !== null && o.prioridad_pago !== undefined);
+        }
+        if (subtabPrioridad === 'rechazadas') {
+          return st === 'rechazado';
+        }
+        return true;
+      }
       return true;
     });
-  }, [ordenes, busqueda, tabFiltro]);
+  }, [ordenes, busqueda, tabFiltro, subtabPrioridad]);
 
   return (
     <div className="odc-container">
@@ -1724,7 +2034,7 @@ const OrdenesCompra = ({ currentUser }) => {
             Órdenes de Compra
           </h1>
           <p style={{ margin: '4px 0 0 0', color: '#64748b', fontSize: '0.9rem', fontWeight: '500', fontFamily: 'Inter, sans-serif' }}>
-            Gestión centralizada de compras y proveedores
+            Gestión centralizada de compras, proveedores y asignación de prioridad de pagos
           </p>
         </div>
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
@@ -1779,7 +2089,126 @@ const OrdenesCompra = ({ currentUser }) => {
         >
           <AlertTriangle size={16} /> Créditos por Vencer / Vencidos ⚠️
         </button>
+        {puedeAprobarPrioridadODC && (
+          <button 
+            className={`odc-tab-btn ${tabFiltro === 'prioridad' ? 'active' : ''}`}
+            onClick={() => setTabFiltro('prioridad')}
+            style={{
+              borderColor: tabFiltro === 'prioridad' ? '#7c3aed' : '#c4b5fd',
+              backgroundColor: tabFiltro === 'prioridad' ? '#7c3aed' : '#f5f3ff',
+              color: tabFiltro === 'prioridad' ? '#ffffff' : '#6d28d9',
+              fontWeight: '800'
+            }}
+          >
+            <ShieldCheck size={16} /> ⭐ Asignación de Prioridad ODC
+            <span style={{
+              marginLeft: '6px',
+              backgroundColor: tabFiltro === 'prioridad' ? '#ffffff' : (odcsPendientesPrioridad.length > 0 ? '#ef4444' : '#6d28d9'),
+              color: tabFiltro === 'prioridad' ? '#7c3aed' : '#ffffff',
+              padding: '2px 8px',
+              borderRadius: '12px',
+              fontSize: '0.72rem',
+              fontWeight: '900'
+            }}>
+              {odcsPendientesPrioridad.length}
+            </span>
+          </button>
+        )}
       </div>
+
+      {/* Subpanel Informativo cuando está activa la pestaña de Prioridad */}
+      {tabFiltro === 'prioridad' && (
+        <div style={{
+          backgroundColor: '#ffffff',
+          borderRadius: '16px',
+          border: '1.5px solid #ddd6fe',
+          padding: '20px 24px',
+          marginBottom: '20px',
+          boxShadow: '0 4px 15px rgba(124, 58, 237, 0.06)'
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '14px', marginBottom: '16px' }}>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '1.25rem' }}>⭐</span>
+                <h3 style={{ margin: 0, color: '#4c1d95', fontSize: '1.15rem', fontWeight: '900' }}>
+                  Panel de Aprobación de Precios y Asignación de Prioridad de Pago
+                </h3>
+              </div>
+              <p style={{ margin: '4px 0 0 0', color: '#6d28d9', fontSize: '0.83rem', fontWeight: '500' }}>
+                Exclusivo para Super Admin, Gerente de Compras y Gerente General. Solo las Órdenes de Compra con precio aprobado y prioridad asignada (Nivel 1 o Nivel 2) se liberan a Cuentas por Pagar.
+              </p>
+            </div>
+
+            {/* Sub-filtros de Prioridad */}
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={() => setSubtabPrioridad('pendientes')}
+                style={{
+                  padding: '7px 14px',
+                  borderRadius: '10px',
+                  fontSize: '0.8rem',
+                  fontWeight: '800',
+                  cursor: 'pointer',
+                  border: subtabPrioridad === 'pendientes' ? '1.5px solid #d97706' : '1px solid #fde68a',
+                  backgroundColor: subtabPrioridad === 'pendientes' ? '#fef3c7' : '#fffbeb',
+                  color: '#92400e'
+                }}
+              >
+                ⏳ Pendientes por Aprobar ({odcsPendientesPrioridad.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setSubtabPrioridad('aprobadas')}
+                style={{
+                  padding: '7px 14px',
+                  borderRadius: '10px',
+                  fontSize: '0.8rem',
+                  fontWeight: '800',
+                  cursor: 'pointer',
+                  border: subtabPrioridad === 'aprobadas' ? '1.5px solid #16a34a' : '1px solid #bbf7d0',
+                  backgroundColor: subtabPrioridad === 'aprobadas' ? '#dcfce7' : '#f0fdf4',
+                  color: '#166534'
+                }}
+              >
+                ✅ Aprobadas Nivel 1 & 2 ({odcsAprobadasPrioridad.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setSubtabPrioridad('rechazadas')}
+                style={{
+                  padding: '7px 14px',
+                  borderRadius: '10px',
+                  fontSize: '0.8rem',
+                  fontWeight: '800',
+                  cursor: 'pointer',
+                  border: subtabPrioridad === 'rechazadas' ? '1.5px solid #dc2626' : '1px solid #fca5a5',
+                  backgroundColor: subtabPrioridad === 'rechazadas' ? '#fee2e2' : '#fef2f2',
+                  color: '#991b1b'
+                }}
+              >
+                ❌ Rechazadas ({odcsRechazadasPrioridad.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setSubtabPrioridad('todas')}
+                style={{
+                  padding: '7px 14px',
+                  borderRadius: '10px',
+                  fontSize: '0.8rem',
+                  fontWeight: '800',
+                  cursor: 'pointer',
+                  border: subtabPrioridad === 'todas' ? '1.5px solid #64748b' : '1px solid #cbd5e1',
+                  backgroundColor: subtabPrioridad === 'todas' ? '#0f172a' : '#f8fafc',
+                  color: subtabPrioridad === 'todas' ? '#ffffff' : '#475569'
+                }}
+              >
+                📋 Todas ({ordenes.length})
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Buscador */}
       <div style={{ marginBottom: '20px', display: 'flex', gap: '15px' }}>
@@ -1789,7 +2218,7 @@ const OrdenesCompra = ({ currentUser }) => {
             type="text"
             className="input-style"
             style={{ width: '100%', paddingLeft: '42px', height: '44px', borderRadius: '12px', fontSize: '0.85rem' }}
-            placeholder="Buscar por correlativo ODC, orden de pago, proveedor, ref. cotización o destino..."
+            placeholder="Buscar por correlativo ODC, orden de pago, proveedor, ref. cotización, requisición o destino..."
             value={busqueda}
             onChange={(e) => setBusqueda(e.target.value)}
           />
@@ -1806,17 +2235,17 @@ const OrdenesCompra = ({ currentUser }) => {
         ) : ordenesFiltradas.length === 0 ? (
           <div style={{ padding: '50px', textAlign: 'center', color: '#94a3b8' }}>
             <FileText size={40} style={{ margin: '0 auto 10px auto', opacity: 0.5 }} />
-            <p style={{ margin: 0, fontWeight: '600' }}>No se encontraron Órdenes de Compra registradas.</p>
+            <p style={{ margin: 0, fontWeight: '600' }}>No se encontraron Órdenes de Compra con los filtros seleccionados.</p>
           </div>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
             <thead>
               <tr style={{ backgroundColor: '#0f172a', color: 'white', textAlign: 'left' }}>
                 <th style={{ padding: '14px 16px' }}>Correlativo ODC</th>
-                <th style={{ padding: '14px 16px' }}>Proveedor</th>
+                <th style={{ padding: '14px 16px' }}>Proveedor & Condición</th>
                 <th style={{ padding: '14px 16px' }}>Requisición Origen</th>
                 <th style={{ padding: '14px 16px' }}>Tipo Pago</th>
-                <th style={{ padding: '14px 16px' }}>Semáforo Crédito</th>
+                <th style={{ padding: '14px 16px', textAlign: 'center' }}>Aprobación Precio & Prioridad</th>
                 <th style={{ padding: '14px 16px', textAlign: 'center' }}>Recepción & Pago</th>
                 <th style={{ padding: '14px 16px', textAlign: 'right' }}>Total General</th>
                 <th style={{ padding: '14px 16px', textAlign: 'center' }}>Firma Carlos</th>
@@ -1854,11 +2283,35 @@ const OrdenesCompra = ({ currentUser }) => {
                         {odc.numero_odc}
                       </motion.span>
                     </td>
-                    <td style={{ padding: '14px 16px', fontWeight: '600', color: '#0f172a' }}>
-                      {odc.proveedor_nombre || 'N/A'}
+                    <td style={{ padding: '14px 16px' }}>
+                      <div style={{ fontWeight: '700', color: '#0f172a' }}>{odc.proveedor_nombre || 'N/A'}</div>
+                      <div style={{ display: 'flex', gap: '4px', marginTop: '3px' }}>
+                        {odc.proveedor_es_preferencial ? (
+                          <span style={{ fontSize: '0.68rem', fontWeight: '800', padding: '2px 6px', borderRadius: '4px', backgroundColor: '#fef3c7', color: '#b45309', border: '1px solid #fde68a' }}>
+                            ⭐ PREFERENCIAL
+                          </span>
+                        ) : (
+                          <span style={{ fontSize: '0.68rem', fontWeight: '700', padding: '2px 6px', borderRadius: '4px', backgroundColor: '#f1f5f9', color: '#64748b' }}>
+                            🏢 REGULAR
+                          </span>
+                        )}
+                      </div>
                     </td>
-                    <td style={{ padding: '14px 16px', fontWeight: '600', color: '#0f172a' }}>
-                      {odc.requisicion_correlativo || odc.requisicion_obj?.correlativo_req || odc.numero_req || (odc.requisicion_id ? (String(odc.requisicion_id).startsWith('REQ-') ? odc.requisicion_id : `REQ-${odc.requisicion_id}`) : 'N/A')}
+                    <td style={{ padding: '14px 16px' }}>
+                      <div style={{ fontWeight: '700', color: '#0f172a' }}>
+                        {odc.requisicion_correlativo || odc.requisicion_obj?.correlativo_req || odc.numero_req || (odc.requisicion_id ? (String(odc.requisicion_id).startsWith('REQ-') ? odc.requisicion_id : `REQ-${odc.requisicion_id}`) : 'N/A')}
+                      </div>
+                      <div style={{ marginTop: '3px' }}>
+                        {odc.requisicion_es_emergencia ? (
+                          <span style={{ fontSize: '0.68rem', fontWeight: '900', padding: '2px 6px', borderRadius: '4px', backgroundColor: '#fee2e2', color: '#dc2626', border: '1px solid #fecaca' }}>
+                            🚨 EMERGENCIA
+                          </span>
+                        ) : (
+                          <span style={{ fontSize: '0.68rem', fontWeight: '700', padding: '2px 6px', borderRadius: '4px', backgroundColor: '#f1f5f9', color: '#64748b' }}>
+                            📋 NORMAL
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td style={{ padding: '14px 16px' }}>
                       <span style={{ 
@@ -1869,10 +2322,94 @@ const OrdenesCompra = ({ currentUser }) => {
                         {odc.tipo_pago} {odc.tipo_pago === 'CREDITO' ? `(${odc.dias_credito}d)` : ''}
                       </span>
                     </td>
-                    <td style={{ padding: '14px 16px' }}>
-                      <span className={`badge-semaforo ${sem.badgeClass}`}>
-                        {sem.label}
-                      </span>
+                    <td style={{ padding: '14px 16px', textAlign: 'center' }}>
+                      {odc.estado_aprobacion_precio === 'aprobado' ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+                          {odc.prioridad_pago === 1 ? (
+                            <span style={{ padding: '4px 10px', borderRadius: '8px', fontSize: '0.75rem', fontWeight: '900', backgroundColor: '#fee2e2', color: '#991b1b', border: '1px solid #fca5a5' }}>
+                              🔴 NIVEL 1 (Urgente)
+                            </span>
+                          ) : (
+                            <span style={{ padding: '4px 10px', borderRadius: '8px', fontSize: '0.75rem', fontWeight: '900', backgroundColor: '#dbeafe', color: '#1e40af', border: '1px solid #bfdbfe' }}>
+                              🔵 NIVEL 2 (Normal)
+                            </span>
+                          )}
+                          {puedeAprobarPrioridadODC && (
+                            <button
+                              type="button"
+                              onClick={() => cambiarNivelPrioridadDirecto(odc, odc.prioridad_pago === 1 ? 2 : 1)}
+                              style={{
+                                padding: '2px 6px',
+                                fontSize: '0.65rem',
+                                fontWeight: '700',
+                                borderRadius: '4px',
+                                border: '1px dashed #94a3b8',
+                                backgroundColor: '#f8fafc',
+                                color: '#475569',
+                                cursor: 'pointer'
+                              }}
+                              title="Cambiar entre Nivel 1 y Nivel 2 en cualquier momento"
+                            >
+                              🔄 Cambiar a Nivel {odc.prioridad_pago === 1 ? 2 : 1}
+                            </button>
+                          )}
+                        </div>
+                      ) : odc.estado_aprobacion_precio === 'rechazado' ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+                          <span style={{ padding: '4px 10px', borderRadius: '8px', fontSize: '0.75rem', fontWeight: '900', backgroundColor: '#fee2e2', color: '#dc2626', border: '1px solid #fecaca' }}>
+                            ❌ RECHAZADA
+                          </span>
+                          {odc.motivo_rechazo_compras && (
+                            <span style={{ fontSize: '0.68rem', color: '#991b1b', maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={odc.motivo_rechazo_compras}>
+                              {odc.motivo_rechazo_compras}
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => abrirModalEditarOdc(odc)}
+                            style={{
+                              padding: '3px 8px',
+                              fontSize: '0.68rem',
+                              fontWeight: '800',
+                              borderRadius: '6px',
+                              border: '1px solid #fca5a5',
+                              backgroundColor: '#ffffff',
+                              color: '#dc2626',
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px'
+                            }}
+                            title="Modificar esta orden de compra rechazada para corregirla"
+                          >
+                            <Edit2 size={11} /> Modificar ODC
+                          </button>
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+                          <span style={{ padding: '4px 10px', borderRadius: '8px', fontSize: '0.75rem', fontWeight: '800', backgroundColor: '#fef3c7', color: '#b45309', border: '1px solid #fde68a' }}>
+                            ⏳ PENDIENTE
+                          </span>
+                          {puedeAprobarPrioridadODC && (
+                            <button
+                              type="button"
+                              onClick={() => abrirModalAprobacionPrioridad(odc)}
+                              style={{
+                                padding: '3px 8px',
+                                fontSize: '0.7rem',
+                                fontWeight: '800',
+                                borderRadius: '6px',
+                                border: 'none',
+                                backgroundColor: '#7c3aed',
+                                color: 'white',
+                                cursor: 'pointer'
+                              }}
+                            >
+                              ⭐ Aprobar
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </td>
                     <td style={{ padding: '14px 16px', textAlign: 'center' }}>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'center' }}>
@@ -1926,6 +2463,28 @@ const OrdenesCompra = ({ currentUser }) => {
                     </td>
                     <td style={{ padding: '14px 16px', textAlign: 'center' }}>
                       <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', alignItems: 'center' }}>
+                        {puedeAprobarPrioridadODC && (
+                          <motion.button 
+                            whileHover={{ scale: 1.15 }}
+                            whileTap={{ scale: 0.9 }}
+                            style={{
+                              width: '32px',
+                              height: '32px',
+                              borderRadius: '8px',
+                              border: '1px solid #ddd6fe',
+                              backgroundColor: '#f5f3ff',
+                              color: '#7c3aed',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center'
+                            }}
+                            onClick={() => abrirModalAprobacionPrioridad(odc)}
+                            title="Asignar Prioridad / Aprobar Precio ODC"
+                          >
+                            <ShieldCheck size={16} />
+                          </motion.button>
+                        )}
                         <motion.button 
                           whileHover={{ scale: 1.15 }}
                           whileTap={{ scale: 0.9 }}
@@ -2090,6 +2649,46 @@ const OrdenesCompra = ({ currentUser }) => {
                 </button>
               </div>
             </div>
+
+            {/* Banner de ODC Rechazada con botón para modificar */}
+            {odcSeleccionada.estado_aprobacion_precio === 'rechazado' && (
+              <div style={{ backgroundColor: '#fef2f2', border: '1.5px solid #fca5a5', borderRadius: '16px', padding: '16px 20px', marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '14px' }}>
+                <div style={{ flex: 1, minWidth: '260px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#991b1b', fontWeight: '900', fontSize: '0.92rem' }}>
+                    <AlertTriangle size={20} color="#dc2626" /> Esta Órden de Compra fue RECHAZADA por Compras / Gerencia
+                  </div>
+                  <div style={{ fontSize: '0.82rem', color: '#7f1d1d', marginTop: '4px' }}>
+                    <strong>Motivo de ajustes:</strong> {odcSeleccionada.motivo_rechazo_compras || 'Ajustes en precios, condiciones o proveedor requeridos.'}
+                  </div>
+                  <div style={{ fontSize: '0.75rem', color: '#991b1b', marginTop: '2px', fontStyle: 'italic' }}>
+                    Por favor modifique los datos según las observaciones y guarde para reenviar a aprobación.
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setModalOpen(false);
+                    abrirModalEditarOdc(odcSeleccionada);
+                  }}
+                  style={{
+                    padding: '10px 18px',
+                    backgroundColor: '#dc2626',
+                    color: 'white',
+                    fontWeight: '800',
+                    fontSize: '0.82rem',
+                    borderRadius: '10px',
+                    border: 'none',
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    boxShadow: '0 4px 10px rgba(220, 38, 38, 0.25)'
+                  }}
+                >
+                  <Edit2 size={16} /> ✏️ Modificar y Reenviar ODC
+                </button>
+              </div>
+            )}
 
             {/* Panel de Control de Gobernanza (Switch de Carlos Vega) */}
             {esCarlosVega && (
@@ -2492,6 +3091,26 @@ const OrdenesCompra = ({ currentUser }) => {
             ) : (
               <div style={{ padding: '24px 28px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
                 
+                {/* Banner si la ODC fue rechazada */}
+                {(editOdcTarget.motivo_rechazo_compras || editOdcTarget.estado_aprobacion_precio === 'rechazado' || editOdcTarget.estatus_orden === 'RECHAZADA') && (
+                  <div style={{ backgroundColor: '#fef2f2', border: '1.5px solid #fca5a5', padding: '16px 20px', borderRadius: '16px', display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+                    <AlertTriangle size={22} color="#dc2626" style={{ flexShrink: 0, marginTop: '2px' }} />
+                    <div>
+                      <div style={{ fontWeight: '900', color: '#991b1b', fontSize: '0.9rem' }}>
+                        Modificación de Órden de Compra Rechazada
+                      </div>
+                      {editOdcTarget.motivo_rechazo_compras && (
+                        <div style={{ fontSize: '0.82rem', color: '#7f1d1d', marginTop: '4px' }}>
+                          <strong>Motivo de rechazo indicado por Compras:</strong> "{editOdcTarget.motivo_rechazo_compras}"
+                        </div>
+                      )}
+                      <div style={{ fontSize: '0.78rem', color: '#b91c1c', marginTop: '4px', fontStyle: 'italic' }}>
+                        💡 Modifique los precios, renglones o datos de proveedor según las observaciones. Al guardar, el estatus volverá a <strong>PENDIENTE</strong> para que Compras / Gerencia la evalúe y apruebe para Cuentas por Pagar.
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Sección 1: Encabezado y Datos del Proveedor */}
                 <div style={{ backgroundColor: '#f8fafc', padding: '18px 20px', borderRadius: '16px', border: '1px solid #e2e8f0' }}>
                   <h4 style={{ margin: '0 0 14px 0', fontSize: '0.88rem', fontWeight: '800', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -3087,6 +3706,362 @@ const OrdenesCompra = ({ currentUser }) => {
               >
                 Listo / Cerrar
               </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Revisión y Asignación de Prioridad de ODC */}
+      {modalPrioridadOpen && odcPrioridadTarget && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15, 23, 42, 0.85)', backdropFilter: 'blur(6px)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 12000, padding: '20px' }}>
+          <div style={{ backgroundColor: 'white', borderRadius: '24px', width: '100%', maxWidth: '960px', maxHeight: '92vh', overflowY: 'auto', boxShadow: '0 25px 60px -12px rgba(0,0,0,0.5)', padding: '28px' }}>
+            
+            {/* Cabecera del Modal */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px', borderBottom: '1px solid #e2e8f0', paddingBottom: '16px' }}>
+              <div>
+                <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#7c3aed', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  Aprobación de Precio & Prioridad de Pago
+                </span>
+                <h2 style={{ margin: '3px 0 0 0', fontSize: '1.4rem', fontWeight: '900', color: '#0f172a' }}>
+                  {odcPrioridadTarget.numero_odc}
+                </h2>
+                
+                {/* Badges de Estado */}
+                <div style={{ display: 'flex', gap: '8px', marginTop: '8px', flexWrap: 'wrap' }}>
+                  {odcPrioridadTarget.requisicion_es_emergencia ? (
+                    <span style={{ padding: '3px 10px', borderRadius: '6px', fontSize: '0.74rem', fontWeight: '900', backgroundColor: '#fee2e2', color: '#dc2626', border: '1px solid #fca5a5' }}>
+                      🚨 REQUISICIÓN DE EMERGENCIA
+                    </span>
+                  ) : (
+                    <span style={{ padding: '3px 10px', borderRadius: '6px', fontSize: '0.74rem', fontWeight: '800', backgroundColor: '#f1f5f9', color: '#475569' }}>
+                      📋 REQUISICIÓN NORMAL
+                    </span>
+                  )}
+
+                  {odcPrioridadTarget.proveedor_es_preferencial ? (
+                    <span style={{ padding: '3px 10px', borderRadius: '6px', fontSize: '0.74rem', fontWeight: '900', backgroundColor: '#fef3c7', color: '#b45309', border: '1px solid #fde68a' }}>
+                      ⭐ PROVEEDOR PREFERENCIAL ({odcPrioridadTarget.proveedor_nivel_preferencial || 'TIER 1'})
+                    </span>
+                  ) : (
+                    <span style={{ padding: '3px 10px', borderRadius: '6px', fontSize: '0.74rem', fontWeight: '800', backgroundColor: '#f1f5f9', color: '#475569' }}>
+                      🏢 PROVEEDOR REGULAR
+                    </span>
+                  )}
+
+                  <span style={{ 
+                    padding: '3px 10px', borderRadius: '6px', fontSize: '0.74rem', fontWeight: '800',
+                    backgroundColor: odcPrioridadTarget.tipo_pago === 'CREDITO' ? '#eff6ff' : '#f0fdf4',
+                    color: odcPrioridadTarget.tipo_pago === 'CREDITO' ? '#1d4ed8' : '#15803d',
+                    border: odcPrioridadTarget.tipo_pago === 'CREDITO' ? '1px solid #bfdbfe' : '1px solid #bbf7d0'
+                  }}>
+                    {odcPrioridadTarget.tipo_pago === 'CREDITO' ? `💳 CRÉDITO (${odcPrioridadTarget.dias_credito || 0} DÍAS)` : '💵 CONTADO'}
+                  </span>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setModalPrioridadOpen(false)}
+                style={{ background: '#f1f5f9', border: 'none', borderRadius: '50%', width: '36px', height: '36px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              >
+                <XCircle size={20} color="#64748b" />
+              </button>
+            </div>
+
+            {/* Metadatos Resumen Proveedor y Requisición */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '14px', marginBottom: '20px' }}>
+              <div style={{ backgroundColor: '#f8fafc', padding: '14px 16px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+                <div style={{ fontSize: '0.75rem', fontWeight: '800', color: '#64748b', textTransform: 'uppercase', marginBottom: '4px' }}>
+                  Datos del Proveedor
+                </div>
+                <div style={{ fontWeight: '900', color: '#0f172a', fontSize: '0.92rem' }}>
+                  {odcPrioridadTarget.proveedor_nombre || 'N/A'}
+                </div>
+                <div style={{ fontSize: '0.78rem', color: '#475569', marginTop: '2px' }}>
+                  <strong>RIF:</strong> {odcPrioridadTarget.proveedor_rif || 'N/A'} | <strong>Contacto:</strong> {odcPrioridadTarget.proveedor_contacto || 'N/A'}
+                </div>
+                <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '3px' }}>
+                  <strong>Cuenta Bancaria / Pago:</strong> {odcPrioridadTarget.datos_bancarios || odcPrioridadTarget.cuenta_bancaria || 'No especificada'}
+                </div>
+              </div>
+
+              <div style={{ backgroundColor: '#f0fdf4', padding: '14px 16px', borderRadius: '12px', border: '1px solid #bbf7d0' }}>
+                <div style={{ fontSize: '0.75rem', fontWeight: '800', color: '#166534', textTransform: 'uppercase', marginBottom: '4px' }}>
+                  Requisición de Origen & Destino
+                </div>
+                <div style={{ fontWeight: '900', color: '#14532d', fontSize: '0.92rem' }}>
+                  {odcPrioridadTarget.requisicion_correlativo || (odcPrioridadTarget.requisicion_id ? `REQ-${odcPrioridadTarget.requisicion_id}` : 'Sin correlativo')}
+                </div>
+                <div style={{ fontSize: '0.78rem', color: '#166534', marginTop: '2px' }}>
+                  <strong>Solicitante:</strong> {odcPrioridadTarget.solicitante || odcPrioridadTarget.requisicion_obj?.solicitante || 'Total Clean C.A.'}
+                </div>
+                <div style={{ fontSize: '0.75rem', color: '#166534', marginTop: '3px' }}>
+                  <strong>Destino / Centro de Costo:</strong> {odcPrioridadTarget.destino_despacho || odcPrioridadTarget.requisicion_obj?.centro_costo || 'Galpones Riese'}
+                </div>
+              </div>
+            </div>
+
+            {/* Comparativa de Precios y Renglones (Opción 5) */}
+            <div style={{ marginBottom: '22px' }}>
+              <h4 style={{ margin: '0 0 10px 0', fontSize: '0.9rem', fontWeight: '900', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <DollarSign size={16} color="#7c3aed" /> Comparativa de Precios Cotizados vs Estimados de Requisición
+              </h4>
+
+              {loadingItemsPrioridad ? (
+                <div style={{ padding: '30px', textAlign: 'center', color: '#64748b' }}>
+                  <RefreshCw size={20} className="animate-spin" style={{ margin: '0 auto 8px auto' }} />
+                  Cargando renglones y análisis de precios...
+                </div>
+              ) : itemsOdcPrioridad.length === 0 ? (
+                <div style={{ padding: '20px', textAlign: 'center', color: '#94a3b8', backgroundColor: '#f8fafc', borderRadius: '12px' }}>
+                  No se encontraron renglones para esta Órden de Compra.
+                </div>
+              ) : (
+                <div style={{ overflowX: 'auto', border: '1px solid #cbd5e1', borderRadius: '12px' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+                    <thead>
+                      <tr style={{ backgroundColor: '#0f172a', color: 'white', textAlign: 'left' }}>
+                        <th style={{ padding: '10px 12px', width: '4%', textAlign: 'center' }}>#</th>
+                        <th style={{ padding: '10px 12px', width: '36%' }}>Descripción del Ítem</th>
+                        <th style={{ padding: '10px 12px', width: '10%', textAlign: 'center' }}>Cant. & Unidad</th>
+                        <th style={{ padding: '10px 12px', width: '14%', textAlign: 'right' }}>PU Cotizado ODC ($)</th>
+                        <th style={{ padding: '10px 12px', width: '14%', textAlign: 'right' }}>Total Fila ($)</th>
+                        <th style={{ padding: '10px 12px', width: '12%', textAlign: 'right' }}>PU Estimado Req</th>
+                        <th style={{ padding: '10px 12px', width: '10%', textAlign: 'center' }}>Variación</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {itemsOdcPrioridad.map((it, idx) => {
+                        const puCot = parseFloat(it.precio_unitario) || 0;
+                        const puEst = parseFloat(it.precio_estimado_req) || 0;
+                        const diff = it.diferencia_pu || 0;
+                        const pct = it.diferencia_pct || 0;
+                        return (
+                          <tr key={it.id || idx} style={{ borderBottom: '1px solid #f1f5f9', backgroundColor: idx % 2 === 0 ? 'white' : '#f8fafc' }}>
+                            <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: '700', color: '#64748b' }}>{idx + 1}</td>
+                            <td style={{ padding: '10px 12px', fontWeight: '600', color: '#0f172a' }}>{it.descripcion}</td>
+                            <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: '700', color: '#475569' }}>
+                              {it.cantidad} {it.unidad || 'UNID'}
+                            </td>
+                            <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: '800', color: '#0f172a' }}>
+                              $ {puCot.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                            </td>
+                            <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: '900', color: '#0369a1' }}>
+                              $ {(Number(it.total_fila || (it.cantidad * puCot))).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                            </td>
+                            <td style={{ padding: '10px 12px', textAlign: 'right', color: '#64748b' }}>
+                              {puEst > 0 ? `$ ${puEst.toLocaleString('de-DE', { minimumFractionDigits: 2 })}` : 'N/A'}
+                            </td>
+                            <td style={{ padding: '10px 12px', textAlign: 'center' }}>
+                              {puEst > 0 ? (
+                                diff < 0 ? (
+                                  <span style={{ fontSize: '0.72rem', fontWeight: '800', color: '#16a34a', backgroundColor: '#dcfce7', padding: '2px 6px', borderRadius: '4px' }}>
+                                    {pct.toFixed(1)}% (Ahorro)
+                                  </span>
+                                ) : diff > 0 ? (
+                                  <span style={{ fontSize: '0.72rem', fontWeight: '800', color: '#dc2626', backgroundColor: '#fee2e2', padding: '2px 6px', borderRadius: '4px' }}>
+                                    +{pct.toFixed(1)}%
+                                  </span>
+                                ) : (
+                                  <span style={{ fontSize: '0.72rem', fontWeight: '800', color: '#0284c7', backgroundColor: '#e0f2fe', padding: '2px 6px', borderRadius: '4px' }}>
+                                    = Igual
+                                  </span>
+                                )
+                              ) : (
+                                <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>—</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* Total General Banner */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '10px', gap: '20px' }}>
+                <div style={{ backgroundColor: '#0f172a', color: 'white', padding: '10px 20px', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '14px' }}>
+                  <span style={{ fontSize: '0.85rem', fontWeight: '700', color: '#94a3b8' }}>TOTAL GENERAL ODC:</span>
+                  <span style={{ fontSize: '1.2rem', fontWeight: '900', color: '#38bdf8' }}>
+                    $ {Number(odcPrioridadTarget.total_general || odcPrioridadTarget.total || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Selector de Nivel de Prioridad (1 y 2) */}
+            <div style={{ marginBottom: '22px', backgroundColor: '#faf5ff', padding: '20px', borderRadius: '16px', border: '1.5px solid #e9d5ff' }}>
+              <label style={{ display: 'block', fontSize: '0.9rem', fontWeight: '900', color: '#581c87', marginBottom: '12px' }}>
+                ⚡ Seleccione el Nivel de Prioridad de Aprobación para Pago:
+              </label>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '14px' }}>
+                
+                {/* Opción Nivel 1 */}
+                <div
+                  onClick={() => setPrioridadSeleccionada(1)}
+                  style={{
+                    padding: '16px',
+                    borderRadius: '14px',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s',
+                    border: prioridadSeleccionada === 1 ? '2.5px solid #dc2626' : '1.5px solid #cbd5e1',
+                    backgroundColor: prioridadSeleccionada === 1 ? '#fef2f2' : '#ffffff',
+                    boxShadow: prioridadSeleccionada === 1 ? '0 4px 12px rgba(220, 38, 38, 0.15)' : 'none'
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                    <span style={{ fontSize: '0.95rem', fontWeight: '900', color: '#991b1b', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      🔴 NIVEL 1 — Prioridad Máxima de Pago
+                    </span>
+                    <input
+                      type="radio"
+                      name="prioridad_odc"
+                      checked={prioridadSeleccionada === 1}
+                      onChange={() => setPrioridadSeleccionada(1)}
+                      style={{ width: '18px', height: '18px', cursor: 'pointer', accentColor: '#dc2626' }}
+                    />
+                  </div>
+                  <p style={{ margin: 0, fontSize: '0.78rem', color: '#7f1d1d', fontWeight: '500', lineHeight: 1.4 }}>
+                    Pago prioritario inmediato. Recomendado para requisiciones de <strong>EMERGENCIA</strong>, proveedores críticos o acuerdos que exigen desembolso urgente.
+                  </p>
+                </div>
+
+                {/* Opción Nivel 2 */}
+                <div
+                  onClick={() => setPrioridadSeleccionada(2)}
+                  style={{
+                    padding: '16px',
+                    borderRadius: '14px',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s',
+                    border: prioridadSeleccionada === 2 ? '2.5px solid #2563eb' : '1.5px solid #cbd5e1',
+                    backgroundColor: prioridadSeleccionada === 2 ? '#eff6ff' : '#ffffff',
+                    boxShadow: prioridadSeleccionada === 2 ? '0 4px 12px rgba(37, 99, 235, 0.15)' : 'none'
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                    <span style={{ fontSize: '0.95rem', fontWeight: '900', color: '#1e40af', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      🔵 NIVEL 2 — Prioridad Normal / Programable
+                    </span>
+                    <input
+                      type="radio"
+                      name="prioridad_odc"
+                      checked={prioridadSeleccionada === 2}
+                      onChange={() => setPrioridadSeleccionada(2)}
+                      style={{ width: '18px', height: '18px', cursor: 'pointer', accentColor: '#2563eb' }}
+                    />
+                  </div>
+                  <p style={{ margin: 0, fontSize: '0.78rem', color: '#1e3a8a', fontWeight: '500', lineHeight: 1.4 }}>
+                    Pago regular programado. Para compras ordinarias bajo plazos normales de crédito o flujo estándar de caja.
+                  </p>
+                </div>
+
+              </div>
+            </div>
+
+            {/* Formulario de Rechazo (Opción 6) */}
+            {mostrarRechazoInput && (
+              <div style={{ backgroundColor: '#fef2f2', border: '1.5px solid #fca5a5', padding: '16px 20px', borderRadius: '14px', marginBottom: '20px' }}>
+                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: '800', color: '#991b1b', marginBottom: '6px' }}>
+                  Motivo de Rechazo / Ajustes requeridos para Compras (Precios, Días de Crédito, Proveedor) *
+                </label>
+                <textarea
+                  rows={3}
+                  style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #f87171', fontSize: '0.82rem', resize: 'vertical' }}
+                  placeholder="Explique el motivo por el cual se rechaza el precio o condición y qué ajustes debe realizar Compras antes de volver a enviarla..."
+                  value={motivoRechazoInput}
+                  onChange={(e) => setMotivoRechazoInput(e.target.value)}
+                />
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>
+                  <button
+                    type="button"
+                    onClick={() => setMostrarRechazoInput(false)}
+                    style={{ padding: '8px 16px', fontSize: '0.78rem', fontWeight: '700', borderRadius: '8px', border: '1px solid #cbd5e1', backgroundColor: 'white', color: '#475569', cursor: 'pointer' }}
+                  >
+                    Cancelar Rechazo
+                  </button>
+                  <button
+                    type="button"
+                    disabled={guardandoPrioridadOdc}
+                    onClick={ejecutarRechazoPrecioODC}
+                    style={{ padding: '8px 18px', fontSize: '0.78rem', fontWeight: '800', borderRadius: '8px', border: 'none', backgroundColor: '#dc2626', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
+                  >
+                    <Ban size={15} /> Confirmar Rechazo de ODC
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Botones Principales de Acción */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid #e2e8f0', paddingTop: '18px', flexWrap: 'wrap', gap: '12px' }}>
+              <div>
+                {!mostrarRechazoInput && (
+                  <button
+                    type="button"
+                    onClick={() => setMostrarRechazoInput(true)}
+                    style={{
+                      padding: '10px 18px',
+                      fontSize: '0.82rem',
+                      fontWeight: '800',
+                      borderRadius: '10px',
+                      border: '1px solid #fca5a5',
+                      backgroundColor: '#fff',
+                      color: '#dc2626',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px'
+                    }}
+                  >
+                    <Ban size={15} /> Rechazar Orden de Compra
+                  </button>
+                )}
+              </div>
+
+              <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                <button
+                  type="button"
+                  onClick={() => setModalPrioridadOpen(false)}
+                  style={{
+                    padding: '10px 20px',
+                    fontSize: '0.82rem',
+                    fontWeight: '700',
+                    borderRadius: '10px',
+                    border: '1px solid #cbd5e1',
+                    backgroundColor: '#f8fafc',
+                    color: '#475569',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Cerrar
+                </button>
+
+                <button
+                  type="button"
+                  disabled={guardandoPrioridadOdc}
+                  onClick={() => ejecutarAprobacionPrecioYPrioridad(prioridadSeleccionada)}
+                  style={{
+                    padding: '10px 24px',
+                    fontSize: '0.85rem',
+                    fontWeight: '900',
+                    borderRadius: '10px',
+                    border: 'none',
+                    backgroundColor: prioridadSeleccionada === 1 ? '#dc2626' : '#16a34a',
+                    color: 'white',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    boxShadow: '0 4px 14px rgba(22, 163, 74, 0.3)'
+                  }}
+                >
+                  <CheckCircle2 size={16} />
+                  {guardandoPrioridadOdc ? 'Guardando...' : `Aprobar Precio de ODC (Nivel ${prioridadSeleccionada})`}
+                </button>
+              </div>
             </div>
 
           </div>

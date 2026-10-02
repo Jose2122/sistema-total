@@ -7,7 +7,7 @@ import toast from 'react-hot-toast';
 import { format } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Loader2, Upload, FileText, MessageSquare, Paperclip, Clock, CheckCircle2, AlertCircle, ShoppingBag, ChevronDown, X, Landmark, Trash2 } from 'lucide-react';
-import { getSemanaInfo, getSemanaInfoForWeek } from './utils/helpers';
+import { getSemanaInfo, getSemanaInfoForWeek, safeSupabaseInsert } from './utils/helpers';
 import { compressImage } from './utils/compressImage';
 import { obtenerTodosProveedores } from './services/proveedoresService';
 import './Requisiciones.css';
@@ -644,47 +644,49 @@ const Compras = () => {
 
       const prov = proveedores.find(p => String(p.id) === String(odcForm.proveedor_id));
 
-      const { data: odcCreada, error: errOdc } = await supabase
-        .from('ordenes_compra')
-        .insert([{
-          numero_odc,
-          requisicion_id: odcForm.requisicion_id || requisicionActiva?.id || null,
-          proveedor_id: odcForm.proveedor_id,
-          proveedor_nombre: prov?.razon_social || prov?.nombre || null,
-          proveedor_rif: prov?.rif || prov?.rif_nit || null,
-          proveedor_contacto: prov?.persona_contacto || prov?.contacto_nombre || null,
-          proveedor_ciudad: prov?.ciudad || prov?.localizacion || null,
-          proveedor_direccion: prov?.direccion || null,
-          cotizacion_ref: odcForm.cotizacion_ref || null,
-          fecha_cotizacion: odcForm.fecha_cotizacion || null,
-          fecha_despacho: odcForm.fecha_despacho || odcForm.fecha_cotizacion || new Date().toISOString().split('T')[0],
-          tipo_pago: odcForm.tipo_pago,
-          dias_credito: odcForm.tipo_pago === 'CREDITO' ? (parseInt(odcForm.dias_credito) || 0) : 0,
-          fecha_vencimiento_credito: fechaVenc,
-          despachar_a_id: odcForm.despachar_a_id || null,
-          despachar_a_direccion: odcForm.despachar_a_direccion || 'Galpones Riese - Av. Los Haticos',
-          destino_despacho: odcForm.despachar_a_direccion || 'Galpones Riese - Av. Los Haticos',
-          datos_bancarios: odcForm.cuenta_bancaria_proveedor || null,
-          cuenta_bancaria: odcForm.cuenta_bancaria_proveedor || null,
-          observaciones: odcForm.observaciones || null,
-          subtotal: subtotalVal,
-          iva_porcentaje: odcForm.aplica_iva ? 16 : 0,
-          iva_monto: ivaVal,
-          total: totalVal,
-          total_general: totalVal,
-          moneda: odcForm.moneda === 'OTRA' ? (odcForm.moneda_custom?.trim().toUpperCase() || 'OTRA') : (odcForm.moneda || 'USD'),
-          tasa_bcv: odcForm.moneda === 'USD' ? 1 : (parseFloat(odcForm.tasa_bcv) || 1),
-          elaborado_por_id: currentUser?.id || null,
-          elaborado_por_nombre: `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim() || 'Comprador',
-          revisado_por_nombre: 'Ricardo Herrera',
-          aprobado_por_nombre: 'Carlos Vega',
-          carlos_firma_digital_activa: false,
-          status_pago: 'PENDIENTE'
-        }])
-        .select()
-        .single();
+      const baseOdcPayload = {
+        numero_odc,
+        requisicion_id: odcForm.requisicion_id || requisicionActiva?.id || null,
+        proveedor_id: odcForm.proveedor_id,
+        proveedor_nombre: prov?.razon_social || prov?.nombre || null,
+        proveedor_rif: prov?.rif || prov?.rif_nit || null,
+        proveedor_contacto: prov?.persona_contacto || prov?.contacto_nombre || null,
+        proveedor_ciudad: prov?.ciudad || prov?.localizacion || null,
+        proveedor_direccion: prov?.direccion || null,
+        cotizacion_ref: odcForm.cotizacion_ref || null,
+        fecha_cotizacion: odcForm.fecha_cotizacion || null,
+        fecha_despacho: odcForm.fecha_despacho || odcForm.fecha_cotizacion || new Date().toISOString().split('T')[0],
+        tipo_pago: odcForm.tipo_pago,
+        dias_credito: odcForm.tipo_pago === 'CREDITO' ? (parseInt(odcForm.dias_credito) || 0) : 0,
+        fecha_vencimiento_credito: fechaVenc,
+        despachar_a_id: odcForm.despachar_a_id || null,
+        despachar_a_direccion: odcForm.despachar_a_direccion || 'Galpones Riese - Av. Los Haticos',
+        destino_despacho: odcForm.despachar_a_direccion || 'Galpones Riese - Av. Los Haticos',
+        datos_bancarios: odcForm.cuenta_bancaria_proveedor || null,
+        cuenta_bancaria: odcForm.cuenta_bancaria_proveedor || null,
+        observaciones: odcForm.observaciones || null,
+        subtotal: subtotalVal,
+        iva_porcentaje: odcForm.aplica_iva ? 16 : 0,
+        iva_monto: ivaVal,
+        total: totalVal,
+        total_general: totalVal,
+        moneda: odcForm.moneda === 'OTRA' ? (odcForm.moneda_custom?.trim().toUpperCase() || 'OTRA') : (odcForm.moneda || 'USD'),
+        tasa_bcv: odcForm.moneda === 'USD' ? 1 : (parseFloat(odcForm.tasa_bcv) || 1),
+        elaborado_por_id: currentUser?.id || null,
+        elaborado_por_nombre: `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim() || 'Comprador',
+        revisado_por_nombre: 'Ricardo Herrera',
+        aprobado_por_nombre: 'Carlos Vega',
+        carlos_firma_digital_activa: false,
+        status_pago: 'PENDIENTE',
+        estado_aprobacion_precio: 'pendiente',
+        prioridad_pago: null,
+        motivo_rechazo_compras: null
+      };
 
-      if (errOdc) throw errOdc;
+      const { data: odcInsertData, error: errOdc } = await safeSupabaseInsert(supabase, 'ordenes_compra', baseOdcPayload);
+      const odcCreada = Array.isArray(odcInsertData) ? odcInsertData[0] : odcInsertData;
+
+      if (errOdc || !odcCreada) throw (errOdc || new Error("No se pudo crear el registro de Orden de Compra."));
 
       const itemsPayload = itemsIncluidos.map(it => {
         const montoFila = (parseFloat(it.cant_odc) || 0) * (parseFloat(it.pu_odc) || 0);

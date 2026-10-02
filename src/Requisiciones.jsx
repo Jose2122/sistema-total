@@ -547,11 +547,18 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     // --- DEEP LINKING LISTENER ---
     const handleDeepLink = (e) => {
       const targetId = e.detail;
-      if (targetId && historial.length > 0) {
-        const targetReq = historial.find(h => h.id === targetId || String(h.id) === String(targetId));
-        if (targetReq) {
-          verRequisicion(targetReq);
-        }
+      if (targetId) {
+        sessionStorage.setItem('abrir_requisicion_id', String(targetId));
+        setHistorial(prev => {
+          if (prev && prev.length > 0) {
+            const targetReq = prev.find(h => String(h.id) === String(targetId) || h.correlativo === targetId || h.correlativo_req === targetId);
+            if (targetReq) {
+              sessionStorage.removeItem('abrir_requisicion_id');
+              setTimeout(() => verRequisicion(targetReq), 50);
+            }
+          }
+          return prev;
+        });
       }
     };
     window.addEventListener('abrirRequisicionDeepLink', handleDeepLink);
@@ -561,6 +568,18 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       window.removeEventListener('abrirRequisicionDeepLink', handleDeepLink);
     };
   }, [cargarHistorialDesdeBD]);
+
+  // Auto-abrir requisición pendiente por Deep Link una vez cargado el historial
+  useEffect(() => {
+    const pendingOpenId = sessionStorage.getItem('abrir_requisicion_id');
+    if (pendingOpenId && historial && historial.length > 0) {
+      const targetReq = historial.find(h => String(h.id) === String(pendingOpenId) || h.correlativo === pendingOpenId || h.correlativo_req === pendingOpenId);
+      if (targetReq) {
+        sessionStorage.removeItem('abrir_requisicion_id');
+        setTimeout(() => verRequisicion(targetReq), 50);
+      }
+    }
+  }, [historial]);
 
   // --- LÓGICA DE FILTRADO EN TIEMPO REAL ---
   const historialFiltrado = useMemo(() => {

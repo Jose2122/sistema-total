@@ -21,6 +21,7 @@ import {
 import toast from 'react-hot-toast';
 import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
+import { resolverCategoriaGasto } from './utils/helpers';
 import './Reportes.css';
 import './ReportesMaestro.css';
 
@@ -419,6 +420,7 @@ const Reportes = () => {
             correlativo: doc.correlativo_req || `REQ-${String(doc.id).padStart(3, '0')}`,
             almacen: isAlmacen ? 'SÍ' : 'NO',
             almacenBool: isAlmacen,
+            prioridad: doc.prioridad || 'Normal',
             descripcion: item.descripcion || '—',
             nroFactura: nroFactura,
             fecha: fechaEmision,
@@ -453,6 +455,7 @@ const Reportes = () => {
             correlativo: doc.codigo_control || `TP-${String(doc.id).padStart(4, '0')}`,
             almacen: 'NO',
             almacenBool: false,
+            prioridad: doc.prioridad || 'Normal',
             descripcion: item.desc || item.descripcion || '—',
             nroFactura: doc.ref_pago || '0',
             fecha: fecha,
@@ -464,7 +467,7 @@ const Reportes = () => {
             teOrderProveedor: 0,
             fechaEntregaAlmacen: '',
             solicitante: doc.responsable_nombre || '—',
-            categoria: item.cat || item.categoria || 'S/C',
+            categoria: resolverCategoriaGasto(item, doc),
             gerencia: doc.departamento || 'No asignada',
             centroCosto: item.cc || doc.centro_costo || '—',
             monedaPago: '$/BS',
@@ -1146,6 +1149,7 @@ const Reportes = () => {
     const headers = [
       'CORRELATIVO #',
       'ALMACÉN',
+      'PRIORIDAD',
       'DESCRIPCIÓN',
       'NRO DE FACTURA',
       'FECHA',
@@ -1180,6 +1184,7 @@ const Reportes = () => {
       const row = worksheet.addRow([
         r.correlativo,
         r.almacen,
+        (r.prioridad || 'Normal').toUpperCase(),
         r.descripcion,
         r.nroFactura,
         r.fecha ? new Date(r.fecha + 'T12:00:00') : '—',
@@ -1201,35 +1206,36 @@ const Reportes = () => {
       ]);
 
       // Aplicar formatos
-      if (r.fecha) row.getCell(5).numFmt = 'dd/mm/yyyy';
-      if (r.fechaAprobGteGtl) row.getCell(6).numFmt = 'dd/mm/yyyy';
-      if (r.asignacionGCompras) row.getCell(7).numFmt = 'dd/mm/yyyy';
-      if (r.fechaEntregaAlmacen) row.getCell(10).numFmt = 'dd/mm/yyyy';
+      if (r.fecha) row.getCell(6).numFmt = 'dd/mm/yyyy';
+      if (r.fechaAprobGteGtl) row.getCell(7).numFmt = 'dd/mm/yyyy';
+      if (r.asignacionGCompras) row.getCell(8).numFmt = 'dd/mm/yyyy';
+      if (r.fechaEntregaAlmacen) row.getCell(11).numFmt = 'dd/mm/yyyy';
 
       row.getCell(1).numFmt = '@';
-      row.getCell(4).numFmt = '@';
-      if (typeof r.teOrderSys === 'number') row.getCell(8).numFmt = '#,##0';
-      if (typeof r.teOrderProveedor === 'number') row.getCell(9).numFmt = '#,##0';
-      row.getCell(17).numFmt = '#,##0';
+      row.getCell(5).numFmt = '@';
+      if (typeof r.teOrderSys === 'number') row.getCell(9).numFmt = '#,##0';
+      if (typeof r.teOrderProveedor === 'number') row.getCell(10).numFmt = '#,##0';
       row.getCell(18).numFmt = '#,##0';
       row.getCell(19).numFmt = '#,##0';
-      row.getCell(20).numFmt = '"$"#,##0.00;[Red]"$"#,##0.00';
+      row.getCell(20).numFmt = '#,##0';
+      row.getCell(21).numFmt = '"$"#,##0.00;[Red]"$"#,##0.00';
 
       row.getCell(1).alignment = { horizontal: 'center' };
       row.getCell(2).alignment = { horizontal: 'center' };
-      row.getCell(4).alignment = { horizontal: 'center' };
+      row.getCell(3).alignment = { horizontal: 'center' };
       row.getCell(5).alignment = { horizontal: 'center' };
       row.getCell(6).alignment = { horizontal: 'center' };
       row.getCell(7).alignment = { horizontal: 'center' };
       row.getCell(8).alignment = { horizontal: 'center' };
       row.getCell(9).alignment = { horizontal: 'center' };
       row.getCell(10).alignment = { horizontal: 'center' };
-      row.getCell(15).alignment = { horizontal: 'center' };
+      row.getCell(11).alignment = { horizontal: 'center' };
       row.getCell(16).alignment = { horizontal: 'center' };
-      row.getCell(17).alignment = { horizontal: 'right' };
+      row.getCell(17).alignment = { horizontal: 'center' };
       row.getCell(18).alignment = { horizontal: 'right' };
       row.getCell(19).alignment = { horizontal: 'right' };
       row.getCell(20).alignment = { horizontal: 'right' };
+      row.getCell(21).alignment = { horizontal: 'right' };
 
       row.eachCell(cell => {
         cell.border = {
@@ -1244,6 +1250,7 @@ const Reportes = () => {
     worksheet.columns = [
       { width: 18 }, // CORRELATIVO #
       { width: 12 }, // ALMACÉN
+      { width: 16 }, // PRIORIDAD
       { width: 42 }, // DESCRIPCIÓN
       { width: 18 }, // NRO DE FACTURA
       { width: 14 }, // FECHA
@@ -1265,13 +1272,13 @@ const Reportes = () => {
     ];
 
     const lastRowNum = slaRows.length + 3;
-    worksheet.mergeCells(`A${lastRowNum}:S${lastRowNum}`);
+    worksheet.mergeCells(`A${lastRowNum}:T${lastRowNum}`);
     const totalLabel = worksheet.getCell(`A${lastRowNum}`);
     totalLabel.value = 'TOTAL GENERAL ($):';
     totalLabel.font = { bold: true };
     totalLabel.alignment = { horizontal: 'right', vertical: 'middle' };
 
-    const totalVal = worksheet.getCell(`T${lastRowNum}`);
+    const totalVal = worksheet.getCell(`U${lastRowNum}`);
     totalVal.value = totalGastoSLA;
     totalVal.font = { bold: true, color: { argb: 'FF15803D' } };
     totalVal.numFmt = '"$"#,##0.00';
@@ -1773,7 +1780,7 @@ const Reportes = () => {
         </table>
       )}
 
-      {/* --- VISTA 2: REPORTE DE LEAD TIMES & SLA (18 COLUMNAS EXACTAS SEGÚN IMAGEN) --- */}
+      {/* --- VISTA 2: REPORTE DE LEAD TIMES & SLA (COLUMNAS EXACTAS CON PRIORIDAD) --- */}
       {tabActiva === 'lead_times' && (
         <div className="sla-table-wrapper">
           <table className="sla-table">
@@ -1781,6 +1788,7 @@ const Reportes = () => {
               <tr>
                 <th style={{ minWidth: '130px' }}>CORRELATIVO #</th>
                 <th style={{ minWidth: '80px' }}>ALMACÉN</th>
+                <th style={{ minWidth: '110px', textAlign: 'center' }}>PRIORIDAD</th>
                 <th style={{ minWidth: '260px', textAlign: 'left' }}>DESCRIPCIÓN</th>
                 <th style={{ minWidth: '120px' }}>NRO DE FACTURA</th>
                 <th style={{ minWidth: '100px' }}>FECHA</th>
@@ -1804,7 +1812,7 @@ const Reportes = () => {
             <tbody>
               {slaRows.length === 0 ? (
                 <tr>
-                  <td colSpan="20" style={{ textAlign: 'center', padding: '60px', color: '#94a3b8', fontStyle: 'italic' }}>
+                  <td colSpan="21" style={{ textAlign: 'center', padding: '60px', color: '#94a3b8', fontStyle: 'italic' }}>
                     No se encontraron registros de adquisiciones con los filtros seleccionados.
                   </td>
                 </tr>
@@ -1826,6 +1834,22 @@ const Reportes = () => {
                           border: `1px solid ${r.almacenBool ? '#bfdbfe' : '#e2e8f0'}`
                         }}>
                           {r.almacen}
+                        </span>
+                      </td>
+                      <td style={{ textAlign: 'center' }}>
+                        <span style={{
+                          padding: '3px 8px',
+                          borderRadius: '6px',
+                          fontSize: '0.65rem',
+                          fontWeight: '800',
+                          backgroundColor: (r.prioridad || '').toLowerCase() === 'emergencia' ? '#fee2e2' : '#eff6ff',
+                          color: (r.prioridad || '').toLowerCase() === 'emergencia' ? '#dc2626' : '#2563eb',
+                          border: `1px solid ${(r.prioridad || '').toLowerCase() === 'emergencia' ? '#fecaca' : '#bfdbfe'}`,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px'
+                        }}>
+                          {(r.prioridad || '').toLowerCase() === 'emergencia' ? '🚨 EMERGENCIA' : 'NORMAL'}
                         </span>
                       </td>
                       <td style={{ textAlign: 'left', fontWeight: '700', color: '#0f172a', maxWidth: '300px', overflow: 'hidden', textOverflow: 'ellipsis' }} title={r.descripcion}>

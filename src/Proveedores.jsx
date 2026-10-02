@@ -653,7 +653,17 @@ const Proveedores = ({ currentUser }) => {
         }
       }
 
-      const provGuardado = await guardarProveedorService(formData, usuarioActivo, nombreUsuarioActual);
+      const catsLimpias = (Array.isArray(formData.categoria) ? formData.categoria : (formData.categoria ? [formData.categoria] : []))
+        .map(c => String(c).trim().toUpperCase())
+        .filter(Boolean);
+      const categoriaFinal = catsLimpias.length > 0 ? (catsLimpias.length > 1 ? catsLimpias.filter(c => c !== 'OTROS') : catsLimpias) : ['OTROS'];
+
+      const provAGuardar = {
+        ...formData,
+        categoria: categoriaFinal
+      };
+
+      const provGuardado = await guardarProveedorService(provAGuardar, usuarioActivo, nombreUsuarioActual);
 
       setProveedores(prev => {
         const listaActualizada = esEdicion
@@ -794,18 +804,17 @@ const Proveedores = ({ currentUser }) => {
       toast.error('La categoría no puede estar vacía');
       return;
     }
-    // Verificar si ya existe
-    const yaExiste = categoriasUnicas.includes(trimmed);
-    if (yaExiste) {
-      toast.error('La categoría ya existe');
-      if (!formData.categoria.includes(trimmed)) {
-        setFormData(prev => ({ ...prev, categoria: [...prev.categoria, trimmed] }));
-      }
-      setNuevaCategoriaText('');
-      return;
+    if (!sessionCategories.includes(trimmed)) {
+      setSessionCategories(prev => [...prev, trimmed]);
     }
-    setSessionCategories(prev => [...prev, trimmed]);
-    setFormData(prev => ({ ...prev, categoria: [...prev.categoria, trimmed] }));
+    setFormData(prev => {
+      const prevCats = Array.isArray(prev.categoria) ? prev.categoria : (prev.categoria ? [prev.categoria] : []);
+      const filtered = prevCats.filter(c => c && (trimmed === 'OTROS' || String(c).toUpperCase() !== 'OTROS'));
+      if (!filtered.includes(trimmed)) {
+        return { ...prev, categoria: [...filtered, trimmed] };
+      }
+      return { ...prev, categoria: filtered };
+    });
     setNuevaCategoriaText('');
     toast.success(`Categoría "${trimmed}" agregada`);
   };
@@ -1640,9 +1649,20 @@ const Proveedores = ({ currentUser }) => {
 
   const handleEdit = (p) => {
     const pNorm = normalizarProveedor(p);
+    let catsArr = [];
+    if (pNorm.categoria) {
+      if (Array.isArray(pNorm.categoria)) {
+        catsArr = pNorm.categoria.map(c => String(c).trim()).filter(Boolean);
+      } else if (typeof pNorm.categoria === 'string') {
+        catsArr = pNorm.categoria.split(',').map(c => c.trim()).filter(Boolean);
+      }
+    }
+    if (catsArr.length > 1) {
+      catsArr = catsArr.filter(c => c.toUpperCase() !== 'OTROS');
+    }
     setFormData({
       ...pNorm,
-      categoria: pNorm.categoria ? (Array.isArray(pNorm.categoria) ? pNorm.categoria : pNorm.categoria.split(', ').filter(c => c)) : []
+      categoria: catsArr
     });
     setMostrarParametrosSrm(true);
     setShowModal(true);
@@ -1665,14 +1685,14 @@ const Proveedores = ({ currentUser }) => {
       if (p && p.categoria) {
         const catList = Array.isArray(p.categoria)
           ? p.categoria
-          : (typeof p.categoria === 'string' ? p.categoria.split(', ') : [String(p.categoria)]);
-        catList.filter(Boolean).forEach(c => cats.add(String(c).trim().toUpperCase()));
+          : (typeof p.categoria === 'string' ? p.categoria.split(',') : [String(p.categoria)]);
+        catList.map(c => String(c).trim().toUpperCase()).filter(Boolean).forEach(c => cats.add(c));
       }
     });
     // Asegurar que las categorías de la lista y de sesión estén presentes
-    LISTA_CATEGORIAS.forEach(c => cats.add(c));
-    sessionCategories.forEach(c => cats.add(c));
-    return Array.from(cats).sort();
+    LISTA_CATEGORIAS.forEach(c => cats.add(c.toUpperCase().trim()));
+    sessionCategories.forEach(c => cats.add(c.toUpperCase().trim()));
+    return Array.from(cats).filter(Boolean).sort();
   }, [proveedores, sessionCategories]);
 
   const obtenerDiagnosticoProveedor = (p) => {
@@ -1868,8 +1888,18 @@ const Proveedores = ({ currentUser }) => {
     const matchTexto = p.razon_social?.toLowerCase().includes(busqueda.toLowerCase()) ||
                        p.rif?.toLowerCase().includes(busqueda.toLowerCase());
     
-    const pCats = p.categoria ? (Array.isArray(p.categoria) ? p.categoria : p.categoria.split(', ').filter(c => c)) : [];
-    const matchCat = filtroCategoria === 'Todos' || pCats.includes(filtroCategoria);
+    let pCats = [];
+    if (p.categoria) {
+      if (Array.isArray(p.categoria)) {
+        pCats = p.categoria.map(c => String(c).trim().toUpperCase()).filter(Boolean);
+      } else if (typeof p.categoria === 'string') {
+        pCats = p.categoria.split(',').map(c => c.trim().toUpperCase()).filter(Boolean);
+      }
+    }
+    if (pCats.length === 0) pCats = ['OTROS'];
+
+    const filtroUpper = (filtroCategoria || 'Todos').toUpperCase().trim();
+    const matchCat = filtroUpper === 'TODOS' || pCats.includes(filtroUpper);
 
     const esPref = Boolean(p.es_preferencial || p.proveedor_preferencial);
     let matchTipo = true;
@@ -2585,11 +2615,19 @@ const Proveedores = ({ currentUser }) => {
                       </td>
                     <td>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
-                        {p.categoria ? (Array.isArray(p.categoria) ? p.categoria : p.categoria.split(', ')).map((cat, i) => (
-                          <span key={i} style={{ backgroundColor: '#f1f5f9', padding: '2px 8px', borderRadius: '6px', fontSize: '0.6rem', fontWeight: '800', color: '#475569', border: '1px solid #e2e8f0' }}>
-                            {cat}
-                          </span>
-                        )) : <span style={{ color: '#cbd5e1' }}>-</span>}
+                        {(() => {
+                          let cats = [];
+                          if (p.categoria) {
+                            if (Array.isArray(p.categoria)) cats = p.categoria.filter(Boolean);
+                            else if (typeof p.categoria === 'string') cats = p.categoria.split(',').map(c => c.trim()).filter(Boolean);
+                          }
+                          if (cats.length === 0) cats = ['OTROS'];
+                          return cats.map((cat, i) => (
+                            <span key={i} style={{ backgroundColor: '#f1f5f9', padding: '2px 8px', borderRadius: '6px', fontSize: '0.6rem', fontWeight: '800', color: '#475569', border: '1px solid #e2e8f0' }}>
+                              {cat}
+                            </span>
+                          ));
+                        })()}
                       </div>
                     </td>
                     <td>
@@ -3564,16 +3602,23 @@ const Proveedores = ({ currentUser }) => {
                         value=""
                         onChange={(e) => {
                           const cat = e.target.value;
-                          if (cat && !formData.categoria.includes(cat)) {
-                            setFormData({...formData, categoria: [...formData.categoria, cat]});
+                          if (cat) {
+                            setFormData(prev => {
+                              const prevCats = Array.isArray(prev.categoria) ? prev.categoria : (prev.categoria ? [prev.categoria] : []);
+                              const filtered = prevCats.filter(c => c && (cat === 'OTROS' || String(c).toUpperCase() !== 'OTROS'));
+                              if (!filtered.includes(cat)) {
+                                return { ...prev, categoria: [...filtered, cat] };
+                              }
+                              return { ...prev, categoria: filtered };
+                            });
                           }
                         }}
                         style={{ flex: 1, minWidth: '200px' }}
                       >
                         <option value="">-- Seleccionar Categoría --</option>
                         {categoriasUnicas.map(cat => (
-                          <option key={cat} value={cat} disabled={formData.categoria.includes(cat)}>
-                            {cat} {formData.categoria.includes(cat) ? '(Ya seleccionada)' : ''}
+                          <option key={cat} value={cat} disabled={(formData.categoria || []).includes(cat)}>
+                            {cat} {(formData.categoria || []).includes(cat) ? '(Ya seleccionada)' : ''}
                           </option>
                         ))}
                       </select>
@@ -3625,12 +3670,12 @@ const Proveedores = ({ currentUser }) => {
                       display: 'flex', 
                       flexWrap: 'wrap', 
                       gap: '6px', 
-                      padding: formData.categoria.length > 0 ? '10px' : '0px', 
-                      border: formData.categoria.length > 0 ? '1px solid #e2e8f0' : 'none', 
+                      padding: (formData.categoria && formData.categoria.length > 0) ? '10px' : '0px', 
+                      border: (formData.categoria && formData.categoria.length > 0) ? '1px solid #e2e8f0' : 'none', 
                       borderRadius: '12px',
                       backgroundColor: '#f8fafc'
                     }}>
-                      {formData.categoria.map(cat => (
+                      {(formData.categoria || []).map(cat => (
                         <span
                           key={cat}
                           style={{
@@ -3649,7 +3694,10 @@ const Proveedores = ({ currentUser }) => {
                           {cat}
                           <button
                             type="button"
-                            onClick={() => setFormData({...formData, categoria: formData.categoria.filter(c => c !== cat)})}
+                            onClick={() => setFormData(prev => ({
+                              ...prev,
+                              categoria: (prev.categoria || []).filter(c => c !== cat)
+                            }))}
                             style={{
                               background: 'none',
                               border: 'none',
@@ -3665,6 +3713,11 @@ const Proveedores = ({ currentUser }) => {
                           </button>
                         </span>
                       ))}
+                      {(!formData.categoria || formData.categoria.length === 0) && (
+                        <span style={{ fontSize: '0.75rem', color: '#94a3b8', fontStyle: 'italic', padding: '4px 8px' }}>
+                          Sin categoría seleccionada (se guardará como "OTROS" por defecto)
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>

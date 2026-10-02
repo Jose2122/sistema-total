@@ -296,17 +296,39 @@ export const normalizarProveedor = (p) => {
   let actualizadoPorNombre = p.actualizado_por_nombre || localSrm.actualizado_por_nombre || '';
   if (actualizadoPorNombre.toLowerCase() === 'sistema') actualizadoPorNombre = 'Analista Compras';
 
-  // Normalizar categoría a string
-  const catNorm = Array.isArray(p.categoria)
-    ? p.categoria.filter(Boolean).join(', ')
-    : (typeof p.categoria === 'string' ? p.categoria.trim() : (p.categoria ? String(p.categoria) : 'OTROS'));
+  // Normalizar categoría
+  let catNorm = '';
+  if (Array.isArray(p.categoria)) {
+    const valid = p.categoria.map(c => String(c).trim()).filter(c => c && c.toUpperCase() !== 'NULL');
+    const specific = valid.filter(c => c.toUpperCase() !== 'OTROS');
+    catNorm = specific.length > 0 ? specific.join(', ') : (valid.includes('OTROS') ? 'OTROS' : '');
+  } else if (typeof p.categoria === 'string') {
+    const trimmed = p.categoria.trim();
+    if (trimmed && trimmed.toUpperCase() !== 'NULL') {
+      catNorm = trimmed;
+    }
+  } else if (p.categoria) {
+    catNorm = String(p.categoria).trim();
+  }
+
+  if (!catNorm && localSrm.categoria) {
+    if (Array.isArray(localSrm.categoria)) {
+      catNorm = localSrm.categoria.filter(Boolean).join(', ');
+    } else {
+      catNorm = String(localSrm.categoria).trim();
+    }
+  }
+
+  if (!catNorm || catNorm.toUpperCase() === 'NULL') {
+    catNorm = 'OTROS';
+  }
 
   return {
     ...p,
     id: p.id,
     rif: (p.rif || '').trim().toUpperCase(),
     razon_social: (p.razon_social || p.nombre || '').trim(),
-    categoria: catNorm || 'OTROS',
+    categoria: catNorm,
     monto_limite_credito: limite,
     limite_credito: limite,
     dias_credito: dias,
@@ -351,11 +373,11 @@ export const fusionarProveedor = (base = {}, nuevo = {}) => {
 
   const merged = { ...base, ...nuevo };
 
-  // Priorizar campos de texto no vacíos
+  // Priorizar campos de texto no vacíos (la categoría se maneja con lógica inteligente abajo)
   const camposTexto = [
     'rif', 'telefono', 'correo', 'persona_contacto', 'contacto_nombre', 
     'contacto_administrativo', 'direccion', 'ciudad', 'localizacion', 
-    'categoria', 'observaciones_negociacion', 'nivel_preferencial', 'condiciones_acuerdo_nota'
+    'observaciones_negociacion', 'nivel_preferencial', 'condiciones_acuerdo_nota'
   ];
   
   camposTexto.forEach(campo => {
@@ -367,6 +389,28 @@ export const fusionarProveedor = (base = {}, nuevo = {}) => {
       merged[campo] = base[campo];
     }
   });
+
+  // Manejo inteligente de Categoría: las categorías específicas válidas siempre tienen prioridad sobre 'OTROS' o vacío
+  const esCatValida = (c) => {
+    if (!c) return false;
+    const str = (Array.isArray(c) ? c.join(', ') : String(c)).trim().toUpperCase();
+    return str && str !== 'OTROS' && str !== 'SIN CATEGORIA' && str !== 'SIN CATEGORÍA' && str !== 'N/A' && str !== 'NULL' && str !== '—';
+  };
+
+  const catBase = (Array.isArray(base.categoria) ? base.categoria.join(', ') : (base.categoria || '')).trim();
+  const catNuevo = (Array.isArray(nuevo.categoria) ? nuevo.categoria.join(', ') : (nuevo.categoria || '')).trim();
+
+  if (esCatValida(catNuevo)) {
+    merged.categoria = catNuevo;
+  } else if (esCatValida(catBase)) {
+    merged.categoria = catBase;
+  } else if (catNuevo && catNuevo.toUpperCase() !== 'NULL') {
+    merged.categoria = catNuevo;
+  } else if (catBase && catBase.toUpperCase() !== 'NULL') {
+    merged.categoria = catBase;
+  } else {
+    merged.categoria = 'OTROS';
+  }
 
   // Priorizar RIF formateado y completo
   const rifBase = (base.rif || '').trim().toUpperCase();
@@ -791,7 +835,12 @@ export const sincronizarProveedorCloud = async (nuevoProveedor, nuevaModificacio
       listaActualizada = provsCloud.map(p => {
         if (sonProveedoresCoincidentes(p, nuevoProveedor)) {
           matched = true;
-          return fusionarProveedor(p, nuevoProveedor);
+          const merged = fusionarProveedor(p, nuevoProveedor);
+          return {
+            ...merged,
+            ...nuevoProveedor,
+            categoria: nuevoProveedor.categoria || merged.categoria || p.categoria || 'OTROS'
+          };
         }
         return p;
       });
@@ -1096,7 +1145,7 @@ export const obtenerTodosProveedores = async () => {
                 localizacion: h.ciudad || 'Maracaibo',
                 ciudad: h.ciudad || 'Maracaibo',
                 direccion: h.direccion || '',
-                categoria: h.categoria || 'OTROS',
+                categoria: (h.categoria && h.categoria.toUpperCase() !== 'OTROS') ? h.categoria : '',
                 status: true,
                 es_historico: true
               });
@@ -1184,6 +1233,18 @@ export const guardarProveedorService = async (formData, usuarioActivo, nombreUsu
     ? formData.creado_por
     : (proveedorAnterior?.creado_por && proveedorAnterior.creado_por.toLowerCase() !== 'sistema' ? proveedorAnterior.creado_por : emailUsuario);
 
+  // Procesar categorías: limpiar, remover OTROS si hay categorías específicas
+  let catsArr = [];
+  if (Array.isArray(formData.categoria)) {
+    catsArr = formData.categoria.map(c => String(c).trim().toUpperCase()).filter(Boolean);
+  } else if (typeof formData.categoria === 'string' && formData.categoria.trim()) {
+    catsArr = formData.categoria.split(',').map(c => c.trim().toUpperCase()).filter(Boolean);
+  }
+  if (catsArr.length > 1) {
+    catsArr = catsArr.filter(c => c !== 'OTROS');
+  }
+  const catFinal = catsArr.length > 0 ? catsArr.join(', ') : 'OTROS';
+
   const payloadCompleto = {
     id: idProveedor,
     rif: rifLimpio,
@@ -1196,7 +1257,7 @@ export const guardarProveedorService = async (formData, usuarioActivo, nombreUsu
     correo: (formData.correo || '').trim(),
     telefono: (formData.telefono || '').trim(),
     direccion: (formData.direccion || '').trim(),
-    categoria: Array.isArray(formData.categoria) ? formData.categoria.join(', ') : (formData.categoria || 'OTROS'),
+    categoria: catFinal,
     monto_limite_credito: Number(formData.monto_limite_credito) || 0,
     limite_credito: Number(formData.monto_limite_credito) || 0,
     dias_credito: Number(formData.dias_credito) || 0,
@@ -1236,6 +1297,7 @@ export const guardarProveedorService = async (formData, usuarioActivo, nombreUsu
         updatedList.push({
           ...p,
           ...payloadCompleto,
+          categoria: catFinal,
           id: (p.id && !isNaN(Number(p.id)) && Number(p.id) > 0) ? p.id : payloadCompleto.id
         });
       } else {
@@ -1279,6 +1341,7 @@ export const guardarProveedorService = async (formData, usuarioActivo, nombreUsu
     creado_por_nombre: payloadCompleto.creado_por_nombre,
     actualizado_por: payloadCompleto.actualizado_por,
     actualizado_por_nombre: payloadCompleto.actualizado_por_nombre,
+    categoria: catFinal,
     updated_at: new Date().toISOString()
   });
 
@@ -1308,7 +1371,7 @@ export const guardarProveedorService = async (formData, usuarioActivo, nombreUsu
       correo: (formData.correo || '').trim(),
       telefono: (formData.telefono || '').trim(),
       direccion: (formData.direccion || '').trim(),
-      categoria: Array.isArray(formData.categoria) ? formData.categoria.join(', ') : (formData.categoria || 'OTROS'),
+      categoria: catFinal,
       dias_credito_habituales: Number(formData.dias_credito) || 0,
       condicion_pago_defecto: Number(formData.dias_credito) > 0 ? 'CREDITO' : 'CONTADO',
       status: formData.status !== undefined ? formData.status : true,

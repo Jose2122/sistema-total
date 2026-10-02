@@ -39,6 +39,7 @@ import { saveAs } from 'file-saver';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { format, parseISO } from 'date-fns';
+import { resolverCategoriaGasto } from './utils/helpers';
 import './ReporteOperaciones.css';
 
 const parsearFacturaUrls = (facturaUrlField) => {
@@ -335,7 +336,7 @@ const ReporteOperaciones = ({ currentUser }) => {
                     uId: `TK-${t.id}-${item.id || Math.random()}`,
                     fecha: rowDate,
                     semana: getWeekNumber(rowDate),
-                    categoria: item.cat || item.categoria || t.clasificacion_admin || 'Directo',
+                    categoria: resolverCategoriaGasto(item, t),
                     descripcion: item.desc || item.descripcion || 'Sin descripción',
                     monto: Number(item.total || item.pu * item.cant || 0),
                     cc: item.cc || t.centro_costo || 'N/A',
@@ -364,7 +365,7 @@ const ReporteOperaciones = ({ currentUser }) => {
                         uId: `REQ-${r.id}-${item.id || Math.random()}-${hIdx}`,
                         fecha: rowDate,
                         semana: getWeekNumber(rowDate),
-                        categoria: item.categoria || 'Compra',
+                        categoria: resolverCategoriaGasto(item, r),
                         descripcion: item.descripcion,
                         monto: (Number(h.cant) || 0) * (Number(h.pu) || 0),
                         cc: r.centro_costo,

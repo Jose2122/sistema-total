@@ -4,7 +4,7 @@ import toast from 'react-hot-toast';
 import { AnimatePresence } from 'framer-motion';
 import { getSemanaInfo } from './utils/helpers';
 import { compressImage } from './utils/compressImage';
-import { obtenerTodosProveedores } from './services/proveedoresService';
+import { obtenerTodosProveedores, sonProveedoresCoincidentes } from './services/proveedoresService';
 import {
   Search,
   Eye,
@@ -85,6 +85,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
   const [filtroProveedor, setFiltroProveedor] = useState('Todos');
   const [subtabCxp, setSubtabCxp] = useState('todas'); // 'todas', 'facturas', 'odc_credito', 'odc_contado', 'historico'
   const [filtroSemaforo, setFiltroSemaforo] = useState('Todos'); // 'Todos', 'En Plazo', 'Por Vencer', 'Vencidos'
+  const [filtroPrioridadOdc, setFiltroPrioridadOdc] = useState('todas'); // 'todas', '1', '2'
 
   // Modal detailed view
   const [invoiceSeleccionada, setInvoiceSeleccionada] = useState(null);
@@ -492,10 +493,76 @@ const LiquidacionFacturas = ({ currentUser }) => {
     }
   }, []);
 
-  // Órdenes de Compra a Crédito y sus balances para CxP
+  const reqMapById = useMemo(() => {
+    const map = {};
+    (requisiciones || []).forEach(r => {
+      if (r.id) map[String(r.id)] = r;
+      if (r.correlativo_req) map[String(r.correlativo_req).trim().toUpperCase()] = r;
+    });
+    return map;
+  }, [requisiciones]);
+
+  const provMapById = useMemo(() => {
+    const map = {};
+    (proveedores || []).forEach(p => {
+      if (p.id) map[String(p.id)] = p;
+      if (p.rif) map[String(p.rif).trim().toUpperCase()] = p;
+      if (p.razon_social) map[String(p.razon_social).trim().toUpperCase()] = p;
+      if (p.nombre) map[String(p.nombre).trim().toUpperCase()] = p;
+    });
+    return map;
+  }, [proveedores]);
+
+  const odcEstaAprobadaParaCxp = useCallback((o) => {
+    const localPrio = localStorage.getItem(`odc_prio_${o.id}`);
+    const localStatus = localStorage.getItem(`odc_prio_status_${o.id}`);
+    const stAprob = (o.estado_aprobacion_precio || localStatus || '').toLowerCase();
+    const stOrden = String(o.estatus_orden || '').trim().toUpperCase();
+    const tieneRechazoEnComentario = typeof o.carlos_comentario_aprobacion === 'string' && o.carlos_comentario_aprobacion.startsWith('[RECHAZADO]:');
+
+    // 1. Si está rechazada o anulada -> NUNCA mostrar en Cuentas por Pagar activas
+    if (stAprob === 'rechazado' || stOrden === 'RECHAZADA' || tieneRechazoEnComentario) return false;
+    
+    const stPago = (o.estatus_pago || o.status_pago || '').toUpperCase();
+    if (stPago === 'ANULADA' || stOrden === 'ANULADA') return false;
+
+    // 2. Si fue aprobada por Compras / Gerencia -> SÍ mostrar en Cuentas por Pagar
+    if (stAprob === 'aprobado' || stOrden === 'APROBADA' || (o.prioridad_pago !== null && o.prioridad_pago !== undefined) || localPrio || o.carlos_firma_digital_activa) {
+      return true;
+    }
+
+    // 3. ODCs históricas que ya fueron pagadas
+    if (stPago === 'PAGADO') return true;
+
+    // 4. Órdenes pendientes de revisión o no aprobadas -> NO mostrar en Cuentas por Pagar
+    return false;
+  }, []);
+
+  // Órdenes de Compra a Crédito y sus balances para CxP (Solo Aprobadas por Compras)
   const odcsCredito = useMemo(() => {
-    return ordenesCompra.filter(o => o.tipo_pago === 'CREDITO');
-  }, [ordenesCompra]);
+    return ordenesCompra
+      .filter(o => o.tipo_pago === 'CREDITO' && odcEstaAprobadaParaCxp(o))
+      .map(o => {
+        const cleanReq = String(o.requisicion_id || o.numero_req || o.correlativo_req || '').replace(/^REQ-?/i, '').trim();
+        const reqObj = reqMapById[cleanReq] || reqMapById[String(o.requisicion_id)] || reqMapById[String(o.requisicion_correlativo || '').toUpperCase()];
+        const provObj = provMapById[String(o.proveedor_id)] || provMapById[String(o.proveedor_nombre || '').toUpperCase()];
+        
+        const esPref = Boolean(provObj?.es_preferencial || provObj?.proveedor_preferencial || o.proveedor_es_preferencial);
+        const reqPrio = String(reqObj?.prioridad || o.requisicion_prioridad || '').toUpperCase();
+        const esEmerg = reqPrio === 'EMERGENCIA' || reqPrio.includes('EMERGENCIA');
+        const prioLocal = localStorage.getItem(`odc_prio_${o.id}`);
+        const prio = o.prioridad_pago !== undefined && o.prioridad_pago !== null ? Number(o.prioridad_pago) : (prioLocal ? Number(prioLocal) : (esEmerg ? 1 : 2));
+
+        return {
+          ...o,
+          prioridad_pago: prio,
+          proveedor_es_preferencial: esPref,
+          requisicion_es_emergencia: esEmerg,
+          requisicion_prioridad: reqPrio || 'NORMAL',
+          requisicion_correlativo: o.requisicion_correlativo || reqObj?.correlativo_req || (cleanReq ? `REQ-${cleanReq}` : 'N/A')
+        };
+      });
+  }, [ordenesCompra, odcEstaAprobadaParaCxp, reqMapById, provMapById]);
 
   const odcsCreditoPendientes = useMemo(() => {
     return odcsCredito.filter(o => {
@@ -508,10 +575,31 @@ const LiquidacionFacturas = ({ currentUser }) => {
     return odcsCreditoPendientes.reduce((sum, o) => sum + (Number(o.total_general ?? o.total) || 0), 0);
   }, [odcsCreditoPendientes]);
 
-  // Órdenes de Compra a Contado para CxP
+  // Órdenes de Compra a Contado para CxP (Solo Aprobadas por Compras)
   const odcsContado = useMemo(() => {
-    return ordenesCompra.filter(o => o.tipo_pago !== 'CREDITO');
-  }, [ordenesCompra]);
+    return ordenesCompra
+      .filter(o => o.tipo_pago !== 'CREDITO' && odcEstaAprobadaParaCxp(o))
+      .map(o => {
+        const cleanReq = String(o.requisicion_id || o.numero_req || o.correlativo_req || '').replace(/^REQ-?/i, '').trim();
+        const reqObj = reqMapById[cleanReq] || reqMapById[String(o.requisicion_id)] || reqMapById[String(o.requisicion_correlativo || '').toUpperCase()];
+        const provObj = provMapById[String(o.proveedor_id)] || provMapById[String(o.proveedor_nombre || '').toUpperCase()];
+        
+        const esPref = Boolean(provObj?.es_preferencial || provObj?.proveedor_preferencial || o.proveedor_es_preferencial);
+        const reqPrio = String(reqObj?.prioridad || o.requisicion_prioridad || '').toUpperCase();
+        const esEmerg = reqPrio === 'EMERGENCIA' || reqPrio.includes('EMERGENCIA');
+        const prioLocal = localStorage.getItem(`odc_prio_${o.id}`);
+        const prio = o.prioridad_pago !== undefined && o.prioridad_pago !== null ? Number(o.prioridad_pago) : (prioLocal ? Number(prioLocal) : (esEmerg ? 1 : 2));
+
+        return {
+          ...o,
+          prioridad_pago: prio,
+          proveedor_es_preferencial: esPref,
+          requisicion_es_emergencia: esEmerg,
+          requisicion_prioridad: reqPrio || 'NORMAL',
+          requisicion_correlativo: o.requisicion_correlativo || reqObj?.correlativo_req || (cleanReq ? `REQ-${cleanReq}` : 'N/A')
+        };
+      });
+  }, [ordenesCompra, odcEstaAprobadaParaCxp, reqMapById, provMapById]);
 
   const odcsContadoPendientes = useMemo(() => {
     return odcsContado.filter(o => {
@@ -675,11 +763,16 @@ const LiquidacionFacturas = ({ currentUser }) => {
       prov = proveedores.find(p => p.id === fac.proveedor_id);
     }
     if (!prov && fac.proveedor_nombre) {
-      const nameNorm = fac.proveedor_nombre.trim().toUpperCase();
-      prov = proveedores.find(p => (p.razon_social || '').trim().toUpperCase() === nameNorm);
+      prov = proveedores.find(p => sonProveedoresCoincidentes(p, { id: fac.proveedor_id, razon_social: fac.proveedor_nombre }));
     }
     if (prov && prov.categoria) {
-      return prov.categoria.split(', ').filter(Boolean).map(c => c.trim().toUpperCase());
+      if (Array.isArray(prov.categoria)) {
+        const arr = prov.categoria.filter(Boolean).map(c => c.trim().toUpperCase());
+        if (arr.length > 0) return arr;
+      } else if (typeof prov.categoria === 'string') {
+        const arr = prov.categoria.split(',').map(c => c.trim().toUpperCase()).filter(Boolean);
+        if (arr.length > 0) return arr;
+      }
     }
     return ['OTROS'];
   }, [proveedores]);
@@ -742,61 +835,87 @@ const LiquidacionFacturas = ({ currentUser }) => {
   // Órdenes de Compra a Crédito Filtradas para la vista CxP
   const odcsCreditoFiltradas = useMemo(() => {
     const q = filtroBusqueda.toLowerCase().trim();
-    return odcsCredito.filter(odc => {
-      const matchesSearch = !q ||
-        (odc.numero_odc || '').toLowerCase().includes(q) ||
-        (odc.proveedor_nombre || '').toLowerCase().includes(q) ||
-        (odc.cotizacion_ref || '').toLowerCase().includes(q) ||
-        (odc.orden_pago_ref || '').toLowerCase().includes(q) ||
-        (odc.destino_despacho || '').toLowerCase().includes(q);
+    return odcsCredito
+      .filter(odc => {
+        const matchesSearch = !q ||
+          (odc.numero_odc || '').toLowerCase().includes(q) ||
+          (odc.proveedor_nombre || '').toLowerCase().includes(q) ||
+          (odc.cotizacion_ref || '').toLowerCase().includes(q) ||
+          (odc.orden_pago_ref || '').toLowerCase().includes(q) ||
+          (odc.destino_despacho || '').toLowerCase().includes(q) ||
+          (odc.requisicion_correlativo || '').toLowerCase().includes(q);
 
-      const st = (odc.estatus_pago || odc.status_pago || 'PENDIENTE').toUpperCase();
-      const matchesStatus =
-        filtroEstatus === 'Todos' ||
-        (filtroEstatus === 'EMITIDO' && st === 'PENDIENTE') ||
-        (filtroEstatus === 'PAGADO' && st === 'PAGADO') ||
-        (filtroEstatus === 'PAGADO PARCIAL' && st === 'PAGADO PARCIAL');
+        const st = (odc.estatus_pago || odc.status_pago || 'PENDIENTE').toUpperCase();
+        const matchesStatus =
+          filtroEstatus === 'Todos' ||
+          (filtroEstatus === 'EMITIDO' && st === 'PENDIENTE') ||
+          (filtroEstatus === 'PAGADO' && st === 'PAGADO') ||
+          (filtroEstatus === 'PAGADO PARCIAL' && st === 'PAGADO PARCIAL');
 
-      const sem = calcularSemaforoCredito(odc);
-      const matchesSemaforo =
-        filtroSemaforo === 'Todos' ||
-        (filtroSemaforo === 'En Plazo' && sem.nivel === 'verde') ||
-        (filtroSemaforo === 'Por Vencer' && sem.nivel === 'amarillo') ||
-        (filtroSemaforo === 'Vencidos' && (sem.nivel === 'rojo' || sem.nivel === 'morado'));
+        const sem = calcularSemaforoCredito(odc);
+        const matchesSemaforo =
+          filtroSemaforo === 'Todos' ||
+          (filtroSemaforo === 'En Plazo' && sem.nivel === 'verde') ||
+          (filtroSemaforo === 'Por Vencer' && sem.nivel === 'amarillo') ||
+          (filtroSemaforo === 'Vencidos' && (sem.nivel === 'rojo' || sem.nivel === 'morado'));
 
-      const matchesProv =
-        filtroProveedor === 'Todos' ||
-        (odc.proveedor_nombre || '').trim().toUpperCase() === filtroProveedor.trim().toUpperCase();
+        const matchesProv =
+          filtroProveedor === 'Todos' ||
+          (odc.proveedor_nombre || '').trim().toUpperCase() === filtroProveedor.trim().toUpperCase();
 
-      return matchesSearch && matchesStatus && matchesSemaforo && matchesProv;
-    });
-  }, [odcsCredito, filtroBusqueda, filtroEstatus, filtroSemaforo, filtroProveedor, calcularSemaforoCredito]);
+        const matchesPrioridad =
+          filtroPrioridadOdc === 'todas' ||
+          (filtroPrioridadOdc === '1' && odc.prioridad_pago === 1) ||
+          (filtroPrioridadOdc === '2' && odc.prioridad_pago === 2);
+
+        return matchesSearch && matchesStatus && matchesSemaforo && matchesProv && matchesPrioridad;
+      })
+      .sort((a, b) => {
+        const prioA = a.prioridad_pago === 1 ? 1 : 2;
+        const prioB = b.prioridad_pago === 1 ? 1 : 2;
+        if (prioA !== prioB) return prioA - prioB; // Nivel 1 primero
+        return new Date(b.created_at || b.fecha_emision || 0) - new Date(a.created_at || a.fecha_emision || 0);
+      });
+  }, [odcsCredito, filtroBusqueda, filtroEstatus, filtroSemaforo, filtroProveedor, filtroPrioridadOdc, calcularSemaforoCredito]);
 
   // Órdenes de Compra a Contado Filtradas para la vista CxP
   const odcsContadoFiltradas = useMemo(() => {
     const q = filtroBusqueda.toLowerCase().trim();
-    return odcsContado.filter(odc => {
-      const matchesSearch = !q ||
-        (odc.numero_odc || '').toLowerCase().includes(q) ||
-        (odc.proveedor_nombre || '').toLowerCase().includes(q) ||
-        (odc.cotizacion_ref || '').toLowerCase().includes(q) ||
-        (odc.orden_pago_ref || '').toLowerCase().includes(q) ||
-        (odc.destino_despacho || '').toLowerCase().includes(q);
+    return odcsContado
+      .filter(odc => {
+        const matchesSearch = !q ||
+          (odc.numero_odc || '').toLowerCase().includes(q) ||
+          (odc.proveedor_nombre || '').toLowerCase().includes(q) ||
+          (odc.cotizacion_ref || '').toLowerCase().includes(q) ||
+          (odc.orden_pago_ref || '').toLowerCase().includes(q) ||
+          (odc.destino_despacho || '').toLowerCase().includes(q) ||
+          (odc.requisicion_correlativo || '').toLowerCase().includes(q);
 
-      const st = (odc.estatus_pago || odc.status_pago || 'PENDIENTE').toUpperCase();
-      const matchesStatus =
-        filtroEstatus === 'Todos' ||
-        (filtroEstatus === 'EMITIDO' && st === 'PENDIENTE') ||
-        (filtroEstatus === 'PAGADO' && st === 'PAGADO') ||
-        (filtroEstatus === 'PAGADO PARCIAL' && st === 'PAGADO PARCIAL');
+        const st = (odc.estatus_pago || odc.status_pago || 'PENDIENTE').toUpperCase();
+        const matchesStatus =
+          filtroEstatus === 'Todos' ||
+          (filtroEstatus === 'EMITIDO' && st === 'PENDIENTE') ||
+          (filtroEstatus === 'PAGADO' && st === 'PAGADO') ||
+          (filtroEstatus === 'PAGADO PARCIAL' && st === 'PAGADO PARCIAL');
 
-      const matchesProv =
-        filtroProveedor === 'Todos' ||
-        (odc.proveedor_nombre || '').trim().toUpperCase() === filtroProveedor.trim().toUpperCase();
+        const matchesProv =
+          filtroProveedor === 'Todos' ||
+          (odc.proveedor_nombre || '').trim().toUpperCase() === filtroProveedor.trim().toUpperCase();
 
-      return matchesSearch && matchesStatus && matchesProv;
-    });
-  }, [odcsContado, filtroBusqueda, filtroEstatus, filtroProveedor]);
+        const matchesPrioridad =
+          filtroPrioridadOdc === 'todas' ||
+          (filtroPrioridadOdc === '1' && odc.prioridad_pago === 1) ||
+          (filtroPrioridadOdc === '2' && odc.prioridad_pago === 2);
+
+        return matchesSearch && matchesStatus && matchesProv && matchesPrioridad;
+      })
+      .sort((a, b) => {
+        const prioA = a.prioridad_pago === 1 ? 1 : 2;
+        const prioB = b.prioridad_pago === 1 ? 1 : 2;
+        if (prioA !== prioB) return prioA - prioB; // Nivel 1 primero
+        return new Date(b.created_at || b.fecha_emision || 0) - new Date(a.created_at || a.fecha_emision || 0);
+      });
+  }, [odcsContado, filtroBusqueda, filtroEstatus, filtroProveedor, filtroPrioridadOdc]);
 
   // Histórico de Pagos Realizados (Totalmente Liquidados o Pagados)
   const pagadosConsolidados = useMemo(() => {
@@ -1459,6 +1578,61 @@ const LiquidacionFacturas = ({ currentUser }) => {
             <option value="PAGADO PARCIAL">Pagado Parcial</option>
             <option value="PAGADO">Pagado</option>
           </select>
+
+          {/* Filtro Prioridad ODC (Nivel 1 / Nivel 2) */}
+          {(subtabCxp === 'todas' || subtabCxp === 'odc_credito' || subtabCxp === 'odc_contado') && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#f8fafc', padding: '4px 8px', borderRadius: '10px', border: '1px solid #cbd5e1' }}>
+              <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569' }}>Prioridad:</span>
+              <button
+                type="button"
+                onClick={() => setFiltroPrioridadOdc('todas')}
+                style={{
+                  padding: '4px 8px',
+                  fontSize: '0.72rem',
+                  fontWeight: '800',
+                  borderRadius: '6px',
+                  border: 'none',
+                  cursor: 'pointer',
+                  backgroundColor: filtroPrioridadOdc === 'todas' ? '#0f172a' : 'transparent',
+                  color: filtroPrioridadOdc === 'todas' ? '#fff' : '#64748b'
+                }}
+              >
+                Todas
+              </button>
+              <button
+                type="button"
+                onClick={() => setFiltroPrioridadOdc('1')}
+                style={{
+                  padding: '4px 8px',
+                  fontSize: '0.72rem',
+                  fontWeight: '800',
+                  borderRadius: '6px',
+                  border: 'none',
+                  cursor: 'pointer',
+                  backgroundColor: filtroPrioridadOdc === '1' ? '#dc2626' : '#fee2e2',
+                  color: filtroPrioridadOdc === '1' ? '#fff' : '#991b1b'
+                }}
+              >
+                🔴 Nivel 1 (Máxima)
+              </button>
+              <button
+                type="button"
+                onClick={() => setFiltroPrioridadOdc('2')}
+                style={{
+                  padding: '4px 8px',
+                  fontSize: '0.72rem',
+                  fontWeight: '800',
+                  borderRadius: '6px',
+                  border: 'none',
+                  cursor: 'pointer',
+                  backgroundColor: filtroPrioridadOdc === '2' ? '#2563eb' : '#dbeafe',
+                  color: filtroPrioridadOdc === '2' ? '#fff' : '#1e40af'
+                }}
+              >
+                🔵 Nivel 2 (Normal)
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -1483,7 +1657,9 @@ const LiquidacionFacturas = ({ currentUser }) => {
               <thead>
                 <tr>
                   <th>Correlativo ODC</th>
+                  <th>Prioridad ODC</th>
                   <th>Proveedor</th>
+                  <th>Requisición Origen</th>
                   <th>Plazo / Semaforización Crédito</th>
                   <th>Total ODC</th>
                   <th>Estatus Pago</th>
@@ -1496,7 +1672,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
                   const isPagado = statusActual === 'PAGADO';
                   const sem = calcularSemaforoCredito(odc);
                   return (
-                    <tr key={odc.id} style={{ backgroundColor: isPagado ? '#f0fdf4' : 'transparent' }}>
+                    <tr key={odc.id} style={{ backgroundColor: isPagado ? '#f0fdf4' : (odc.prioridad_pago === 1 ? '#fff7f7' : 'transparent') }}>
                       <td>
                         <button
                           type="button"
@@ -1516,10 +1692,68 @@ const LiquidacionFacturas = ({ currentUser }) => {
                           {odc.numero_odc}
                         </button>
                       </td>
+                      <td>
+                        {odc.prioridad_pago === 1 ? (
+                          <span style={{
+                            padding: '4px 8px',
+                            borderRadius: '6px',
+                            fontSize: '0.72rem',
+                            fontWeight: '900',
+                            backgroundColor: '#fee2e2',
+                            color: '#b91c1c',
+                            border: '1px solid #f87171',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px'
+                          }}>
+                            🔴 NIVEL 1 (MÁXIMA)
+                          </span>
+                        ) : (
+                          <span style={{
+                            padding: '4px 8px',
+                            borderRadius: '6px',
+                            fontSize: '0.72rem',
+                            fontWeight: '800',
+                            backgroundColor: '#eff6ff',
+                            color: '#1d4ed8',
+                            border: '1px solid #93c5fd',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px'
+                          }}>
+                            🔵 NIVEL 2 (NORMAL)
+                          </span>
+                        )}
+                      </td>
                       <td style={{ fontWeight: '700' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                           <Building2 size={16} color="#64748b" />
-                          {odc.proveedor_nombre || 'N/A'}
+                          <span>{odc.proveedor_nombre || 'N/A'}</span>
+                          {odc.proveedor_es_preferencial ? (
+                            <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '0.68rem', fontWeight: '800', backgroundColor: '#fef3c7', color: '#b45309', border: '1px solid #fde68a' }}>
+                              ⭐ PREFERENCIAL
+                            </span>
+                          ) : (
+                            <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '0.68rem', fontWeight: '700', backgroundColor: '#f1f5f9', color: '#64748b', border: '1px solid #e2e8f0' }}>
+                              🏢 REGULAR
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                          <span style={{ fontWeight: '800', fontSize: '0.8rem', color: '#0f172a' }}>
+                            {odc.requisicion_correlativo || 'N/A'}
+                          </span>
+                          {odc.requisicion_es_emergencia ? (
+                            <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '0.68rem', fontWeight: '800', backgroundColor: '#fee2e2', color: '#dc2626', border: '1px solid #fca5a5', width: 'fit-content' }}>
+                              🚨 EMERGENCIA
+                            </span>
+                          ) : (
+                            <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '0.68rem', fontWeight: '700', backgroundColor: '#f8fafc', color: '#475569', border: '1px solid #cbd5e1', width: 'fit-content' }}>
+                              📋 NORMAL
+                            </span>
+                          )}
                         </div>
                       </td>
                       <td>
@@ -1702,7 +1936,9 @@ const LiquidacionFacturas = ({ currentUser }) => {
               <thead>
                 <tr>
                   <th>Correlativo ODC</th>
+                  <th>Prioridad ODC</th>
                   <th>Proveedor</th>
+                  <th>Requisición Origen</th>
                   <th>Fecha Emisión</th>
                   <th>Total ODC</th>
                   <th>Condición</th>
@@ -1715,7 +1951,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
                   const statusActual = (odc.estatus_pago || odc.status_pago || 'PENDIENTE').toUpperCase();
                   const isPagado = statusActual === 'PAGADO';
                   return (
-                    <tr key={odc.id} style={{ backgroundColor: isPagado ? '#f0fdf4' : 'transparent' }}>
+                    <tr key={odc.id} style={{ backgroundColor: isPagado ? '#f0fdf4' : (odc.prioridad_pago === 1 ? '#fff7f7' : 'transparent') }}>
                       <td>
                         <button
                           type="button"
@@ -1735,10 +1971,68 @@ const LiquidacionFacturas = ({ currentUser }) => {
                           {odc.numero_odc}
                         </button>
                       </td>
+                      <td>
+                        {odc.prioridad_pago === 1 ? (
+                          <span style={{
+                            padding: '4px 8px',
+                            borderRadius: '6px',
+                            fontSize: '0.72rem',
+                            fontWeight: '900',
+                            backgroundColor: '#fee2e2',
+                            color: '#b91c1c',
+                            border: '1px solid #f87171',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px'
+                          }}>
+                            🔴 NIVEL 1 (MÁXIMA)
+                          </span>
+                        ) : (
+                          <span style={{
+                            padding: '4px 8px',
+                            borderRadius: '6px',
+                            fontSize: '0.72rem',
+                            fontWeight: '800',
+                            backgroundColor: '#eff6ff',
+                            color: '#1d4ed8',
+                            border: '1px solid #93c5fd',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px'
+                          }}>
+                            🔵 NIVEL 2 (NORMAL)
+                          </span>
+                        )}
+                      </td>
                       <td style={{ fontWeight: '700' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                           <Building2 size={16} color="#64748b" />
-                          {odc.proveedor_nombre || 'N/A'}
+                          <span>{odc.proveedor_nombre || 'N/A'}</span>
+                          {odc.proveedor_es_preferencial ? (
+                            <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '0.68rem', fontWeight: '800', backgroundColor: '#fef3c7', color: '#b45309', border: '1px solid #fde68a' }}>
+                              ⭐ PREFERENCIAL
+                            </span>
+                          ) : (
+                            <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '0.68rem', fontWeight: '700', backgroundColor: '#f1f5f9', color: '#64748b', border: '1px solid #e2e8f0' }}>
+                              🏢 REGULAR
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                          <span style={{ fontWeight: '800', fontSize: '0.8rem', color: '#0f172a' }}>
+                            {odc.requisicion_correlativo || 'N/A'}
+                          </span>
+                          {odc.requisicion_es_emergencia ? (
+                            <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '0.68rem', fontWeight: '800', backgroundColor: '#fee2e2', color: '#dc2626', border: '1px solid #fca5a5', width: 'fit-content' }}>
+                              🚨 EMERGENCIA
+                            </span>
+                          ) : (
+                            <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '0.68rem', fontWeight: '700', backgroundColor: '#f8fafc', color: '#475569', border: '1px solid #cbd5e1', width: 'fit-content' }}>
+                              📋 NORMAL
+                            </span>
+                          )}
                         </div>
                       </td>
                       <td style={{ color: '#64748b', fontSize: '0.8rem' }}>
@@ -2165,6 +2459,37 @@ const LiquidacionFacturas = ({ currentUser }) => {
                   <h2 style={{ margin: '4px 0 0 0', fontSize: '1.35rem', fontWeight: '950', color: '#0f172a' }}>
                     Orden de Compra: {odcPreviewSeleccionada.numero_odc} — {odcPreviewSeleccionada.proveedor_nombre || 'PROVEEDOR'}
                   </h2>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px', flexWrap: 'wrap' }}>
+                    {odcPreviewSeleccionada.prioridad_pago === 1 ? (
+                      <span style={{ padding: '3px 8px', borderRadius: '6px', fontSize: '0.72rem', fontWeight: '900', backgroundColor: '#fee2e2', color: '#b91c1c', border: '1px solid #f87171' }}>
+                        🔴 PRIORIDAD: NIVEL 1 (MÁXIMA)
+                      </span>
+                    ) : (
+                      <span style={{ padding: '3px 8px', borderRadius: '6px', fontSize: '0.72rem', fontWeight: '800', backgroundColor: '#eff6ff', color: '#1d4ed8', border: '1px solid #93c5fd' }}>
+                        🔵 PRIORIDAD: NIVEL 2 (NORMAL)
+                      </span>
+                    )}
+
+                    {odcPreviewSeleccionada.proveedor_es_preferencial ? (
+                      <span style={{ padding: '3px 8px', borderRadius: '6px', fontSize: '0.72rem', fontWeight: '800', backgroundColor: '#fef3c7', color: '#b45309', border: '1px solid #fde68a' }}>
+                        ⭐ PROVEEDOR PREFERENCIAL
+                      </span>
+                    ) : (
+                      <span style={{ padding: '3px 8px', borderRadius: '6px', fontSize: '0.72rem', fontWeight: '700', backgroundColor: '#f1f5f9', color: '#64748b', border: '1px solid #e2e8f0' }}>
+                        🏢 PROVEEDOR REGULAR
+                      </span>
+                    )}
+
+                    {odcPreviewSeleccionada.requisicion_es_emergencia ? (
+                      <span style={{ padding: '3px 8px', borderRadius: '6px', fontSize: '0.72rem', fontWeight: '800', backgroundColor: '#fee2e2', color: '#dc2626', border: '1px solid #fca5a5' }}>
+                        🚨 REQUISICIÓN: EMERGENCIA ({odcPreviewSeleccionada.requisicion_correlativo || 'N/A'})
+                      </span>
+                    ) : (
+                      <span style={{ padding: '3px 8px', borderRadius: '6px', fontSize: '0.72rem', fontWeight: '700', backgroundColor: '#f8fafc', color: '#475569', border: '1px solid #cbd5e1' }}>
+                        📋 REQUISICIÓN: NORMAL ({odcPreviewSeleccionada.requisicion_correlativo || 'N/A'})
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <button
                   className="liquidacion-modal-close"
