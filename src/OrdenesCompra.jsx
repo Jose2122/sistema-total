@@ -2102,7 +2102,7 @@ const OrdenesCompra = ({ currentUser }) => {
     });
   };
 
-  // Generación de documento PDF Formato Oficial F-ADM-01-2 (3 Copias en un solo documento)
+  // Generación de documento PDF Formato Oficial F-ADM-01-2 (2 Copias: Original y Control)
   const construirDocPDF_F_ADM_01_2 = async () => {
     if (!odcSeleccionada) return null;
 
@@ -2114,7 +2114,6 @@ const OrdenesCompra = ({ currentUser }) => {
 
       const copias = [
         "original para el cliente",
-        "Copia para cuenta por pagar",
         "copia para control de compras"
       ];
 
@@ -3973,7 +3972,7 @@ const OrdenesCompra = ({ currentUser }) => {
 
               {/* Identificador de Copias al Pie */}
               <div className="f-adm-copy-footer-label">
-                &mdash; ORIGINAL PARA EL CLIENTE &bull; COPIA PARA CUENTA POR PAGAR &bull; COPIA PARA CONTROL DE COMPRAS &mdash;
+                &mdash; ORIGINAL PARA EL CLIENTE &bull; COPIA PARA CONTROL DE COMPRAS &mdash;
               </div>
 
             </div>
