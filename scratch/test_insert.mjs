@@ -2,42 +2,37 @@ import { createClient } from '@supabase/supabase-js';
 import fs from 'fs';
 import path from 'path';
 
-// Parse .env manually
-const envPath = path.resolve('.env');
+const envPath = path.resolve('.env.local');
 const envContent = fs.readFileSync(envPath, 'utf-8');
 const env = {};
 envContent.split('\n').forEach(line => {
-  const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*)?\s*$/);
-  if (match) {
-    const key = match[1];
-    let value = match[2] || '';
-    if (value.startsWith('"') && value.endsWith('"')) {
-      value = value.substring(1, value.length - 1);
-    } else if (value.startsWith("'") && value.endsWith("'")) {
-      value = value.substring(1, value.length - 1);
-    }
-    env[key] = value.trim();
+  const parts = line.split('=');
+  if (parts.length >= 2) {
+    const k = parts[0].trim();
+    const v = parts.slice(1).join('=').trim().replace(/^['"]|['"]$/g, '').replace('\r', '');
+    env[k] = v;
   }
 });
-
 const supabase = createClient(env.VITE_SUPABASE_URL, env.VITE_SUPABASE_ANON_KEY);
 
-async function run() {
-  try {
-    // Attempt to select the 'prioridad' column from 'tickets_directos'
-    const { data, error } = await supabase
-      .from('tickets_directos')
-      .select('prioridad')
-      .limit(1);
+async function testInsert() {
+  const dbPayload = {
+    rif: 'J-40282085-2',
+    razon_social: 'TECHNOLOGY AND SERVICE',
+    persona_contacto: 'TECHNOLOGY AND SERVICE',
+    ciudad: 'Maracaibo',
+    localizacion: 'Maracaibo',
+    correo: 'TECHNOLOGYANDSERVICE@GMAIL.COM',
+    telefono: '0424-654-5244',
+    direccion: 'AV . 3H ENTRE CALLE 78 Y79 EDIF GINEBRA LOCAL 4',
+    categoria: 'TECNOLOGÍA',
+    dias_credito_habituales: 0,
+    condicion_pago_defecto: 'CONTADO',
+    status: true,
+    cuentas_bancarias: []
+  };
 
-    if (error) {
-      console.log("Error querying 'prioridad' column:", error.message);
-    } else {
-      console.log("Successfully queried 'prioridad' column! It exists. Data:", data);
-    }
-  } catch (e) {
-    console.error("Exception:", e.message);
-  }
+  const { data, error } = await supabase.from('proveedores').insert([dbPayload]).select();
+  console.log('Insert result data:', data, 'error:', error);
 }
-
-run();
+testInsert();

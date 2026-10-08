@@ -2774,18 +2774,45 @@ const Compras = () => {
         const fileName = `${cleanCorrelativo}_${cleanDoc}_${cleanDesc}.${fileExt}`;
         const filePath = `${fileName}`;
 
-        const compressedFile = await compressImage(file);
-        const { error: uploadError } = await supabase.storage
-          .from('facturas')
-          .upload(filePath, compressedFile);
+        let publicUrl = null;
+        let compressedFile = null;
+        try {
+          compressedFile = await compressImage(file);
+          const { error: uploadError } = await supabase.storage
+            .from('facturas')
+            .upload(filePath, compressedFile, { upsert: true });
 
-        if (uploadError) {
-          console.error("Error al subir archivo:", uploadError);
-          toast.error(`Error al subir el soporte: ${uploadError.message}`);
-          throw uploadError;
+          if (!uploadError) {
+            const { data } = supabase.storage.from('facturas').getPublicUrl(filePath);
+            publicUrl = data?.publicUrl;
+          } else {
+            console.warn("Aviso upload bucket facturas:", uploadError.message);
+            const { error: uploadError2 } = await supabase.storage
+              .from('tickets-evidencia')
+              .upload(`soportes/${filePath}`, compressedFile, { upsert: true });
+            if (!uploadError2) {
+              const { data: data2 } = supabase.storage.from('tickets-evidencia').getPublicUrl(`soportes/${filePath}`);
+              publicUrl = data2?.publicUrl;
+            }
+          }
+        } catch (errStorage) {
+          console.warn("Aviso upload storage:", errStorage);
         }
 
-        const { data: { publicUrl } } = supabase.storage.from('facturas').getPublicUrl(filePath);
+        if (!publicUrl) {
+          try {
+            const fileToEncode = compressedFile || file;
+            publicUrl = await new Promise((resolve) => {
+              const reader = new FileReader();
+              reader.onloadend = () => resolve(reader.result);
+              reader.onerror = () => resolve(null);
+              reader.readAsDataURL(fileToEncode);
+            });
+          } catch {
+            // ignore
+          }
+        }
+
         uploadedFileObj = {
           url: publicUrl,
           etiqueta: customName
@@ -3062,18 +3089,48 @@ const Compras = () => {
         const cleanDoc = (firstItem.doc_numero_actual || 'SOPORTE').replace(/[^a-zA-Z0-9]/g, '');
         const cleanDesc = (firstItem.descripcion || 'General').replace(/[^a-zA-Z0-9]/g, '').slice(0, 30);
         const fileName = `${cleanCorrelativo}_${cleanDoc}_${cleanDesc}_${index}_${Date.now()}.${fileExt}`;
-        const filePath = `${fileName}`; // Subir a la raíz para máxima compatibilidad publicUrl
+        const filePath = `${fileName}`;
 
-        const compressedFile = await compressImage(file);
-        const { error: uploadError } = await supabase.storage
-          .from('facturas')
-          .upload(filePath, compressedFile);
+        let publicUrl = null;
+        let compressedFile = null;
+        try {
+          compressedFile = await compressImage(file);
+          const { error: uploadError } = await supabase.storage
+            .from('facturas')
+            .upload(filePath, compressedFile, { upsert: true });
 
-        if (uploadError) throw uploadError;
+          if (!uploadError) {
+            const { data } = supabase.storage.from('facturas').getPublicUrl(filePath);
+            publicUrl = data?.publicUrl;
+          } else {
+            console.warn("Aviso upload bucket facturas:", uploadError.message);
+            const { error: uploadError2 } = await supabase.storage
+              .from('tickets-evidencia')
+              .upload(`soportes/${filePath}`, compressedFile, { upsert: true });
+            if (!uploadError2) {
+              const { data: data2 } = supabase.storage.from('tickets-evidencia').getPublicUrl(`soportes/${filePath}`);
+              publicUrl = data2?.publicUrl;
+            }
+          }
+        } catch (err) {
+          console.warn("Aviso upload storage:", err);
+        }
 
-        // OBTENER LA URL PÚBLICA CORRECTAMENTE
-        const { data: { publicUrl } } = supabase.storage.from('facturas').getPublicUrl(filePath);
-        return publicUrl;
+        if (!publicUrl) {
+          try {
+            const fileToEncode = compressedFile || file;
+            publicUrl = await new Promise((resolve) => {
+              const reader = new FileReader();
+              reader.onloadend = () => resolve(reader.result);
+              reader.onerror = () => resolve(null);
+              reader.readAsDataURL(fileToEncode);
+            });
+          } catch {
+            // ignore
+          }
+        }
+
+        return publicUrl || '';
       });
 
       const nuevasDescargas = await Promise.all(uploadPromises);

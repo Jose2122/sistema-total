@@ -126,16 +126,25 @@ export const extraerCoreRif = (rif) => {
 };
 
 const GENERIC_WORDS_SUPPLIERS = new Set([
-  'INVERSIONES', 'DISTRIBUIDORA', 'COMERCIALIZADORA', 'SUMINISTROS', 
-  'SERVICIOS', 'IMPORTADORA', 'CORPORACION', 'GRUPO', 'REPUESTOS', 
-  'CONSTRUCCIONES', 'FERRETERIA', 'MANTENIMIENTO', 'TECNOLOGIA', 
-  'SOLUCIONES', 'CONSULTORES', 'AUTOMOTRIZ', 'TRANSPORTE', 'LOGISTICA', 
-  'VENTAS', 'VENTA', 'PRODUCTOS', 'INDUSTRIAS', 'INTERNACIONAL', 'NACIONAL', 
-  'VENEZUELA', 'TOTAL', 'DROGUERIA', 'DROGUERIAS', 'FARMACIAS', 'FARMACIA',
-  'LABORATORIO', 'LABORATORIOS', 'EMPRESAS', 'EMPRESA', 'CENTRO', 'CLINICA',
-  'MATERIALES', 'INSUMOS', 'ELECTRICOS', 'REPARACIONES', 'EQUIPOS', 'EQUIPO',
-  'ORIENTE', 'TECNICA', 'INDUSTRIAL', 'INTEGRALES', 'CAUCHOS', 'CONSTRUCCION',
-  'COMERCIAL', 'GENERALES', 'COMERCIO'
+  'INVERSIONES', 'INVERSION', 'INVESTMENT', 'INVESTMENTS', 'DISTRIBUIDORA', 'DISTRIBUIDOR', 
+  'DISTRIBUTOR', 'DISTRIBUTORS', 'COMERCIALIZADORA', 'COMERCIAL', 'COMERCIO', 'COMMERCE',
+  'SUMINISTROS', 'SUMINISTRO', 'SUPPLY', 'SUPPLIES', 'SERVICIOS', 'SERVICIO', 'SERVICES', 
+  'SERVICE', 'IMPORTADORA', 'IMPORTACION', 'IMPORTACIONES', 'IMPORT', 'IMPORTS',
+  'CORPORACION', 'CORP', 'CORPORATION', 'GRUPO', 'GROUP', 'REPUESTOS', 'REPUESTO', 
+  'PARTS', 'CONSTRUCCIONES', 'CONSTRUCCION', 'FERRETERIA', 'MANTENIMIENTO', 'MAINTENANCE',
+  'TECNOLOGIA', 'TECNOLOGIAS', 'TECHNOLOGY', 'TECHNOLOGIES', 'TECH', 'SOLUCIONES', 
+  'SOLUCION', 'SOLUTIONS', 'SOLUTION', 'CONSULTORES', 'CONSULTOR', 'CONSULTING', 
+  'CONSULTORIA', 'AUTOMOTRIZ', 'AUTO', 'TRANSPORTE', 'TRANSPORTES', 'LOGISTICA', 
+  'LOGISTICS', 'VENTAS', 'VENTA', 'SALES', 'PRODUCTOS', 'PRODUCTO', 'PRODUCTS', 
+  'INDUSTRIAS', 'INDUSTRIA', 'INDUSTRY', 'INDUSTRIES', 'INTERNACIONAL', 'INTERNATIONAL', 
+  'NACIONAL', 'NATIONAL', 'VENEZUELA', 'TOTAL', 'DROGUERIA', 'DROGUERIAS', 'FARMACIAS', 
+  'FARMACIA', 'LABORATORIO', 'LABORATORIOS', 'EMPRESAS', 'EMPRESA', 'ENTERPRISE', 
+  'ENTERPRISES', 'CENTRO', 'CENTER', 'CLINICA', 'MATERIALES', 'INSUMOS', 'ELECTRICOS', 
+  'ELECTRICO', 'REPARACIONES', 'EQUIPOS', 'EQUIPO', 'ORIENTE', 'OCCIDENTE', 'TECNICA', 
+  'INDUSTRIAL', 'INTEGRALES', 'INTEGRAL', 'CAUCHOS', 'CAUCHO', 'GENERALES', 'GENERAL', 
+  'AND', 'THE', 'LOS', 'LAS', 'DEL', 'DE', 'LA', 'EL', 'Y', 'EN', 'OF', 'MEGA', 'MULTI', 
+  'MAX', 'PLUS', 'EXPRESS', 'SUPER', 'GLOBAL', 'WORLD', 'STORE', 'SHOP', 'SYSTEM', 'SYSTEMS',
+  'SISTEMA', 'SISTEMAS', 'RED', 'NETWORK', 'NETWORKS', 'SECURITY', 'SEGURIDAD'
 ]);
 
 /**
@@ -163,17 +172,14 @@ export const sonProveedoresCoincidentes = (provObjOrNameA, provObjOrNameB) => {
   const cRifA = extraerCoreRif(rifA);
   const cRifB = extraerCoreRif(rifB);
 
-  // Si ambos tienen RIFs válidos (>= 7 dígitos numéricos) pero son DISTINTOS, NUNCA son el mismo proveedor
+  // Si ambos tienen RIFs válidos (>= 7 dígitos numéricos)
   if (cRifA.nums.length >= 7 && cRifB.nums.length >= 7) {
     const sonRifsIguales = (cRifA.nums === cRifB.nums) || 
       (Math.abs(cRifA.nums.length - cRifB.nums.length) === 1 && (cRifA.nums.startsWith(cRifB.nums) || cRifB.nums.startsWith(cRifA.nums)));
-    if (!sonRifsIguales) {
-      return false;
-    }
-    return true;
+    return sonRifsIguales;
   }
 
-  if (cRifA.raw && cRifB.raw && cRifA.raw.length >= 6 && cRifA.raw === cRifB.raw) {
+  if (cRifA.raw && cRifB.raw && cRifA.raw.length >= 7 && cRifA.raw === cRifB.raw) {
     return true;
   }
 
@@ -190,34 +196,27 @@ export const sonProveedoresCoincidentes = (provObjOrNameA, provObjOrNameB) => {
   const tokensA = cleanA.split(' ').filter(w => w.length >= 2);
   const tokensB = cleanB.split(' ').filter(w => w.length >= 2);
 
-  // 3.1 Contención completa (ej: "FARMATODO" en "DROGUERIA FARMATODO" o "FARMATODO C.A.")
-  if (cleanA.includes(cleanB) || cleanB.includes(cleanA)) {
-    const shorter = cleanA.length < cleanB.length ? cleanA : cleanB;
-    const isGeneric = GENERIC_WORDS_SUPPLIERS.has(shorter.trim());
-    if (!isGeneric && shorter.length >= 3) {
+  const distinctiveA = tokensA.filter(w => !GENERIC_WORDS_SUPPLIERS.has(w));
+  const distinctiveB = tokensB.filter(w => !GENERIC_WORDS_SUPPLIERS.has(w));
+
+  // Si ambos tienen palabras distintivas y son exactamente idénticas
+  if (distinctiveA.length > 0 && distinctiveB.length > 0) {
+    const strDistA = distinctiveA.join(' ');
+    const strDistB = distinctiveB.join(' ');
+    if (strDistA === strDistB) return true;
+
+    // Si una lista distintiva contiene a la otra y cubre todos sus términos
+    const shared = distinctiveA.filter(w => distinctiveB.includes(w));
+    if (shared.length === distinctiveA.length && shared.length === distinctiveB.length) {
       return true;
     }
   }
 
-  // 3.2 Token overlap distintivo (debe haber al menos una palabra clave distintiva)
-  const distinctiveA = tokensA.filter(w => !GENERIC_WORDS_SUPPLIERS.has(w) && w.length >= 3);
-  const distinctiveB = tokensB.filter(w => !GENERIC_WORDS_SUPPLIERS.has(w) && w.length >= 3);
-
-  if (distinctiveA.length > 0 && distinctiveB.length > 0) {
-    const shared = distinctiveA.filter(w => distinctiveB.includes(w));
-    if (shared.length > 0) {
-      if (shared.some(w => w.length >= 3 && !GENERIC_WORDS_SUPPLIERS.has(w))) {
-        return true;
-      }
-    }
-  }
-
-  // 4. Coincidencia por Teléfono si ambos tienen y el nombre es similar
+  // 4. Coincidencia por Teléfono SOLO si los nombres completos son muy cercanos
   const telA = typeof provObjOrNameA === 'object' ? (provObjOrNameA?.telefono || '').replace(/[^0-9]/g, '') : '';
   const telB = typeof provObjOrNameB === 'object' ? (provObjOrNameB?.telefono || '').replace(/[^0-9]/g, '') : '';
-  if (telA.length >= 7 && telB.length >= 7 && telA === telB) {
-    const tokensMatch = tokensA.some(w => tokensB.includes(w));
-    if (tokensMatch) return true;
+  if (telA.length >= 7 && telB.length >= 7 && telA === telB && cleanA.length >= 4 && cleanB.length >= 4) {
+    if (cleanA.includes(cleanB) || cleanB.includes(cleanA)) return true;
   }
 
   return false;
