@@ -410,6 +410,26 @@
   margin-top: 18px;
 }
 
+.f-adm-digital-seal-img1 {
+  background-color: #f0fdf4;
+  border: 1px solid #166534;
+  border-radius: 6px;
+  padding: 4px 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  margin-top: 4px;
+}
+
+.f-adm-signature-graphic {
+  max-height: 38px;
+  max-width: 100px;
+  object-fit: contain;
+  margin: -4px 0 -2px 0;
+  pointer-events: none;
+}
+
 .f-adm-verified-prov-note {
   text-align: right;
   font-size: 0.82rem;

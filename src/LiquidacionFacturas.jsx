@@ -3217,30 +3217,10 @@ const LiquidacionFacturas = ({ currentUser }) => {
                       )}
 
                       <button
-                        className="liquidacion-btn"
-                        style={{
-                          width: '100%',
-                          marginTop: '4px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          gap: '6px',
-                          padding: '9px 14px',
-                          borderRadius: '8px',
-                          fontWeight: '800',
-                          fontSize: '0.8rem',
-                          backgroundColor: '#0f172a',
-                          color: '#ffffff',
-                          border: 'none',
-                          cursor: 'pointer',
-                          boxShadow: '0 2px 4px rgba(15, 23, 42, 0.15)',
-                          transition: 'all 0.2s ease'
-                        }}
-                        onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#1e293b'; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#0f172a'; }}
+                        className="btn-registrar-pago-animado"
                         onClick={() => abrirRegistrarAbonoOdc(odcPreviewSeleccionada)}
                       >
-                        <CreditCard size={15} />
+                        <CreditCard size={17} />
                         Registrar Pago / Abono ODC
                       </button>
                     </div>
