@@ -2142,6 +2142,46 @@ const OrdenesCompra = ({ currentUser }) => {
     });
   };
 
+  // Cargar Imagen de Firma Ricardo Herrera con transparencia garantizada
+  const cargarImagenFirmaRicardo = () => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.crossOrigin = "Anonymous";
+      img.src = '/firma_ricardo_herrera.png';
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = img.naturalWidth || img.width;
+          canvas.height = img.naturalHeight || img.height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0);
+          const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const data = imgData.data;
+          for (let i = 0; i < data.length; i += 4) {
+            const r = data[i];
+            const g = data[i + 1];
+            const b = data[i + 2];
+            if (r > 200 && g > 200 && b > 200) {
+              data[i + 3] = 0;
+            } else if (data[i + 3] > 0) {
+              data[i] = 15;
+              data[i + 1] = 23;
+              data[i + 2] = 42;
+            }
+          }
+          ctx.putImageData(imgData, 0, 0);
+          const transImg = new Image();
+          transImg.src = canvas.toDataURL('image/png');
+          transImg.onload = () => resolve(transImg);
+          transImg.onerror = () => resolve(img);
+        } catch {
+          resolve(img);
+        }
+      };
+      img.onerror = () => resolve(null);
+    });
+  };
+
   // Generación de documento PDF Formato Oficial F-ADM-01-2 (2 Copias: Original y Control)
   const construirDocPDF_F_ADM_01_2 = async () => {
     if (!odcSeleccionada) return null;
@@ -2152,6 +2192,7 @@ const OrdenesCompra = ({ currentUser }) => {
       const pageHeight = doc.internal.pageSize.getHeight();
       const logoImg = await cargarImagenLogo();
       const firmaCarlosImg = await cargarImagenFirmaCarlos();
+      const firmaRicardoImg = await cargarImagenFirmaRicardo();
 
       const copias = [
         "original para el cliente",
@@ -2502,6 +2543,20 @@ const OrdenesCompra = ({ currentUser }) => {
         doc.setFontSize(6.2);
         doc.setTextColor(71, 85, 105);
         doc.text("Gerente de Compras", marginX + sigW + sigW / 2, sigY + 6.0, { align: 'center' });
+
+        // Estampar trazo de firma manuscrita de Ricardo Herrera sobre la línea si está autorizada
+        if (odcSeleccionada.ricardo_firma_digital_activa && firmaRicardoImg) {
+          try {
+            const sigImgW = 14.2;
+            const sigImgH = 11.8;
+            const sigImgX = marginX + sigW + (sigW / 2) - (sigImgW / 2);
+            const sigImgY = sigY + 12.0 - sigImgH + 2.0;
+            doc.addImage(firmaRicardoImg, 'PNG', sigImgX, sigImgY, sigImgW, sigImgH);
+          } catch (errImg) {
+            console.warn("No se pudo insertar la firma de Ricardo en PDF:", errImg);
+          }
+        }
+
         doc.setDrawColor(0, 0, 0);
         doc.line(marginX + sigW + 6, sigY + 12.0, marginX + sigW * 2 - 6, sigY + 12.0);
         doc.setFont("helvetica", "bold");
@@ -3639,10 +3694,10 @@ const OrdenesCompra = ({ currentUser }) => {
               <div style={{ backgroundColor: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '16px', padding: '16px 20px', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 2px 6px rgba(2, 132, 199, 0.06)' }}>
                 <div>
                   <span style={{ fontWeight: '800', color: '#0369a1', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <ShieldCheck size={18} /> Gobernanza de Aval Digital - Ricardo Herrera (Gerencia de Compras)
+                    <ShieldCheck size={18} /> Firma de Aval - Ricardo Herrera (Gerencia de Compras)
                   </span>
                   <span style={{ fontSize: '0.75rem', color: '#0284c7', display: 'block', marginTop: '2px' }}>
-                    Al activar esta opción se estampará automáticamente tu aval digital en el casillero de Gerente de Compras en el formato F-ADM-01-2.
+                    Al activar esta opción se estampará automáticamente la firma autorizada en la Orden de Compra y PDF oficial F-ADM-01-2.
                   </span>
                 </div>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', fontWeight: '700', fontSize: '0.85rem', color: '#0369a1' }}>
@@ -3653,7 +3708,7 @@ const OrdenesCompra = ({ currentUser }) => {
                     disabled={guardandoFirmaRicardo}
                     onChange={(e) => toggleFirmaDigitalRicardo(e.target.checked)}
                   />
-                  Aval Digital Activo
+                  Firma Activa
                 </label>
               </div>
             )}
@@ -3968,6 +4023,13 @@ const OrdenesCompra = ({ currentUser }) => {
                     <div className="f-adm-sig-sub-compact">Gerente de Compras</div>
                   </div>
                   <div className="f-adm-sig-name-compact">
+                    {odcSeleccionada.ricardo_firma_digital_activa && (
+                      <img 
+                        src="/firma_ricardo_herrera.png" 
+                        alt="Firma Ricardo Herrera" 
+                        className="f-adm-signature-overlay" 
+                      />
+                    )}
                     Ricardo Herrera (Gerente de Compras)
                   </div>
                 </div>
