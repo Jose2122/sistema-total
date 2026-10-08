@@ -2269,40 +2269,40 @@ const OrdenesCompra = ({ currentUser }) => {
         const marginX = 12;
         const usableWidth = pageWidth - (marginX * 2);
 
-        // --- ENCABEZADO SUPERIOR ---
-        // Izquierda: Título y Correlativo en Rojo
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(16.5);
-        doc.setTextColor(30, 58, 138); // Azul corporativo
-        doc.text("Orden de Compra", marginX, 9.5);
-
-        doc.setFontSize(13.5);
-        doc.setTextColor(220, 38, 38); // Rojo
-        doc.text(`No. ${correlativoNum}`, marginX, 15.0);
-
-        // Derecha: Logo y Datos de Empresa
+        // --- ENCABEZADO SUPERIOR (INVERTIDO) ---
+        // Izquierda: Logo y Datos de Empresa
         let headerTextY = 10.5;
         if (logoImg) {
           const logoW = 32;
           const logoH = (logoImg.height / logoImg.width) * logoW;
-          doc.addImage(logoImg, 'PNG', pageWidth - marginX - logoW, 3.5, logoW, logoH);
+          doc.addImage(logoImg, 'PNG', marginX, 3.5, logoW, logoH);
           headerTextY = 3.5 + logoH + 1.2;
         }
 
         doc.setFont("helvetica", "bold");
         doc.setFontSize(8.2);
         doc.setTextColor(15, 23, 42);
-        doc.text("TOTAL CLEAN C.A.", pageWidth - marginX, headerTextY, { align: 'right' });
+        doc.text("TOTAL CLEAN C.A.", marginX, headerTextY, { align: 'left' });
 
         doc.setFont("helvetica", "normal");
         doc.setFontSize(5.4);
-        doc.text("Dirección Fiscal: AV 61 ENTRE CALLE 147 Y TAPÓN PARCELA CI-19 SECTOR I,", pageWidth - marginX, headerTextY + 2.8, { align: 'right' });
-        doc.text("LOCAL GALPÓN NRO 147-113, ZONA INDUSTRIAL DE MARACAIBO SUR.", pageWidth - marginX, headerTextY + 5.0, { align: 'right' });
+        doc.text("Dirección Fiscal: AV 61 ENTRE CALLE 147 Y TAPÓN PARCELA CI-19 SECTOR I,", marginX, headerTextY + 2.8, { align: 'left' });
+        doc.text("LOCAL GALPÓN NRO 147-113, ZONA INDUSTRIAL DE MARACAIBO SUR.", marginX, headerTextY + 5.0, { align: 'left' });
 
         doc.setFont("helvetica", "bold");
         doc.setFontSize(6.2);
-        doc.text("Telf.: 0414-8101155 / 0414-643-1203", pageWidth - marginX, headerTextY + 7.4, { align: 'right' });
-        doc.text("R.I.F.: J-30365868-7", pageWidth - marginX, headerTextY + 9.8, { align: 'right' });
+        doc.text("Telf.: 0414-8101155 / 0414-643-1203", marginX, headerTextY + 7.4, { align: 'left' });
+        doc.text("R.I.F.: J-30365868-7", marginX, headerTextY + 9.8, { align: 'left' });
+
+        // Derecha: Título y Correlativo en Rojo
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(16.5);
+        doc.setTextColor(30, 58, 138); // Azul corporativo
+        doc.text("Orden de Compra", pageWidth - marginX, 9.5, { align: 'right' });
+
+        doc.setFontSize(13.5);
+        doc.setTextColor(220, 38, 38); // Rojo
+        doc.text(`No. ${correlativoNum}`, pageWidth - marginX, 15.0, { align: 'right' });
 
         const barY = Math.max(headerTextY + 12.5, 24.0);
 
@@ -3844,21 +3844,21 @@ const OrdenesCompra = ({ currentUser }) => {
             {/* HOJA IMPRIMIBLE F-ADM-01-2 (Formato Físico de Referencia) */}
             <div ref={printRef} className="f-adm-01-2-sheet f-adm-sheet-printable">
               
-              {/* Header Imprimible */}
+              {/* Header Imprimible (Invertido: Datos a la Izquierda, Orden a la Derecha) */}
               <div className="f-adm-header-img3">
                 <div className="f-adm-header-left">
-                  <h1 className="f-adm-title">Orden de Compra</h1>
-                  <div className="f-adm-no">
-                    No. {odcSeleccionada.numero_odc ? odcSeleccionada.numero_odc.replace('ODC-2026-', '').replace('ODC-', '') : '000106'}
-                  </div>
-                </div>
-
-                <div className="f-adm-header-right">
                   <img src="/logo.png" alt="TOTAL CLEAN" className="f-adm-logo-img3" onError={(e) => { e.target.style.display = 'none'; }} />
                   <div className="f-adm-company-name-img3">TOTAL CLEAN C.A.</div>
                   <div className="f-adm-company-details-img3" style={{ fontSize: '0.62rem', maxWidth: '380px', lineHeight: '1.2' }}>Dirección Fiscal: AV 61 ENTRE CALLE 147 Y TAPÓN PARCELA CI-19 SECTOR I, LOCAL GALPÓN NRO 147-113, ZONA INDUSTRIAL DE MARACAIBO SUR.</div>
                   <div className="f-adm-company-details-img3" style={{ fontWeight: '800' }}>Telf.: 0414-8101155 / 0414-643-1203</div>
                   <div className="f-adm-rif-img3">R.I.F.: J-30365868-7</div>
+                </div>
+
+                <div className="f-adm-header-right">
+                  <h1 className="f-adm-title">Orden de Compra</h1>
+                  <div className="f-adm-no">
+                    No. {odcSeleccionada.numero_odc ? odcSeleccionada.numero_odc.replace('ODC-2026-', '').replace('ODC-', '') : '000106'}
+                  </div>
                 </div>
               </div>
 
