@@ -2102,13 +2102,42 @@ const OrdenesCompra = ({ currentUser }) => {
     });
   };
 
-  // Cargar Imagen de Firma Digital Carlos Vega
+  // Cargar Imagen de Firma Carlos Vega con transparencia garantizada
   const cargarImagenFirmaCarlos = () => {
     return new Promise((resolve) => {
       const img = new Image();
       img.crossOrigin = "Anonymous";
       img.src = '/firma_carlos_vega.png';
-      img.onload = () => resolve(img);
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = img.naturalWidth || img.width;
+          canvas.height = img.naturalHeight || img.height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0);
+          const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const data = imgData.data;
+          for (let i = 0; i < data.length; i += 4) {
+            const r = data[i];
+            const g = data[i + 1];
+            const b = data[i + 2];
+            if (r > 200 && g > 200 && b > 200) {
+              data[i + 3] = 0;
+            } else if (data[i + 3] > 0) {
+              data[i] = 15;
+              data[i + 1] = 23;
+              data[i + 2] = 42;
+            }
+          }
+          ctx.putImageData(imgData, 0, 0);
+          const transImg = new Image();
+          transImg.src = canvas.toDataURL('image/png');
+          transImg.onload = () => resolve(transImg);
+          transImg.onerror = () => resolve(img);
+        } catch {
+          resolve(img);
+        }
+      };
       img.onerror = () => resolve(null);
     });
   };
@@ -2463,69 +2492,55 @@ const OrdenesCompra = ({ currentUser }) => {
         doc.text(compradorNombre, marginX + sigW / 2, sigY + 15.8, { align: 'center' });
 
         // 2. Revisado y avalado por Ricardo Herrera
+        doc.setDrawColor(30, 58, 138);
         doc.rect(marginX + sigW, sigY, sigW, sigH);
         doc.setFont("helvetica", "bold");
         doc.setFontSize(7.2);
+        doc.setTextColor(30, 58, 138);
         doc.text("Revisado y avalado por (nombre y firma)", marginX + sigW + sigW / 2, sigY + 3.2, { align: 'center' });
         doc.setFont("helvetica", "normal");
         doc.setFontSize(6.2);
+        doc.setTextColor(71, 85, 105);
         doc.text("Gerente de Compras", marginX + sigW + sigW / 2, sigY + 6.0, { align: 'center' });
-
-        if (odcSeleccionada.ricardo_firma_digital_activa) {
-          doc.setFillColor(240, 253, 244);
-          doc.setDrawColor(22, 101, 52);
-          doc.roundedRect(marginX + sigW + 3, sigY + 7.5, sigW - 6, 9.2, 1, 1, 'FD');
-          doc.setFont("helvetica", "bold");
-          doc.setFontSize(5.6);
-          doc.setTextColor(4, 120, 87);
-          doc.text("AVALADO DIGITALMENTE", marginX + sigW + sigW / 2, sigY + 11.0, { align: 'center' });
-          doc.setFontSize(5.2);
-          doc.text("Ricardo Herrera (Gerente de Compras)", marginX + sigW + sigW / 2, sigY + 14.8, { align: 'center' });
-        } else {
-          doc.line(marginX + sigW + 6, sigY + 12.0, marginX + sigW * 2 - 6, sigY + 12.0);
-          doc.setFontSize(6.2);
-          doc.text("Ricardo Herrera (Gerente de Compras)", marginX + sigW + sigW / 2, sigY + 15.8, { align: 'center' });
-        }
+        doc.setDrawColor(0, 0, 0);
+        doc.line(marginX + sigW + 6, sigY + 12.0, marginX + sigW * 2 - 6, sigY + 12.0);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(6.2);
+        doc.setTextColor(0, 0, 0);
+        doc.text("Ricardo Herrera (Gerente de Compras)", marginX + sigW + sigW / 2, sigY + 15.8, { align: 'center' });
 
         // 3. Autorizado por Carlos Vega
+        doc.setDrawColor(30, 58, 138);
         doc.rect(marginX + sigW * 2, sigY, sigW, sigH);
         doc.setFont("helvetica", "bold");
         doc.setFontSize(7.2);
+        doc.setTextColor(30, 58, 138);
         doc.text("Autorizado por (nombre y firma)", marginX + sigW * 2 + sigW / 2, sigY + 3.2, { align: 'center' });
         doc.setFont("helvetica", "normal");
         doc.setFontSize(6.2);
+        doc.setTextColor(71, 85, 105);
         doc.text("Personal Autorizado", marginX + sigW * 2 + sigW / 2, sigY + 6.0, { align: 'center' });
 
-        if (odcSeleccionada.carlos_firma_digital_activa) {
-          doc.setFillColor(240, 253, 244);
-          doc.setDrawColor(22, 101, 52);
-          doc.roundedRect(marginX + sigW * 2 + 3, sigY + 7.2, sigW - 6, 9.8, 1, 1, 'FD');
-          
-          if (firmaCarlosImg) {
-            try {
-              doc.addImage(firmaCarlosImg, 'PNG', marginX + sigW * 2 + (sigW / 2) - 3.5, sigY + 7.4, 7.0, 5.0);
-            } catch (errImg) {
-              console.warn("No se pudo insertar la imagen de firma en PDF:", errImg);
-            }
-            doc.setFont("helvetica", "bold");
-            doc.setFontSize(5.0);
-            doc.setTextColor(4, 120, 87);
-            doc.text("FIRMADO DIGITALMENTE", marginX + sigW * 2 + sigW / 2, sigY + 13.6, { align: 'center' });
-            doc.setFontSize(4.8);
-            doc.text("Carlos Vega (Gerencia General)", marginX + sigW * 2 + sigW / 2, sigY + 16.0, { align: 'center' });
-          } else {
-            doc.setFont("helvetica", "bold");
-            doc.setFontSize(5.6);
-            doc.setTextColor(4, 120, 87);
-            doc.text("FIRMADO DIGITALMENTE", marginX + sigW * 2 + sigW / 2, sigY + 11.0, { align: 'center' });
-            doc.setFontSize(5.2);
-            doc.text("Carlos Vega (Gerencia General)", marginX + sigW * 2 + sigW / 2, sigY + 14.8, { align: 'center' });
+        // Estampar trazo de firma manuscrita sobre la línea si está autorizada
+        if (odcSeleccionada.carlos_firma_digital_activa && firmaCarlosImg) {
+          try {
+            const sigImgW = 9.2;
+            const sigImgH = 12.5;
+            const sigImgX = marginX + sigW * 2 + (sigW / 2) - (sigImgW / 2);
+            const sigImgY = sigY + 12.0 - sigImgH + 1.8;
+            doc.addImage(firmaCarlosImg, 'PNG', sigImgX, sigImgY, sigImgW, sigImgH);
+          } catch (errImg) {
+            console.warn("No se pudo insertar la firma de Carlos en PDF:", errImg);
           }
-        } else {
-          doc.line(marginX + sigW * 2 + 6, sigY + 12.0, marginX + usableWidth - 6, sigY + 12.0);
-          doc.setFontSize(6.2);
-          doc.text("Carlos Vega (Gerencia General)", marginX + sigW * 2 + sigW / 2, sigY + 15.8, { align: 'center' });
         }
+
+        // Línea horizontal tradicional de firma
+        doc.setDrawColor(0, 0, 0);
+        doc.line(marginX + sigW * 2 + 6, sigY + 12.0, marginX + usableWidth - 6, sigY + 12.0);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(6.2);
+        doc.setTextColor(0, 0, 0);
+        doc.text("Carlos Vega (Gerencia General)", marginX + sigW * 2 + sigW / 2, sigY + 15.8, { align: 'center' });
 
         // Texto pie a la derecha: "Verificado datos de compra por proveedor"
         doc.setFont("helvetica", "bold");
@@ -3648,10 +3663,10 @@ const OrdenesCompra = ({ currentUser }) => {
               <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '16px', padding: '16px 20px', marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 2px 6px rgba(22, 101, 52, 0.06)' }}>
                 <div>
                   <span style={{ fontWeight: '800', color: '#166534', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <ShieldCheck size={18} /> Gobernanza de Firma Remota - Carlos Vega (Gerencia General)
+                    <ShieldCheck size={18} /> Firma de Aprobación - Carlos Vega (Gerencia General)
                   </span>
                   <span style={{ fontSize: '0.75rem', color: '#15803d', display: 'block', marginTop: '2px' }}>
-                    Al activar esta opción se estampará automáticamente tu firma digital y leyenda de verificación en el PDF oficial F-ADM-01-2.
+                    Al activar esta opción se estampará automáticamente la firma autorizada en la Orden de Compra y PDF oficial F-ADM-01-2.
                   </span>
                 </div>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', fontWeight: '700', fontSize: '0.85rem', color: '#14532d' }}>
@@ -3662,7 +3677,7 @@ const OrdenesCompra = ({ currentUser }) => {
                     disabled={guardandoFirmaCarlos}
                     onChange={(e) => toggleFirmaDigitalCarlos(e.target.checked)}
                   />
-                  Firma Digital Activa
+                  Firma Activa
                 </label>
               </div>
             )}
@@ -3952,20 +3967,9 @@ const OrdenesCompra = ({ currentUser }) => {
                     <div className="f-adm-sig-header-compact">Revisado y avalado por (nombre y firma)</div>
                     <div className="f-adm-sig-sub-compact">Gerente de Compras</div>
                   </div>
-                  {odcSeleccionada.ricardo_firma_digital_activa ? (
-                    <div className="f-adm-digital-seal-img1" style={{ padding: '4px' }}>
-                      <div style={{ color: '#047857', fontWeight: '800', fontSize: '0.62rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '3px' }}>
-                        <ShieldCheck size={11} color="#047857" /> AVALADO DIGITALMENTE
-                      </div>
-                      <div style={{ color: '#0f766e', fontWeight: '700', fontSize: '0.60rem' }}>
-                        Ricardo Herrera (Gerente de Compras)
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="f-adm-sig-name-compact">
-                      Ricardo Herrera (Gerente de Compras)
-                    </div>
-                  )}
+                  <div className="f-adm-sig-name-compact">
+                    Ricardo Herrera (Gerente de Compras)
+                  </div>
                 </div>
 
                 {/* 3. Carlos Vega - Gerente General */}
@@ -3974,25 +3978,16 @@ const OrdenesCompra = ({ currentUser }) => {
                     <div className="f-adm-sig-header-compact">Autorizado por (nombre y firma)</div>
                     <div className="f-adm-sig-sub-compact">Personal Autorizado</div>
                   </div>
-                  {odcSeleccionada.carlos_firma_digital_activa ? (
-                    <div className="f-adm-digital-seal-img1">
+                  <div className="f-adm-sig-name-compact">
+                    {odcSeleccionada.carlos_firma_digital_activa && (
                       <img 
                         src="/firma_carlos_vega.png" 
                         alt="Firma Carlos Vega" 
-                        className="f-adm-signature-graphic" 
+                        className="f-adm-signature-overlay" 
                       />
-                      <div style={{ color: '#047857', fontWeight: '800', fontSize: '0.62rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '3px' }}>
-                        <ShieldCheck size={11} color="#047857" /> FIRMADO DIGITALMENTE
-                      </div>
-                      <div style={{ color: '#0f766e', fontWeight: '700', fontSize: '0.60rem' }}>
-                        Carlos Vega (Gerencia General)
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="f-adm-sig-name-compact">
-                      Carlos Vega (Gerencia General)
-                    </div>
-                  )}
+                    )}
+                    Carlos Vega (Gerencia General)
+                  </div>
                 </div>
 
               </div>
