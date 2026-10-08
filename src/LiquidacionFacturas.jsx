@@ -24,7 +24,8 @@ import {
   Trash2,
   Save,
   Edit3,
-  RefreshCw
+  RefreshCw,
+  Copy
 } from 'lucide-react';
 import './LiquidacionFacturas.css';
 
@@ -2774,85 +2775,86 @@ const LiquidacionFacturas = ({ currentUser }) => {
                 </button>
               </div>
 
-              {/* CUERPO DEL MODAL (3 COLUMNAS HORIZONTALES) */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(350px, 1.35fr) minmax(280px, 1fr) minmax(280px, 1.05fr)', gap: '14px', alignItems: 'start' }}>
+              {/* CUERPO DEL MODAL (3 COLUMNAS HORIZONTALES SIMÉTRICAS) */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(360px, 1.35fr) minmax(310px, 1.05fr) minmax(310px, 1.05fr)', gap: '14px', alignItems: 'stretch' }}>
                 
                 {/* COLUMNA 1: ITEMS COMPRADOS & HISTORIAL DE PAGOS */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                   
-                  {/* TABLA DE RENGLONES / ITEMS */}
+                  {/* TABLA DE RENGLONES / ITEMS (FILA SUPERIOR: 190px) */}
                   <div>
                     <h4 style={{ margin: '0 0 6px 0', fontSize: '10.5px', fontWeight: '900', textTransform: 'uppercase', color: '#64748b', letterSpacing: '0.4px' }}>
                       ITEMS COMPRADOS EN ESTA ÓRDEN DE COMPRA
                     </h4>
 
-                    <div style={{ border: '1px solid #e2e8f0', borderRadius: '12px', overflow: 'hidden', backgroundColor: 'white', maxHeight: '230px', overflowY: 'auto' }}>
-                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem' }}>
-                        <thead>
-                          <tr style={{ backgroundColor: '#0f172a', color: 'white', textTransform: 'uppercase', fontSize: '10px', position: 'sticky', top: 0, zIndex: 5 }}>
-                            <th style={{ padding: '8px 10px', textAlign: 'left' }}>DESCRIPCIÓN Y CUENTA</th>
-                            <th style={{ padding: '8px 6px', textAlign: 'center', width: '50px' }}>CANT</th>
-                            <th style={{ padding: '8px 8px', textAlign: 'right', width: '85px' }}>P.U ($)</th>
-                            <th style={{ padding: '8px 10px', textAlign: 'right', width: '95px' }}>TOTAL ($)</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {loadingOdcItemsPreview ? (
-                            <tr>
-                              <td colSpan="4" style={{ padding: '20px', textAlign: 'center', color: '#64748b', fontWeight: '600' }}>
-                                Cargando ítems de la Órden de Compra...
-                              </td>
+                    <div style={{ border: '1px solid #e2e8f0', borderRadius: '14px', overflow: 'hidden', backgroundColor: 'white', height: '190px', display: 'flex', flexDirection: 'column' }}>
+                      <div style={{ flex: 1, overflowY: 'auto' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem' }}>
+                          <thead>
+                            <tr style={{ backgroundColor: '#0f172a', color: 'white', textTransform: 'uppercase', fontSize: '10px', position: 'sticky', top: 0, zIndex: 5 }}>
+                              <th style={{ padding: '8px 10px', textAlign: 'left' }}>DESCRIPCIÓN Y CUENTA</th>
+                              <th style={{ padding: '8px 6px', textAlign: 'center', width: '50px' }}>CANT</th>
+                              <th style={{ padding: '8px 8px', textAlign: 'right', width: '85px' }}>P.U ($)</th>
+                              <th style={{ padding: '8px 10px', textAlign: 'right', width: '95px' }}>TOTAL ($)</th>
                             </tr>
-                          ) : odcItemsPreview.length === 0 ? (
-                            <tr>
-                              <td colSpan="4" style={{ padding: '20px', textAlign: 'center', color: '#94a3b8', fontStyle: 'italic' }}>
-                                No se encontraron renglones detallados registrados para esta ODC.
-                              </td>
-                            </tr>
-                          ) : (
-                            odcItemsPreview.map((it, idx) => (
-                              <tr key={it.id || idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                                <td style={{ padding: '7px 10px', fontWeight: '600', color: '#1e293b' }}>
-                                  <div>{it.descripcion}</div>
-                                  {(it.cuenta || it.departamento || odcPreviewSeleccionada.departamento) && (
-                                    <span style={{ display: 'inline-block', marginTop: '2px', fontSize: '0.65rem', color: '#0284c7', backgroundColor: '#e0f2fe', padding: '1px 5px', borderRadius: '4px', fontWeight: '700' }}>
-                                      🏛️ {it.cuenta || it.departamento || odcPreviewSeleccionada.departamento}
-                                    </span>
-                                  )}
-                                </td>
-                                <td style={{ padding: '7px 6px', textAlign: 'center', fontWeight: '800', color: '#475569' }}>
-                                  {Number(it.cantidad || 0).toLocaleString('de-DE')}
-                                </td>
-                                <td style={{ padding: '7px 8px', textAlign: 'right', color: '#475569' }}>
-                                  $ {Number(it.precio_unitario || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
-                                </td>
-                                <td style={{ padding: '7px 10px', textAlign: 'right', fontWeight: '900', color: '#0f172a' }}>
-                                  $ {Number(it.total_fila || (it.cantidad * it.precio_unitario) || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                          </thead>
+                          <tbody>
+                            {loadingOdcItemsPreview ? (
+                              <tr>
+                                <td colSpan="4" style={{ padding: '20px', textAlign: 'center', color: '#64748b', fontWeight: '600' }}>
+                                  Cargando ítems de la Órden de Compra...
                                 </td>
                               </tr>
-                            ))
-                          )}
-                        </tbody>
-                      </table>
+                            ) : odcItemsPreview.length === 0 ? (
+                              <tr>
+                                <td colSpan="4" style={{ padding: '20px', textAlign: 'center', color: '#94a3b8', fontStyle: 'italic' }}>
+                                  No se encontraron renglones detallados registrados para esta ODC.
+                                </td>
+                              </tr>
+                            ) : (
+                              odcItemsPreview.map((it, idx) => (
+                                <tr key={it.id || idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                  <td style={{ padding: '7px 10px', fontWeight: '600', color: '#1e293b' }}>
+                                    <div>{it.descripcion}</div>
+                                    {(it.cuenta || it.departamento || odcPreviewSeleccionada.departamento) && (
+                                      <span style={{ display: 'inline-block', marginTop: '2px', fontSize: '0.65rem', color: '#0284c7', backgroundColor: '#e0f2fe', padding: '1px 5px', borderRadius: '4px', fontWeight: '700' }}>
+                                        🏛️ {it.cuenta || it.departamento || odcPreviewSeleccionada.departamento}
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td style={{ padding: '7px 6px', textAlign: 'center', fontWeight: '800', color: '#475569' }}>
+                                    {Number(it.cantidad || 0).toLocaleString('de-DE')}
+                                  </td>
+                                  <td style={{ padding: '7px 8px', textAlign: 'right', color: '#475569' }}>
+                                    $ {Number(it.precio_unitario || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                                  </td>
+                                  <td style={{ padding: '7px 10px', textAlign: 'right', fontWeight: '900', color: '#0f172a' }}>
+                                    $ {Number(it.total_fila || (it.cantidad * it.precio_unitario) || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                                  </td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
                   </div>
 
-                  {/* HISTORIAL Y COMPROBANTES DE PAGOS REGISTRADOS */}
+                  {/* HISTORIAL Y COMPROBANTES DE PAGOS REGISTRADOS (FILA INFERIOR: 240px) */}
                   <div>
                     <h4 style={{ margin: '0 0 6px 0', fontSize: '10.5px', fontWeight: '900', textTransform: 'uppercase', color: '#64748b', letterSpacing: '0.4px' }}>
                       HISTORIAL Y COMPROBANTES DE PAGOS ({abonosOdc.length})
                     </h4>
 
-                    {abonosOdc.length === 0 ? (
-                      <div style={{ padding: '12px 14px', textAlign: 'center', color: '#94a3b8', fontSize: '0.74rem', fontStyle: 'italic', border: '1px dashed #cbd5e1', borderRadius: '10px', backgroundColor: '#f8fafc' }}>
-                        No se han registrado pagos o abonos para esta Órden de Compra todavía.
-                      </div>
-                    ) : (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '160px', overflowY: 'auto' }}>
-                        {abonosOdc.map((ab, idx) => (
-                          <div key={ab.abono_id || idx} style={{ padding: '8px 10px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                              <div style={{ fontSize: '0.92rem', fontWeight: '900', color: '#10b981' }}>
+                    <div style={{ height: '240px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '14px', padding: '10px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      {abonosOdc.length === 0 ? (
+                        <div style={{ margin: 'auto', padding: '16px 20px', textAlign: 'center', color: '#94a3b8', fontSize: '0.76rem', fontStyle: 'italic', border: '1px dashed #cbd5e1', borderRadius: '10px', backgroundColor: 'white' }}>
+                          No se han registrado pagos o abonos para esta Órden de Compra todavía.
+                        </div>
+                      ) : abonosOdc.map((ab, idx) => (
+                          <div key={ab.abono_id || idx} style={{ padding: '9px 12px', backgroundColor: 'white', border: '1px solid #e2e8f0', borderRadius: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', boxShadow: '0 1px 2px rgba(0,0,0,0.02)' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                              <div style={{ fontSize: '0.95rem', fontWeight: '950', color: '#10b981' }}>
                                 + $ {(Number(ab.monto) || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
                               </div>
                               <div style={{ fontSize: '0.72rem', color: '#475569', display: 'flex', flexDirection: 'column' }}>
@@ -2884,8 +2886,8 @@ const LiquidacionFacturas = ({ currentUser }) => {
                                         textDecoration: 'none',
                                         color: '#0284c7',
                                         backgroundColor: '#e0f2fe',
-                                        padding: '3px 8px',
-                                        borderRadius: '5px',
+                                        padding: '4px 9px',
+                                        borderRadius: '6px',
                                         fontSize: '0.68rem',
                                         fontWeight: '800',
                                         border: '1px solid #bae6fd'
@@ -2909,8 +2911,8 @@ const LiquidacionFacturas = ({ currentUser }) => {
                                     textDecoration: 'none',
                                     color: '#0284c7',
                                     backgroundColor: '#e0f2fe',
-                                    padding: '3px 8px',
-                                    borderRadius: '5px',
+                                    padding: '4px 9px',
+                                    borderRadius: '6px',
                                     fontSize: '0.68rem',
                                     fontWeight: '800',
                                     border: '1px solid #bae6fd'
@@ -2946,8 +2948,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
                             </div>
                           </div>
                         ))}
-                      </div>
-                    )}
+                    </div>
                   </div>
 
                 </div>
@@ -2955,75 +2956,125 @@ const LiquidacionFacturas = ({ currentUser }) => {
                 {/* COLUMNA 2: FORMAS DE PAGO & CONTACTO PROVEEDOR */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                   
-                  {/* FORMAS DE PAGO Y CUENTAS BANCARIAS */}
+                  {/* FORMAS DE PAGO Y CUENTAS BANCARIAS (FILA SUPERIOR: 190px) */}
                   <div>
                     <h4 style={{ margin: '0 0 6px 0', fontSize: '10.5px', fontWeight: '900', textTransform: 'uppercase', color: '#64748b', letterSpacing: '0.4px' }}>
                       FORMAS Y CUENTAS DE PAGO DEL PROVEEDOR
                     </h4>
 
-                    <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '10px', display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '180px', overflowY: 'auto' }}>
+                    <div style={{ height: '190px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '14px', padding: '10px', display: 'flex', flexDirection: 'column', gap: '8px', overflowY: 'auto' }}>
                       {ctasBancariasProv.length === 0 ? (
-                        <div style={{ fontSize: '0.74rem', color: '#64748b', fontStyle: 'italic', padding: '8px 0', textAlign: 'center' }}>
+                        <div style={{ margin: 'auto', fontSize: '0.76rem', color: '#64748b', fontStyle: 'italic', padding: '12px', textAlign: 'center' }}>
                           No hay cuentas bancarias registradas en la ficha de este proveedor.
                         </div>
-                      ) : (
-                        ctasBancariasProv.map((cta, idx) => (
-                          <div key={idx} style={{ padding: '8px 10px', backgroundColor: 'white', border: '1px solid #cbd5e1', borderRadius: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
-                            <div>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                <span style={{ fontSize: '0.78rem', fontWeight: '900', color: '#0f172a' }}>{cta.banco || 'BANCO / METODO'}</span>
-                                <span style={{ fontSize: '0.62rem', fontWeight: '900', padding: '1px 5px', borderRadius: '5px', backgroundColor: (cta.moneda || 'USD').includes('USD') || (cta.moneda || '').includes('$') ? '#dcfce7' : '#eff6ff', color: (cta.moneda || 'USD').includes('USD') || (cta.moneda || '').includes('$') ? '#15803d' : '#1d4ed8', border: `1px solid ${(cta.moneda || 'USD').includes('USD') || (cta.moneda || '').includes('$') ? '#bbf7d0' : '#bfdbfe'}` }}>
-                                  {cta.moneda || 'VES/USD'}
+                      ) : ctasBancariasProv.map((cta, idx) => (
+                          <div 
+                            key={idx} 
+                            style={{ 
+                              padding: '11px 13px', 
+                              backgroundColor: 'white', 
+                              border: '1.5px solid #cbd5e1', 
+                              borderRadius: '12px', 
+                              boxShadow: '0 1px 3px rgba(0,0,0,0.03)',
+                              display: 'flex', 
+                              flexDirection: 'column', 
+                              gap: '6px' 
+                            }}
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+                                <Landmark size={17} color="#0284c7" />
+                                <span style={{ fontSize: '0.92rem', fontWeight: '950', color: '#0f172a', letterSpacing: '-0.2px' }}>
+                                  {cta.banco || 'BANCO / METODO'}
                                 </span>
                               </div>
-                              <div style={{ fontSize: '0.74rem', fontFamily: 'monospace', fontWeight: '700', color: '#334155', marginTop: '2px' }}>
-                                {cta.nro_cuenta || cta.cuenta || 'Sin número de cuenta'}
-                              </div>
+                              <span style={{ 
+                                fontSize: '0.7rem', 
+                                fontWeight: '900', 
+                                padding: '2px 7px', 
+                                borderRadius: '6px', 
+                                backgroundColor: (cta.moneda || 'USD').includes('USD') || (cta.moneda || '').includes('$') ? '#dcfce7' : '#eff6ff', 
+                                color: (cta.moneda || 'USD').includes('USD') || (cta.moneda || '').includes('$') ? '#15803d' : '#1d4ed8', 
+                                border: `1px solid ${(cta.moneda || 'USD').includes('USD') || (cta.moneda || '').includes('$') ? '#bbf7d0' : '#bfdbfe'}` 
+                              }}>
+                                {cta.moneda || 'VES/USD'}
+                              </span>
                             </div>
+
+                            {/* Número de cuenta grande con botón de copiar */}
+                            <div 
+                              style={{ 
+                                display: 'flex', 
+                                justifyContent: 'space-between', 
+                                alignItems: 'center', 
+                                backgroundColor: '#f8fafc', 
+                                padding: '6px 10px', 
+                                borderRadius: '8px', 
+                                border: '1px solid #e2e8f0',
+                                cursor: 'pointer',
+                                transition: 'all 0.15s ease'
+                              }}
+                              onClick={() => {
+                                const num = cta.nro_cuenta || cta.cuenta;
+                                if (num) {
+                                  navigator.clipboard.writeText(num);
+                                  toast.success("Número de cuenta copiado");
+                                }
+                              }}
+                              title="Clic para copiar número de cuenta"
+                            >
+                              <span style={{ fontSize: '0.92rem', fontFamily: 'Consolas, Monaco, monospace', fontWeight: '900', color: '#0f172a', letterSpacing: '0.6px' }}>
+                                {cta.nro_cuenta || cta.cuenta || 'Sin número de cuenta'}
+                              </span>
+                              <span style={{ fontSize: '0.68rem', color: '#0284c7', fontWeight: '800', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                <Copy size={11} /> Copiar
+                              </span>
+                            </div>
+
+                            {/* Titular y RIF */}
                             {(cta.titular || cta.rif) && (
-                              <div style={{ textAlign: 'right', fontSize: '0.68rem', color: '#64748b' }}>
-                                <div style={{ fontWeight: '800', color: '#475569' }}>{cta.titular || ''}</div>
-                                <div>RIF/CI: {cta.rif || '—'}</div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.76rem', color: '#475569', paddingTop: '1px' }}>
+                                <span style={{ fontWeight: '800', color: '#334155' }}>{cta.titular || ''}</span>
+                                <span style={{ fontWeight: '700', color: '#64748b' }}>RIF/CI: {cta.rif || '—'}</span>
                               </div>
                             )}
                           </div>
-                        ))
-                      )}
+                        ))}
                     </div>
                   </div>
 
-                  {/* CONTACTO Y DATOS FISCALES DEL PROVEEDOR */}
+                  {/* CONTACTO Y DATOS FISCALES DEL PROVEEDOR (FILA INFERIOR: 240px) */}
                   <div>
                     <h4 style={{ margin: '0 0 6px 0', fontSize: '10.5px', fontWeight: '900', textTransform: 'uppercase', color: '#64748b', letterSpacing: '0.4px' }}>
                       CONTACTO Y DATOS FISCALES
                     </h4>
 
-                    <div style={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '12px', display: 'flex', flexDirection: 'column', gap: '7px', fontSize: '0.76rem', boxShadow: '0 1px 2px rgba(0,0,0,0.02)' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <div style={{ height: '240px', backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '14px', padding: '14px 16px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', fontSize: '0.78rem', boxShadow: '0 1px 2px rgba(0,0,0,0.02)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <span style={{ color: '#64748b', fontWeight: '600' }}>Contacto:</span>
-                        <span style={{ fontWeight: '800', color: '#0f172a' }}>{contactoNombre}</span>
+                        <span style={{ fontWeight: '900', color: '#0f172a' }}>{contactoNombre}</span>
                       </div>
 
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <span style={{ color: '#64748b', fontWeight: '600' }}>Teléfono:</span>
-                        <span style={{ fontWeight: '800', color: '#0f172a' }}>{contactoTelefono}</span>
+                        <span style={{ fontWeight: '900', color: '#0f172a', fontFamily: 'monospace', fontSize: '0.82rem' }}>{contactoTelefono}</span>
                       </div>
 
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <span style={{ color: '#64748b', fontWeight: '600' }}>Correo:</span>
                         <span style={{ fontWeight: '800', color: '#0284c7' }}>{contactoCorreo}</span>
                       </div>
 
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <span style={{ color: '#64748b', fontWeight: '600' }}>RIF:</span>
                         <span style={{ fontWeight: '800', color: '#0f172a' }}>{rifProv}</span>
                       </div>
 
-                      <div style={{ height: '1px', backgroundColor: '#f1f5f9', margin: '1px 0' }}></div>
+                      <div style={{ height: '1px', backgroundColor: '#f1f5f9', margin: '2px 0' }}></div>
 
                       <div>
-                        <span style={{ color: '#64748b', fontWeight: '600', display: 'block', marginBottom: '1px', fontSize: '0.72rem' }}>Dirección / Ciudad:</span>
-                        <span style={{ fontWeight: '700', color: '#334155', fontSize: '0.73rem', lineHeight: '1.2' }}>
+                        <span style={{ color: '#64748b', fontWeight: '600', display: 'block', marginBottom: '2px', fontSize: '0.72rem' }}>Dirección / Ciudad:</span>
+                        <span style={{ fontWeight: '700', color: '#334155', fontSize: '0.75rem', lineHeight: '1.3' }}>
                           {direccionProv} {ciudadProv ? `(${ciudadProv})` : ''}
                         </span>
                       </div>
@@ -3035,13 +3086,13 @@ const LiquidacionFacturas = ({ currentUser }) => {
                 {/* COLUMNA 3: ORIGEN/TRAZABILIDAD & RESUMEN FINANCIERO */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                   
-                  {/* ORIGEN, SOLICITANTE, EMISIÓN Y DESTINO */}
+                  {/* ORIGEN, SOLICITANTE, EMISIÓN Y DESTINO (FILA SUPERIOR: 190px) */}
                   <div>
                     <h4 style={{ margin: '0 0 6px 0', fontSize: '10.5px', fontWeight: '900', textTransform: 'uppercase', color: '#475569', letterSpacing: '0.4px' }}>
                       ORIGEN, EMISIÓN Y DESTINO
                     </h4>
 
-                    <div style={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.75rem', boxShadow: '0 1px 2px rgba(0,0,0,0.02)' }}>
+                    <div style={{ height: '190px', backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '14px', padding: '12px 14px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', fontSize: '0.76rem', boxShadow: '0 1px 2px rgba(0,0,0,0.02)' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <span style={{ color: '#64748b', fontWeight: '600' }}>Requisición:</span>
                         <span style={{ fontWeight: '800', color: '#0f172a', display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
@@ -3097,7 +3148,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
                       </div>
 
                       {(odcPreviewSeleccionada.despachar_a_direccion || odcPreviewSeleccionada.destino_despacho) && (
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', paddingTop: '2px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', paddingTop: '1px' }}>
                           <span style={{ color: '#64748b', fontWeight: '600', fontSize: '0.72rem' }}>Destino:</span>
                           <span style={{ fontWeight: '600', color: '#334155', textAlign: 'right', maxWidth: '65%', fontSize: '0.72rem' }}>
                             {odcPreviewSeleccionada.despachar_a_direccion || odcPreviewSeleccionada.destino_despacho}
@@ -3107,13 +3158,13 @@ const LiquidacionFacturas = ({ currentUser }) => {
                     </div>
                   </div>
 
-                  {/* RESUMEN FINANCIERO */}
+                  {/* RESUMEN FINANCIERO (FILA INFERIOR: 240px) */}
                   <div>
                     <h4 style={{ margin: '0 0 6px 0', fontSize: '10.5px', fontWeight: '900', textTransform: 'uppercase', color: '#475569', letterSpacing: '0.4px' }}>
                       RESUMEN FINANCIERO
                     </h4>
 
-                    <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: '7px', boxShadow: '0 1px 2px rgba(0,0,0,0.02)' }}>
+                    <div style={{ height: '240px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '14px', padding: '14px 16px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', boxShadow: '0 1px 2px rgba(0,0,0,0.02)' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', paddingBottom: '6px', borderBottom: '1px solid #e2e8f0' }}>
                         <span style={{ fontWeight: '700', color: '#64748b', fontSize: '0.8rem' }}>Total ODC:</span>
                         <span style={{ fontWeight: '900', fontSize: '1.25rem', color: '#0f172a', letterSpacing: '-0.02em' }}>
