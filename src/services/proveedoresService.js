@@ -1043,23 +1043,51 @@ export const obtenerHistorialModificacionesProveedores = () => {
 };
 
 /**
- * Carga todos los proveedores unificando:
- * 1. Directorio central en la nube (SYS-PROVEEDORES-CENTRAL)
- * 2. Base de datos Supabase (tabla proveedores)
- * 3. Almacenamiento local persistente (`local_proveedores_registrados`)
- * 4. Histórico de compras en requisiciones
- * Utiliza deduplicación multi-fase y fusión inteligente.
+ * Cache en memoria con TTL de 3 minutos e invalidación reactiva
  */
-export const obtenerTodosProveedores = async () => {
-  // 0. Directorio maestro en la nube
+let _cachedProveedoresList = null;
+let _cachedProveedoresTimestamp = 0;
+const PROVEEDORES_CACHE_TTL_MS = 3 * 60 * 1000;
+
+export const invalidarCacheProveedores = () => {
+  _cachedProveedoresList = null;
+  _cachedProveedoresTimestamp = 0;
+};
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('proveedores_actualizados', invalidarCacheProveedores);
+}
+
+/**
+ * Obtiene todos los proveedores fusionando todas las fuentes disponibles:
+ * 1. Directorio central en la nube (SYS-PROVEEDORES-CENTRAL)
+ * 2. Tabla 'proveedores' en Supabase
+ * 3. Almacenamiento local persistente
+ * 4. Snapshots del historial y proveedores históricos
+ * Utiliza deduplicación multi-fase y caché de alto rendimiento.
+ */
+export const obtenerTodosProveedores = async (options = {}) => {
+  const forceRefresh = Boolean(options && options.forceRefresh);
+  const now = Date.now();
+
+  // Retorno instantáneo si la caché en memoria sigue vigente
+  if (!forceRefresh && _cachedProveedoresList && (now - _cachedProveedoresTimestamp < PROVEEDORES_CACHE_TTL_MS)) {
+    return _cachedProveedoresList;
+  }
+
+  // 0 y 1. Consultar directorio central cloud y tabla proveedores de Supabase EN PARALELO
+  const [cloudRes, supabaseRes] = await Promise.allSettled([
+    obtenerDirectorioCentralCloud(),
+    supabase.from('proveedores').select('*').order('razon_social', { ascending: true })
+  ]);
+
   let cloudProvs = [];
-  try {
-    const cloudData = await obtenerDirectorioCentralCloud();
+  if (cloudRes.status === 'fulfilled' && cloudRes.value) {
+    const cloudData = cloudRes.value;
     if (Array.isArray(cloudData.proveedores) && cloudData.proveedores.length > 0) {
       cloudProvs = cloudData.proveedores;
     }
     if (Array.isArray(cloudData.historial) && cloudData.historial.length > 0) {
-      // Sincronizar historial de la nube con local
       try {
         const localHist = JSON.parse(localStorage.getItem(STORAGE_KEY_HISTORIAL_PROVEEDORES) || '[]');
         const mapH = new Map();
@@ -1070,27 +1098,15 @@ export const obtenerTodosProveedores = async () => {
         });
         const histMerged = Array.from(mapH.values()).sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
         localStorage.setItem(STORAGE_KEY_HISTORIAL_PROVEEDORES, JSON.stringify(histMerged));
-        window.dispatchEvent(new CustomEvent('historial_proveedores_actualizado'));
       } catch {
         // ignore
       }
     }
-  } catch (errCloud) {
-    console.warn('Aviso leyendo directorio central cloud:', errCloud);
   }
 
-  // 1. Supabase tabla proveedores
   let supabaseProvs = [];
-  try {
-    const { data, error } = await supabase
-      .from('proveedores')
-      .select('*')
-      .order('razon_social', { ascending: true });
-    if (!error && Array.isArray(data)) {
-      supabaseProvs = data;
-    }
-  } catch (err) {
-    console.warn('Error al consultar tabla proveedores de Supabase:', err);
+  if (supabaseRes.status === 'fulfilled' && supabaseRes.value && !supabaseRes.value.error && Array.isArray(supabaseRes.value.data)) {
+    supabaseProvs = supabaseRes.value.data;
   }
 
   // 2. Almacenamiento local persistente
@@ -1107,67 +1123,83 @@ export const obtenerTodosProveedores = async () => {
     console.warn('Error leyendo local_proveedores_registrados:', err);
   }
 
-  // 3. Proveedores históricos de requisiciones
+  // 3. Proveedores históricos (usar caché local previa o solo si las fuentes primarias están vacías)
   let historicosReqs = [];
   try {
-    let reqsAll = [];
-    let pageReq = 0;
-    let keepReq = true;
-    while (keepReq) {
-      const { data: chunk, error: reqsError } = await supabase
-        .from('requisiciones')
-        .select('items, correlativo_req, fecha_emision')
-        .range(pageReq * 1000, (pageReq + 1) * 1000 - 1);
-      
-      if (reqsError) {
-        console.warn('Error extrayendo proveedores históricos:', reqsError);
-        break;
-      }
-      if (chunk && chunk.length > 0) {
-        reqsAll = reqsAll.concat(chunk);
-        if (chunk.length < 1000) keepReq = false;
-        else pageReq++;
-      } else {
-        keepReq = false;
+    const rawHistCache = localStorage.getItem('local_proveedores_historicos_extraidos');
+    if (rawHistCache) {
+      const parsedHist = JSON.parse(rawHistCache);
+      if (Array.isArray(parsedHist)) {
+        historicosReqs = parsedHist;
       }
     }
+  } catch {
+    // ignore
+  }
 
-    const mapaHist = new Map();
-    reqsAll.forEach(r => {
-      // Ignorar registro de sincronización del sistema
-      if (r.correlativo_req?.startsWith('SYS-')) return;
-      const items = Array.isArray(r.items) ? r.items : [];
-      items.forEach(it => {
-        const hist = Array.isArray(it.historial_compras) ? it.historial_compras : [];
-        hist.forEach(h => {
-          if (h.tipo === 'JUSTIFICACION' || h.tipo === 'ANULACION') return;
-          const nombreLimpio = (h.proveedor_nombre || '').trim();
-          if (nombreLimpio) {
-            const key = normalizarNombreEmpresa(nombreLimpio);
-            if (key && !mapaHist.has(key)) {
-              mapaHist.set(key, {
-                id: h.proveedor_id || `HIST-${key.substring(0, 15)}`,
-                razon_social: nombreLimpio,
-                rif: h.proveedor_rif || '',
-                persona_contacto: h.contacto || '',
-                contacto_nombre: h.contacto || '',
-                telefono: h.telefono || '',
-                correo: h.correo || '',
-                localizacion: h.ciudad || 'Maracaibo',
-                ciudad: h.ciudad || 'Maracaibo',
-                direccion: h.direccion || '',
-                categoria: (h.categoria && h.categoria.toUpperCase() !== 'OTROS') ? h.categoria : '',
-                status: true,
-                es_historico: true
-              });
+  // Si no hay proveedores históricos en caché y no tenemos proveedores primarios, escanear bajo demanda
+  if (historicosReqs.length === 0 && cloudProvs.length === 0 && supabaseProvs.length === 0 && localProvs.length === 0) {
+    try {
+      let reqsAll = [];
+      let pageReq = 0;
+      let keepReq = true;
+      while (keepReq) {
+        const { data: chunk, error: reqsError } = await supabase
+          .from('requisiciones')
+          .select('items, correlativo_req, fecha_emision')
+          .range(pageReq * 1000, (pageReq + 1) * 1000 - 1);
+        
+        if (reqsError) break;
+        if (chunk && chunk.length > 0) {
+          reqsAll = reqsAll.concat(chunk);
+          if (chunk.length < 1000) keepReq = false;
+          else pageReq++;
+        } else {
+          keepReq = false;
+        }
+      }
+
+      const mapaHist = new Map();
+      reqsAll.forEach(r => {
+        if (r.correlativo_req?.startsWith('SYS-')) return;
+        const items = Array.isArray(r.items) ? r.items : [];
+        items.forEach(it => {
+          const hist = Array.isArray(it.historial_compras) ? it.historial_compras : [];
+          hist.forEach(h => {
+            if (h.tipo === 'JUSTIFICACION' || h.tipo === 'ANULACION') return;
+            const nombreLimpio = (h.proveedor_nombre || '').trim();
+            if (nombreLimpio) {
+              const key = normalizarNombreEmpresa(nombreLimpio);
+              if (key && !mapaHist.has(key)) {
+                mapaHist.set(key, {
+                  id: h.proveedor_id || `HIST-${key.substring(0, 15)}`,
+                  razon_social: nombreLimpio,
+                  rif: h.proveedor_rif || '',
+                  persona_contacto: h.contacto || '',
+                  contacto_nombre: h.contacto || '',
+                  telefono: h.telefono || '',
+                  correo: h.correo || '',
+                  localizacion: h.ciudad || 'Maracaibo',
+                  ciudad: h.ciudad || 'Maracaibo',
+                  direccion: h.direccion || '',
+                  categoria: (h.categoria && h.categoria.toUpperCase() !== 'OTROS') ? h.categoria : '',
+                  status: true,
+                  es_historico: true
+                });
+              }
             }
-          }
+          });
         });
       });
-    });
-    historicosReqs = deduplicarListaProveedores(Array.from(mapaHist.values()));
-  } catch (err) {
-    console.warn('Error en proceso de proveedores históricos:', err);
+      historicosReqs = deduplicarListaProveedores(Array.from(mapaHist.values()));
+      try {
+        localStorage.setItem('local_proveedores_historicos_extraidos', JSON.stringify(historicosReqs));
+      } catch {
+        // ignore
+      }
+    } catch (err) {
+      console.warn('Error en proceso de proveedores históricos:', err);
+    }
   }
 
   // 3.5 Snapshots de proveedores desde el historial de modificaciones
@@ -1235,6 +1267,9 @@ export const obtenerTodosProveedores = async () => {
 
   const todos = listaDeduplicada.map(p => normalizarProveedor(p));
   todos.sort((a, b) => (a.razon_social || '').localeCompare(b.razon_social || '', 'es'));
+  
+  _cachedProveedoresList = todos;
+  _cachedProveedoresTimestamp = Date.now();
   return todos;
 };
 

@@ -84,6 +84,9 @@ const OrdenesCompra = ({ currentUser }) => {
   const [motivoAnulacionDetalle, setMotivoAnulacionDetalle] = useState('');
   const [guardandoAnulacion, setGuardandoAnulacion] = useState(false);
 
+  const isCargandoOrdenesRef = useRef(false);
+  const debounceRealtimeRef = useRef(null);
+
   const categoriasDisponibles = useMemo(() => {
     const setCat = new Set();
     (proveedoresList || []).forEach(p => {
@@ -201,34 +204,132 @@ const OrdenesCompra = ({ currentUser }) => {
 
   useEffect(() => {
     cargarOrdenes();
-    cargarDestinosDespacho();
 
     const handleProvActualizados = () => {
-      cargarOrdenes();
-      cargarDestinosDespacho();
+      if (debounceRealtimeRef.current) clearTimeout(debounceRealtimeRef.current);
+      debounceRealtimeRef.current = setTimeout(() => {
+        cargarOrdenes();
+      }, 300);
     };
     window.addEventListener('proveedores_actualizados', handleProvActualizados);
 
     const channel = supabase
       .channel('ordenes_compra_realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'ordenes_compra' }, () => {
-        cargarOrdenes();
+        if (debounceRealtimeRef.current) clearTimeout(debounceRealtimeRef.current);
+        debounceRealtimeRef.current = setTimeout(() => {
+          cargarOrdenes();
+        }, 500);
       })
       .subscribe();
 
     return () => {
+      if (debounceRealtimeRef.current) clearTimeout(debounceRealtimeRef.current);
       supabase.removeChannel(channel);
       window.removeEventListener('proveedores_actualizados', handleProvActualizados);
     };
   }, []);
 
   const cargarOrdenes = async () => {
+    if (isCargandoOrdenesRef.current) return;
+    isCargandoOrdenesRef.current = true;
     setLoading(true);
     try {
-      // 1. Cargar catálogo de proveedores unificado
-      const provsData = await obtenerTodosProveedores();
+      // 1. Carga paralela de todas las fuentes de datos independientes
+      const [provsData, reqsData, itemsOdcData, odcData, destinosData] = await Promise.all([
+        obtenerTodosProveedores(),
+        // Catálogo de requisiciones de forma ultraliviana (sin el campo pesado 'items' JSON)
+        (async () => {
+          let reqs = [];
+          let page = 0;
+          let keep = true;
+          while (keep) {
+            const { data: chunk, error: reqErr } = await supabase
+              .from('requisiciones')
+              .select('id, correlativo_req, solicitante, gerencia, centro_costo, prioridad')
+              .range(page * 1000, (page + 1) * 1000 - 1);
+            if (reqErr) {
+              console.warn("Aviso al cargar catálogo de requisiciones:", reqErr);
+              break;
+            }
+            if (chunk && chunk.length > 0) {
+              reqs = reqs.concat(chunk);
+              if (chunk.length < 1000) keep = false;
+              else page++;
+            } else {
+              keep = false;
+            }
+          }
+          return reqs;
+        })(),
+        // Renglones detallados de la tabla ordenes_compra_items
+        (async () => {
+          let items = [];
+          let page = 0;
+          let keep = true;
+          while (keep) {
+            const { data: chunkItems, error: itemsErr } = await supabase
+              .from('ordenes_compra_items')
+              .select('id, orden_compra_id, item_numero, descripcion, cantidad, unidad, precio_unitario, subtotal, total_fila')
+              .order('item_numero', { ascending: true })
+              .range(page * 1000, (page + 1) * 1000 - 1);
+            if (itemsErr) {
+              console.warn("Aviso al cargar ítems globales de ODC:", itemsErr.message);
+              break;
+            }
+            if (chunkItems && chunkItems.length > 0) {
+              items = items.concat(chunkItems);
+              if (chunkItems.length < 1000) keep = false;
+              else page++;
+            } else {
+              keep = false;
+            }
+          }
+          return items;
+        })(),
+        // Órdenes de compra principales
+        (async () => {
+          let odcs = [];
+          let page = 0;
+          let keep = true;
+          while (keep) {
+            const { data: chunk, error } = await supabase
+              .from('ordenes_compra')
+              .select('*')
+              .order('created_at', { ascending: false })
+              .range(page * 1000, (page + 1) * 1000 - 1);
+            if (error) throw error;
+            if (chunk && chunk.length > 0) {
+              odcs = odcs.concat(chunk);
+              if (chunk.length < 1000) keep = false;
+              else page++;
+            } else {
+              keep = false;
+            }
+          }
+          return odcs;
+        })(),
+        // Destinos de despacho
+        (async () => {
+          try {
+            const { data, error } = await supabase
+              .from('destinos_despacho_predeterminados')
+              .select('*')
+              .order('es_predeterminado', { ascending: false });
+            if (!error && data) return data;
+          } catch {
+            // ignore
+          }
+          return [];
+        })()
+      ]);
+
+      if (destinosData && destinosData.length > 0) {
+        setDestinosDespacho(destinosData);
+      }
       setProveedoresList(provsData || []);
-      
+      setRequisicionesList(reqsData || []);
+
       const provMap = {};
       (provsData || []).forEach(p => {
         if (p.id !== undefined && p.id !== null) {
@@ -238,27 +339,6 @@ const OrdenesCompra = ({ currentUser }) => {
           provMap[p.rif.trim().toUpperCase()] = p;
         }
       });
-
-      // 2. Cargar requisiciones de origen para vinculación directa (Paginación completa)
-      let reqsData = [];
-      let pageReq = 0;
-      let keepReq = true;
-      while (keepReq) {
-        const { data: chunk, error: reqErr } = await supabase
-          .from('requisiciones')
-          .select('id, correlativo_req, solicitante, gerencia, centro_costo, prioridad, items')
-          .range(pageReq * 1000, (pageReq + 1) * 1000 - 1);
-        if (reqErr) {
-          console.error("Error al cargar catálogo de requisiciones:", reqErr);
-        }
-        if (chunk && chunk.length > 0) {
-          reqsData = reqsData.concat(chunk);
-          if (chunk.length < 1000) keepReq = false;
-          else pageReq++;
-        } else {
-          keepReq = false;
-        }
-      }
 
       const reqMap = {};
       (reqsData || []).forEach(r => {
@@ -274,30 +354,6 @@ const OrdenesCompra = ({ currentUser }) => {
           reqMap[cTrim.toUpperCase()] = r;
         }
       });
-      setRequisicionesList(reqsData || []);
-
-      // 2.5 Cargar renglones de ordenes_compra_items para mapeo de descripción directa
-      let itemsOdcData = [];
-      let pageItems = 0;
-      let keepItems = true;
-      while (keepItems) {
-        const { data: chunkItems, error: itemsErr } = await supabase
-          .from('ordenes_compra_items')
-          .select('id, orden_compra_id, item_numero, descripcion, cantidad, unidad, precio_unitario, subtotal, total_fila')
-          .order('item_numero', { ascending: true })
-          .range(pageItems * 1000, (pageItems + 1) * 1000 - 1);
-        if (itemsErr) {
-          console.warn("Aviso al cargar ítems globales de ODC:", itemsErr.message);
-          break;
-        }
-        if (chunkItems && chunkItems.length > 0) {
-          itemsOdcData = itemsOdcData.concat(chunkItems);
-          if (chunkItems.length < 1000) keepItems = false;
-          else pageItems++;
-        } else {
-          keepItems = false;
-        }
-      }
 
       const odcItemsMap = {};
       (itemsOdcData || []).forEach(it => {
@@ -308,31 +364,7 @@ const OrdenesCompra = ({ currentUser }) => {
         }
       });
 
-      // 3. Cargar órdenes de compra sin pedir relaciones embebidas
-      let data = [];
-      let pageOdc = 0;
-      let keepOdc = true;
-      while (keepOdc) {
-        const { data: chunk, error } = await supabase
-          .from('ordenes_compra')
-          .select('*')
-          .order('created_at', { ascending: false })
-          .range(pageOdc * 1000, (pageOdc + 1) * 1000 - 1);
-
-        if (error) {
-          console.error("Error PostgREST en ordenes_compra:", error);
-          throw error;
-        }
-        if (chunk && chunk.length > 0) {
-          data = data.concat(chunk);
-          if (chunk.length < 1000) keepOdc = false;
-          else pageOdc++;
-        } else {
-          keepOdc = false;
-        }
-      }
-
-      const mapeadas = (data || []).map(o => {
+      const mapeadas = (odcData || []).map(o => {
         const prov = provMap[String(o.proveedor_id)];
         const cleanReqId = o.requisicion_id ? String(o.requisicion_id).trim() : '';
         const numOnlyReqId = cleanReqId.replace(/^REQ-?/i, '').trim();
@@ -345,35 +377,6 @@ const OrdenesCompra = ({ currentUser }) => {
                        (o.requisicion_correlativo ? reqMap[String(o.requisicion_correlativo).trim().toUpperCase()] : null);
 
         let itemsThisOdc = odcItemsMap[String(o.id)] || [];
-
-        // Fallback: Si no hay ítems en la tabla ordenes_compra_items, buscar en items de requisición
-        if (itemsThisOdc.length === 0 && reqObj?.items) {
-          const rawItems = Array.isArray(reqObj.items) ? reqObj.items : parsearJsonSeguro(reqObj.items);
-          const matchingReqItems = (rawItems || []).filter(it => 
-            (it.historial_compras || []).some(h => String(h.odc_id) === String(o.id) || h.odc_numero === o.numero_odc)
-          );
-          if (matchingReqItems.length > 0) {
-            itemsThisOdc = matchingReqItems.map((it, idx) => ({
-              id: it.id || `req_it_${idx}`,
-              orden_compra_id: o.id,
-              item_numero: idx + 1,
-              descripcion: it.descripcion || it.nombre || it.material || 'Material / Servicio',
-              cantidad: it.cantidad || it.cant || 1,
-              unidad: it.unidad || it.uni || 'UND',
-              precio_unitario: it.precio_unitario || it.pu || 0
-            }));
-          } else if (rawItems && rawItems.length > 0) {
-            itemsThisOdc = rawItems.map((it, idx) => ({
-              id: it.id || `req_it_${idx}`,
-              orden_compra_id: o.id,
-              item_numero: idx + 1,
-              descripcion: it.descripcion || it.nombre || it.material || 'Material / Servicio',
-              cantidad: it.cantidad || it.cant || 1,
-              unidad: it.unidad || it.uni || 'UND',
-              precio_unitario: it.precio_unitario || it.pu || 0
-            }));
-          }
-        }
 
         let descResumen = '';
         if (itemsThisOdc.length === 1) {
@@ -422,12 +425,6 @@ const OrdenesCompra = ({ currentUser }) => {
           pasaAlmacenVal = o.pasa_por_almacen !== false;
         } else if (pasaAlmacenLocal !== null) {
           pasaAlmacenVal = pasaAlmacenLocal === 'true';
-        } else if (reqObj?.items && Array.isArray(reqObj.items)) {
-          const directItem = reqObj.items.find(it => 
-            (it.historial_compras || []).some(h => (String(h.odc_id) === String(o.id) || h.odc_numero === o.numero_odc) && h.pasa_por_almacen === false) ||
-            (it.pasa_por_almacen === false && (it.historial_compras || []).some(h => String(h.odc_id) === String(o.id) || h.odc_numero === o.numero_odc))
-          );
-          if (directItem) pasaAlmacenVal = false;
         }
 
         const stOrden = String(o.estatus_orden || '').trim().toUpperCase();
@@ -509,6 +506,7 @@ const OrdenesCompra = ({ currentUser }) => {
       toast.error(`Error al cargar Órdenes de Compra: ${err.message || 'Error en consulta'}`);
     } finally {
       setLoading(false);
+      isCargandoOrdenesRef.current = false;
     }
   };
 
@@ -774,9 +772,12 @@ const OrdenesCompra = ({ currentUser }) => {
     setShowEditModal(true);
 
     try {
-      // 1. Cargar lista de proveedores para el selector
-      const provs = await obtenerTodosProveedores();
-      setProveedoresList(provs || []);
+      // 1. Cargar lista de proveedores si está vacía
+      let provs = proveedoresList;
+      if (!provs || provs.length === 0) {
+        provs = await obtenerTodosProveedores();
+        setProveedoresList(provs || []);
+      }
 
       // 1.1 Cargar destinos de despacho si aún no están en memoria
       let currentDestinos = destinosDespacho;
@@ -795,28 +796,17 @@ const OrdenesCompra = ({ currentUser }) => {
         }
       }
 
-      // 2. Cargar lista de requisiciones aprobadas/activas para vincular o importar renglones (Paginación completa)
-      let reqsAll = [];
-      let pageReq = 0;
-      let keepReq = true;
-      while (keepReq) {
-        const { data: chunk, error: reqErr2 } = await supabase
+      // 2. Usar lista de requisiciones en memoria o cargar catálogo liviano
+      let reqsAll = requisicionesList;
+      if (!reqsAll || reqsAll.length === 0) {
+        const { data: chunk } = await supabase
           .from('requisiciones')
-          .select('id, correlativo_req, solicitante, gerencia, centro_costo, items, created_at')
-          .order('created_at', { ascending: false })
-          .range(pageReq * 1000, (pageReq + 1) * 1000 - 1);
-        if (reqErr2) {
-          console.error("Error al cargar requisiciones en modal edición:", reqErr2);
-        }
-        if (chunk && chunk.length > 0) {
-          reqsAll = reqsAll.concat(chunk);
-          if (chunk.length < 1000) keepReq = false;
-          else pageReq++;
-        } else {
-          keepReq = false;
-        }
+          .select('id, correlativo_req, solicitante, gerencia, centro_costo, prioridad')
+          .order('id', { ascending: false })
+          .limit(500);
+        reqsAll = chunk || [];
+        setRequisicionesList(reqsAll);
       }
-      setRequisicionesList(reqsAll || []);
 
       // Determinar requisición de origen vinculada
       let reqEncontrada = odc.requisicion_obj || null;
@@ -838,6 +828,23 @@ const OrdenesCompra = ({ currentUser }) => {
           String(r.id) === String(odc.numero_req)
         );
       }
+
+      // Si la requisición vinculada no tiene items cargados en memoria, cargarlos bajo demanda
+      if (reqEncontrada && !reqEncontrada.items) {
+        try {
+          const { data: rDetail } = await supabase
+            .from('requisiciones')
+            .select('items')
+            .eq('id', reqEncontrada.id)
+            .maybeSingle();
+          if (rDetail && rDetail.items) {
+            reqEncontrada = { ...reqEncontrada, items: rDetail.items };
+          }
+        } catch (e) {
+          console.warn("Aviso al cargar ítems de requisición vinculada:", e);
+        }
+      }
+
       setSourceReqSelected(reqEncontrada || null);
 
       const resolvedReqId = reqEncontrada ? String(reqEncontrada.id) : (odc.requisicion_id ? String(odc.requisicion_id) : '');
