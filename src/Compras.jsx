@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import html2canvas from 'html2canvas';
@@ -10,6 +10,7 @@ import { Loader2, Upload, FileText, MessageSquare, Paperclip, Clock, CheckCircle
 import { getSemanaInfo, getSemanaInfoForWeek, safeSupabaseInsert } from './utils/helpers';
 import { compressImage } from './utils/compressImage';
 import { obtenerTodosProveedores } from './services/proveedoresService';
+import { consolidarSoportesRequisicion } from './services/requisicionesService';
 import './Requisiciones.css';
 import './ReportesMaestro.css';
 
@@ -27,59 +28,143 @@ const safeArray = (val) => {
   return [];
 };
 
-const FormularioAdjuntoToast = ({ cantProcesar, onConfirm, onCancel }) => {
-  const [docNumero, setDocNumero] = useState('');
-  const [docTipo, setDocTipo] = useState('FAC');
+const normalizarDocStr = (str) => {
+  if (!str) return '';
+  return String(str)
+    .toUpperCase()
+    .replace(/^(FAC|NC|FACTURA|NOTA\s*DE\s*CREDITO|DOC|ODC)[:\s\-_]*/i, '')
+    .replace(/[^A-Z0-9]/g, '')
+    .trim();
+};
+
+const FormularioAdjuntoToast = ({ cantProcesar, onConfirm, onCancel, item, renglones, requisicionActiva, proveedores }) => {
+  const [docNumero, setDocNumero] = useState(item?.doc_numero_actual || '');
+  const [docTipo, setDocTipo] = useState(item?.doc_tipo_actual || 'FAC');
   const [fileName, setFileName] = useState('Soporte Compra');
   const [file, setFile] = useState(null);
   const [duplicateUrl, setDuplicateUrl] = useState(null);
   const [loadingCheck, setLoadingCheck] = useState(false);
   const [alertaVisual, setAlertaVisual] = useState('');
 
-  // Debounce check for duplicate invoice
+  // Identificar el proveedor actual seleccionado
+  const provId = item?.proveedor_seleccionado_id;
+  const provObj = (proveedores || []).find(p => String(p.id) === String(provId));
+  const provNombre = provObj?.razon_social || provObj?.nombre || item?.proveedor || '';
+
+  // Detección instantánea y síncrona en local + debounce en base de datos
   useEffect(() => {
-    if (!docNumero.trim()) {
+    const rawDoc = (docNumero || '').trim();
+    const cleanDoc = normalizarDocStr(rawDoc);
+
+    if (!cleanDoc) {
       setDuplicateUrl(null);
       setAlertaVisual('');
       return;
     }
 
+    // 1. Búsqueda instantánea síncrona en renglones de la requisición activa actual
+    let foundUrl = null;
+
+    if (Array.isArray(renglones)) {
+      for (const r of renglones) {
+        if (Array.isArray(r.historial_compras)) {
+          for (const h of r.historial_compras) {
+            const hCleanDoc = normalizarDocStr(h.doc_numero || h.factura_num || h.numero_factura || h.odc_numero);
+            if (hCleanDoc && (hCleanDoc === cleanDoc || hCleanDoc.includes(cleanDoc) || cleanDoc.includes(hCleanDoc))) {
+              const urlCandidate = h.factura_url || h.url || h.soporte_url || h.archivo_url;
+              if (urlCandidate && urlCandidate.length > 5) {
+                foundUrl = urlCandidate;
+                break;
+              }
+            }
+          }
+        }
+        if (foundUrl) break;
+      }
+    }
+
+    // 2. Búsqueda en los soportes consolidados de la requisición activa (facturas_url)
+    if (!foundUrl && requisicionActiva?.facturas_url) {
+      const soportesArr = Array.isArray(requisicionActiva.facturas_url)
+        ? requisicionActiva.facturas_url
+        : safeArray(requisicionActiva.facturas_url);
+
+      for (const s of soportesArr) {
+        const urlCandidate = typeof s === 'string' ? s : s?.url;
+        const etiqCandidate = typeof s === 'string' ? '' : (s?.etiqueta || '');
+        const cleanEtiq = normalizarDocStr(etiqCandidate);
+        const cleanUrlName = normalizarDocStr(urlCandidate?.split('/').pop() || '');
+
+        if (cleanEtiq.includes(cleanDoc) || cleanUrlName.includes(cleanDoc)) {
+          if (urlCandidate && urlCandidate.length > 5) {
+            foundUrl = urlCandidate;
+            break;
+          }
+        }
+      }
+    }
+
+    if (foundUrl) {
+      setDuplicateUrl(foundUrl);
+      setAlertaVisual(`✓ Soporte ya cargado para ${docTipo}: ${rawDoc}${provNombre ? ` (${provNombre})` : ''}. No es necesario volver a subir el archivo.`);
+      setFile(null);
+      return;
+    }
+
+    // 3. Búsqueda asíncrona en base de datos Supabase
+    setLoadingCheck(true);
     const delayDebounceFn = setTimeout(async () => {
-      setLoadingCheck(true);
       try {
         const { data, error } = await supabase
           .from('requisiciones')
-          .select('items')
-          .not('items', 'is', null);
+          .select('id, items, facturas_url')
+          .not('items', 'is', null)
+          .order('created_at', { ascending: false })
+          .limit(200);
 
         if (error) throw error;
 
-        let foundUrl = null;
+        let dbFoundUrl = null;
         if (data) {
           for (const req of data) {
             if (Array.isArray(req.items)) {
               for (const it of req.items) {
                 if (Array.isArray(it.historial_compras)) {
                   for (const h of it.historial_compras) {
-                    if (h.doc_numero && String(h.doc_numero).trim().toUpperCase() === docNumero.trim().toUpperCase()) {
-                      if (h.factura_url) {
-                        foundUrl = h.factura_url;
+                    const hClean = normalizarDocStr(h.doc_numero || h.factura_num || h.numero_factura);
+                    if (hClean && (hClean === cleanDoc || hClean.includes(cleanDoc) || cleanDoc.includes(hClean))) {
+                      const candidate = h.factura_url || h.url || h.soporte_url;
+                      if (candidate && candidate.length > 5) {
+                        dbFoundUrl = candidate;
                         break;
                       }
                     }
                   }
                 }
-                if (foundUrl) break;
+                if (dbFoundUrl) break;
               }
             }
-            if (foundUrl) break;
+            if (!dbFoundUrl && req.facturas_url) {
+              const fArr = safeArray(req.facturas_url);
+              for (const fItem of fArr) {
+                const u = typeof fItem === 'string' ? fItem : fItem?.url;
+                const et = typeof fItem === 'string' ? '' : (fItem?.etiqueta || '');
+                if (normalizarDocStr(et).includes(cleanDoc) || normalizarDocStr(u?.split('/').pop() || '').includes(cleanDoc)) {
+                  if (u && u.length > 5) {
+                    dbFoundUrl = u;
+                    break;
+                  }
+                }
+              }
+            }
+            if (dbFoundUrl) break;
           }
         }
 
-        if (foundUrl) {
-          setDuplicateUrl(foundUrl);
-          setAlertaVisual('Factura existente detectada. Soporte vinculado automáticamente');
-          setFile(null); // Clear manual file if any
+        if (dbFoundUrl) {
+          setDuplicateUrl(dbFoundUrl);
+          setAlertaVisual(`✓ Soporte existente detectado en el sistema para ${docTipo}: ${rawDoc}${provNombre ? ` (${provNombre})` : ''}. Se vinculará automáticamente.`);
+          setFile(null);
         } else {
           setDuplicateUrl(null);
           setAlertaVisual('');
@@ -89,10 +174,10 @@ const FormularioAdjuntoToast = ({ cantProcesar, onConfirm, onCancel }) => {
       } finally {
         setLoadingCheck(false);
       }
-    }, 500); // 500ms debounce
+    }, 400);
 
     return () => clearTimeout(delayDebounceFn);
-  }, [docNumero]);
+  }, [docNumero, docTipo, renglones, requisicionActiva, provNombre]);
 
   const inputStyle = {
     padding: '8px 12px',
@@ -118,15 +203,16 @@ const FormularioAdjuntoToast = ({ cantProcesar, onConfirm, onCancel }) => {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '5px', minWidth: '280px' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '5px', minWidth: '290px' }}>
       <p style={{ margin: 0, fontSize: '0.85rem', fontWeight: '700', color: '#1e293b', display: 'flex', alignItems: 'center', gap: '6px' }}>
         <FileText size={16} color="#22c55e" />
         Adjuntar Soporte de Compra
       </p>
 
       {/* Info de la compra */}
-      <div style={{ fontSize: '11px', color: '#475569', backgroundColor: '#f1f5f9', padding: '8px', borderRadius: '6px' }}>
-        <strong>Cant a Procesar:</strong> {cantProcesar}
+      <div style={{ fontSize: '11px', color: '#475569', backgroundColor: '#f1f5f9', padding: '8px 10px', borderRadius: '6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span><strong>Cant a Procesar:</strong> {cantProcesar}</span>
+        {provNombre && <span style={{ color: '#0369a1', fontWeight: '700' }}>🏢 {provNombre}</span>}
       </div>
 
       {/* Factura / Documento */}
@@ -147,14 +233,15 @@ const FormularioAdjuntoToast = ({ cantProcesar, onConfirm, onCancel }) => {
             onChange={(e) => setDocNumero(e.target.value)}
             style={{ ...inputStyle, flex: 1 }}
             placeholder="Número de Factura"
+            autoFocus
           />
         </div>
       </div>
 
       {/* Alerta de duplicado */}
       {loadingCheck && (
-        <div style={{ fontSize: '10px', color: '#64748b', fontStyle: 'italic' }}>
-          Verificando factura en el sistema...
+        <div style={{ fontSize: '10px', color: '#64748b', fontStyle: 'italic', display: 'flex', alignItems: 'center', gap: '4px' }}>
+          <Clock size={12} className="animate-spin" /> Verificando soporte de factura en el sistema...
         </div>
       )}
       {alertaVisual && (
@@ -163,52 +250,76 @@ const FormularioAdjuntoToast = ({ cantProcesar, onConfirm, onCancel }) => {
           color: '#15803d',
           backgroundColor: '#f0fdf4',
           border: '1px solid #bbf7d0',
-          padding: '6px 10px',
-          borderRadius: '6px',
+          padding: '8px 10px',
+          borderRadius: '8px',
           fontWeight: 'bold',
-          lineHeight: '1.2'
+          lineHeight: '1.3'
         }}>
-          {alertaVisual}
+          <div>{alertaVisual}</div>
+          {duplicateUrl && (
+            <a 
+              href={duplicateUrl} 
+              target="_blank" 
+              rel="noreferrer" 
+              style={{ fontSize: '10px', color: '#0284c7', textDecoration: 'underline', display: 'inline-flex', alignItems: 'center', gap: '3px', marginTop: '4px' }}
+            >
+              <Paperclip size={12} /> Ver documento existente enlazado
+            </a>
+          )}
         </div>
       )}
 
-      {/* Adjuntar Soporte File Input */}
-      {!duplicateUrl && (
-        <div>
-          <label style={labelStyle}>Adjuntar Soporte (Obligatorio) <span style={{ color: '#ef4444' }}>*</span></label>
-          <input
-            type="file"
-            accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv"
-            onChange={(e) => {
-              if (e.target.files && e.target.files[0]) {
-                const selectedFile = e.target.files[0];
-                if (selectedFile.size > 5 * 1024 * 1024) {
-                  toast.error("El archivo supera el límite de 5MB. Por favor, redúzcalo antes de subirlo.");
-                  e.target.value = '';
-                  setFile(null);
-                  return;
+      {/* Adjuntar Soporte File Input (Opcional o Automático si ya existe) */}
+      {!duplicateUrl ? (
+        <>
+          <div>
+            <label style={labelStyle}>Adjuntar Soporte (Obligatorio) <span style={{ color: '#ef4444' }}>*</span></label>
+            <input
+              type="file"
+              accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv"
+              onChange={(e) => {
+                if (e.target.files && e.target.files[0]) {
+                  const selectedFile = e.target.files[0];
+                  if (selectedFile.size > 5 * 1024 * 1024) {
+                    toast.error("El archivo supera el límite de 5MB. Por favor, redúzcalo antes de subirlo.");
+                    e.target.value = '';
+                    setFile(null);
+                    return;
+                  }
+                  setFile(selectedFile);
+                  const cleanName = selectedFile.name.split('.')[0];
+                  setFileName(cleanName);
                 }
-                setFile(selectedFile);
-                const cleanName = selectedFile.name.split('.')[0];
-                setFileName(cleanName);
-              }
-            }}
-            style={{ ...inputStyle, padding: '6px', cursor: 'pointer', backgroundColor: 'white' }}
-          />
-        </div>
-      )}
+              }}
+              style={{ ...inputStyle, padding: '6px', cursor: 'pointer', backgroundColor: 'white' }}
+            />
+          </div>
 
-      {/* Nombre del Soporte */}
-      {!duplicateUrl && (
-        <div>
-          <label style={labelStyle}>Nombre del Documento <span style={{ color: '#ef4444' }}>*</span></label>
-          <input
-            type="text"
-            value={fileName}
-            onChange={(e) => setFileName(e.target.value)}
-            style={inputStyle}
-            placeholder="Ej: Factura Compra, Recibo..."
-          />
+          <div>
+            <label style={labelStyle}>Nombre del Documento <span style={{ color: '#ef4444' }}>*</span></label>
+            <input
+              type="text"
+              value={fileName}
+              onChange={(e) => setFileName(e.target.value)}
+              style={inputStyle}
+              placeholder="Ej: Factura Compra, Recibo..."
+            />
+          </div>
+        </>
+      ) : (
+        <div style={{
+          backgroundColor: '#ecfdf5',
+          border: '1px solid #a7f3d0',
+          padding: '8px 10px',
+          borderRadius: '8px',
+          fontSize: '11px',
+          color: '#065f46',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '6px'
+        }}>
+          <CheckCircle2 size={16} color="#10b981" />
+          <span>Soporte vinculado. Haga clic en <strong>CONFIRMAR</strong> para registrar.</span>
         </div>
       )}
 
@@ -230,7 +341,7 @@ const FormularioAdjuntoToast = ({ cantProcesar, onConfirm, onCancel }) => {
             }
             onConfirm({
               file,
-              fileName: duplicateUrl ? 'Soporte Factura Existente' : fileName.trim(),
+              fileName: duplicateUrl ? (fileName.trim() || 'Soporte Factura') : fileName.trim(),
               docNumero: docNumero.trim(),
               docTipo,
               duplicateUrl
@@ -448,6 +559,7 @@ const Compras = () => {
   const [showNuevoDestinoModal, setShowNuevoDestinoModal] = useState(false);
   const [nuevoDestinoForm, setNuevoDestinoForm] = useState({ nombre: '', direccion: '', contacto_nombre: '', contacto_telefono: '' });
   const [guardandoOdc, setGuardandoOdc] = useState(false);
+  const guardandoOdcRef = useRef(false);
   const [odcForm, setOdcForm] = useState({
     proveedor_id: '',
     tipo_pago: 'CONTADO',
@@ -457,6 +569,7 @@ const Compras = () => {
     fecha_despacho: new Date().toISOString().split('T')[0],
     despachar_a_id: '',
     despachar_a_direccion: '',
+    pasa_por_almacen: true,
     observaciones: '',
     moneda: 'USD',
     tasa_bcv: 1,
@@ -493,17 +606,25 @@ const Compras = () => {
     const provMatch = proveedores.find(p => p.id === provIdItem || String(p.id) === String(provIdItem));
     const defaultDestino = destinosDespacho.find(d => d.es_predeterminado) || destinosDespacho[0];
 
-    const odcItemsInic = aProcesar.map(r => ({
-      id: r.id,
-      descripcion: r.descripcion,
-      uni: r.uni || r.unidad || 'UND',
-      cant_pedida: r.cantidad_pedida,
-      cant_pendiente: r.cantidad_pendiente,
-      cant_odc: r.compra_actual_cant > 0 ? r.compra_actual_cant : r.cantidad_pendiente,
-      pu_odc: r.compra_actual_pu > 0 ? r.compra_actual_pu : (r.pu || 0),
-      total_odc: (r.compra_actual_cant > 0 ? r.compra_actual_cant : r.cantidad_pendiente) * (r.compra_actual_pu > 0 ? r.compra_actual_pu : (r.pu || 0)),
-      incluido: true
-    }));
+    const odcItemsInic = aProcesar.map(r => {
+      const cantPedida = parseFloat(r.cantidad_pedida !== undefined ? r.cantidad_pedida : (r.cant_aprobada || r.cantidad || r.cant || 0));
+      const cantPendiente = parseFloat(r.cantidad_pendiente !== undefined ? r.cantidad_pendiente : cantPedida);
+      const cantMax = cantPendiente > 0 ? cantPendiente : (cantPedida > 0 ? cantPedida : 1);
+      const cantInic = r.compra_actual_cant > 0 ? Math.min(parseFloat(r.compra_actual_cant), cantMax) : cantMax;
+
+      return {
+        id: r.id,
+        descripcion: r.descripcion,
+        uni: r.uni || r.unidad || 'UND',
+        cant_pedida: cantPedida,
+        cant_pendiente: cantPendiente,
+        cant_max: cantMax,
+        cant_odc: cantInic,
+        pu_odc: r.compra_actual_pu > 0 ? r.compra_actual_pu : (r.pu || 0),
+        total_odc: cantInic * (r.compra_actual_pu > 0 ? r.compra_actual_pu : (r.pu || 0)),
+        incluido: true
+      };
+    });
 
     setOdcForm({
       requisicion_id: requisicionActiva?.id || null,
@@ -514,7 +635,8 @@ const Compras = () => {
       cotizacion_ref: '',
       fecha_cotizacion: new Date().toISOString().split('T')[0],
       despachar_a_id: defaultDestino ? defaultDestino.id : '',
-      despachar_a_direccion: defaultDestino ? `${defaultDestino.nombre} - ${defaultDestino.direccion}` : '',
+      despachar_a_direccion: defaultDestino ? (defaultDestino.direccion && defaultDestino.direccion !== 'null' ? `${defaultDestino.nombre} - ${defaultDestino.direccion}` : defaultDestino.nombre) : '',
+      pasa_por_almacen: true,
       observaciones: '',
       moneda: 'USD',
       moneda_custom: '',
@@ -543,7 +665,7 @@ const Compras = () => {
       setOdcForm(prev => ({
         ...prev,
         despachar_a_id: data.id,
-        despachar_a_direccion: `${data.nombre} - ${data.direccion}`
+        despachar_a_direccion: data.direccion && data.direccion !== 'null' ? `${data.nombre} - ${data.direccion}` : data.nombre
       }));
       setShowNuevoDestinoModal(false);
       setNuevoDestinoForm({ nombre: '', direccion: '', contacto_nombre: '', contacto_telefono: '' });
@@ -579,6 +701,8 @@ const Compras = () => {
   };
 
   const guardarOrdenCompra = async () => {
+    if (guardandoOdcRef.current || guardandoOdc) return;
+
     if (!odcForm.proveedor_id) {
       toast.error("Debe seleccionar un Proveedor para la Órden de Compra.");
       return;
@@ -603,6 +727,7 @@ const Compras = () => {
       return;
     }
 
+    guardandoOdcRef.current = true;
     setGuardandoOdc(true);
     try {
       const currentYear = new Date().getFullYear();
@@ -631,6 +756,17 @@ const Compras = () => {
         return;
       }
 
+      // Validar que la cantidad de ningún producto supere la solicitada en la requisición
+      for (const it of itemsIncluidos) {
+        const maxPermitida = parseFloat(it.cant_max || it.cant_pendiente || it.cant_pedida || 0);
+        const cantIngresada = parseFloat(it.cant_odc || 0);
+        if (maxPermitida > 0 && cantIngresada > maxPermitida) {
+          toast.error(`La cantidad para "${it.descripcion}" (${cantIngresada}) no puede ser mayor a la solicitada (${maxPermitida} ${it.uni || 'UND'}).`);
+          setGuardandoOdc(false);
+          return;
+        }
+      }
+
       const subtotalVal = itemsIncluidos.reduce((acc, it) => acc + ((parseFloat(it.cant_odc) || 0) * (parseFloat(it.pu_odc) || 0)), 0);
       const ivaVal = odcForm.aplica_iva ? subtotalVal * 0.16 : 0;
       const totalVal = subtotalVal + ivaVal;
@@ -643,6 +779,7 @@ const Compras = () => {
       }
 
       const prov = proveedores.find(p => String(p.id) === String(odcForm.proveedor_id));
+      const itemPasaAlmacen = odcForm.pasa_por_almacen !== false;
 
       const baseOdcPayload = {
         numero_odc,
@@ -662,6 +799,7 @@ const Compras = () => {
         despachar_a_id: odcForm.despachar_a_id || null,
         despachar_a_direccion: odcForm.despachar_a_direccion || 'Galpones Riese - Av. Los Haticos',
         destino_despacho: odcForm.despachar_a_direccion || 'Galpones Riese - Av. Los Haticos',
+        pasa_por_almacen: itemPasaAlmacen,
         datos_bancarios: odcForm.cuenta_bancaria_proveedor || null,
         cuenta_bancaria: odcForm.cuenta_bancaria_proveedor || null,
         observaciones: odcForm.observaciones || null,
@@ -687,6 +825,13 @@ const Compras = () => {
       const odcCreada = Array.isArray(odcInsertData) ? odcInsertData[0] : odcInsertData;
 
       if (errOdc || !odcCreada) throw (errOdc || new Error("No se pudo crear el registro de Orden de Compra."));
+
+      if (odcCreada?.id) {
+        localStorage.setItem(`odc_pasa_almacen_${odcCreada.id}`, itemPasaAlmacen ? 'true' : 'false');
+      }
+      if (numero_odc) {
+        localStorage.setItem(`odc_pasa_almacen_${numero_odc}`, itemPasaAlmacen ? 'true' : 'false');
+      }
 
       const itemsPayload = itemsIncluidos.map(it => {
         const montoFila = (parseFloat(it.cant_odc) || 0) * (parseFloat(it.pu_odc) || 0);
@@ -723,11 +868,16 @@ const Compras = () => {
             doc_tipo: 'ODC',
             doc_numero: numero_odc,
             metodo_pago: odcForm.tipo_pago,
-            usuario_nombre: `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim()
+            usuario_nombre: `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim(),
+            pasa_por_almacen: itemPasaAlmacen,
+            estatus_almacen: itemPasaAlmacen ? 'Por_Clasificar_Almacen' : 'no_aplica',
+            ubicacion_almacen: itemPasaAlmacen ? null : 'ENTREGA DIRECTA (Sin paso por almacén)'
           };
           return {
             ...r,
             selectedForOdc: false,
+            pasa_por_almacen: itemPasaAlmacen,
+            estatus_almacen: itemPasaAlmacen ? (r.estatus_almacen || 'Por_Clasificar_Almacen') : 'no_aplica',
             historial_compras: [...(r.historial_compras || []), nuevaOdcTraza]
           };
         }
@@ -745,6 +895,9 @@ const Compras = () => {
         })
         .eq('id', requisicionActiva.id);
 
+      localStorage.setItem(`odc_pasa_almacen_${odcCreada.id}`, String(itemPasaAlmacen));
+      localStorage.setItem(`odc_pasa_almacen_${numero_odc}`, String(itemPasaAlmacen));
+
       setRequisicionActiva(prev => prev ? { ...prev, items: renglonesActualizados, status_compra: nuevoStatus } : prev);
       setRenglones(renglonesActualizados);
       setShowOdcModal(false);
@@ -754,6 +907,7 @@ const Compras = () => {
       console.error("Error al generar ODC:", err);
       toast.error("Error al guardar la Órden de Compra: " + err.message);
     } finally {
+      guardandoOdcRef.current = false;
       setGuardandoOdc(false);
     }
   };
@@ -851,6 +1005,7 @@ const Compras = () => {
       }
       setHistorial((data || []).map(db => {
         const itemsArr = safeArray(db.items);
+        const facturasConsolidadas = consolidarSoportesRequisicion(db.facturas_url, itemsArr);
         const esCcTigre = (db.centro_costo || '').toLowerCase().includes('tigre');
         const fechaEmisionRef = db.fecha_emision || db.created_at;
         const fechaAprobRef = db.f_aprobacion_general || db.fecha_aprobacion_general || db.f_aprobacion_area;
@@ -863,6 +1018,7 @@ const Compras = () => {
           total: db.total_bs || 0,
           items: itemsArr,
           detalles: itemsArr,
+          facturas_url: facturasConsolidadas,
           fecha: db.fecha_emision ? String(db.fecha_emision).split('T')[0] : '',
           semanaInfo,
           semanaEmisionInfo,
@@ -1031,7 +1187,7 @@ const Compras = () => {
               semanaAprobacionInfo,
               observaciones: payload.new.observaciones || '',
               observaciones_direccion: payload.new.observaciones_direccion || '',
-              facturas_url: safeArray(payload.new.facturas_url)
+              facturas_url: consolidarSoportesRequisicion(payload.new.facturas_url, itemsArr)
             };
           }
           return req;
@@ -1154,8 +1310,9 @@ const Compras = () => {
 
     setRenglones(renglonesIniciados);
     const fUrl = req.facturas_url || req.factura_url || [];
-    setFacturasUrls(Array.isArray(fUrl) ? fUrl : [fUrl].filter(Boolean));
-    setExpandirSoportes((Array.isArray(fUrl) ? fUrl : [fUrl].filter(Boolean)).length > 0);
+    const soportesConsolidados = consolidarSoportesRequisicion(fUrl, renglonesIniciados);
+    setFacturasUrls(soportesConsolidados);
+    setExpandirSoportes(soportesConsolidados.length > 0);
     setShowModal(true);
     setExpandirHistorial({});
     obtenerPreciosReferencia(renglonesIniciados);
@@ -2583,6 +2740,9 @@ const Compras = () => {
           t={t}
           item={item}
           cantProcesar={cantProcesar}
+          renglones={renglones}
+          requisicionActiva={requisicionActiva}
+          proveedores={proveedores}
           onConfirm={(values) => {
             toast.dismiss(t.id);
             guardarUnicoRenglon(id, values);
@@ -5713,14 +5873,19 @@ const Compras = () => {
       {showOdcModal && (
         <div className="modal-overlay" style={{ zIndex: 3500 }}>
           <div className="modal-card animate-modal" style={{ maxWidth: '950px', maxHeight: '90vh', overflowY: 'auto', padding: '30px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: '2px solid #e2e8f0', paddingBottom: '15px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '2px solid #e2e8f0', paddingBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
               <div>
                 <span style={{ backgroundColor: '#0ea5e9', color: 'white', padding: '4px 10px', borderRadius: '6px', fontSize: '0.7rem', fontWeight: '900' }}>EMISIÓN DE ODC</span>
-                <h2 style={{ margin: '6px 0 0 0', color: '#0f172a', fontSize: '1.4rem', fontWeight: '900' }}>
+                <h2 style={{ margin: '6px 0 0 0', color: '#0f172a', fontSize: '1.35rem', fontWeight: '900' }}>
                   Generar Órden de Compra - {requisicionActiva?.correlativo_req || requisicionActiva?.correlativo || (requisicionActiva?.id ? `REQ-${requisicionActiva.id}` : '')}
                 </h2>
               </div>
-              <button onClick={() => setShowOdcModal(false)} style={{ border: 'none', background: '#f1f5f9', borderRadius: '50%', width: '32px', height: '32px', cursor: 'pointer', fontWeight: 'bold' }}>✕</button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ backgroundColor: '#f1f5f9', border: '1px solid #cbd5e1', padding: '6px 12px', borderRadius: '8px', fontSize: '0.78rem', color: '#334155' }}>
+                  <strong>Centro de Costo:</strong> <span style={{ color: '#0284c7', fontWeight: '800' }}>{requisicionActiva?.centro_costo || requisicionActiva?.centroCosto || requisicionActiva?.obra || 'No especificado'}</span>
+                </div>
+                <button onClick={() => setShowOdcModal(false)} style={{ border: 'none', background: '#f1f5f9', borderRadius: '50%', width: '32px', height: '32px', cursor: 'pointer', fontWeight: 'bold' }}>✕</button>
+              </div>
             </div>
 
             {/* Fila 1: Categoría, Proveedor, Cuenta Bancaria (Alineados en la misma base) */}
@@ -5884,13 +6049,13 @@ const Compras = () => {
                     setOdcForm(prev => ({
                       ...prev,
                       despachar_a_id: destId,
-                      despachar_a_direccion: dest ? `${dest.nombre} - ${dest.direccion}` : ''
+                      despachar_a_direccion: dest ? (dest.direccion && dest.direccion !== 'null' ? `${dest.nombre} - ${dest.direccion}` : dest.nombre) : ''
                     }));
                   }}
                 >
                   <option value="">Seleccione Destino de Entrega...</option>
                   {destinosDespacho.map(d => (
-                    <option key={d.id} value={d.id}>{d.nombre} ({d.direccion})</option>
+                    <option key={d.id} value={d.id}>{d.nombre}{d.direccion && d.direccion !== 'null' ? ` (${d.direccion})` : ''}</option>
                   ))}
                 </select>
               </div>
@@ -5971,22 +6136,6 @@ const Compras = () => {
                 </div>
               )}
 
-              {odcForm.moneda !== 'USD' && (
-                <div style={{ width: '160px' }}>
-                  <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '6px' }}>
-                    {odcForm.moneda === 'BS' ? 'TASA BCV (Bs/$)' : `TASA CAMBIO (${odcForm.moneda || 'MONEDA'}/$)`}
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    className="input-tc"
-                    placeholder="Tasa de cambio respecto al $"
-                    style={{ width: '100%', padding: '8px', fontWeight: '800', borderRadius: '8px', border: '1px solid #cbd5e1' }}
-                    value={odcForm.tasa_bcv}
-                    onChange={(e) => setOdcForm(prev => ({ ...prev, tasa_bcv: e.target.value }))}
-                  />
-                </div>
-              )}
 
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '20px' }}>
                 <input
@@ -6002,6 +6151,102 @@ const Compras = () => {
               </div>
             </div>
 
+            {/* Configuración de Paso por Almacén / Entrega Directa */}
+            <div style={{
+              backgroundColor: '#f8fafc',
+              border: '1.5px solid #e2e8f0',
+              padding: '16px',
+              borderRadius: '16px',
+              marginBottom: '20px'
+            }}>
+              <div style={{ fontSize: '0.82rem', fontWeight: '800', color: '#1e293b', marginBottom: '10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+                <span>🚚 Logística & Recepción Física</span>
+                <span style={{
+                  fontSize: '0.72rem',
+                  fontWeight: '900',
+                  padding: '3px 10px',
+                  borderRadius: '20px',
+                  backgroundColor: odcForm.pasa_por_almacen !== false ? '#dcfce7' : '#fef3c7',
+                  color: odcForm.pasa_por_almacen !== false ? '#15803d' : '#92400e',
+                  border: `1px solid ${odcForm.pasa_por_almacen !== false ? '#bbf7d0' : '#fde68a'}`
+                }}>
+                  {odcForm.pasa_por_almacen !== false ? '📦 PASA POR ALMACÉN' : '⚡ ENTREGA DIRECTA (NO PASA POR ALMACÉN)'}
+                </span>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '12px' }}>
+                {/* Opción 1: Pasa por Almacén */}
+                <button
+                  type="button"
+                  onClick={() => setOdcForm(prev => ({ ...prev, pasa_por_almacen: true }))}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    gap: '10px',
+                    padding: '12px 14px',
+                    borderRadius: '12px',
+                    border: odcForm.pasa_por_almacen !== false ? '2px solid #16a34a' : '1.5px solid #cbd5e1',
+                    backgroundColor: odcForm.pasa_por_almacen !== false ? '#f0fdf4' : '#ffffff',
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                    transition: 'all 0.15s ease',
+                    boxShadow: odcForm.pasa_por_almacen !== false ? '0 2px 8px rgba(22, 163, 74, 0.15)' : 'none'
+                  }}
+                >
+                  <input
+                    type="radio"
+                    name="compras_pasa_almacen_radio"
+                    checked={odcForm.pasa_por_almacen !== false}
+                    onChange={() => setOdcForm(prev => ({ ...prev, pasa_por_almacen: true }))}
+                    style={{ marginTop: '3px', cursor: 'pointer', accentColor: '#16a34a' }}
+                  />
+                  <div>
+                    <div style={{ fontSize: '0.85rem', fontWeight: '800', color: odcForm.pasa_por_almacen !== false ? '#166534' : '#334155', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      📦 Pasa por Almacén
+                    </div>
+                    <div style={{ fontSize: '0.72rem', color: odcForm.pasa_por_almacen !== false ? '#15803d' : '#64748b', marginTop: '3px', lineHeight: '1.3' }}>
+                      La mercancía ingresa físicamente a Almacén, requiere clasificación de ubicación y entrega formal del almacenista.
+                    </div>
+                  </div>
+                </button>
+
+                {/* Opción 2: No pasa por Almacén */}
+                <button
+                  type="button"
+                  onClick={() => setOdcForm(prev => ({ ...prev, pasa_por_almacen: false }))}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    gap: '10px',
+                    padding: '12px 14px',
+                    borderRadius: '12px',
+                    border: odcForm.pasa_por_almacen === false ? '2px solid #d97706' : '1.5px solid #cbd5e1',
+                    backgroundColor: odcForm.pasa_por_almacen === false ? '#fffbeb' : '#ffffff',
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                    transition: 'all 0.15s ease',
+                    boxShadow: odcForm.pasa_por_almacen === false ? '0 2px 8px rgba(217, 119, 6, 0.15)' : 'none'
+                  }}
+                >
+                  <input
+                    type="radio"
+                    name="compras_pasa_almacen_radio"
+                    checked={odcForm.pasa_por_almacen === false}
+                    onChange={() => setOdcForm(prev => ({ ...prev, pasa_por_almacen: false }))}
+                    style={{ marginTop: '3px', cursor: 'pointer', accentColor: '#d97706' }}
+                  />
+                  <div>
+                    <div style={{ fontSize: '0.85rem', fontWeight: '800', color: odcForm.pasa_por_almacen === false ? '#92400e' : '#334155', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      🚚 No pasa por Almacén (Entrega Directa)
+                    </div>
+                    <div style={{ fontSize: '0.72rem', color: odcForm.pasa_por_almacen === false ? '#b45309' : '#64748b', marginTop: '3px', lineHeight: '1.3' }}>
+                      Entrega directa en sitio, obra o servicio. No requiere recepción ni registro pendiente en Almacén.
+                    </div>
+                  </div>
+                </button>
+              </div>
+            </div>
+
             {/* Ítems incluidos */}
             <div style={{ marginBottom: '20px' }}>
               <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '8px' }}>PRODUCTOS A INCLUIR EN LA ODC</label>
@@ -6010,7 +6255,7 @@ const Compras = () => {
                   <tr style={{ backgroundColor: '#f8fafc' }}>
                     <th style={{ textAlign: 'center', width: '60px' }}>INCLUIR</th>
                     <th>DESCRIPCIÓN</th>
-                    <th style={{ textAlign: 'center', width: '90px' }}>CANT.</th>
+                    <th style={{ textAlign: 'center', width: '110px' }}>CANT.</th>
                     <th style={{ textAlign: 'right', width: '110px' }}>P.U. ({odcForm.moneda === 'BS' ? 'Bs' : '$'})</th>
                     <th style={{ textAlign: 'right', width: '120px' }}>SUBTOTAL ({odcForm.moneda === 'BS' ? 'Bs' : '$'})</th>
                   </tr>
@@ -6018,9 +6263,12 @@ const Compras = () => {
                 <tbody>
                   {odcForm.items.map((it, idx) => {
                     const isInc = it.incluido !== false;
-                    const subFila = isInc ? ((parseFloat(it.cant_odc) || 0) * (parseFloat(it.pu_odc) || 0)) : 0;
+                    const maxPermitida = parseFloat(it.cant_max || it.cant_pendiente || it.cant_pedida || 0);
+                    const cantNum = parseFloat(it.cant_odc) || 0;
+                    const superaMax = maxPermitida > 0 && cantNum > maxPermitida;
+                    const subFila = isInc ? (cantNum * (parseFloat(it.pu_odc) || 0)) : 0;
                     return (
-                      <tr key={it.id || idx} style={{ opacity: isInc ? 1 : 0.45, backgroundColor: isInc ? 'transparent' : '#f8fafc' }}>
+                      <tr key={it.id || idx} style={{ opacity: isInc ? 1 : 0.45, backgroundColor: isInc ? (superaMax ? '#fef2f2' : 'transparent') : '#f8fafc' }}>
                         <td style={{ textAlign: 'center' }}>
                           <input
                             type="checkbox"
@@ -6039,28 +6287,77 @@ const Compras = () => {
                             }}
                           />
                         </td>
-                        <td style={{ fontWeight: '700' }}>{it.descripcion}</td>
+                        <td style={{ fontWeight: '700' }}>
+                          <div>{it.descripcion}</div>
+                          {maxPermitida > 0 && (
+                            <div style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: '600' }}>
+                              Solicitado: <strong style={{ color: '#0f172a' }}>{maxPermitida} {it.uni || 'UND'}</strong>
+                            </div>
+                          )}
+                        </td>
                         <td>
-                          <input
-                            type="number"
-                            className="input-tc"
-                            style={{ width: '100%', textAlign: 'center', fontWeight: '700', padding: '4px' }}
-                            disabled={!isInc}
-                            value={it.cant_odc}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              setOdcForm(prev => ({
-                                ...prev,
-                                items: prev.items.map(item => item.id === it.id ? { ...item, cant_odc: val, total_odc: (parseFloat(val) || 0) * (parseFloat(item.pu_odc) || 0) } : item)
-                              }));
-                            }}
-                          />
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px' }}>
+                            <input
+                              type="number"
+                              step="any"
+                              min="0.01"
+                              max={maxPermitida > 0 ? maxPermitida : undefined}
+                              className="input-tc"
+                              style={{ 
+                                width: '100%', 
+                                textAlign: 'center', 
+                                fontWeight: '800', 
+                                padding: '6px 4px',
+                                border: superaMax ? '2px solid #ef4444' : '1.5px solid #cbd5e1',
+                                backgroundColor: superaMax ? '#fee2e2' : '#ffffff',
+                                color: superaMax ? '#b91c1c' : '#0f172a'
+                              }}
+                              disabled={!isInc}
+                              value={it.cant_odc !== undefined ? it.cant_odc : ''}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                const valNum = parseFloat(val);
+                                if (val !== '' && !isNaN(valNum) && maxPermitida > 0 && valNum > maxPermitida) {
+                                  toast.error(`La cantidad para "${it.descripcion}" no puede ser mayor a la solicitada (${maxPermitida} ${it.uni || 'UND'}).`, { id: `max-cant-${it.id}` });
+                                }
+                                setOdcForm(prev => ({
+                                  ...prev,
+                                  items: prev.items.map(item => item.id === it.id ? { 
+                                    ...item, 
+                                    cant_odc: val, 
+                                    total_odc: (parseFloat(val) || 0) * (parseFloat(item.pu_odc) || 0) 
+                                  } : item)
+                                }));
+                              }}
+                              onBlur={() => {
+                                const valNum = parseFloat(it.cant_odc);
+                                if (maxPermitida > 0 && valNum > maxPermitida) {
+                                  toast.error(`Cantidad ajustada automáticamente al máximo solicitado: ${maxPermitida} ${it.uni || 'UND'}.`);
+                                  setOdcForm(prev => ({
+                                    ...prev,
+                                    items: prev.items.map(item => item.id === it.id ? { 
+                                      ...item, 
+                                      cant_odc: maxPermitida, 
+                                      total_odc: maxPermitida * (parseFloat(item.pu_odc) || 0) 
+                                    } : item)
+                                  }));
+                                }
+                              }}
+                            />
+                            {maxPermitida > 0 && (
+                              <span style={{ fontSize: '0.67rem', color: superaMax ? '#dc2626' : '#64748b', fontWeight: '800' }}>
+                                Máx: {maxPermitida}
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td>
                           <input
                             type="number"
+                            step="any"
+                            min="0"
                             className="input-tc"
-                            style={{ width: '100%', textAlign: 'right', fontWeight: '700', padding: '4px' }}
+                            style={{ width: '100%', textAlign: 'right', fontWeight: '700', padding: '6px 4px' }}
                             disabled={!isInc}
                             value={it.pu_odc}
                             onChange={(e) => {

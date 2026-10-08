@@ -30,7 +30,19 @@ import {
   BellOff,
   Eye,
   History,
-  Trash2
+  Trash2,
+  Layers,
+  FileText,
+  Package,
+  Truck,
+  CreditCard,
+  Landmark,
+  ArrowRight,
+  CornerDownRight,
+  X,
+  ShieldCheck,
+  CheckCircle,
+  ChevronRight
 } from 'lucide-react';
 import ModalNovedades from './components/ModalNovedades';
 import {
@@ -58,18 +70,20 @@ export default function AdminAnalytics() {
   const [authorized, setAuthorized] = useState(null); // null = checking, false = denied, true = OK
   const [loading, setLoading] = useState(true);
 
-  // Tabs: 'telemetry', 'management', or 'user_audit'
+  // Tabs: 'telemetry', 'management', 'traceability', or 'user_audit'
   const [activeTab, setActiveTab] = useState('telemetry');
 
-  // Date Range Picker States (Default last 30 days)
-  const [startDate, setStartDate] = useState(() => {
-    const d = new Date();
-    d.setDate(d.getDate() - 30);
-    return d.toISOString().split('T')[0];
-  });
-  const [endDate, setEndDate] = useState(() => {
-    return new Date().toISOString().split('T')[0];
-  });
+  // Sub-tabs for Trazabilidad: 'pipeline' | 'sla_bottlenecks' | 'inspector' | 'bitacora'
+  const [subTabTrazabilidad, setSubTabTrazabilidad] = useState('pipeline');
+  const [inspectorSearch, setInspectorSearch] = useState('');
+  const [inspectedItem, setInspectedItem] = useState(null);
+  const [inspectedType, setInspectedType] = useState('requisicion'); // 'requisicion' | 'odc' | 'ticket'
+
+  // Date Range Picker States (Default Histórico Completo)
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [busquedaTrazabilidad, setBusquedaTrazabilidad] = useState('');
+  const [filtroAccionTrazabilidad, setFiltroAccionTrazabilidad] = useState('TODAS');
 
   // Telemetry raw data from Supabase
   const [systemErrors, setSystemErrors] = useState([]);
@@ -160,6 +174,8 @@ export default function AdminAnalytics() {
   const [requisiciones, setRequisiciones] = useState([]);
   const [requisicionLogs, setRequisicionLogs] = useState([]);
   const [ticketsDirectos, setTicketsDirectos] = useState([]);
+  const [ordenesCompra, setOrdenesCompra] = useState([]);
+  const [solicitudesFondos, setSolicitudesFondos] = useState([]);
   const [perfiles, setPerfiles] = useState([]);
   const [authAttempts, setAuthAttempts] = useState([]);
   const [profileChanges, setProfileChanges] = useState([]);
@@ -335,21 +351,51 @@ export default function AdminAnalytics() {
         setHourlyTraffic(dummyTraffic);
       }
 
-      // 5. Fetch requisiciones for gerencia reports (full list, range up to 9999)
-      const { data: reqs } = await supabase
-        .from('requisiciones')
-        .select('id, correlativo_req, created_at, fecha_aprobacion_final, gerencia, estado_aprobacion, total_bs, solicitante, items, motivo_rechazo')
-        .range(0, 9999);
+      // 5. Helper para paginar y traer el 100% de los registros de Supabase (sin límite de 1000)
+      const fetchAllTableRecords = async (tableName, orderCol = 'id') => {
+        let allData = [];
+        let page = 0;
+        const pageSize = 1000;
+        let hasMore = true;
+
+        while (hasMore) {
+          let query = supabase
+            .from(tableName)
+            .select('*')
+            .range(page * pageSize, (page + 1) * pageSize - 1);
+
+          if (orderCol) {
+            query = query.order(orderCol, { ascending: false });
+          }
+
+          const { data: chunk, error: errChunk } = await query;
+          if (errChunk) {
+            if (errChunk.code !== '42P01') console.warn(`Aviso al cargar ${tableName}:`, errChunk.message);
+            break;
+          }
+          if (chunk && chunk.length > 0) {
+            allData = allData.concat(chunk);
+            if (chunk.length < pageSize) {
+              hasMore = false;
+            } else {
+              page++;
+            }
+          } else {
+            hasMore = false;
+          }
+        }
+        return allData;
+      };
+
+      // 6. Fetch requisiciones completas (100% histórico paginado)
+      const reqs = await fetchAllTableRecords('requisiciones', 'id');
       setRequisiciones(reqs || []);
 
-      // 6. Fetch requisiciones audit action logs
-      const { data: logs } = await supabase
-        .from('requisicion_logs')
-        .select('id, requisicion_id, accion, comentario, fecha, usuario_nombre')
-        .range(0, 9999);
+      // 7. Fetch requisiciones audit action logs completos (100% histórico paginado)
+      const logs = await fetchAllTableRecords('requisicion_logs', 'id');
       setRequisicionLogs(logs || []);
 
-      // 7. Fetch active perfiles count
+      // 8. Fetch active perfiles count
       const { data: profiles } = await supabase
         .from('perfiles')
         .select('id, nombre, apellido, rol, departamento, activo, last_login, created_at')
@@ -373,14 +419,19 @@ export default function AdminAnalytics() {
         .limit(200);
       setProfileChanges(actLogs || []);
 
-      // 11. Fetch tickets_directos for operational comparison
-      const { data: tkts } = await supabase
-        .from('tickets_directos')
-        .select('id, fecha_emision, departamento, total_usd')
-        .range(0, 9999);
+      // 11. Fetch tickets_directos completos (100% paginado)
+      const tkts = await fetchAllTableRecords('tickets_directos', 'id');
       setTicketsDirectos(tkts || []);
 
-      // 12. Fetch VPS server status disk telemetry
+      // 12. Fetch ordenes_compra completas (100% paginado)
+      const odcs = await fetchAllTableRecords('ordenes_compra', 'id');
+      setOrdenesCompra(odcs || []);
+
+      // 13. Fetch solicitudes_fondos completas (100% paginado)
+      const sfs = await fetchAllTableRecords('solicitudes_fondos', 'id');
+      setSolicitudesFondos(sfs || []);
+
+      // 14. Fetch VPS server status disk telemetry
       await fetchVpsStatus();
 
     } catch (err) {
@@ -393,15 +444,38 @@ export default function AdminAnalytics() {
   // Refresco silencioso: solo actualiza datos operativos sin mostrar pantalla de carga
   const refrescarDatosSilencioso = async () => {
     try {
-      const { data: reqs } = await supabase
-        .from('requisiciones')
-        .select('id, correlativo_req, created_at, fecha_aprobacion_final, gerencia, estado_aprobacion, total_bs, solicitante, items');
+      const fetchAllTableRecords = async (tableName, orderCol = 'id') => {
+        let allData = [];
+        let page = 0;
+        const pageSize = 1000;
+        let hasMore = true;
+        while (hasMore) {
+          let query = supabase.from(tableName).select('*').range(page * pageSize, (page + 1) * pageSize - 1);
+          if (orderCol) query = query.order(orderCol, { ascending: false });
+          const { data: chunk, error: errChunk } = await query;
+          if (errChunk) break;
+          if (chunk && chunk.length > 0) {
+            allData = allData.concat(chunk);
+            if (chunk.length < pageSize) hasMore = false;
+            else page++;
+          } else {
+            hasMore = false;
+          }
+        }
+        return allData;
+      };
+
+      const reqs = await fetchAllTableRecords('requisiciones', 'id');
       setRequisiciones(reqs || []);
 
-      const { data: logs } = await supabase
-        .from('requisicion_logs')
-        .select('id, requisicion_id, accion, comentario, fecha, usuario_nombre');
+      const logs = await fetchAllTableRecords('requisicion_logs', 'id');
       setRequisicionLogs(logs || []);
+
+      const tkts = await fetchAllTableRecords('tickets_directos', 'id');
+      setTicketsDirectos(tkts || []);
+
+      const odcs = await fetchAllTableRecords('ordenes_compra', 'id');
+      setOrdenesCompra(odcs || []);
     } catch (err) {
       console.warn("Error en refresco silencioso:", err);
     }
@@ -411,7 +485,7 @@ export default function AdminAnalytics() {
     if (authorized === true) {
       cargarDatos();
 
-      // Realtime subscription for requisiciones (silencioso, sin pantalla de carga)
+      // Realtime subscription for requisiciones
       const reqChannel = supabase
         .channel('realtime_reqs_analytics')
         .on('postgres_changes', { event: '*', schema: 'public', table: 'requisiciones' }, () => {
@@ -419,7 +493,7 @@ export default function AdminAnalytics() {
         })
         .subscribe();
 
-      // Realtime subscription for requisicion_logs (silencioso, sin pantalla de carga)
+      // Realtime subscription for requisicion_logs
       const logsChannel = supabase
         .channel('realtime_logs_analytics')
         .on('postgres_changes', { event: '*', schema: 'public', table: 'requisicion_logs' }, () => {
@@ -427,9 +501,27 @@ export default function AdminAnalytics() {
         })
         .subscribe();
 
+      // Realtime subscription for tickets_directos
+      const tktsChannel = supabase
+        .channel('realtime_tkts_analytics')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'tickets_directos' }, () => {
+          refrescarDatosSilencioso();
+        })
+        .subscribe();
+
+      // Realtime subscription for ordenes_compra
+      const odcsChannel = supabase
+        .channel('realtime_odcs_analytics')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'ordenes_compra' }, () => {
+          refrescarDatosSilencioso();
+        })
+        .subscribe();
+
       return () => {
         supabase.removeChannel(reqChannel);
         supabase.removeChannel(logsChannel);
+        supabase.removeChannel(tktsChannel);
+        supabase.removeChannel(odcsChannel);
       };
     }
   }, [authorized]);
@@ -665,24 +757,33 @@ export default function AdminAnalytics() {
     const deptos = new Set();
     requisiciones.forEach(r => {
       if (r.gerencia) deptos.add(r.gerencia);
+      if (r.centro_costo) deptos.add(r.centro_costo);
     });
     ticketsDirectos.forEach(t => {
       if (t.departamento) deptos.add(t.departamento);
+      if (t.centro_costo) deptos.add(t.centro_costo);
     });
-    return Array.from(deptos).sort();
-  }, [requisiciones, ticketsDirectos]);
+    ordenesCompra.forEach(o => {
+      if (o.departamento) deptos.add(o.departamento);
+      if (o.centro_costo) deptos.add(o.centro_costo);
+    });
+    return Array.from(deptos).filter(Boolean).sort();
+  }, [requisiciones, ticketsDirectos, ordenesCompra]);
 
   const filteredReqsForTraceability = useMemo(() => {
     const { start, end } = dateLimits;
     let list = requisiciones;
     if (start && end) {
       list = list.filter(r => {
-        const date = new Date(r.created_at);
+        const date = new Date(r.created_at || r.fecha_emision);
         return date >= start && date <= end;
       });
     }
     if (traceabilityDeptoFilter !== 'TODOS') {
-      list = list.filter(r => (r.gerencia || '').toUpperCase() === traceabilityDeptoFilter.toUpperCase());
+      list = list.filter(r => 
+        (r.gerencia || '').toUpperCase() === traceabilityDeptoFilter.toUpperCase() ||
+        (r.centro_costo || '').toUpperCase() === traceabilityDeptoFilter.toUpperCase()
+      );
     }
     return list;
   }, [requisiciones, dateLimits, traceabilityDeptoFilter]);
@@ -692,15 +793,36 @@ export default function AdminAnalytics() {
     let list = ticketsDirectos;
     if (start && end) {
       list = list.filter(t => {
-        const date = t.fecha_emision ? new Date(t.fecha_emision + 'T12:00:00') : new Date();
+        const date = t.fecha_emision ? new Date(t.fecha_emision.includes('T') ? t.fecha_emision : t.fecha_emision + 'T12:00:00') : new Date(t.created_at);
         return date >= start && date <= end;
       });
     }
     if (traceabilityDeptoFilter !== 'TODOS') {
-      list = list.filter(t => (t.departamento || '').toUpperCase() === traceabilityDeptoFilter.toUpperCase());
+      list = list.filter(t => 
+        (t.departamento || '').toUpperCase() === traceabilityDeptoFilter.toUpperCase() ||
+        (t.centro_costo || '').toUpperCase() === traceabilityDeptoFilter.toUpperCase()
+      );
     }
     return list;
   }, [ticketsDirectos, dateLimits, traceabilityDeptoFilter]);
+
+  const filteredOdcsForTraceability = useMemo(() => {
+    const { start, end } = dateLimits;
+    let list = ordenesCompra;
+    if (start && end) {
+      list = list.filter(o => {
+        const date = new Date(o.created_at || o.fecha_emision);
+        return date >= start && date <= end;
+      });
+    }
+    if (traceabilityDeptoFilter !== 'TODOS') {
+      list = list.filter(o => 
+        (o.departamento || '').toUpperCase() === traceabilityDeptoFilter.toUpperCase() ||
+        (o.centro_costo || '').toUpperCase() === traceabilityDeptoFilter.toUpperCase()
+      );
+    }
+    return list;
+  }, [ordenesCompra, dateLimits, traceabilityDeptoFilter]);
 
   const filteredLogsForTraceability = useMemo(() => {
     const { start, end } = dateLimits;
@@ -713,9 +835,12 @@ export default function AdminAnalytics() {
     }
     return list.filter(l => {
       const req = requisiciones.find(r => r.id === l.requisicion_id);
-      if (!req) return false;
+      if (!req) return true;
       if (traceabilityDeptoFilter !== 'TODOS') {
-        return (req.gerencia || '').toUpperCase() === traceabilityDeptoFilter.toUpperCase();
+        return (
+          (req.gerencia || '').toUpperCase() === traceabilityDeptoFilter.toUpperCase() ||
+          (req.centro_costo || '').toUpperCase() === traceabilityDeptoFilter.toUpperCase()
+        );
       }
       return true;
     });
@@ -739,14 +864,16 @@ export default function AdminAnalytics() {
         emitidas: 0,
         aprobadas: 0,
         rechazadas: 0,
-        tickets: 0
+        tickets: 0,
+        odcs: 0
       };
       current.setDate(current.getDate() + 1);
     }
 
     filteredReqsForTraceability.forEach(r => {
-      if (r.created_at) {
-        const dateStr = new Date(r.created_at).toISOString().split('T')[0];
+      const refDate = r.created_at || r.fecha_emision;
+      if (refDate) {
+        const dateStr = new Date(refDate).toISOString().split('T')[0];
         if (datesMap[dateStr]) {
           datesMap[dateStr].emitidas += 1;
         }
@@ -772,20 +899,35 @@ export default function AdminAnalytics() {
     });
 
     filteredTicketsForTraceability.forEach(t => {
-      if (t.fecha_emision) {
+      const refDate = t.fecha_emision || t.created_at;
+      if (refDate) {
         try {
-          const dateStr = new Date(t.fecha_emision + 'T12:00:00').toISOString().split('T')[0];
+          const dateStr = new Date(refDate.includes('T') ? refDate : refDate + 'T12:00:00').toISOString().split('T')[0];
           if (datesMap[dateStr]) {
             datesMap[dateStr].tickets += 1;
           }
         } catch (e) {
-          console.error("Error formatting ticket date:", t.fecha_emision, e);
+          console.error("Error formatting ticket date:", refDate, e);
+        }
+      }
+    });
+
+    filteredOdcsForTraceability.forEach(o => {
+      const refDate = o.created_at || o.fecha_emision;
+      if (refDate) {
+        try {
+          const dateStr = new Date(refDate.includes('T') ? refDate : refDate + 'T12:00:00').toISOString().split('T')[0];
+          if (datesMap[dateStr]) {
+            datesMap[dateStr].odcs += 1;
+          }
+        } catch (e) {
+          console.error("Error formatting odc date:", refDate, e);
         }
       }
     });
 
     return Object.values(datesMap).sort((a, b) => a.dateStr.localeCompare(b.dateStr));
-  }, [filteredReqsForTraceability, filteredTicketsForTraceability, filteredLogsForTraceability, dateLimits]);
+  }, [filteredReqsForTraceability, filteredTicketsForTraceability, filteredLogsForTraceability, filteredOdcsForTraceability, dateLimits]);
 
   // Timeline of Daily Active Users (DAU)
   const dauTimelineData = useMemo(() => {
@@ -835,8 +977,225 @@ export default function AdminAnalytics() {
   }, [filteredAuthAttempts]);
 
   // ----------------------------------------------------
-  // NEW: REQUISITION LIFECYCLE PIPELINE CLASSIFIER
+  // MODULE 1: LIFECYCLE FUNNEL PIPELINE CALCULATIONS (5 FASES)
   // ----------------------------------------------------
+  const lifecycleFunnelData = useMemo(() => {
+    const totalReqs = filteredReqsForTraceability.length;
+    const emitidasCount = totalReqs;
+    
+    const aprobadasReqs = filteredReqsForTraceability.filter(r => 
+      r.estado_aprobacion === 'aprobado_final' || r.estado_aprobacion === 'APROBADO_FINAL'
+    );
+    const aprobadasCount = aprobadasReqs.length;
+    const tasaAprobacion = emitidasCount > 0 ? ((aprobadasCount / emitidasCount) * 100).toFixed(1) : 0;
+    
+    const rechazosCount = filteredLogsForTraceability.filter(l => l.accion === 'RECHAZADA' || l.accion === 'RECHAZADO').length;
+    const odcsCount = filteredOdcsForTraceability.length;
+    const ticketsCount = filteredTicketsForTraceability.length;
+    const compromisosCount = odcsCount + ticketsCount;
+
+    // Recepción en almacén: análisis de items en historial de compras
+    let reqsConAlmacen = 0;
+    let reqsEnCompras = 0;
+    filteredReqsForTraceability.forEach(r => {
+      const items = Array.isArray(r.items) ? r.items : [];
+      let hasPurchases = false;
+      let allUbicados = true;
+      items.forEach(it => {
+        const hist = Array.isArray(it.historial_compras) ? it.historial_compras : [];
+        const compras = hist.filter(h => h.tipo !== 'JUSTIFICACION' && h.tipo !== 'ANULACION');
+        if (compras.length > 0) {
+          hasPurchases = true;
+          compras.forEach(h => {
+            const st = h.estatus_almacen || (h.enviado_almacen ? 'Ubicado' : 'Pendiente_Compras');
+            if (st !== 'Ubicado') allUbicados = false;
+          });
+        }
+      });
+      if (hasPurchases && allUbicados) reqsConAlmacen++;
+      else if (hasPurchases) reqsEnCompras++;
+    });
+
+    // Liquidación financiera de tickets
+    const ticketsPagados = filteredTicketsForTraceability.filter(t => 
+      t.estado === 'PAGADO' || t.estado === 'LIQUIDADO' || t.estatus === 'PAGADO' || t.pagado === true
+    ).length;
+    const ticketsPendientes = Math.max(0, ticketsCount - ticketsPagados);
+
+    return {
+      emitidasCount,
+      aprobadasCount,
+      tasaAprobacion,
+      rechazosCount,
+      odcsCount,
+      ticketsCount,
+      compromisosCount,
+      reqsConAlmacen,
+      reqsEnCompras,
+      ticketsPagados,
+      ticketsPendientes
+    };
+  }, [filteredReqsForTraceability, filteredOdcsForTraceability, filteredTicketsForTraceability, filteredLogsForTraceability]);
+
+  // ----------------------------------------------------
+  // MODULE 2: SLA & BOTTLENECKS CALCULATIONS
+  // ----------------------------------------------------
+  const bottleneckRequisitions = useMemo(() => {
+    const pendingStatuses = ['pendiente_proyecto', 'pendiente_area', 'enviada_general', 'PENDIENTE', 'pendiente', 'en_espera'];
+    const now = Date.now();
+
+    const pendingList = filteredReqsForTraceability.filter(r => 
+      pendingStatuses.includes(r.estado_aprobacion)
+    ).map(r => {
+      const createdAt = new Date(r.created_at || r.fecha_emision || now);
+      const diffMs = now - createdAt.getTime();
+      const diasEspera = Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
+      const horasEspera = Math.max(0, Math.floor(diffMs / (1000 * 60 * 60)));
+
+      let nivel = 'NORMAL';
+      if (diasEspera >= 5) nivel = 'CRITICA';
+      else if (diasEspera >= 3) nivel = 'ADVERTENCIA';
+
+      return {
+        ...r,
+        diasEspera,
+        horasEspera,
+        nivel
+      };
+    });
+
+    return pendingList.sort((a, b) => b.horasEspera - a.horasEspera);
+  }, [filteredReqsForTraceability]);
+
+  const slaByDepartmentData = useMemo(() => {
+    const deptMap = {};
+    listTraceabilityDeptos.forEach(d => {
+      deptMap[d] = {
+        departamento: d,
+        emitidas: 0,
+        aprobadas: 0,
+        pendientes: 0,
+        rechazos: 0,
+        totalSlaMs: 0
+      };
+    });
+
+    filteredReqsForTraceability.forEach(r => {
+      const d = r.gerencia || r.centro_costo || 'Sin Departamento';
+      if (!deptMap[d]) {
+        deptMap[d] = { departamento: d, emitidas: 0, aprobadas: 0, pendientes: 0, rechazos: 0, totalSlaMs: 0 };
+      }
+      deptMap[d].emitidas++;
+      if (r.estado_aprobacion === 'aprobado_final' || r.estado_aprobacion === 'APROBADO_FINAL') {
+        deptMap[d].aprobadas++;
+        if (r.fecha_aprobacion_final && r.created_at) {
+          const diff = new Date(r.fecha_aprobacion_final) - new Date(r.created_at);
+          if (diff > 0) deptMap[d].totalSlaMs += diff;
+        }
+      } else if (['pendiente_proyecto', 'pendiente_area', 'enviada_general', 'PENDIENTE'].includes(r.estado_aprobacion)) {
+        deptMap[d].pendientes++;
+      }
+    });
+
+    filteredLogsForTraceability.forEach(l => {
+      if (l.accion === 'RECHAZADA' || l.accion === 'RECHAZADO') {
+        const req = requisiciones.find(r => r.id === l.requisicion_id);
+        const d = req?.gerencia || req?.centro_costo || 'Sin Departamento';
+        if (deptMap[d]) deptMap[d].rechazos++;
+      }
+    });
+
+    return Object.values(deptMap).map(item => {
+      const avgHours = item.aprobadas > 0 ? (item.totalSlaMs / item.aprobadas / (1000 * 60 * 60)).toFixed(1) : '0';
+      const avgDays = (Number(avgHours) / 24).toFixed(1);
+      const tasaAprobacion = item.emitidas > 0 ? ((item.aprobadas / item.emitidas) * 100).toFixed(1) : 0;
+      return {
+        ...item,
+        avgHours: Number(avgHours),
+        avgDays: Number(avgDays),
+        tasaAprobacion: Number(tasaAprobacion)
+      };
+    }).filter(d => d.emitidas > 0).sort((a, b) => b.pendientes - a.pendientes || b.emitidas - a.emitidas);
+  }, [listTraceabilityDeptos, filteredReqsForTraceability, filteredLogsForTraceability, requisiciones]);
+
+  // ----------------------------------------------------
+  // MODULE 3: 360 INSPECTOR UNIVERSAL SEARCH RESULTS
+  // ----------------------------------------------------
+  const inspectorSearchResults = useMemo(() => {
+    if (!inspectorSearch.trim() || inspectorSearch.trim().length < 2) return [];
+    const q = inspectorSearch.toLowerCase().trim();
+    const results = [];
+
+    // 1. Requisiciones
+    requisiciones.forEach(r => {
+      const code = String(r.correlativo_req || r.id || '').toLowerCase();
+      const sol = String(r.solicitante || '').toLowerCase();
+      const depto = String(r.gerencia || r.centro_costo || '').toLowerCase();
+      const just = String(r.justificacion || '').toLowerCase();
+      if (code.includes(q) || sol.includes(q) || depto.includes(q) || just.includes(q)) {
+        results.push({
+          tipo: 'requisicion',
+          id: r.id,
+          titulo: r.correlativo_req || `REQ-${r.id}`,
+          subtitulo: `${r.solicitante || 'Sin solicitante'} • ${r.gerencia || 'SITC'}`,
+          estado: r.estado_aprobacion,
+          fecha: r.created_at || r.fecha_emision,
+          data: r
+        });
+      }
+    });
+
+    // 2. Órdenes de Compra
+    ordenesCompra.forEach(o => {
+      const num = String(o.correlativo || o.numero_orden || o.id || '').toLowerCase();
+      const prov = String(o.proveedor_nombre || '').toLowerCase();
+      const rif = String(o.proveedor_rif || '').toLowerCase();
+      if (num.includes(q) || prov.includes(q) || rif.includes(q)) {
+        results.push({
+          tipo: 'odc',
+          id: o.id,
+          titulo: o.correlativo ? `ODC-${o.correlativo}` : `ODC #${o.id}`,
+          subtitulo: `${o.proveedor_nombre || 'Proveedor'} • $${Number(o.total || o.total_monto || 0).toLocaleString()}`,
+          estado: o.estado || 'EMITIDA',
+          fecha: o.fecha_emision || o.created_at,
+          data: o
+        });
+      }
+    });
+
+    // 3. Tickets Directos de Pago
+    ticketsDirectos.forEach(t => {
+      const code = String(t.codigo_control || t.id || '').toLowerCase();
+      const prov = String(t.proveedor || '').toLowerCase();
+      const conc = String(t.concepto || '').toLowerCase();
+      if (code.includes(q) || prov.includes(q) || conc.includes(q)) {
+        results.push({
+          tipo: 'ticket',
+          id: t.id,
+          titulo: t.codigo_control || `TKT-${t.id}`,
+          subtitulo: `${t.proveedor || 'Proveedor'} • ${t.departamento || 'General'}`,
+          estado: t.estado || 'EMITIDO',
+          fecha: t.fecha_emision || t.created_at,
+          data: t
+        });
+      }
+    });
+
+    return results.slice(0, 15);
+  }, [inspectorSearch, requisiciones, ordenesCompra, ticketsDirectos]);
+
+  // Handler para seleccionar un expediente e inspeccionarlo en el Módulo 3
+  const abrirInspectorExpediente = (item, tipo = 'requisicion') => {
+    let targetObj = item;
+    if (tipo === 'requisicion' && (typeof item === 'number' || typeof item === 'string')) {
+      targetObj = requisiciones.find(r => r.id === parseInt(item) || r.correlativo_req === item) || item;
+    }
+    setInspectedItem(targetObj);
+    setInspectedType(tipo);
+    setSubTabTrazabilidad('inspector');
+    toast.success(`Expediente cargado en el Inspector 360° ✓`);
+  };
+
   const getRequisitionLifecycleStatus = (r) => {
     if (['pendiente_proyecto', 'pendiente_area', 'enviada_general'].includes(r.estado_aprobacion)) {
       return 'En Proceso';
@@ -868,7 +1227,7 @@ export default function AdminAnalytics() {
       }
       return 'En Compras';
     }
-    return null; // Ignore rechazada and ANULADA in lifecycle
+    return null;
   };
 
   const lifecycleStats = useMemo(() => {
@@ -2499,24 +2858,54 @@ export default function AdminAnalytics() {
               </div>
             </div>
           ) : activeTab === 'traceability' ? (
-            /* TRAZABILIDAD DE REQUISICIONES Y TICKETS */
+            /* TRAZABILIDAD INTEGRAL DE COMPRAS, ODCS Y TICKETS */
             <div className="animate-fade">
-              {/* FILTRO DE DEPARTAMENTO ESPECÍFICO */}
-              <div
-                className="chart-card animate-fade"
-                style={{
-                  marginBottom: '25px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '15px',
-                  background: 'rgba(30, 41, 59, 0.4)',
-                  padding: '16px 24px',
-                  borderRadius: '12px',
-                  border: '1px solid rgba(255, 255, 255, 0.05)'
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: '0.9rem', color: '#94a3b8', fontWeight: '600' }}>Filtrar por Gerencia:</span>
+              {/* SUB-TABS NAVIGATION & GERENCIA FILTER */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '25px', flexWrap: 'wrap', gap: '15px' }}>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  <button
+                    className={`tab-btn ${subTabTrazabilidad === 'pipeline' ? 'active' : ''}`}
+                    onClick={() => setSubTabTrazabilidad('pipeline')}
+                  >
+                    <Layers size={16} />
+                    <span>1. Embudo de Ciclo de Vida</span>
+                  </button>
+                  <button
+                    className={`tab-btn ${subTabTrazabilidad === 'sla_bottlenecks' ? 'active' : ''}`}
+                    onClick={() => setSubTabTrazabilidad('sla_bottlenecks')}
+                  >
+                    <Clock size={16} />
+                    <span>2. SLA & Cuellos de Botella</span>
+                    {bottleneckRequisitions.filter(r => r.nivel === 'CRITICA').length > 0 && (
+                      <span style={{ backgroundColor: '#ef4444', color: 'white', padding: '1px 6px', borderRadius: '10px', fontSize: '0.7rem', fontWeight: 'bold' }}>
+                        {bottleneckRequisitions.filter(r => r.nivel === 'CRITICA').length}
+                      </span>
+                    )}
+                  </button>
+                  <button
+                    className={`tab-btn ${subTabTrazabilidad === 'inspector' ? 'active' : ''}`}
+                    onClick={() => setSubTabTrazabilidad('inspector')}
+                  >
+                    <Search size={16} />
+                    <span>3. Inspector de Expediente 360°</span>
+                    {inspectedItem && (
+                      <span style={{ backgroundColor: '#38bdf8', color: '#0f172a', padding: '1px 6px', borderRadius: '10px', fontSize: '0.7rem', fontWeight: 'bold' }}>
+                        1 Activo
+                      </span>
+                    )}
+                  </button>
+                  <button
+                    className={`tab-btn ${subTabTrazabilidad === 'bitacora' ? 'active' : ''}`}
+                    onClick={() => setSubTabTrazabilidad('bitacora')}
+                  >
+                    <History size={16} />
+                    <span>4. Bitácora en Vivo</span>
+                  </button>
+                </div>
+
+                {/* FILTRO POR GERENCIA */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ fontSize: '0.85rem', color: '#94a3b8' }}>Filtrar Gerencia:</span>
                   <select
                     value={traceabilityDeptoFilter}
                     onChange={(e) => setTraceabilityDeptoFilter(e.target.value)}
@@ -2524,12 +2913,12 @@ export default function AdminAnalytics() {
                       backgroundColor: '#0f172a',
                       border: '1px solid #1e293b',
                       color: 'white',
-                      padding: '8px 16px',
+                      padding: '6px 12px',
                       borderRadius: '8px',
-                      fontSize: '0.85rem',
+                      fontSize: '0.8rem',
                       outline: 'none',
                       cursor: 'pointer',
-                      minWidth: '220px'
+                      minWidth: '180px'
                     }}
                   >
                     <option value="TODOS">Todas las Gerencias</option>
@@ -2540,130 +2929,862 @@ export default function AdminAnalytics() {
                 </div>
               </div>
 
-              {/* METRIC CARDS */}
-              <div className="metrics-grid">
-                <div className="metric-card">
-                  <div className="metric-icon-wrapper" style={{ backgroundColor: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8' }}>
-                    <TrendingUp size={22} />
-                  </div>
-                  <div className="metric-info">
-                    <h4>Requisiciones Emitidas</h4>
-                    <div className="metric-value">{filteredReqsForTraceability.length}</div>
-                  </div>
-                </div>
+              {/* ----------------------------------------------------------- */}
+              {/* SUBTAB 1: EMBUDO DE CICLO DE VIDA (LIFECYCLE PIPELINE)      */}
+              {/* ----------------------------------------------------------- */}
+              {subTabTrazabilidad === 'pipeline' && (
+                <div className="animate-fade">
+                  {/* EMBUDO VISUAL DE 5 FASES CONECTADAS */}
+                  <div className="pipeline-funnel-grid">
+                    {/* Fase 1 */}
+                    <div className="pipeline-stage-card" style={{ borderTop: '3px solid #38bdf8' }}>
+                      <div className="pipeline-stage-header">
+                        <span className="pipeline-stage-step" style={{ backgroundColor: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8' }}>
+                          Fase 1 • Origen
+                        </span>
+                        <FileText size={18} color="#38bdf8" />
+                      </div>
+                      <div className="pipeline-stage-title">Requisiciones Emitidas</div>
+                      <div className="pipeline-stage-value">{lifecycleFunnelData.emitidasCount.toLocaleString()}</div>
+                      <div className="pipeline-stage-meta">
+                        <span>Punto de partida operativo</span>
+                        <span style={{ color: '#38bdf8', fontWeight: 'bold' }}>100%</span>
+                      </div>
+                      <div className="pipeline-progress-bar">
+                        <div className="pipeline-progress-fill" style={{ width: '100%', backgroundColor: '#38bdf8' }}></div>
+                      </div>
+                    </div>
 
-                <div className="metric-card">
-                  <div className="metric-icon-wrapper" style={{ backgroundColor: 'rgba(52, 211, 153, 0.15)', color: '#34d399' }}>
-                    <UserCheck size={22} />
+                    {/* Fase 2 */}
+                    <div className="pipeline-stage-card" style={{ borderTop: '3px solid #34d399' }}>
+                      <div className="pipeline-stage-header">
+                        <span className="pipeline-stage-step" style={{ backgroundColor: 'rgba(52, 211, 153, 0.15)', color: '#34d399' }}>
+                          Fase 2 • Aprobación
+                        </span>
+                        <ShieldCheck size={18} color="#34d399" />
+                      </div>
+                      <div className="pipeline-stage-title">Aprobadas por Gerencia</div>
+                      <div className="pipeline-stage-value">{lifecycleFunnelData.aprobadasCount.toLocaleString()}</div>
+                      <div className="pipeline-stage-meta">
+                        <span>Rechazos: {lifecycleFunnelData.rechazosCount}</span>
+                        <span style={{ color: '#34d399', fontWeight: 'bold' }}>{lifecycleFunnelData.tasaAprobacion}%</span>
+                      </div>
+                      <div className="pipeline-progress-bar">
+                        <div className="pipeline-progress-fill" style={{ width: `${lifecycleFunnelData.tasaAprobacion}%`, backgroundColor: '#34d399' }}></div>
+                      </div>
+                    </div>
+
+                    {/* Fase 3 */}
+                    <div className="pipeline-stage-card" style={{ borderTop: '3px solid #a855f7' }}>
+                      <div className="pipeline-stage-header">
+                        <span className="pipeline-stage-step" style={{ backgroundColor: 'rgba(168, 85, 247, 0.15)', color: '#c084fc' }}>
+                          Fase 3 • Comercial
+                        </span>
+                        <CreditCard size={18} color="#c084fc" />
+                      </div>
+                      <div className="pipeline-stage-title">ODCs & Tickets de Pago</div>
+                      <div className="pipeline-stage-value">{lifecycleFunnelData.compromisosCount.toLocaleString()}</div>
+                      <div className="pipeline-stage-meta">
+                        <span>ODCs: {lifecycleFunnelData.odcsCount} • Tickets: {lifecycleFunnelData.ticketsCount}</span>
+                        <span style={{ color: '#c084fc', fontWeight: 'bold' }}>Emitidas</span>
+                      </div>
+                      <div className="pipeline-progress-bar">
+                        <div className="pipeline-progress-fill" style={{ width: '88%', backgroundColor: '#a855f7' }}></div>
+                      </div>
+                    </div>
+
+                    {/* Fase 4 */}
+                    <div className="pipeline-stage-card" style={{ borderTop: '3px solid #10b981' }}>
+                      <div className="pipeline-stage-header">
+                        <span className="pipeline-stage-step" style={{ backgroundColor: 'rgba(16, 185, 129, 0.15)', color: '#10b981' }}>
+                          Fase 4 • Almacén
+                        </span>
+                        <Package size={18} color="#10b981" />
+                      </div>
+                      <div className="pipeline-stage-title">Recepción en Almacén</div>
+                      <div className="pipeline-stage-value">{lifecycleFunnelData.reqsConAlmacen.toLocaleString()}</div>
+                      <div className="pipeline-stage-meta">
+                        <span>En compras: {lifecycleFunnelData.reqsEnCompras}</span>
+                        <span style={{ color: '#10b981', fontWeight: 'bold' }}>Físico</span>
+                      </div>
+                      <div className="pipeline-progress-bar">
+                        <div className="pipeline-progress-fill" style={{ width: '75%', backgroundColor: '#10b981' }}></div>
+                      </div>
+                    </div>
+
+                    {/* Fase 5 */}
+                    <div className="pipeline-stage-card" style={{ borderTop: '3px solid #f59e0b' }}>
+                      <div className="pipeline-stage-header">
+                        <span className="pipeline-stage-step" style={{ backgroundColor: 'rgba(245, 158, 11, 0.15)', color: '#fbbf24' }}>
+                          Fase 5 • Liquidación
+                        </span>
+                        <Landmark size={18} color="#fbbf24" />
+                      </div>
+                      <div className="pipeline-stage-title">Cuentas por Pagar</div>
+                      <div className="pipeline-stage-value">{lifecycleFunnelData.ticketsPagados.toLocaleString()}</div>
+                      <div className="pipeline-stage-meta">
+                        <span>Pendientes: {lifecycleFunnelData.ticketsPendientes}</span>
+                        <span style={{ color: '#fbbf24', fontWeight: 'bold' }}>Finanzas</span>
+                      </div>
+                      <div className="pipeline-progress-bar">
+                        <div className="pipeline-progress-fill" style={{ width: '60%', backgroundColor: '#f59e0b' }}></div>
+                      </div>
+                    </div>
                   </div>
-                  <div className="metric-info">
-                    <h4>Requisiciones Aprobadas</h4>
-                    <div className="metric-value">
-                      {filteredReqsForTraceability.filter(r => r.estado_aprobacion?.toUpperCase() === 'APROBADO_FINAL' || r.estado_aprobacion?.toUpperCase() === 'APROBADA_FINAL').length}
+
+                  {/* METRIC CARDS RESUMEN */}
+                  <div className="metrics-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+                    <div className="metric-card">
+                      <div className="metric-icon-wrapper" style={{ backgroundColor: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8' }}>
+                        <TrendingUp size={22} />
+                      </div>
+                      <div className="metric-info">
+                        <h4>Requisiciones Emitidas</h4>
+                        <div className="metric-value">{filteredReqsForTraceability.length}</div>
+                      </div>
+                    </div>
+
+                    <div className="metric-card">
+                      <div className="metric-icon-wrapper" style={{ backgroundColor: 'rgba(52, 211, 153, 0.15)', color: '#34d399' }}>
+                        <UserCheck size={22} />
+                      </div>
+                      <div className="metric-info">
+                        <h4>Requisiciones Aprobadas</h4>
+                        <div className="metric-value">
+                          {filteredReqsForTraceability.filter(r => r.estado_aprobacion?.toUpperCase() === 'APROBADO_FINAL' || r.estado_aprobacion?.toUpperCase() === 'APROBADA_FINAL').length}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="metric-card">
+                      <div className="metric-icon-wrapper" style={{ backgroundColor: 'rgba(248, 113, 113, 0.15)', color: '#f87171' }}>
+                        <Ban size={22} />
+                      </div>
+                      <div className="metric-info">
+                        <h4>Rechazos / Devoluciones</h4>
+                        <div className="metric-value">
+                          {filteredLogsForTraceability.filter(l => l.accion === 'RECHAZADA' || l.accion === 'RECHAZADO').length}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="metric-card">
+                      <div className="metric-icon-wrapper" style={{ backgroundColor: 'rgba(251, 191, 36, 0.15)', color: '#fbbf24' }}>
+                        <Activity size={22} />
+                      </div>
+                      <div className="metric-info">
+                        <h4>Tickets de Pago</h4>
+                        <div className="metric-value">{filteredTicketsForTraceability.length}</div>
+                      </div>
+                    </div>
+
+                    <div className="metric-card">
+                      <div className="metric-icon-wrapper" style={{ backgroundColor: 'rgba(168, 85, 247, 0.15)', color: '#c084fc' }}>
+                        <DollarSign size={22} />
+                      </div>
+                      <div className="metric-info">
+                        <h4>Órdenes de Compra (ODC)</h4>
+                        <div className="metric-value">{filteredOdcsForTraceability.length}</div>
+                      </div>
+                    </div>
+
+                    <div className="metric-card">
+                      <div className="metric-icon-wrapper" style={{ backgroundColor: 'rgba(14, 165, 233, 0.15)', color: '#0ea5e9' }}>
+                        <History size={22} />
+                      </div>
+                      <div className="metric-info">
+                        <h4>Eventos de Auditoría</h4>
+                        <div className="metric-value">{filteredLogsForTraceability.length}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* CHARTS GRID */}
+                  <div className="charts-grid" style={{ marginTop: '25px' }}>
+                    {/* 1. Movimiento Diario de Requisiciones */}
+                    <div className="chart-card">
+                      <div className="chart-card-title">
+                        <TrendingUp size={20} color="#38bdf8" />
+                        <span>Movimiento de Requisiciones por Día</span>
+                      </div>
+                      <div style={{ width: '100%', height: 300 }}>
+                        {dailyTraceabilityData.length === 0 ? (
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#64748b' }}>
+                            No hay suficientes datos registrados para este período
+                          </div>
+                        ) : (
+                          <ResponsiveContainer>
+                            <LineChart
+                              data={dailyTraceabilityData}
+                              margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
+                            >
+                              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                              <XAxis dataKey="label" stroke="#64748b" style={{ fontSize: '10px' }} />
+                              <YAxis stroke="#64748b" style={{ fontSize: '11px' }} allowDecimals={false} />
+                              <Tooltip
+                                contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '12px', color: 'white', fontFamily: 'Inter' }}
+                              />
+                              <Legend wrapperStyle={{ fontSize: '12px', marginTop: '10px' }} />
+                              <Line type="monotone" dataKey="emitidas" name="Emitidas" stroke="#38bdf8" strokeWidth={3} dot={{ r: 3 }} activeDot={{ r: 6 }} />
+                              <Line type="monotone" dataKey="aprobadas" name="Aprobadas Final" stroke="#34d399" strokeWidth={3} dot={{ r: 3 }} activeDot={{ r: 6 }} />
+                              <Line type="monotone" dataKey="rechazadas" name="Rechazadas" stroke="#f87171" strokeWidth={3} dot={{ r: 3 }} activeDot={{ r: 6 }} />
+                            </LineChart>
+                          </ResponsiveContainer>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* 2. Densidad Comparativa: Requisiciones vs. Tickets vs. ODCs */}
+                    <div className="chart-card">
+                      <div className="chart-card-title">
+                        <Activity size={20} color="#fbbf24" />
+                        <span>Densidad Operativa: Requisiciones vs. Tickets vs. ODCs</span>
+                      </div>
+                      <div style={{ width: '100%', height: 300 }}>
+                        {dailyTraceabilityData.length === 0 ? (
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#64748b' }}>
+                            No hay suficientes datos registrados para este período
+                          </div>
+                        ) : (
+                          <ResponsiveContainer>
+                            <AreaChart
+                              data={dailyTraceabilityData}
+                              margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
+                            >
+                              <defs>
+                                <linearGradient id="colorReqs" x1="0" y1="0" x2="0" y2="1">
+                                  <stop offset="5%" stopColor="#6366f1" stopOpacity={0.4} />
+                                  <stop offset="95%" stopColor="#6366f1" stopOpacity={0.0} />
+                                </linearGradient>
+                                <linearGradient id="colorTickets" x1="0" y1="0" x2="0" y2="1">
+                                  <stop offset="5%" stopColor="#fbbf24" stopOpacity={0.4} />
+                                  <stop offset="95%" stopColor="#fbbf24" stopOpacity={0.0} />
+                                </linearGradient>
+                                <linearGradient id="colorOdcs" x1="0" y1="0" x2="0" y2="1">
+                                  <stop offset="5%" stopColor="#a855f7" stopOpacity={0.4} />
+                                  <stop offset="95%" stopColor="#a855f7" stopOpacity={0.0} />
+                                </linearGradient>
+                              </defs>
+                              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                              <XAxis dataKey="label" stroke="#64748b" style={{ fontSize: '10px' }} />
+                              <YAxis stroke="#64748b" style={{ fontSize: '11px' }} allowDecimals={false} />
+                              <Tooltip
+                                contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '12px', color: 'white', fontFamily: 'Inter' }}
+                              />
+                              <Legend wrapperStyle={{ fontSize: '12px', marginTop: '10px' }} />
+                              <Area type="monotone" dataKey="emitidas" name="Requisiciones" stroke="#6366f1" strokeWidth={2} fillOpacity={1} fill="url(#colorReqs)" />
+                              <Area type="monotone" dataKey="tickets" name="Tickets de Pago" stroke="#fbbf24" strokeWidth={2} fillOpacity={1} fill="url(#colorTickets)" />
+                              <Area type="monotone" dataKey="odcs" name="Órdenes de Compra" stroke="#a855f7" strokeWidth={2} fillOpacity={1} fill="url(#colorOdcs)" />
+                            </AreaChart>
+                          </ResponsiveContainer>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
+              )}
 
-                <div className="metric-card">
-                  <div className="metric-icon-wrapper" style={{ backgroundColor: 'rgba(248, 113, 113, 0.15)', color: '#f87171' }}>
-                    <Ban size={22} />
+              {/* ----------------------------------------------------------- */}
+              {/* SUBTAB 2: SLA & CUELLOS DE BOTELLA                          */}
+              {/* ----------------------------------------------------------- */}
+              {subTabTrazabilidad === 'sla_bottlenecks' && (
+                <div className="animate-fade" style={{ display: 'flex', flexDirection: 'column', gap: '25px' }}>
+                  {/* ALERTA DE CUELLOS DE BOTELLA */}
+                  <div className="chart-card" style={{ border: '1px solid rgba(239, 68, 68, 0.3)', background: 'rgba(239, 68, 68, 0.02)' }}>
+                    <div className="chart-card-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <AlertTriangle size={20} color="#ef4444" />
+                        <span>Semáforo de Cuellos de Botella: Requisiciones con Espera Prolongada</span>
+                      </div>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <span style={{ fontSize: '0.75rem', backgroundColor: 'rgba(239, 68, 68, 0.2)', color: '#f87171', padding: '3px 8px', borderRadius: '6px', fontWeight: 'bold' }}>
+                          🔴 {bottleneckRequisitions.filter(r => r.nivel === 'CRITICA').length} Críticas (&gt; 5 días)
+                        </span>
+                        <span style={{ fontSize: '0.75rem', backgroundColor: 'rgba(245, 158, 11, 0.2)', color: '#fbbf24', padding: '3px 8px', borderRadius: '6px', fontWeight: 'bold' }}>
+                          🟡 {bottleneckRequisitions.filter(r => r.nivel === 'ADVERTENCIA').length} Advertencia (3-5 días)
+                        </span>
+                      </div>
+                    </div>
+
+                    <p style={{ color: '#94a3b8', fontSize: '0.85rem', margin: '0 0 15px 0' }}>
+                      Las siguientes requisiciones están pendientes de aprobación y han superado el SLA operativo. Haz clic en "Inspeccionar" para auditar su expediente completo:
+                    </p>
+
+                    {bottleneckRequisitions.length === 0 ? (
+                      <div style={{ padding: '25px', textAlign: 'center', color: '#34d399', background: 'rgba(16, 185, 129, 0.05)', borderRadius: '12px' }}>
+                        <CheckCircle size={28} style={{ margin: '0 auto 8px auto' }} />
+                        <p style={{ fontWeight: 'bold', margin: 0 }}>¡Excelente! No hay requisiciones con cuellos de botella en este período.</p>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '14px' }}>
+                        {bottleneckRequisitions.slice(0, 9).map(req => {
+                          const isCritica = req.nivel === 'CRITICA';
+                          return (
+                            <div
+                              key={req.id}
+                              className={isCritica ? 'bottleneck-card-critica' : 'bottleneck-card-advertencia'}
+                              style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}
+                            >
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span style={{ fontFamily: 'monospace', fontWeight: 'bold', fontSize: '1rem', color: isCritica ? '#ef4444' : '#fbbf24' }}>
+                                  {req.correlativo_req || `REQ-${req.id}`}
+                                </span>
+                                <span style={{
+                                  fontSize: '0.75rem',
+                                  fontWeight: 'bold',
+                                  padding: '2px 8px',
+                                  borderRadius: '6px',
+                                  backgroundColor: isCritica ? 'rgba(239, 68, 68, 0.2)' : 'rgba(245, 158, 11, 0.2)',
+                                  color: isCritica ? '#f87171' : '#fbbf24'
+                                }}>
+                                  ⏱️ {req.diasEspera} días en espera
+                                </span>
+                              </div>
+
+                              <div style={{ fontSize: '0.8rem', color: '#cbd5e1' }}>
+                                <div><strong>Gerencia:</strong> {req.gerencia || 'General'}</div>
+                                <div><strong>Solicitante:</strong> {req.solicitante || 'Usuario SITC'}</div>
+                                <div style={{ color: '#94a3b8', fontSize: '0.75rem', marginTop: '2px' }}>
+                                  <strong>Estado actual:</strong> {req.estado_aprobacion?.toUpperCase()}
+                                </div>
+                              </div>
+
+                              <button
+                                onClick={() => abrirInspectorExpediente(req, 'requisicion')}
+                                style={{
+                                  marginTop: '4px',
+                                  padding: '6px 12px',
+                                  borderRadius: '8px',
+                                  backgroundColor: isCritica ? 'rgba(239, 68, 68, 0.15)' : 'rgba(245, 158, 11, 0.15)',
+                                  color: isCritica ? '#f87171' : '#fbbf24',
+                                  border: `1px solid ${isCritica ? 'rgba(239, 68, 68, 0.3)' : 'rgba(245, 158, 11, 0.3)'}`,
+                                  fontSize: '0.75rem',
+                                  fontWeight: 'bold',
+                                  cursor: 'pointer',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  gap: '6px',
+                                  transition: 'all 0.15s'
+                                }}
+                              >
+                                <Eye size={13} />
+                                <span>Inspeccionar Expediente 360°</span>
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
-                  <div className="metric-info">
-                    <h4>Requisiciones Rechazadas</h4>
-                    <div className="metric-value">
-                      {filteredLogsForTraceability.filter(l => l.accion === 'RECHAZADA' || l.accion === 'RECHAZADO').length}
+
+                  {/* TABLA DE SLA POR GERENCIA */}
+                  <div className="chart-card">
+                    <div className="chart-card-title">
+                      <Clock size={20} color="#6366f1" />
+                      <span>Matriz de Rendimiento SLA y Aprobación por Gerencia</span>
+                    </div>
+
+                    <div style={{ overflowX: 'auto' }}>
+                      <table className="console-table" style={{ fontFamily: 'Inter' }}>
+                        <thead>
+                          <tr>
+                            <th>GERENCIA / DEPARTAMENTO</th>
+                            <th style={{ textAlign: 'center' }}>EMITIDAS</th>
+                            <th style={{ textAlign: 'center' }}>APROBADAS</th>
+                            <th style={{ textAlign: 'center' }}>PENDIENTES</th>
+                            <th style={{ textAlign: 'center' }}>TASA APROBACIÓN</th>
+                            <th style={{ textAlign: 'right' }}>SLA PROMEDIO</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {slaByDepartmentData.length === 0 ? (
+                            <tr>
+                              <td colSpan="6" style={{ textAlign: 'center', color: '#64748b', padding: '20px' }}>
+                                No hay datos de gerencias en este período
+                              </td>
+                            </tr>
+                          ) : (
+                            slaByDepartmentData.map(d => (
+                              <tr key={d.departamento}>
+                                <td style={{ color: 'white', fontWeight: 'bold' }}>{d.departamento}</td>
+                                <td style={{ textAlign: 'center', color: '#38bdf8' }}>{d.emitidas}</td>
+                                <td style={{ textAlign: 'center', color: '#34d399', fontWeight: 'bold' }}>{d.aprobadas}</td>
+                                <td style={{ textAlign: 'center', color: d.pendientes > 0 ? '#fbbf24' : '#64748b' }}>{d.pendientes}</td>
+                                <td style={{ textAlign: 'center' }}>
+                                  <span style={{
+                                    padding: '2px 8px',
+                                    borderRadius: '6px',
+                                    fontSize: '0.75rem',
+                                    fontWeight: 'bold',
+                                    backgroundColor: d.tasaAprobacion >= 80 ? 'rgba(52, 211, 153, 0.15)' : 'rgba(245, 158, 11, 0.15)',
+                                    color: d.tasaAprobacion >= 80 ? '#34d399' : '#fbbf24'
+                                  }}>
+                                    {d.tasaAprobacion}%
+                                  </span>
+                                </td>
+                                <td style={{ textAlign: 'right', fontWeight: 'bold', color: d.avgHours > 48 ? '#ef4444' : d.avgHours > 24 ? '#f59e0b' : '#38bdf8' }}>
+                                  {d.avgDays >= 1 ? `${d.avgDays} días (${d.avgHours}h)` : `${d.avgHours} hrs`}
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
                     </div>
                   </div>
                 </div>
+              )}
 
-                <div className="metric-card">
-                  <div className="metric-icon-wrapper" style={{ backgroundColor: 'rgba(251, 191, 36, 0.15)', color: '#fbbf24' }}>
-                    <Activity size={22} />
-                  </div>
-                  <div className="metric-info">
-                    <h4>Tickets de Pago</h4>
-                    <div className="metric-value">{filteredTicketsForTraceability.length}</div>
-                  </div>
-                </div>
-              </div>
-
-              {/* CHARTS GRID */}
-              <div className="charts-grid" style={{ marginTop: '25px' }}>
-                {/* 1. Movimiento Diario de Requisiciones */}
-                <div className="chart-card">
-                  <div className="chart-card-title">
-                    <TrendingUp size={20} color="#38bdf8" />
-                    <span>Movimiento de Requisiciones por Día</span>
-                  </div>
-                  <div style={{ width: '100%', height: 320 }}>
-                    {dailyTraceabilityData.length === 0 ? (
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#64748b' }}>
-                        No hay suficientes datos registrados para este período
-                      </div>
-                    ) : (
-                      <ResponsiveContainer>
-                        <LineChart
-                          data={dailyTraceabilityData}
-                          margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
+              {/* ----------------------------------------------------------- */}
+              {/* SUBTAB 3: INSPECTOR DE EXPEDIENTE 360°                      */}
+              {/* ----------------------------------------------------------- */}
+              {subTabTrazabilidad === 'inspector' && (
+                <div className="animate-fade" style={{ display: 'flex', flexDirection: 'column', gap: '25px' }}>
+                  {/* BUSCADOR UNIVERSAL */}
+                  <div className="chart-card" style={{ background: 'rgba(30, 41, 59, 0.4)', padding: '20px' }}>
+                    <div className="inspector-search-wrapper">
+                      <Search size={18} style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', color: '#38bdf8' }} />
+                      <input
+                        type="text"
+                        className="inspector-search-input"
+                        placeholder="🔍 Buscar por Correlativo (ej. MTT-26-0271, REQ-100), ODC, Ticket de Pago, Solicitante o Proveedor..."
+                        value={inspectorSearch}
+                        onChange={(e) => setInspectorSearch(e.target.value)}
+                      />
+                      {inspectorSearch && (
+                        <button
+                          onClick={() => setInspectorSearch('')}
+                          style={{ position: 'absolute', right: '14px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer' }}
                         >
-                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                          <XAxis dataKey="label" stroke="#64748b" style={{ fontSize: '10px' }} />
-                          <YAxis stroke="#64748b" style={{ fontSize: '11px' }} allowDecimals={false} />
-                          <Tooltip
-                            contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '12px', color: 'white', fontFamily: 'Inter' }}
-                          />
-                          <Legend wrapperStyle={{ fontSize: '12px', marginTop: '10px' }} />
-                          <Line type="monotone" dataKey="emitidas" name="Emitidas (Creadas)" stroke="#38bdf8" strokeWidth={3} dot={{ r: 3 }} activeDot={{ r: 6 }} />
-                          <Line type="monotone" dataKey="aprobadas" name="Aprobadas Final" stroke="#34d399" strokeWidth={3} dot={{ r: 3 }} activeDot={{ r: 6 }} />
-                          <Line type="monotone" dataKey="rechazadas" name="Rechazadas" stroke="#f87171" strokeWidth={3} dot={{ r: 3 }} activeDot={{ r: 6 }} />
-                        </LineChart>
-                      </ResponsiveContainer>
-                    )}
-                  </div>
-                </div>
+                          <X size={16} />
+                        </button>
+                      )}
 
-                {/* 2. Densidad Comparativa: Requisiciones vs. Tickets de Pago */}
-                <div className="chart-card">
-                  <div className="chart-card-title">
-                    <Activity size={20} color="#fbbf24" />
-                    <span>Densidad Operativa: Requisiciones vs. Tickets de Pago</span>
-                  </div>
-                  <div style={{ width: '100%', height: 320 }}>
-                    {dailyTraceabilityData.length === 0 ? (
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#64748b' }}>
-                        No hay suficientes datos registrados para este período
-                      </div>
-                    ) : (
-                      <ResponsiveContainer>
-                        <AreaChart
-                          data={dailyTraceabilityData}
-                          margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
+                      {/* RESULTADOS AUTOCOMPLETADO */}
+                      {inspectorSearchResults.length > 0 && (
+                        <div className="inspector-dropdown-results">
+                          {inspectorSearchResults.map((res, idx) => (
+                            <div
+                              key={idx}
+                              className="inspector-dropdown-item"
+                              onClick={() => {
+                                abrirInspectorExpediente(res.data, res.tipo);
+                                setInspectorSearch('');
+                              }}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                <span style={{
+                                  padding: '3px 8px',
+                                  borderRadius: '6px',
+                                  fontSize: '0.7rem',
+                                  fontWeight: 'bold',
+                                  backgroundColor: res.tipo === 'requisicion' ? 'rgba(56, 189, 248, 0.2)' : res.tipo === 'odc' ? 'rgba(168, 85, 247, 0.2)' : 'rgba(251, 191, 36, 0.2)',
+                                  color: res.tipo === 'requisicion' ? '#38bdf8' : res.tipo === 'odc' ? '#c084fc' : '#fbbf24',
+                                  textTransform: 'uppercase'
+                                }}>
+                                  {res.tipo}
+                                </span>
+                                <div>
+                                  <div style={{ color: 'white', fontWeight: 'bold', fontSize: '0.85rem' }}>{res.titulo}</div>
+                                  <div style={{ color: '#94a3b8', fontSize: '0.75rem' }}>{res.subtitulo}</div>
+                                </div>
+                              </div>
+                              <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                                {new Date(res.fecha).toLocaleDateString('es-VE')}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* ATAJOS RÁPIDOS */}
+                    <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: '0.75rem', color: '#64748b' }}>Ejemplos recientes:</span>
+                      {requisiciones.slice(0, 4).map(r => (
+                        <button
+                          key={r.id}
+                          onClick={() => abrirInspectorExpediente(r, 'requisicion')}
+                          style={{
+                            backgroundColor: 'rgba(255, 255, 255, 0.04)',
+                            border: '1px solid rgba(255, 255, 255, 0.08)',
+                            color: '#38bdf8',
+                            padding: '3px 8px',
+                            borderRadius: '6px',
+                            fontSize: '0.75rem',
+                            cursor: 'pointer',
+                            fontFamily: 'monospace'
+                          }}
                         >
-                          <defs>
-                            <linearGradient id="colorReqs" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="5%" stopColor="#6366f1" stopOpacity={0.4} />
-                              <stop offset="95%" stopColor="#6366f1" stopOpacity={0.0} />
-                            </linearGradient>
-                            <linearGradient id="colorTickets" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="5%" stopColor="#fbbf24" stopOpacity={0.4} />
-                              <stop offset="95%" stopColor="#fbbf24" stopOpacity={0.0} />
-                            </linearGradient>
-                          </defs>
-                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                          <XAxis dataKey="label" stroke="#64748b" style={{ fontSize: '10px' }} />
-                          <YAxis stroke="#64748b" style={{ fontSize: '11px' }} allowDecimals={false} />
-                          <Tooltip
-                            contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '12px', color: 'white', fontFamily: 'Inter' }}
-                          />
-                          <Legend wrapperStyle={{ fontSize: '12px', marginTop: '10px' }} />
-                          <Area type="monotone" dataKey="emitidas" name="Requisiciones Emitidas" stroke="#6366f1" strokeWidth={2} fillOpacity={1} fill="url(#colorReqs)" />
-                          <Area type="monotone" dataKey="tickets" name="Tickets de Pago Emitidos" stroke="#fbbf24" strokeWidth={2} fillOpacity={1} fill="url(#colorTickets)" />
-                        </AreaChart>
-                      </ResponsiveContainer>
-                    )}
+                          {r.correlativo_req || `REQ-${r.id}`}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* EXPEDIENTE 360 CARGADO */}
+                  {!inspectedItem ? (
+                    <div className="chart-card" style={{ padding: '60px 20px', textAlign: 'center', color: '#64748b' }}>
+                      <Search size={42} style={{ margin: '0 auto 15px auto', color: '#38bdf8', opacity: 0.4 }} />
+                      <h3 style={{ color: '#cbd5e1', fontSize: '1.1rem', marginBottom: '6px' }}>Ningún expediente seleccionado</h3>
+                      <p style={{ maxWidth: '480px', margin: '0 auto', fontSize: '0.85rem' }}>
+                        Utiliza el buscador superior o selecciona una requisición de la tabla o de la lista de cuellos de botella para inspeccionar su trazabilidad 360°.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="chart-card animate-fade" style={{ background: 'rgba(30, 41, 59, 0.35)', border: '1px solid rgba(56, 189, 248, 0.25)', padding: '24px' }}>
+                      {/* HEADER EXPEDIENTE */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '1px solid rgba(255, 255, 255, 0.08)', paddingBottom: '18px', flexWrap: 'wrap', gap: '15px' }}>
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: '1.4rem', fontWeight: '800', fontFamily: 'monospace', color: '#38bdf8' }}>
+                              {inspectedItem.correlativo_req || inspectedItem.correlativo || `EXP-#${inspectedItem.id}`}
+                            </span>
+                            <span style={{
+                              padding: '3px 10px',
+                              borderRadius: '8px',
+                              fontSize: '0.75rem',
+                              fontWeight: 'bold',
+                              backgroundColor: 'rgba(52, 211, 153, 0.15)',
+                              color: '#34d399',
+                              textTransform: 'uppercase'
+                            }}>
+                              {inspectedItem.estado_aprobacion || inspectedItem.estado || 'REGISTRADO'}
+                            </span>
+                            {inspectedItem.prioridad && (
+                              <span style={{
+                                padding: '3px 10px',
+                                borderRadius: '8px',
+                                fontSize: '0.75rem',
+                                fontWeight: 'bold',
+                                backgroundColor: inspectedItem.prioridad === 'ALTA' ? 'rgba(239, 68, 68, 0.15)' : 'rgba(56, 189, 248, 0.15)',
+                                color: inspectedItem.prioridad === 'ALTA' ? '#f87171' : '#38bdf8'
+                              }}>
+                                Prioridad: {inspectedItem.prioridad}
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ color: '#94a3b8', fontSize: '0.85rem', marginTop: '6px' }}>
+                            Solicitante: <strong style={{ color: 'white' }}>{inspectedItem.solicitante || 'N/A'}</strong> • Gerencia: <strong style={{ color: 'white' }}>{inspectedItem.gerencia || inspectedItem.centro_costo || 'SITC'}</strong>
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          <button
+                            onClick={() => setInspectedItem(null)}
+                            style={{
+                              backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                              border: '1px solid rgba(255, 255, 255, 0.1)',
+                              color: '#cbd5e1',
+                              padding: '6px 12px',
+                              borderRadius: '8px',
+                              fontSize: '0.8rem',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '6px'
+                            }}
+                          >
+                            <X size={14} />
+                            <span>Cerrar</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* TIMELINE ÁRBOL DE TRAZABILIDAD */}
+                      <div className="timeline-tree">
+                        {/* 1. EMISIÓN */}
+                        <div className="timeline-node">
+                          <span className="timeline-dot" style={{ backgroundColor: '#38bdf8' }}></span>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                            <span style={{ fontSize: '0.85rem', fontWeight: 'bold', color: '#38bdf8', textTransform: 'uppercase' }}>
+                              1. Origen & Emisión de Requerimiento
+                            </span>
+                            <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                              {new Date(inspectedItem.created_at || inspectedItem.fecha_emision).toLocaleString('es-VE')}
+                            </span>
+                          </div>
+                          <p style={{ color: '#cbd5e1', fontSize: '0.85rem', margin: '0 0 10px 0' }}>
+                            {inspectedItem.justificacion ? `"${inspectedItem.justificacion}"` : 'Sin justificación detallada'}
+                          </p>
+
+                          {/* Renglones solicitados */}
+                          {Array.isArray(inspectedItem.items) && inspectedItem.items.length > 0 && (
+                            <div style={{ marginTop: '10px', background: 'rgba(15, 23, 42, 0.4)', padding: '10px 14px', borderRadius: '10px', border: '1px solid rgba(255, 255, 255, 0.04)' }}>
+                              <span style={{ fontSize: '0.72rem', color: '#94a3b8', textTransform: 'uppercase', fontWeight: 'bold' }}>
+                                Renglones Solicitados ({inspectedItem.items.length}):
+                              </span>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '6px' }}>
+                                {inspectedItem.items.map((it, itIdx) => (
+                                  <div key={itIdx} style={{ fontSize: '0.8rem', color: '#e2e8f0', display: 'flex', justifyContent: 'space-between' }}>
+                                    <span>• {it.descripcion || it.nombre || 'Ítem'} ({it.cantidad} {it.unidad || 'UND'})</span>
+                                    <span style={{ color: '#64748b', fontSize: '0.75rem' }}>{it.especificaciones || ''}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* 2. APROBACIONES */}
+                        <div className="timeline-node">
+                          <span className="timeline-dot" style={{ backgroundColor: '#34d399' }}></span>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                            <span style={{ fontSize: '0.85rem', fontWeight: 'bold', color: '#34d399', textTransform: 'uppercase' }}>
+                              2. Dictamen & Cadena de Aprobación
+                            </span>
+                            <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                              {inspectedItem.fecha_aprobacion_final ? new Date(inspectedItem.fecha_aprobacion_final).toLocaleString('es-VE') : 'En revisión'}
+                            </span>
+                          </div>
+
+                          {/* Logs de auditoría de la requisición */}
+                          {requisicionLogs.filter(l => l.requisicion_id === inspectedItem.id).length === 0 ? (
+                            <p style={{ color: '#94a3b8', fontSize: '0.8rem', margin: 0 }}>
+                              Estado actual: <strong>{inspectedItem.estado_aprobacion}</strong>. No registra eventos de auditoría previos.
+                            </p>
+                          ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '6px' }}>
+                              {requisicionLogs
+                                .filter(l => l.requisicion_id === inspectedItem.id)
+                                .map(log => (
+                                  <div key={log.id} style={{ background: 'rgba(15, 23, 42, 0.4)', padding: '8px 12px', borderRadius: '8px', borderLeft: `3px solid ${log.accion === 'RECHAZADA' ? '#ef4444' : '#34d399'}` }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
+                                      <strong style={{ color: log.accion === 'RECHAZADA' ? '#f87171' : '#34d399' }}>{log.accion}</strong>
+                                      <span style={{ color: '#64748b' }}>{new Date(log.fecha || log.created_at).toLocaleString('es-VE')}</span>
+                                    </div>
+                                    <div style={{ color: '#cbd5e1', fontSize: '0.8rem', marginTop: '3px' }}>
+                                      <strong>{log.usuario_nombre || 'Gerente'}:</strong> {log.comentario || 'Aprobado'}
+                                    </div>
+                                  </div>
+                                ))}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* 3. GESTIÓN COMERCIAL (ODC O TICKET) */}
+                        <div className="timeline-node">
+                          <span className="timeline-dot" style={{ backgroundColor: '#a855f7' }}></span>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                            <span style={{ fontSize: '0.85rem', fontWeight: 'bold', color: '#c084fc', textTransform: 'uppercase' }}>
+                              3. Compromiso de Compra (ODCs & Tickets)
+                            </span>
+                          </div>
+
+                          {/* Órdenes de compra vinculadas */}
+                          {ordenesCompra.filter(o => 
+                            String(o.requisicion_id) === String(inspectedItem.id) ||
+                            (o.numero_req && String(o.numero_req).toUpperCase() === String(inspectedItem.correlativo_req).toUpperCase()) ||
+                            (o.correlativo_req && String(o.correlativo_req).toUpperCase() === String(inspectedItem.correlativo_req).toUpperCase())
+                          ).length > 0 ? (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                              {ordenesCompra.filter(o => 
+                                String(o.requisicion_id) === String(inspectedItem.id) ||
+                                (o.numero_req && String(o.numero_req).toUpperCase() === String(inspectedItem.correlativo_req).toUpperCase()) ||
+                                (o.correlativo_req && String(o.correlativo_req).toUpperCase() === String(inspectedItem.correlativo_req).toUpperCase())
+                              ).map(odc => (
+                                <div key={odc.id} style={{ background: 'rgba(168, 85, 247, 0.08)', padding: '10px 14px', borderRadius: '10px', border: '1px solid rgba(168, 85, 247, 0.2)' }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <span style={{ fontFamily: 'monospace', fontWeight: 'bold', color: '#c084fc' }}>
+                                      ODC-{odc.correlativo || odc.id}
+                                    </span>
+                                    <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#34d399' }}>
+                                      ${Number(odc.total || odc.total_monto || 0).toLocaleString()}
+                                    </span>
+                                  </div>
+                                  <div style={{ fontSize: '0.8rem', color: '#cbd5e1', marginTop: '4px' }}>
+                                    Proveedor: <strong>{odc.proveedor_nombre || 'N/A'}</strong> (RIF: {odc.proveedor_rif || 'N/A'})
+                                  </div>
+                                  <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: '2px' }}>
+                                    Condición: {odc.condicion_pago || odc.tipo_pago || 'Crédito'} {odc.dias_credito ? `(${odc.dias_credito} días)` : ''}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <p style={{ color: '#94a3b8', fontSize: '0.8rem', margin: 0 }}>
+                              No se han emitido órdenes de compra formales para esta requisición.
+                            </p>
+                          )}
+                        </div>
+
+                        {/* 4. ALMACÉN */}
+                        <div className="timeline-node">
+                          <span className="timeline-dot" style={{ backgroundColor: '#10b981' }}></span>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                            <span style={{ fontSize: '0.85rem', fontWeight: 'bold', color: '#10b981', textTransform: 'uppercase' }}>
+                              4. Recepción en Almacén
+                            </span>
+                          </div>
+                          <p style={{ color: '#cbd5e1', fontSize: '0.85rem', margin: 0 }}>
+                            Control Físico: Los renglones aprobados avanzan al módulo de recepción con verificación de calidad y guía de despacho.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ----------------------------------------------------------- */}
+              {/* SUBTAB 4: BITÁCORA EN VIVO                                  */}
+              {/* ----------------------------------------------------------- */}
+              {subTabTrazabilidad === 'bitacora' && (
+                <div className="chart-card animate-fade">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '15px' }}>
+                    <div className="chart-card-title" style={{ marginBottom: 0 }}>
+                      <History size={20} color="#0ea5e9" />
+                      <span>Bitácora de Trazabilidad & Auditoría en Vivo ({filteredLogsForTraceability.length} eventos)</span>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                      <div style={{ position: 'relative' }}>
+                        <Search size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#64748b' }} />
+                        <input
+                          type="text"
+                          placeholder="Buscar por req, usuario, motivo..."
+                          value={busquedaTrazabilidad}
+                          onChange={(e) => setBusquedaTrazabilidad(e.target.value)}
+                          style={{
+                            backgroundColor: '#0f172a',
+                            border: '1px solid #1e293b',
+                            color: 'white',
+                            padding: '6px 12px 6px 30px',
+                            borderRadius: '8px',
+                            fontSize: '0.8rem',
+                            outline: 'none',
+                            minWidth: '220px'
+                          }}
+                        />
+                      </div>
+
+                      <select
+                        value={filtroAccionTrazabilidad}
+                        onChange={(e) => setFiltroAccionTrazabilidad(e.target.value)}
+                        style={{
+                          backgroundColor: '#0f172a',
+                          border: '1px solid #1e293b',
+                          color: 'white',
+                          padding: '6px 12px',
+                          borderRadius: '8px',
+                          fontSize: '0.8rem',
+                          outline: 'none',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        <option value="TODAS">Todas las Acciones</option>
+                        <option value="CREACION">Creaciones</option>
+                        <option value="APROBADA_FINAL">Aprobaciones Finales</option>
+                        <option value="RECHAZADA">Rechazos / Devoluciones</option>
+                        <option value="ASIGNACION">Asignaciones de Compra</option>
+                        <option value="FINALIZADO">Finalizados / Entregados</option>
+                        <option value="PAUSA">Pausas</option>
+                        <option value="SLA_CALCULO">Cálculo SLA</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div style={{ overflowX: 'auto', maxHeight: '500px', overflowY: 'auto' }}>
+                    <table className="console-table" style={{ fontFamily: 'Inter', fontSize: '0.85rem' }}>
+                      <thead style={{ position: 'sticky', top: 0, backgroundColor: '#0f172a', zIndex: 10 }}>
+                        <tr>
+                          <th style={{ width: '130px' }}>REQUISICIÓN</th>
+                          <th style={{ width: '160px' }}>GERENCIA / OBRA</th>
+                          <th style={{ width: '160px' }}>FECHA / HORA</th>
+                          <th style={{ width: '160px' }}>RESPONSABLE</th>
+                          <th style={{ width: '150px', textAlign: 'center' }}>ACCIÓN / EVENTO</th>
+                          <th>DETALLE / COMENTARIO DE TRAZABILIDAD</th>
+                          <th style={{ width: '80px', textAlign: 'center' }}>EXPEDIENTE</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredLogsForTraceability
+                          .filter(l => {
+                            if (filtroAccionTrazabilidad !== 'TODAS' && l.accion !== filtroAccionTrazabilidad) return false;
+                            if (!busquedaTrazabilidad.trim()) return true;
+                            const q = busquedaTrazabilidad.toLowerCase();
+                            const req = requisiciones.find(r => r.id === l.requisicion_id);
+                            const reqCode = req?.correlativo_req || `#${l.requisicion_id}`;
+                            return (
+                              reqCode.toLowerCase().includes(q) ||
+                              (l.usuario_nombre || '').toLowerCase().includes(q) ||
+                              (l.comentario || '').toLowerCase().includes(q) ||
+                              (l.accion || '').toLowerCase().includes(q)
+                            );
+                          })
+                          .slice(0, 100)
+                          .map(log => {
+                            const req = requisiciones.find(r => r.id === log.requisicion_id);
+                            const isRechazo = log.accion === 'RECHAZADA' || log.accion === 'RECHAZADO';
+                            const isAprobada = log.accion === 'APROBADA_FINAL' || log.accion === 'APROBADO_FINAL';
+                            const isCreacion = log.accion === 'CREACION';
+                            const isAsignacion = log.accion === 'ASIGNACION';
+                            const isPausa = log.accion === 'PAUSA';
+
+                            let badgeBg = 'rgba(100, 116, 139, 0.15)';
+                            let badgeCol = '#94a3b8';
+                            if (isRechazo) { badgeBg = 'rgba(239, 68, 68, 0.2)'; badgeCol = '#ef4444'; }
+                            else if (isAprobada) { badgeBg = 'rgba(34, 197, 94, 0.2)'; badgeCol = '#22c55e'; }
+                            else if (isCreacion) { badgeBg = 'rgba(56, 189, 248, 0.2)'; badgeCol = '#38bdf8'; }
+                            else if (isAsignacion) { badgeBg = 'rgba(168, 85, 247, 0.2)'; badgeCol = '#c084fc'; }
+                            else if (isPausa) { badgeBg = 'rgba(245, 158, 11, 0.2)'; badgeCol = '#f59e0b'; }
+
+                            return (
+                              <tr key={log.id}>
+                                <td style={{ fontFamily: 'monospace', fontWeight: 'bold', color: '#38bdf8' }}>
+                                  {req?.correlativo_req || `#${log.requisicion_id}`}
+                                </td>
+                                <td style={{ color: '#cbd5e1', fontSize: '0.8rem' }}>
+                                  {req?.gerencia || req?.centro_costo || 'N/A'}
+                                </td>
+                                <td style={{ color: '#64748b', fontSize: '0.78rem' }}>
+                                  {new Date(log.fecha || log.created_at).toLocaleString('es-VE')}
+                                </td>
+                                <td style={{ color: '#e2e8f0', fontWeight: '500', fontSize: '0.8rem' }}>
+                                  {log.usuario_nombre || 'Sistema'}
+                                </td>
+                                <td style={{ textAlign: 'center' }}>
+                                  <span style={{
+                                    backgroundColor: badgeBg,
+                                    color: badgeCol,
+                                    padding: '3px 8px',
+                                    borderRadius: '6px',
+                                    fontSize: '0.72rem',
+                                    fontWeight: 'bold',
+                                    textTransform: 'uppercase'
+                                  }}>
+                                    {log.accion}
+                                  </span>
+                                </td>
+                                <td style={{ color: '#94a3b8', fontSize: '0.8rem', fontStyle: isRechazo ? 'italic' : 'normal' }}>
+                                  {log.comentario || 'Sin observaciones'}
+                                </td>
+                                <td style={{ textAlign: 'center' }}>
+                                  <button
+                                    onClick={() => abrirInspectorExpediente(req || log.requisicion_id, 'requisicion')}
+                                    title="Inspeccionar expediente completo"
+                                    style={{
+                                      backgroundColor: 'rgba(56, 189, 248, 0.1)',
+                                      border: '1px solid rgba(56, 189, 248, 0.2)',
+                                      color: '#38bdf8',
+                                      padding: '4px 8px',
+                                      borderRadius: '6px',
+                                      cursor: 'pointer',
+                                      fontSize: '0.72rem'
+                                    }}
+                                  >
+                                    <Eye size={12} />
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                      </tbody>
+                    </table>
                   </div>
                 </div>
-              </div>
+              )}
             </div>
           ) : (
             /* TRAZABILIDAD Y AUDITORIA DE SESIONES (TABS) */

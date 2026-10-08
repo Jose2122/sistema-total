@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import './Requisiciones.css';
 import { compressImage } from './utils/compressImage';
+import { consolidarSoportesRequisicion } from './services/requisicionesService';
 
 const compararNombres = (nombre1, nombre2) => {
   if (!nombre1 || !nombre2) return false;
@@ -426,7 +427,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
 
         const historialMapeado = finalData.map(db => {
           const itemsSeguros = parsearJsonSeguro(db.items);
-          const facturasSeguras = parsearJsonSeguro(db.facturas_url);
+          const facturasSeguras = consolidarSoportesRequisicion(db.facturas_url, itemsSeguros);
           return {
             id: db.id,
             correlativo: db.correlativo_req || `REQ-${String(db.id).padStart(3, '0')}`,
@@ -1028,7 +1029,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     setObservacionesDireccion(req.observaciones_direccion || '');
     setIdReferenciaProyecto(req.id_referencia_proyecto || '');
 
-    const facturasSeguras = parsearJsonSeguro(req.facturas_url);
+    const detallesSeguros = parsearJsonSeguro(req.detalles || req.items);
+    const facturasSeguras = consolidarSoportesRequisicion(req.facturas_url, detallesSeguros);
     setFacturasUrls(facturasSeguras);
     setFechaRequerida(req.fecha_requerida || req.fecha || req.fecha_emision);
     setDepartamento(req.gerencia || 'Operaciones');
@@ -1049,8 +1051,6 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
         })
         .catch(err => console.error("Error al cargar gerente directo del creador:", err));
     }
-
-    const detallesSeguros = parsearJsonSeguro(req.detalles || req.items);
 
     setRenglones(detallesSeguros);
     setCentroCosto(req.centroCosto || req.centro_costo || '');

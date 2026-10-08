@@ -131,7 +131,7 @@ function Dashboard() {
     return 1 + Math.round(((d.getTime() - week1.getTime()) / 86400000 - 3 + (week1.getDay() + 6) % 7) / 7);
   };
 
-  const buildUsuarioConPermisos = (perfil) => {
+  const buildUsuarioConPermisos = (perfil, userAuth = null) => {
     if (!perfil) return null;
     const permisos = {};
     const modulos = perfil.permisos_modulos || [];
@@ -143,10 +143,24 @@ function Dashboard() {
     todosModulos.forEach(modId => {
       permisos[modId] = modulos.includes(modId);
     });
-    if (permisos['compras'] || perfil.esAdminReal || (perfil.departamento || '').toLowerCase().includes('compra')) {
+
+    const emailLower = (perfil.correo || perfil.email || userAuth?.email || '').toLowerCase().trim();
+    const esAdminReal = emailLower === 'jcontreras.totalclean@gmail.com' ||
+                        emailLower === 'cvega@totalclean.com.ve' ||
+                        emailLower === 'karincmm1@gmail.com' ||
+                        (perfil.rol || '').toUpperCase() === 'SUPERADMIN' ||
+                        (perfil.rol || '').toUpperCase() === 'ADMIN';
+
+    if (permisos['compras'] || esAdminReal || (perfil.departamento || '').toLowerCase().includes('compra')) {
       permisos['ordenes_compra'] = true;
     }
-    return { ...perfil, permisos };
+    return {
+      ...perfil,
+      correo: perfil.correo || userAuth?.email || '',
+      email: perfil.email || userAuth?.email || '',
+      esAdminReal,
+      permisos
+    };
   };
 
   const getInitials = (n, a) => {
@@ -170,9 +184,23 @@ function Dashboard() {
         .single();
 
       if (perfil) {
-        setUsuario(buildUsuarioConPermisos(perfil));
+        setUsuario(buildUsuarioConPermisos(perfil, user));
       } else {
-        setUsuario({ nombre: user.email.split('@')[0], apellido: '', rol: 'Usuario', departamento: 'Total Clean', permisos: {} });
+        const emailLower = (user.email || '').toLowerCase();
+        const esAdminReal = emailLower === 'jcontreras.totalclean@gmail.com' ||
+                            emailLower === 'cvega@totalclean.com.ve' ||
+                            emailLower === 'karincmm1@gmail.com';
+        setUsuario({
+          id: user.id,
+          correo: user.email,
+          email: user.email,
+          nombre: user.email.split('@')[0],
+          apellido: '',
+          rol: 'Usuario',
+          departamento: 'Total Clean',
+          esAdminReal,
+          permisos: {}
+        });
       }
       setCargando(false);
     };
@@ -597,7 +625,7 @@ function Dashboard() {
     if (seccionActiva === 'proveedores') return <Proveedores currentUser={usuario} />;
     if (seccionActiva === 'administracion') return <Administracion />;
     if (seccionActiva === 'atributos') return <Atributos />;
-    if (seccionActiva === 'almacen') return <Almacen />;
+    if (seccionActiva === 'almacen') return <Almacen currentUserProp={usuario} />;
     if (seccionActiva === 'ejecutivo') return <ResumenEjecutivo currentUser={usuario} />;
     if (seccionActiva === 'control_precios') return <ControlPrecios currentUser={usuario} />;
     if (seccionActiva === 'analytics_compras') return <AnalyticsCompras usuario={usuario} />;

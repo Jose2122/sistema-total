@@ -515,6 +515,7 @@ export const deduplicarListaProveedores = (lista = []) => {
 };
 
 export const STORAGE_KEY_HISTORIAL_PROVEEDORES = 'historial_modificaciones_proveedores';
+export const STORAGE_KEY_PROVEEDORES_ELIMINADOS = 'local_proveedores_eliminados';
 
 /**
  * Detecta y devuelve una lista estructurada de diferencias entre dos versiones de un proveedor
@@ -906,12 +907,23 @@ export const sincronizarProveedorCloud = async (nuevoProveedor, nuevaModificacio
 /**
  * Elimina un proveedor del registro maestro central en la nube
  */
-export const eliminarProveedorCloud = async (id) => {
+export const eliminarProveedorCloud = async (idOrProv) => {
   try {
+    const targetId = typeof idOrProv === 'object' && idOrProv ? idOrProv.id : idOrProv;
+    const targetRif = (typeof idOrProv === 'object' && idOrProv?.rif ? idOrProv.rif : '').trim().toUpperCase();
+    const targetNombre = typeof idOrProv === 'object' && idOrProv?.razon_social ? idOrProv.razon_social.trim() : '';
+    const targetNormKey = targetNombre ? normalizarNombreEmpresa(targetNombre) : '';
+
     const { id: existingId, proveedores: provsCloud, historial: histCloud } = await obtenerDirectorioCentralCloud();
     if (!existingId) return false;
 
-    const listaActualizada = provsCloud.filter(p => String(p.id) !== String(id));
+    const listaActualizada = provsCloud.filter(p => {
+      if (targetId && String(p.id) === String(targetId)) return false;
+      if (targetRif && p.rif && p.rif.trim().toUpperCase() === targetRif) return false;
+      if (targetNormKey && normalizarNombreEmpresa(p.razon_social) === targetNormKey) return false;
+      return true;
+    });
+
     const payloadItems = [{
       tipo: 'DIRECTORIO_CENTRAL_PROVEEDORES',
       ultima_actualizacion: new Date().toISOString(),
@@ -1177,9 +1189,42 @@ export const obtenerTodosProveedores = async () => {
     console.warn('Error extrayendo snapshots de historial:', err);
   }
 
+  // 3.8 Blacklist / Tombstones de proveedores eliminados
+  let eliminadosSet = new Set();
+  let eliminadosRifSet = new Set();
+  let eliminadosNormSet = new Set();
+  try {
+    const rawElim = localStorage.getItem(STORAGE_KEY_PROVEEDORES_ELIMINADOS);
+    if (rawElim) {
+      const parsedElim = JSON.parse(rawElim);
+      if (Array.isArray(parsedElim)) {
+        parsedElim.forEach(e => {
+          if (e.id) eliminadosSet.add(String(e.id));
+          if (e.rif && e.rif.toUpperCase() !== 'SIN RIF') eliminadosRifSet.add(e.rif.toUpperCase());
+          if (e.normKey) eliminadosNormSet.add(e.normKey);
+          if (e.razon_social) eliminadosNormSet.add(normalizarNombreEmpresa(e.razon_social));
+        });
+      }
+    }
+  } catch (err) {
+    console.warn('Error leyendo proveedores eliminados:', err);
+  }
+
+  const esProveedorEliminado = (p) => {
+    if (!p) return true;
+    if (p.id && eliminadosSet.has(String(p.id))) return true;
+    if (p.rif && p.rif.trim() && eliminadosRifSet.has(p.rif.trim().toUpperCase())) return true;
+    const norm = normalizarNombreEmpresa(p.razon_social || '');
+    if (norm && eliminadosNormSet.has(norm)) return true;
+    if (p.razon_social && String(p.razon_social).startsWith('[ELIMINADO]')) return true;
+    if (p.status === false && p.eliminado === true) return true;
+    return false;
+  };
+
   // 4. Fusionar con precedencia inteligente multi-fuente:
   // 1º Directorio Nube (Cloud) y Registros Editados > 2º Snapshots de Auditoría > 3º Supabase > 4º Históricos de Requisiciones
-  const listaBruta = [...cloudProvs, ...localProvs, ...historySnapshots, ...supabaseProvs, ...historicosReqs];
+  const listaBruta = [...cloudProvs, ...localProvs, ...historySnapshots, ...supabaseProvs, ...historicosReqs]
+    .filter(p => !esProveedorEliminado(p));
   const listaDeduplicada = deduplicarListaProveedores(listaBruta);
 
   // Sincronizar permanentemente en almacenamiento local para respaldo offline
@@ -1422,11 +1467,50 @@ export const guardarProveedorService = async (formData, usuarioActivo, nombreUsu
   return normalizarProveedor(payloadCompleto);
 };
 
-export const eliminarProveedorService = async (id) => {
+export const eliminarProveedorService = async (idOrProv) => {
+  const targetId = typeof idOrProv === 'object' && idOrProv ? idOrProv.id : idOrProv;
+  const targetRif = (typeof idOrProv === 'object' && idOrProv?.rif ? idOrProv.rif : '').trim().toUpperCase();
+  const targetNombre = typeof idOrProv === 'object' && idOrProv?.razon_social ? idOrProv.razon_social.trim() : '';
+  const targetNormKey = targetNombre ? normalizarNombreEmpresa(targetNombre) : '';
+
+  // 1. Guardar en Blacklist / Tombstones de proveedores eliminados en localStorage
+  try {
+    const rawElim = localStorage.getItem(STORAGE_KEY_PROVEEDORES_ELIMINADOS);
+    const listaElim = rawElim ? JSON.parse(rawElim) : [];
+    const nuevoElim = {
+      id: targetId,
+      rif: targetRif,
+      razon_social: targetNombre,
+      normKey: targetNormKey,
+      fecha_eliminacion: new Date().toISOString()
+    };
+    const sinDuplicados = listaElim.filter(e => {
+      if (targetId && String(e.id) === String(targetId)) return false;
+      if (targetRif && e.rif && e.rif.toUpperCase() === targetRif) return false;
+      if (targetNormKey && e.normKey && e.normKey === targetNormKey) return false;
+      return true;
+    });
+    sinDuplicados.push(nuevoElim);
+    localStorage.setItem(STORAGE_KEY_PROVEEDORES_ELIMINADOS, JSON.stringify(sinDuplicados));
+  } catch (e) {
+    console.warn('Error guardando en blacklist local de eliminados:', e);
+  }
+
+  // 2. Eliminar de local_proveedores_registrados
   try {
     const localList = JSON.parse(localStorage.getItem('local_proveedores_registrados') || '[]');
-    const provEliminado = localList.find(p => String(p.id) === String(id));
-    const updated = localList.filter(p => String(p.id) !== String(id));
+    const provEliminado = localList.find(p => {
+      if (targetId && String(p.id) === String(targetId)) return true;
+      if (targetRif && p.rif && p.rif.trim().toUpperCase() === targetRif) return true;
+      if (targetNormKey && normalizarNombreEmpresa(p.razon_social) === targetNormKey) return true;
+      return false;
+    });
+    const updated = localList.filter(p => {
+      if (targetId && String(p.id) === String(targetId)) return false;
+      if (targetRif && p.rif && p.rif.trim().toUpperCase() === targetRif) return false;
+      if (targetNormKey && normalizarNombreEmpresa(p.razon_social) === targetNormKey) return false;
+      return true;
+    });
     localStorage.setItem('local_proveedores_registrados', JSON.stringify(updated));
 
     if (provEliminado) {
@@ -1441,23 +1525,35 @@ export const eliminarProveedorService = async (id) => {
     console.warn('Error eliminando de localStorage:', e);
   }
 
-  // Eliminar del registro maestro en la nube
+  // 3. Eliminar de SYS-PROVEEDORES-CENTRAL en la nube
   try {
-    await eliminarProveedorCloud(id);
+    await eliminarProveedorCloud(idOrProv);
   } catch (errCloudDel) {
     console.warn('Aviso eliminando de cloud:', errCloudDel);
   }
 
-  if (!isNaN(Number(id)) && Number(id) > 0) {
-    try {
-      await supabase.from('proveedores').delete().eq('id', Number(id));
-    } catch (err) {
-      console.warn('Aviso Supabase delete:', err);
+  // 4. Eliminar de Supabase tabla proveedores
+  try {
+    if (targetId && !isNaN(Number(targetId)) && Number(targetId) > 0) {
+      const { error: errDelId } = await supabase.from('proveedores').delete().eq('id', Number(targetId));
+      if (errDelId) {
+        console.warn('Supabase delete by ID error:', errDelId);
+        await supabase.from('proveedores').update({ status: false, activo: false, razon_social: `[ELIMINADO] ${targetNombre || targetId}` }).eq('id', Number(targetId));
+      }
     }
+    if (targetRif && targetRif !== 'SIN RIF') {
+      const { error: errDelRif } = await supabase.from('proveedores').delete().eq('rif', targetRif);
+      if (errDelRif) {
+        console.warn('Supabase delete by RIF warn:', errDelRif);
+      }
+    }
+  } catch (err) {
+    console.warn('Aviso Supabase delete:', err);
   }
 
+  // 5. Notificar a componentes
   try {
-    window.dispatchEvent(new CustomEvent('proveedores_actualizados', { detail: { id, deleted: true } }));
+    window.dispatchEvent(new CustomEvent('proveedores_actualizados', { detail: { id: targetId, rif: targetRif, deleted: true } }));
     window.dispatchEvent(new Event('proveedores_actualizados'));
   } catch {
     // ignore

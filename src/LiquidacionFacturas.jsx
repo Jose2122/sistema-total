@@ -1,9 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from './supabaseClient';
 import toast from 'react-hot-toast';
-import { AnimatePresence } from 'framer-motion';
-import { getSemanaInfo } from './utils/helpers';
-import { compressImage } from './utils/compressImage';
+import { getSemanaInfo, safeSupabaseUpdate } from './utils/helpers';
 import { obtenerTodosProveedores, sonProveedoresCoincidentes } from './services/proveedoresService';
 import {
   Search,
@@ -98,7 +96,45 @@ const LiquidacionFacturas = ({ currentUser }) => {
   const [provDetallePreview, setProvDetallePreview] = useState(null);
 
   const abrirDetalleOdcPreview = async (odc) => {
-    setOdcPreviewSeleccionada(odc);
+    const cleanReq = String(odc.requisicion_id || odc.numero_req || odc.correlativo_req || odc.requisicion_correlativo || '').replace(/^REQ-?/i, '').trim();
+    const reqObj = odc.requisicion_obj || 
+                   reqMapById[cleanReq] || 
+                   reqMapById[String(odc.requisicion_id)] || 
+                   (odc.requisicion_id ? reqMapById[Number(odc.requisicion_id)] : null) ||
+                   (odc.requisicion_correlativo ? reqMapById[String(odc.requisicion_correlativo).trim().toUpperCase()] : null) ||
+                   (odc.numero_req ? reqMapById[String(odc.numero_req).trim().toUpperCase()] : null) ||
+                   (odc.correlativo_req ? reqMapById[String(odc.correlativo_req).trim().toUpperCase()] : null);
+
+    const solicitante = (reqObj?.solicitante && reqObj.solicitante !== 'Total Clean C.A.')
+      ? reqObj.solicitante
+      : ((odc.solicitante && odc.solicitante !== 'Total Clean C.A.') ? odc.solicitante : (reqObj?.solicitante || odc.solicitante || 'Total Clean C.A.'));
+
+    const centroCosto = (reqObj?.centro_costo && reqObj.centro_costo !== 'General / Operaciones')
+      ? reqObj.centro_costo
+      : (odc.centro_costo || reqObj?.centro_costo || 'General / Operaciones');
+
+    const correlativoReq = reqObj?.correlativo_req || 
+                           (odc.requisicion_correlativo && !String(odc.requisicion_correlativo).startsWith('REQ-') ? odc.requisicion_correlativo : null) ||
+                           (odc.correlativo_req && !String(odc.correlativo_req).startsWith('REQ-') ? odc.correlativo_req : null) ||
+                           reqObj?.correlativo_req ||
+                           odc.requisicion_correlativo ||
+                           odc.correlativo_req ||
+                           odc.numero_req ||
+                           (cleanReq && !cleanReq.match(/^\d+$/) && !cleanReq.startsWith('REQ-') ? cleanReq : null) ||
+                           (cleanReq ? `REQ-${cleanReq}` : 'N/A');
+
+    const comprador = odc.elaborado_por_nombre || odc.comprador_nombre || odc.usuario_nombre || odc.creado_por_nombre || 'Equipo de Compras';
+
+    const odcConTodo = {
+      ...odc,
+      requisicion_correlativo: correlativoReq,
+      solicitante,
+      centro_costo: centroCosto,
+      comprador_nombre: comprador,
+      requisicion_obj: reqObj
+    };
+
+    setOdcPreviewSeleccionada(odcConTodo);
     setShowOdcPreviewModal(true);
     setLoadingOdcItemsPreview(true);
     setProvDetallePreview(null);
@@ -113,6 +149,30 @@ const LiquidacionFacturas = ({ currentUser }) => {
         setOdcItemsPreview(data);
       } else {
         setOdcItemsPreview([]);
+      }
+
+      // Si requisicion_obj falta o le faltan datos, buscar directamente en BD de manera segura
+      if (!reqObj || !reqObj.correlativo_req || reqObj.solicitante === 'Total Clean C.A.') {
+        const rawSearch = odc.requisicion_id || odc.numero_req || odc.correlativo_req || odc.requisicion_correlativo;
+        const numOnly = String(rawSearch || '').replace(/^REQ-?/i, '').trim();
+
+        let q = supabase.from('requisiciones').select('id, correlativo_req, solicitante, gerencia, centro_costo, prioridad, estado_aprobacion');
+        if (!isNaN(Number(numOnly)) && Number(numOnly) > 0) {
+          q = q.or(`id.eq.${Number(numOnly)},correlativo_req.eq.${rawSearch}`);
+        } else if (rawSearch) {
+          q = q.eq('correlativo_req', rawSearch);
+        }
+        const { data: foundReq } = await q.maybeSingle();
+        if (foundReq) {
+          setOdcPreviewSeleccionada(prev => ({
+            ...prev,
+            requisicion_correlativo: foundReq.correlativo_req || prev.requisicion_correlativo,
+            solicitante: (foundReq.solicitante && foundReq.solicitante !== 'Total Clean C.A.') ? foundReq.solicitante : (prev.solicitante || foundReq.solicitante),
+            centro_costo: foundReq.centro_costo || prev.centro_costo,
+            gerencia: foundReq.gerencia || prev.gerencia,
+            requisicion_obj: foundReq
+          }));
+        }
       }
 
       // Fetch provider contact & payment details
@@ -306,12 +366,25 @@ const LiquidacionFacturas = ({ currentUser }) => {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      // 1. Fetch requisiciones approved (where purchases live)
-      const { data: reqData, error: reqError } = await supabase
-        .from('requisiciones')
-        .select('*')
-        .eq('estado_aprobacion', 'aprobado_final');
-      if (reqError) throw reqError;
+      // 1. Fetch ALL requisiciones for purchases, traceability, and CxP linkage (paginado)
+      let reqData = [];
+      let pageReq = 0;
+      let keepReq = true;
+      while (keepReq) {
+        const { data: chunk, error: reqError } = await supabase
+          .from('requisiciones')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .range(pageReq * 1000, (pageReq + 1) * 1000 - 1);
+        if (reqError) throw reqError;
+        if (chunk && chunk.length > 0) {
+          reqData = reqData.concat(chunk);
+          if (chunk.length < 1000) keepReq = false;
+          else pageReq++;
+        } else {
+          keepReq = false;
+        }
+      }
       setRequisiciones(reqData || []);
 
       // 2. Fetch bancos to populate selector & management
@@ -329,14 +402,26 @@ const LiquidacionFacturas = ({ currentUser }) => {
         setProveedores(provData);
       }
 
-      // 4. Fetch Órdenes de Compra (ODC) para sincronización con Cuentas por Pagar
-      const { data: odcData, error: odcError } = await supabase
-        .from('ordenes_compra')
-        .select('*')
-        .order('fecha_emision', { ascending: false });
-      if (!odcError && odcData) {
-        setOrdenesCompra(odcData);
+      // 4. Fetch ALL Órdenes de Compra (ODC) para sincronización con Cuentas por Pagar (paginado)
+      let odcData = [];
+      let pageOdc = 0;
+      let keepOdc = true;
+      while (keepOdc) {
+        const { data: chunk, error: odcError } = await supabase
+          .from('ordenes_compra')
+          .select('*')
+          .order('fecha_emision', { ascending: false })
+          .range(pageOdc * 1000, (pageOdc + 1) * 1000 - 1);
+        if (odcError) throw odcError;
+        if (chunk && chunk.length > 0) {
+          odcData = odcData.concat(chunk);
+          if (chunk.length < 1000) keepOdc = false;
+          else pageOdc++;
+        } else {
+          keepOdc = false;
+        }
       }
+      setOrdenesCompra(odcData || []);
     } catch (err) {
       console.error('Error al cargar datos:', err.message);
       toast.error('Error al cargar información: ' + err.message);
@@ -496,8 +581,24 @@ const LiquidacionFacturas = ({ currentUser }) => {
   const reqMapById = useMemo(() => {
     const map = {};
     (requisiciones || []).forEach(r => {
-      if (r.id) map[String(r.id)] = r;
-      if (r.correlativo_req) map[String(r.correlativo_req).trim().toUpperCase()] = r;
+      if (r.id !== undefined && r.id !== null) {
+        map[String(r.id)] = r;
+        map[Number(r.id)] = r;
+        map[`REQ-${r.id}`] = r;
+        map[`REQ-${String(r.id).padStart(3, '0')}`] = r;
+      }
+      if (r.correlativo_req) {
+        const c = String(r.correlativo_req).trim();
+        map[c] = r;
+        map[c.toUpperCase()] = r;
+        map[c.replace(/^REQ-?/i, '')] = r;
+      }
+      if (r.correlativo) {
+        const c2 = String(r.correlativo).trim();
+        map[c2] = r;
+        map[c2.toUpperCase()] = r;
+        map[c2.replace(/^REQ-?/i, '')] = r;
+      }
     });
     return map;
   }, [requisiciones]);
@@ -543,8 +644,14 @@ const LiquidacionFacturas = ({ currentUser }) => {
     return ordenesCompra
       .filter(o => o.tipo_pago === 'CREDITO' && odcEstaAprobadaParaCxp(o))
       .map(o => {
-        const cleanReq = String(o.requisicion_id || o.numero_req || o.correlativo_req || '').replace(/^REQ-?/i, '').trim();
-        const reqObj = reqMapById[cleanReq] || reqMapById[String(o.requisicion_id)] || reqMapById[String(o.requisicion_correlativo || '').toUpperCase()];
+        const cleanReq = String(o.requisicion_id || o.numero_req || o.correlativo_req || o.requisicion_correlativo || '').replace(/^REQ-?/i, '').trim();
+        const reqObj = reqMapById[cleanReq] || 
+                       reqMapById[String(o.requisicion_id)] || 
+                       (o.requisicion_id ? reqMapById[Number(o.requisicion_id)] : null) ||
+                       (o.requisicion_correlativo ? reqMapById[String(o.requisicion_correlativo).trim().toUpperCase()] : null) || 
+                       (o.numero_req ? reqMapById[String(o.numero_req).trim().toUpperCase()] : null) ||
+                       (o.correlativo_req ? reqMapById[String(o.correlativo_req).trim().toUpperCase()] : null);
+
         const provObj = provMapById[String(o.proveedor_id)] || provMapById[String(o.proveedor_nombre || '').toUpperCase()];
         
         const esPref = Boolean(provObj?.es_preferencial || provObj?.proveedor_preferencial || o.proveedor_es_preferencial);
@@ -553,13 +660,38 @@ const LiquidacionFacturas = ({ currentUser }) => {
         const prioLocal = localStorage.getItem(`odc_prio_${o.id}`);
         const prio = o.prioridad_pago !== undefined && o.prioridad_pago !== null ? Number(o.prioridad_pago) : (prioLocal ? Number(prioLocal) : (esEmerg ? 1 : 2));
 
+        const solicitante = (reqObj?.solicitante && reqObj.solicitante !== 'Total Clean C.A.')
+          ? reqObj.solicitante
+          : ((o.solicitante && o.solicitante !== 'Total Clean C.A.') ? o.solicitante : (reqObj?.solicitante || o.solicitante || 'Total Clean C.A.'));
+
+        const centroCosto = (reqObj?.centro_costo && reqObj.centro_costo !== 'General / Operaciones')
+          ? reqObj.centro_costo
+          : (o.centro_costo || reqObj?.centro_costo || 'General / Operaciones');
+
+        const correlativoReq = reqObj?.correlativo_req || 
+                               (o.requisicion_correlativo && !String(o.requisicion_correlativo).startsWith('REQ-') ? o.requisicion_correlativo : null) ||
+                               (o.correlativo_req && !String(o.correlativo_req).startsWith('REQ-') ? o.correlativo_req : null) ||
+                               (o.numero_req && !String(o.numero_req).startsWith('REQ-') ? o.numero_req : null) ||
+                               reqObj?.correlativo_req ||
+                               o.requisicion_correlativo ||
+                               o.correlativo_req ||
+                               o.numero_req ||
+                               (cleanReq && !cleanReq.match(/^\d+$/) && !cleanReq.startsWith('REQ-') ? cleanReq : null) ||
+                               (cleanReq ? `REQ-${cleanReq}` : 'N/A');
+
+        const comprador = o.elaborado_por_nombre || o.comprador_nombre || o.usuario_nombre || o.creado_por_nombre || 'Equipo de Compras';
+
         return {
           ...o,
           prioridad_pago: prio,
           proveedor_es_preferencial: esPref,
           requisicion_es_emergencia: esEmerg,
           requisicion_prioridad: reqPrio || 'NORMAL',
-          requisicion_correlativo: o.requisicion_correlativo || reqObj?.correlativo_req || (cleanReq ? `REQ-${cleanReq}` : 'N/A')
+          requisicion_correlativo: correlativoReq,
+          solicitante,
+          centro_costo: centroCosto,
+          comprador_nombre: comprador,
+          requisicion_obj: reqObj
         };
       });
   }, [ordenesCompra, odcEstaAprobadaParaCxp, reqMapById, provMapById]);
@@ -580,8 +712,14 @@ const LiquidacionFacturas = ({ currentUser }) => {
     return ordenesCompra
       .filter(o => o.tipo_pago !== 'CREDITO' && odcEstaAprobadaParaCxp(o))
       .map(o => {
-        const cleanReq = String(o.requisicion_id || o.numero_req || o.correlativo_req || '').replace(/^REQ-?/i, '').trim();
-        const reqObj = reqMapById[cleanReq] || reqMapById[String(o.requisicion_id)] || reqMapById[String(o.requisicion_correlativo || '').toUpperCase()];
+        const cleanReq = String(o.requisicion_id || o.numero_req || o.correlativo_req || o.requisicion_correlativo || '').replace(/^REQ-?/i, '').trim();
+        const reqObj = reqMapById[cleanReq] || 
+                       reqMapById[String(o.requisicion_id)] || 
+                       (o.requisicion_id ? reqMapById[Number(o.requisicion_id)] : null) ||
+                       (o.requisicion_correlativo ? reqMapById[String(o.requisicion_correlativo).trim().toUpperCase()] : null) || 
+                       (o.numero_req ? reqMapById[String(o.numero_req).trim().toUpperCase()] : null) ||
+                       (o.correlativo_req ? reqMapById[String(o.correlativo_req).trim().toUpperCase()] : null);
+
         const provObj = provMapById[String(o.proveedor_id)] || provMapById[String(o.proveedor_nombre || '').toUpperCase()];
         
         const esPref = Boolean(provObj?.es_preferencial || provObj?.proveedor_preferencial || o.proveedor_es_preferencial);
@@ -590,13 +728,38 @@ const LiquidacionFacturas = ({ currentUser }) => {
         const prioLocal = localStorage.getItem(`odc_prio_${o.id}`);
         const prio = o.prioridad_pago !== undefined && o.prioridad_pago !== null ? Number(o.prioridad_pago) : (prioLocal ? Number(prioLocal) : (esEmerg ? 1 : 2));
 
+        const solicitante = (reqObj?.solicitante && reqObj.solicitante !== 'Total Clean C.A.')
+          ? reqObj.solicitante
+          : ((o.solicitante && o.solicitante !== 'Total Clean C.A.') ? o.solicitante : (reqObj?.solicitante || o.solicitante || 'Total Clean C.A.'));
+
+        const centroCosto = (reqObj?.centro_costo && reqObj.centro_costo !== 'General / Operaciones')
+          ? reqObj.centro_costo
+          : (o.centro_costo || reqObj?.centro_costo || 'General / Operaciones');
+
+        const correlativoReq = reqObj?.correlativo_req || 
+                               (o.requisicion_correlativo && !String(o.requisicion_correlativo).startsWith('REQ-') ? o.requisicion_correlativo : null) ||
+                               (o.correlativo_req && !String(o.correlativo_req).startsWith('REQ-') ? o.correlativo_req : null) ||
+                               (o.numero_req && !String(o.numero_req).startsWith('REQ-') ? o.numero_req : null) ||
+                               reqObj?.correlativo_req ||
+                               o.requisicion_correlativo ||
+                               o.correlativo_req ||
+                               o.numero_req ||
+                               (cleanReq && !cleanReq.match(/^\d+$/) && !cleanReq.startsWith('REQ-') ? cleanReq : null) ||
+                               (cleanReq ? `REQ-${cleanReq}` : 'N/A');
+
+        const comprador = o.elaborado_por_nombre || o.comprador_nombre || o.usuario_nombre || o.creado_por_nombre || 'Equipo de Compras';
+
         return {
           ...o,
           prioridad_pago: prio,
           proveedor_es_preferencial: esPref,
           requisicion_es_emergencia: esEmerg,
           requisicion_prioridad: reqPrio || 'NORMAL',
-          requisicion_correlativo: o.requisicion_correlativo || reqObj?.correlativo_req || (cleanReq ? `REQ-${cleanReq}` : 'N/A')
+          requisicion_correlativo: correlativoReq,
+          solicitante,
+          centro_costo: centroCosto,
+          comprador_nombre: comprador,
+          requisicion_obj: reqObj
         };
       });
   }, [ordenesCompra, odcEstaAprobadaParaCxp, reqMapById, provMapById]);
@@ -843,7 +1006,10 @@ const LiquidacionFacturas = ({ currentUser }) => {
           (odc.cotizacion_ref || '').toLowerCase().includes(q) ||
           (odc.orden_pago_ref || '').toLowerCase().includes(q) ||
           (odc.destino_despacho || '').toLowerCase().includes(q) ||
-          (odc.requisicion_correlativo || '').toLowerCase().includes(q);
+          (odc.requisicion_correlativo || '').toLowerCase().includes(q) ||
+          (odc.solicitante || '').toLowerCase().includes(q) ||
+          (odc.centro_costo || '').toLowerCase().includes(q) ||
+          (odc.comprador_nombre || '').toLowerCase().includes(q);
 
         const st = (odc.estatus_pago || odc.status_pago || 'PENDIENTE').toUpperCase();
         const matchesStatus =
@@ -889,7 +1055,10 @@ const LiquidacionFacturas = ({ currentUser }) => {
           (odc.cotizacion_ref || '').toLowerCase().includes(q) ||
           (odc.orden_pago_ref || '').toLowerCase().includes(q) ||
           (odc.destino_despacho || '').toLowerCase().includes(q) ||
-          (odc.requisicion_correlativo || '').toLowerCase().includes(q);
+          (odc.requisicion_correlativo || '').toLowerCase().includes(q) ||
+          (odc.solicitante || '').toLowerCase().includes(q) ||
+          (odc.centro_costo || '').toLowerCase().includes(q) ||
+          (odc.comprador_nombre || '').toLowerCase().includes(q);
 
         const st = (odc.estatus_pago || odc.status_pago || 'PENDIENTE').toUpperCase();
         const matchesStatus =
@@ -935,9 +1104,38 @@ const LiquidacionFacturas = ({ currentUser }) => {
       const st = (o.estatus_pago || o.status_pago || '').toUpperCase();
       const isPag = st === 'PAGADO';
       if (!isPag) return false;
+      const cleanReq = String(o.requisicion_id || o.numero_req || o.correlativo_req || o.requisicion_correlativo || '').replace(/^REQ-?/i, '').trim();
+      const reqObj = reqMapById[cleanReq] || 
+                     reqMapById[String(o.requisicion_id)] || 
+                     (o.requisicion_id ? reqMapById[Number(o.requisicion_id)] : null) ||
+                     (o.requisicion_correlativo ? reqMapById[String(o.requisicion_correlativo).trim().toUpperCase()] : null) ||
+                     (o.numero_req ? reqMapById[String(o.numero_req).trim().toUpperCase()] : null) ||
+                     (o.correlativo_req ? reqMapById[String(o.correlativo_req).trim().toUpperCase()] : null);
+
+      const solicitante = (reqObj?.solicitante && reqObj.solicitante !== 'Total Clean C.A.') ? reqObj.solicitante : (o.solicitante || o.solicitado_por || reqObj?.solicitante || 'Total Clean C.A.');
+      const centroCosto = (reqObj?.centro_costo && reqObj.centro_costo !== 'General / Operaciones') ? reqObj.centro_costo : (o.centro_costo || reqObj?.centro_costo || 'General / Operaciones');
+      const comprador = o.elaborado_por_nombre || o.comprador_nombre || o.usuario_nombre || o.creado_por_nombre || 'Equipo de Compras';
+      const correlativoReq = reqObj?.correlativo_req || 
+                             (o.requisicion_correlativo && !String(o.requisicion_correlativo).startsWith('REQ-') ? o.requisicion_correlativo : null) ||
+                             (o.correlativo_req && !String(o.correlativo_req).startsWith('REQ-') ? o.correlativo_req : null) ||
+                             reqObj?.correlativo_req ||
+                             o.requisicion_correlativo ||
+                             o.correlativo_req ||
+                             o.numero_req ||
+                             (cleanReq && !cleanReq.match(/^\d+$/) && !cleanReq.startsWith('REQ-') ? cleanReq : null) ||
+                             (cleanReq ? `REQ-${cleanReq}` : 'N/A');
+
+      o.solicitante = solicitante;
+      o.centro_costo = centroCosto;
+      o.comprador_nombre = comprador;
+      o.requisicion_correlativo = correlativoReq;
+      o.requisicion_obj = reqObj;
+
       const matchesSearch = !q ||
         (o.numero_odc || '').toLowerCase().includes(q) ||
-        (o.proveedor_nombre || '').toLowerCase().includes(q);
+        (o.proveedor_nombre || '').toLowerCase().includes(q) ||
+        (solicitante || '').toLowerCase().includes(q) ||
+        (centroCosto || '').toLowerCase().includes(q);
       const matchesProv = filtroProveedor === 'Todos' || (o.proveedor_nombre || '').trim().toUpperCase() === filtroProveedor.trim().toUpperCase();
       return matchesSearch && matchesProv;
     });
@@ -947,7 +1145,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
       odcs: odcsPagadas,
       total: facturasPagadas.length + odcsPagadas.length
     };
-  }, [facturasAgrupadas, ordenesCompra, filtroBusqueda, filtroProveedor]);
+  }, [facturasAgrupadas, ordenesCompra, filtroBusqueda, filtroProveedor, reqMapById]);
 
   // Actualizar estatus de pago de una ODC directamente desde CxP
   const cambiarEstatusPagoOdc = async (odcId, nuevoEstatus) => {
@@ -1145,19 +1343,16 @@ const LiquidacionFacturas = ({ currentUser }) => {
 
         const estatusFinal = saldoRemanente <= 0.01 ? 'PAGADO' : 'PAGADO PARCIAL';
 
-        const { error: errUpdateOdc } = await supabase
-          .from('ordenes_compra')
-          .update({
-            estatus_pago: estatusFinal,
-            status_pago: estatusFinal,
-            detalles_pago: nuevosAbonos,
-            datos_pago: nuevosAbonos,
-            banco_destino: bancoNombre,
-            banco: bancoNombre,
-            orden_pago_ref: abonoForm.referencia.trim()
-          })
-          .eq('id', targetOdc.id);
+        const payloadOdcUpdate = {
+          estatus_pago: estatusFinal,
+          status_pago: estatusFinal,
+          detalles_pago: nuevosAbonos,
+          datos_pago: nuevosAbonos,
+          banco_destino: bancoNombre,
+          orden_pago_ref: abonoForm.referencia.trim()
+        };
 
+        const { error: errUpdateOdc } = await safeSupabaseUpdate(supabase, 'ordenes_compra', payloadOdcUpdate, 'id', targetOdc.id);
         if (errUpdateOdc) throw errUpdateOdc;
 
         toast.success(`Pago de $ ${montoNum.toLocaleString('de-DE', { minimumFractionDigits: 2 })} registrado exitosamente para la ODC ${targetOdc.numero_odc}`);
@@ -1170,7 +1365,6 @@ const LiquidacionFacturas = ({ currentUser }) => {
             detalles_pago: nuevosAbonos,
             datos_pago: nuevosAbonos,
             banco_destino: bancoNombre,
-            banco: bancoNombre,
             orden_pago_ref: abonoForm.referencia.trim()
           }));
         }
@@ -1290,13 +1484,52 @@ const LiquidacionFacturas = ({ currentUser }) => {
       return;
     }
 
-    if (!window.confirm('¿Está seguro de anular este abono? El saldo de la factura se restaurará.')) {
+    if (!window.confirm('¿Está seguro de anular este abono? El saldo se restaurará.')) {
       return;
     }
 
     setLoading(true);
     try {
-      // Find requisitions associated with this invoice (which have this abono in facturas_url)
+      // 1. Check if this abono belongs to an ODC
+      const odcWithAbono = ordenesCompra.find(o => {
+        const abonos = parsearItems(o.detalles_pago || o.datos_pago || []);
+        return abonos.some(a => a.abono_id === abonoId);
+      });
+
+      if (odcWithAbono) {
+        const abonos = parsearItems(odcWithAbono.detalles_pago || odcWithAbono.datos_pago || []);
+        const filteredAbonos = abonos.filter(a => a.abono_id !== abonoId);
+        const sumaTotalAbonos = filteredAbonos.reduce((sum, a) => sum + (Number(a.monto) || 0), 0);
+        const totalOdcVal = Number(odcWithAbono.total_general ?? odcWithAbono.total ?? 0);
+        const saldoRemanente = totalOdcVal - sumaTotalAbonos;
+        const estatusFinal = sumaTotalAbonos <= 0 ? 'PENDIENTE' : (saldoRemanente <= 0.01 ? 'PAGADO' : 'PAGADO PARCIAL');
+
+        const payloadOdc = {
+          estatus_pago: estatusFinal,
+          status_pago: estatusFinal,
+          detalles_pago: filteredAbonos,
+          datos_pago: filteredAbonos
+        };
+
+        const { error: errOdcDel } = await safeSupabaseUpdate(supabase, 'ordenes_compra', payloadOdc, 'id', odcWithAbono.id);
+        if (errOdcDel) throw errOdcDel;
+
+        if (showOdcPreviewModal && odcPreviewSeleccionada && String(odcPreviewSeleccionada.id) === String(odcWithAbono.id)) {
+          setOdcPreviewSeleccionada(prev => ({
+            ...prev,
+            estatus_pago: estatusFinal,
+            status_pago: estatusFinal,
+            detalles_pago: filteredAbonos,
+            datos_pago: filteredAbonos
+          }));
+        }
+
+        toast.success('Pago de la Órden de Compra anulado con éxito.');
+        await fetchData();
+        return;
+      }
+
+      // 2. Otherwise find requisitions associated with this invoice (which have this abono in facturas_url)
       const reqsWithAbono = requisiciones.filter(req => {
         const docs = parsearFacturaUrls(req.facturas_url);
         return docs.some(d => d.abono_id === abonoId);
@@ -1659,7 +1892,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
                   <th>Correlativo ODC</th>
                   <th>Prioridad ODC</th>
                   <th>Proveedor</th>
-                  <th>Requisición Origen</th>
+                  <th>Requisición / Solicitante / C. Costo</th>
                   <th>Plazo / Semaforización Crédito</th>
                   <th>Total ODC</th>
                   <th>Estatus Pago</th>
@@ -1691,6 +1924,10 @@ const LiquidacionFacturas = ({ currentUser }) => {
                         >
                           {odc.numero_odc}
                         </button>
+                        <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '600', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                          <User size={10} color="#0284c7" />
+                          <span>Emitido: <strong>{odc.elaborado_por_nombre || odc.comprador_nombre || odc.usuario_nombre || 'Comprador'}</strong></span>
+                        </div>
                       </td>
                       <td>
                         {odc.prioridad_pago === 1 ? (
@@ -1742,18 +1979,28 @@ const LiquidacionFacturas = ({ currentUser }) => {
                       </td>
                       <td>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                          <span style={{ fontWeight: '800', fontSize: '0.8rem', color: '#0f172a' }}>
-                            {odc.requisicion_correlativo || 'N/A'}
-                          </span>
-                          {odc.requisicion_es_emergencia ? (
-                            <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '0.68rem', fontWeight: '800', backgroundColor: '#fee2e2', color: '#dc2626', border: '1px solid #fca5a5', width: 'fit-content' }}>
-                              🚨 EMERGENCIA
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span style={{ fontWeight: '800', fontSize: '0.82rem', color: '#0f172a' }}>
+                              {odc.requisicion_correlativo || 'N/A'}
                             </span>
-                          ) : (
-                            <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '0.68rem', fontWeight: '700', backgroundColor: '#f8fafc', color: '#475569', border: '1px solid #cbd5e1', width: 'fit-content' }}>
-                              📋 NORMAL
-                            </span>
-                          )}
+                            {odc.requisicion_es_emergencia ? (
+                              <span style={{ padding: '1px 5px', borderRadius: '4px', fontSize: '0.65rem', fontWeight: '800', backgroundColor: '#fee2e2', color: '#dc2626', border: '1px solid #fca5a5' }}>
+                                🚨 EMERGENCIA
+                              </span>
+                            ) : (
+                              <span style={{ padding: '1px 5px', borderRadius: '4px', fontSize: '0.65rem', fontWeight: '700', backgroundColor: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1' }}>
+                                📋 NORMAL
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ fontSize: '0.72rem', color: '#334155', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <span style={{ color: '#64748b', fontWeight: '600' }}>👤 Solicitado:</span>
+                            <strong style={{ color: '#0f172a' }}>{odc.solicitante || 'Total Clean C.A.'}</strong>
+                          </div>
+                          <div style={{ fontSize: '0.70rem', color: '#64748b', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <span>🏢 C. Costo:</span>
+                            <span style={{ color: '#334155', fontWeight: '600' }}>{odc.centro_costo || 'General'}</span>
+                          </div>
                         </div>
                       </td>
                       <td>
@@ -1938,7 +2185,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
                   <th>Correlativo ODC</th>
                   <th>Prioridad ODC</th>
                   <th>Proveedor</th>
-                  <th>Requisición Origen</th>
+                  <th>Requisición / Solicitante / C. Costo</th>
                   <th>Fecha Emisión</th>
                   <th>Total ODC</th>
                   <th>Condición</th>
@@ -1970,6 +2217,10 @@ const LiquidacionFacturas = ({ currentUser }) => {
                         >
                           {odc.numero_odc}
                         </button>
+                        <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '600', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                          <User size={10} color="#0284c7" />
+                          <span>Emitido: <strong>{odc.elaborado_por_nombre || odc.comprador_nombre || odc.usuario_nombre || 'Comprador'}</strong></span>
+                        </div>
                       </td>
                       <td>
                         {odc.prioridad_pago === 1 ? (
@@ -2021,18 +2272,28 @@ const LiquidacionFacturas = ({ currentUser }) => {
                       </td>
                       <td>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                          <span style={{ fontWeight: '800', fontSize: '0.8rem', color: '#0f172a' }}>
-                            {odc.requisicion_correlativo || 'N/A'}
-                          </span>
-                          {odc.requisicion_es_emergencia ? (
-                            <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '0.68rem', fontWeight: '800', backgroundColor: '#fee2e2', color: '#dc2626', border: '1px solid #fca5a5', width: 'fit-content' }}>
-                              🚨 EMERGENCIA
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span style={{ fontWeight: '800', fontSize: '0.82rem', color: '#0f172a' }}>
+                              {odc.requisicion_correlativo || 'N/A'}
                             </span>
-                          ) : (
-                            <span style={{ padding: '2px 6px', borderRadius: '4px', fontSize: '0.68rem', fontWeight: '700', backgroundColor: '#f8fafc', color: '#475569', border: '1px solid #cbd5e1', width: 'fit-content' }}>
-                              📋 NORMAL
-                            </span>
-                          )}
+                            {odc.requisicion_es_emergencia ? (
+                              <span style={{ padding: '1px 5px', borderRadius: '4px', fontSize: '0.65rem', fontWeight: '800', backgroundColor: '#fee2e2', color: '#dc2626', border: '1px solid #fca5a5' }}>
+                                🚨 EMERGENCIA
+                              </span>
+                            ) : (
+                              <span style={{ padding: '1px 5px', borderRadius: '4px', fontSize: '0.65rem', fontWeight: '700', backgroundColor: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1' }}>
+                                📋 NORMAL
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ fontSize: '0.72rem', color: '#334155', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <span style={{ color: '#64748b', fontWeight: '600' }}>👤 Solicitado:</span>
+                            <strong style={{ color: '#0f172a' }}>{odc.solicitante || 'Total Clean C.A.'}</strong>
+                          </div>
+                          <div style={{ fontSize: '0.70rem', color: '#64748b', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <span>🏢 C. Costo:</span>
+                            <span style={{ color: '#334155', fontWeight: '600' }}>{odc.centro_costo || 'General'}</span>
+                          </div>
                         </div>
                       </td>
                       <td style={{ color: '#64748b', fontSize: '0.8rem' }}>
@@ -2451,44 +2712,42 @@ const LiquidacionFacturas = ({ currentUser }) => {
             <div className="liquidacion-modal-card" style={{ maxWidth: '940px', width: '94%', maxHeight: '90vh', overflowY: 'auto', borderRadius: '24px', padding: '28px', backgroundColor: 'white' }}>
               
               {/* CABECERA DE MODAL */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', borderBottom: '1px solid #e2e8f0', paddingBottom: '16px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: '1px solid #e2e8f0', paddingBottom: '16px' }}>
                 <div>
-                  <span style={{ fontSize: '0.7rem', fontWeight: '900', color: '#0ea5e9', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                    EXPEDIENTES Y DETALLES DE COMPRA
+                  <span style={{ fontSize: '0.7rem', fontWeight: '800', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    EXPEDIENTE Y DETALLES DE COMPRA
                   </span>
                   <h2 style={{ margin: '4px 0 0 0', fontSize: '1.35rem', fontWeight: '950', color: '#0f172a' }}>
                     Orden de Compra: {odcPreviewSeleccionada.numero_odc} — {odcPreviewSeleccionada.proveedor_nombre || 'PROVEEDOR'}
                   </h2>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px', flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px', flexWrap: 'wrap' }}>
                     {odcPreviewSeleccionada.prioridad_pago === 1 ? (
-                      <span style={{ padding: '3px 8px', borderRadius: '6px', fontSize: '0.72rem', fontWeight: '900', backgroundColor: '#fee2e2', color: '#b91c1c', border: '1px solid #f87171' }}>
-                        🔴 PRIORIDAD: NIVEL 1 (MÁXIMA)
+                      <span style={{ padding: '3px 8px', borderRadius: '6px', fontSize: '0.72rem', fontWeight: '800', backgroundColor: '#fef2f2', color: '#991b1b', border: '1px solid #fecaca' }}>
+                        🔴 Prioridad: Nivel 1 (Máxima)
                       </span>
                     ) : (
-                      <span style={{ padding: '3px 8px', borderRadius: '6px', fontSize: '0.72rem', fontWeight: '800', backgroundColor: '#eff6ff', color: '#1d4ed8', border: '1px solid #93c5fd' }}>
-                        🔵 PRIORIDAD: NIVEL 2 (NORMAL)
+                      <span style={{ padding: '3px 8px', borderRadius: '6px', fontSize: '0.72rem', fontWeight: '700', backgroundColor: '#f8fafc', color: '#334155', border: '1px solid #e2e8f0' }}>
+                        Prioridad: Nivel 2 (Normal)
                       </span>
                     )}
 
                     {odcPreviewSeleccionada.proveedor_es_preferencial ? (
-                      <span style={{ padding: '3px 8px', borderRadius: '6px', fontSize: '0.72rem', fontWeight: '800', backgroundColor: '#fef3c7', color: '#b45309', border: '1px solid #fde68a' }}>
-                        ⭐ PROVEEDOR PREFERENCIAL
+                      <span style={{ padding: '3px 8px', borderRadius: '6px', fontSize: '0.72rem', fontWeight: '700', backgroundColor: '#fefce8', color: '#854d0e', border: '1px solid #fef08a' }}>
+                        ⭐ Proveedor Preferencial
                       </span>
                     ) : (
-                      <span style={{ padding: '3px 8px', borderRadius: '6px', fontSize: '0.72rem', fontWeight: '700', backgroundColor: '#f1f5f9', color: '#64748b', border: '1px solid #e2e8f0' }}>
-                        🏢 PROVEEDOR REGULAR
+                      <span style={{ padding: '3px 8px', borderRadius: '6px', fontSize: '0.72rem', fontWeight: '600', backgroundColor: '#f8fafc', color: '#64748b', border: '1px solid #e2e8f0' }}>
+                        Proveedor Regular
                       </span>
                     )}
 
-                    {odcPreviewSeleccionada.requisicion_es_emergencia ? (
-                      <span style={{ padding: '3px 8px', borderRadius: '6px', fontSize: '0.72rem', fontWeight: '800', backgroundColor: '#fee2e2', color: '#dc2626', border: '1px solid #fca5a5' }}>
-                        🚨 REQUISICIÓN: EMERGENCIA ({odcPreviewSeleccionada.requisicion_correlativo || 'N/A'})
-                      </span>
-                    ) : (
-                      <span style={{ padding: '3px 8px', borderRadius: '6px', fontSize: '0.72rem', fontWeight: '700', backgroundColor: '#f8fafc', color: '#475569', border: '1px solid #cbd5e1' }}>
-                        📋 REQUISICIÓN: NORMAL ({odcPreviewSeleccionada.requisicion_correlativo || 'N/A'})
-                      </span>
-                    )}
+                    <span style={{ padding: '3px 8px', borderRadius: '6px', fontSize: '0.72rem', fontWeight: '700', backgroundColor: '#f8fafc', color: '#334155', border: '1px solid #e2e8f0' }}>
+                      👤 Solicitante: {odcPreviewSeleccionada.solicitante || 'Total Clean C.A.'}
+                    </span>
+
+                    <span style={{ padding: '3px 8px', borderRadius: '6px', fontSize: '0.72rem', fontWeight: '700', backgroundColor: '#f8fafc', color: '#334155', border: '1px solid #e2e8f0' }}>
+                      🏢 C. Costo: {odcPreviewSeleccionada.centro_costo || 'General'}
+                    </span>
                   </div>
                 </div>
                 <button
@@ -2685,6 +2944,27 @@ const LiquidacionFacturas = ({ currentUser }) => {
                               ) : (
                                 <span style={{ fontSize: '0.7rem', color: '#94a3b8', fontStyle: 'italic' }}>Sin comprobante</span>
                               )}
+
+                              {esAdmin && ab.abono_id && (
+                                <button
+                                  onClick={() => handleEliminarAbono(ab.abono_id)}
+                                  title="Anular este pago / abono"
+                                  style={{
+                                    backgroundColor: '#fee2e2',
+                                    color: '#dc2626',
+                                    border: '1px solid #fca5a5',
+                                    borderRadius: '6px',
+                                    padding: '5px 8px',
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    transition: 'all 0.15s ease'
+                                  }}
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              )}
                             </div>
                           </div>
                         ))}
@@ -2694,85 +2974,201 @@ const LiquidacionFacturas = ({ currentUser }) => {
 
                 </div>
 
-                {/* COLUMNA DERECHA: RESUMEN FINANCIERO Y CONTACTO */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                {/* COLUMNA DERECHA: ORIGEN/TRAZABILIDAD, RESUMEN FINANCIERO Y CONTACTO */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
                   
+                  {/* ORIGEN, SOLICITANTE Y DESTINO */}
+                  <div>
+                    <h4 style={{ margin: '0 0 10px 0', fontSize: '11px', fontWeight: '900', textTransform: 'uppercase', color: '#475569', letterSpacing: '0.5px' }}>
+                      ORIGEN, SOLICITANTE Y DESTINO
+                    </h4>
+
+                    <div style={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '16px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '0.8rem', boxShadow: '0 1px 3px rgba(0,0,0,0.03)' }}>
+                      
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ color: '#64748b', fontWeight: '600' }}>Requisición:</span>
+                        <span style={{ fontWeight: '800', color: '#0f172a', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                          <span>{odcPreviewSeleccionada.requisicion_correlativo || odcPreviewSeleccionada.requisicion_obj?.correlativo_req || 'N/A'}</span>
+                          {odcPreviewSeleccionada.requisicion_es_emergencia ? (
+                            <span style={{ padding: '1px 5px', borderRadius: '4px', fontSize: '0.65rem', fontWeight: '800', backgroundColor: '#fee2e2', color: '#dc2626', border: '1px solid #fca5a5' }}>
+                              EMERGENCIA
+                            </span>
+                          ) : (
+                            <span style={{ padding: '1px 5px', borderRadius: '4px', fontSize: '0.65rem', fontWeight: '700', backgroundColor: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1' }}>
+                              NORMAL
+                            </span>
+                          )}
+                        </span>
+                      </div>
+
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ color: '#64748b', fontWeight: '600' }}>👤 Solicitado por:</span>
+                        <span style={{ fontWeight: '800', color: '#0f172a' }}>
+                          {odcPreviewSeleccionada.requisicion_obj?.solicitante || odcPreviewSeleccionada.solicitante || 'Total Clean C.A.'}
+                        </span>
+                      </div>
+
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ color: '#64748b', fontWeight: '600' }}>🏢 Centro de Costo:</span>
+                        <span style={{ fontWeight: '700', color: '#334155' }}>
+                          {odcPreviewSeleccionada.requisicion_obj?.centro_costo || odcPreviewSeleccionada.centro_costo || 'General / Operaciones'}
+                        </span>
+                      </div>
+
+                      {odcPreviewSeleccionada.requisicion_obj?.gerencia && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ color: '#64748b', fontWeight: '600' }}>🏛️ Gerencia:</span>
+                          <span style={{ fontWeight: '700', color: '#475569' }}>
+                            {odcPreviewSeleccionada.requisicion_obj.gerencia}
+                          </span>
+                        </div>
+                      )}
+
+                      {(odcPreviewSeleccionada.despachar_a_direccion || odcPreviewSeleccionada.destino_despacho) && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ color: '#64748b', fontWeight: '600' }}>📍 Destino Despacho:</span>
+                          <span style={{ fontWeight: '600', color: '#334155', textAlign: 'right', maxWidth: '60%', fontSize: '0.75rem' }}>
+                            {odcPreviewSeleccionada.despachar_a_direccion || odcPreviewSeleccionada.destino_despacho}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* EMISIÓN Y RESPONSABLE (SUBDIVISIÓN APARTE) */}
+                  <div>
+                    <h4 style={{ margin: '0 0 10px 0', fontSize: '11px', fontWeight: '900', textTransform: 'uppercase', color: '#475569', letterSpacing: '0.5px' }}>
+                      EMISIÓN Y RESPONSABLE
+                    </h4>
+
+                    <div style={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '16px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '0.8rem', boxShadow: '0 1px 3px rgba(0,0,0,0.03)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ color: '#64748b', fontWeight: '600' }}>🛒 Emitido por (Compras):</span>
+                        <span style={{ fontWeight: '800', color: '#0f172a' }}>
+                          {odcPreviewSeleccionada.elaborado_por_nombre || odcPreviewSeleccionada.comprador_nombre || odcPreviewSeleccionada.usuario_nombre || 'Equipo de Compras'}
+                        </span>
+                      </div>
+
+                      {odcPreviewSeleccionada.fecha_emision && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ color: '#64748b', fontWeight: '600' }}>📅 Fecha de Emisión:</span>
+                          <span style={{ fontWeight: '600', color: '#475569' }}>
+                            {new Date(odcPreviewSeleccionada.fecha_emision).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                          </span>
+                        </div>
+                      )}
+
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ color: '#64748b', fontWeight: '600' }}>📦 Paso por Almacén:</span>
+                        <span style={{
+                          fontWeight: '700',
+                          fontSize: '0.72rem',
+                          padding: '2px 8px',
+                          borderRadius: '6px',
+                          backgroundColor: odcPreviewSeleccionada.pasa_por_almacen === false ? '#fef3c7' : '#dcfce7',
+                          color: odcPreviewSeleccionada.pasa_por_almacen === false ? '#92400e' : '#166534',
+                          border: odcPreviewSeleccionada.pasa_por_almacen === false ? '1px solid #fde68a' : '1px solid #bbf7d0'
+                        }}>
+                          {odcPreviewSeleccionada.pasa_por_almacen === false ? '🚚 Entrega Directa' : '📦 Recepción en Almacén'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
                   {/* RESUMEN FINANCIERO */}
                   <div>
-                    <h4 style={{ margin: '0 0 10px 0', fontSize: '11px', fontWeight: '900', textTransform: 'uppercase', color: '#64748b', letterSpacing: '0.5px' }}>
+                    <h4 style={{ margin: '0 0 10px 0', fontSize: '11px', fontWeight: '900', textTransform: 'uppercase', color: '#475569', letterSpacing: '0.5px' }}>
                       RESUMEN FINANCIERO
                     </h4>
 
-                    <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '16px', padding: '18px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px' }}>
-                        <span style={{ fontWeight: '600', color: '#64748b' }}>Total ODC:</span>
-                        <span style={{ fontWeight: '900', fontSize: '1.25rem', color: '#0f172a' }}>
+                    <div style={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '16px', padding: '18px', display: 'flex', flexDirection: 'column', gap: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.03)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', paddingBottom: '10px', borderBottom: '1px solid #f1f5f9' }}>
+                        <span style={{ fontWeight: '700', color: '#64748b', fontSize: '0.85rem' }}>Total ODC:</span>
+                        <span style={{ fontWeight: '900', fontSize: '1.35rem', color: '#0f172a', letterSpacing: '-0.02em' }}>
                           $ {Number(odcPreviewSeleccionada.total_general ?? odcPreviewSeleccionada.total ?? 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
                         </span>
                       </div>
 
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px' }}>
-                        <span style={{ fontWeight: '600', color: '#64748b' }}>Moneda / Tasa:</span>
-                        <span style={{ fontWeight: '800', color: '#0f172a' }}>
-                          {odcPreviewSeleccionada.moneda || 'USD'} {odcPreviewSeleccionada.tasa_cambio ? `(Bs. ${Number(odcPreviewSeleccionada.tasa_cambio).toLocaleString('de-DE', { minimumFractionDigits: 2 })})` : ''}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8rem' }}>
+                        <span style={{ color: '#64748b', fontWeight: '600' }}>Moneda:</span>
+                        <span style={{ fontWeight: '700', color: '#1e293b' }}>
+                          {odcPreviewSeleccionada.moneda || 'USD'}
                         </span>
                       </div>
 
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px' }}>
-                        <span style={{ fontWeight: '600', color: '#64748b' }}>Condición de Pago:</span>
-                        <span style={{ fontWeight: '800', color: '#1d4ed8', backgroundColor: '#eff6ff', padding: '3px 8px', borderRadius: '6px', border: '1px solid #bfdbfe' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8rem' }}>
+                        <span style={{ color: '#64748b', fontWeight: '600' }}>Condición de Pago:</span>
+                        <span style={{ fontWeight: '700', color: '#334155', backgroundColor: '#f1f5f9', padding: '3px 8px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '0.75rem' }}>
                           {odcPreviewSeleccionada.tipo_pago || 'CRÉDITO'} ({odcPreviewSeleccionada.dias_credito || 0} Días)
                         </span>
                       </div>
 
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px' }}>
-                        <span style={{ fontWeight: '600', color: '#64748b' }}>Estatus Recepción:</span>
-                        <span style={{ fontWeight: '800', color: odcPreviewSeleccionada.estatus_recepcion === 'RECIBIDO' ? '#15803d' : '#b45309', backgroundColor: odcPreviewSeleccionada.estatus_recepcion === 'RECIBIDO' ? '#dcfce7' : '#fef3c7', padding: '3px 8px', borderRadius: '6px' }}>
-                          {odcPreviewSeleccionada.estatus_recepcion === 'RECIBIDO' ? '📦 RECIBIDO' : '🚚 EN TRÁNSITO'}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8rem' }}>
+                        <span style={{ color: '#64748b', fontWeight: '600' }}>Estatus Recepción:</span>
+                        <span style={{ fontWeight: '700', color: '#334155', backgroundColor: '#f8fafc', padding: '3px 8px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '0.75rem' }}>
+                          {odcPreviewSeleccionada.estatus_recepcion === 'RECIBIDO' ? '📦 Recibido en Almacén' : '🚚 En Tránsito / Pendiente'}
                         </span>
                       </div>
 
-                      <div style={{ height: '1px', backgroundColor: '#e2e8f0' }}></div>
+                      <div style={{ height: '1px', backgroundColor: '#f1f5f9', margin: '2px 0' }}></div>
 
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px' }}>
-                        <span style={{ fontWeight: '800', color: '#475569' }}>Total Abonado:</span>
-                        <span style={{ fontWeight: '800', color: '#10b981' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.82rem' }}>
+                        <span style={{ fontWeight: '600', color: '#64748b' }}>Total Abonado:</span>
+                        <span style={{ fontWeight: '700', color: totalAbonadoOdc > 0 ? '#059669' : '#64748b' }}>
                           $ {totalAbonadoOdc.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
                         </span>
                       </div>
 
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px' }}>
-                        <span style={{ fontWeight: '800', color: '#475569' }}>Saldo Remanente:</span>
-                        <span style={{ fontWeight: '900', color: saldoPendienteOdc <= 0.01 ? '#10b981' : '#f59e0b' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.85rem' }}>
+                        <span style={{ fontWeight: '700', color: '#334155' }}>Saldo Remanente:</span>
+                        <span style={{ fontWeight: '900', color: saldoPendienteOdc <= 0.01 ? '#059669' : '#0f172a', fontSize: '0.95rem' }}>
                           $ {saldoPendienteOdc.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
                         </span>
                       </div>
 
-                      <div style={{ height: '1px', backgroundColor: '#e2e8f0' }}></div>
-
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px' }}>
-                        <span style={{ fontWeight: '800', color: '#475569' }}>Estatus de Pago:</span>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.82rem', paddingTop: '4px' }}>
+                        <span style={{ fontWeight: '700', color: '#475569' }}>Estatus de Pago:</span>
                         <span style={{
-                          padding: '4px 12px',
-                          borderRadius: '8px',
+                          padding: '3px 10px',
+                          borderRadius: '6px',
                           fontSize: '0.75rem',
-                          fontWeight: '900',
-                          backgroundColor: estatusPagoOdc === 'PAGADO' ? '#dcfce7' : (estatusPagoOdc === 'PAGADO PARCIAL' ? '#fef9c3' : '#fef3c7'),
-                          color: estatusPagoOdc === 'PAGADO' ? '#166534' : (estatusPagoOdc === 'PAGADO PARCIAL' ? '#854d0e' : '#92400e')
+                          fontWeight: '800',
+                          backgroundColor: estatusPagoOdc === 'PAGADO' ? '#f0fdf4' : (estatusPagoOdc === 'PAGADO PARCIAL' ? '#fffbeb' : '#f8fafc'),
+                          color: estatusPagoOdc === 'PAGADO' ? '#166534' : (estatusPagoOdc === 'PAGADO PARCIAL' ? '#854d0e' : '#475569'),
+                          border: `1px solid ${estatusPagoOdc === 'PAGADO' ? '#bbf7d0' : (estatusPagoOdc === 'PAGADO PARCIAL' ? '#fde68a' : '#cbd5e1')}`
                         }}>
                           {estatusPagoOdc === 'PAGADO' ? '✅ PAGADO' : (estatusPagoOdc === 'PAGADO PARCIAL' ? '🟡 PARCIAL' : '⏳ PENDIENTE')}
                         </span>
                       </div>
 
                       {odcPreviewSeleccionada.fecha_vencimiento_credito && (
-                        <div style={{ fontSize: '11px', color: '#64748b', textAlign: 'right', fontWeight: '700' }}>
-                          Vencimiento Crédito: {odcPreviewSeleccionada.fecha_vencimiento_credito}
+                        <div style={{ fontSize: '11px', color: '#64748b', textAlign: 'right', fontWeight: '600' }}>
+                          Vencimiento: {odcPreviewSeleccionada.fecha_vencimiento_credito}
                         </div>
                       )}
 
                       <button
-                        className="liquidacion-btn liquidacion-btn-primary"
-                        style={{ width: '100%', marginTop: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '10px 16px', borderRadius: '10px', fontWeight: '800', fontSize: '0.85rem' }}
+                        className="liquidacion-btn"
+                        style={{
+                          width: '100%',
+                          marginTop: '6px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '8px',
+                          padding: '11px 16px',
+                          borderRadius: '10px',
+                          fontWeight: '800',
+                          fontSize: '0.85rem',
+                          backgroundColor: '#0f172a',
+                          color: '#ffffff',
+                          border: 'none',
+                          cursor: 'pointer',
+                          boxShadow: '0 2px 4px rgba(15, 23, 42, 0.15)',
+                          transition: 'all 0.2s ease'
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#1e293b'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#0f172a'; }}
                         onClick={() => abrirRegistrarAbonoOdc(odcPreviewSeleccionada)}
                       >
                         <CreditCard size={16} />

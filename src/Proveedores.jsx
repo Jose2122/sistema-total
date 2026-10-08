@@ -239,6 +239,20 @@ const Proveedores = ({ currentUser }) => {
   const [mostrarParametrosSrm, setMostrarParametrosSrm] = useState(true);
   const [subTabFicha, setSubTabFicha] = useState('credito'); // 'credito' | 'historial' | 'evaluacion'
   const [guardandoSrmProv, setGuardandoSrmProv] = useState(false);
+  const [vistaHistorialTipo, setVistaHistorialTipo] = useState('odc'); // 'odc' | 'requisiciones'
+  const [odcsDelProveedor, setOdcsDelProveedor] = useState([]);
+  const [metricasOdcProv, setMetricasOdcProv] = useState({
+    totalCompradoOdc: 0,
+    totalAbonadoOdc: 0,
+    saldoPendienteTotalOdc: 0,
+    totalCreditoOdc: 0,
+    abonadoCreditoOdc: 0,
+    deudaPendienteCreditoOdc: 0,
+    totalContadoOdc: 0,
+    pagadoContadoOdc: 0,
+    pendienteContadoOdc: 0,
+    cantidadOdcs: 0
+  });
 
   const obtenerProveedores = async () => {
     setLoading(true);
@@ -687,28 +701,40 @@ const Proveedores = ({ currentUser }) => {
     }
   };
 
-  const eliminarProveedor = async (id) => {
+  const eliminarProveedor = async (pOrId) => {
+    const pObj = (typeof pOrId === 'object' && pOrId) ? pOrId : proveedores.find(item => String(item.id) === String(pOrId)) || { id: pOrId };
+    const nombre = pObj.razon_social || 'este proveedor';
+
     toast((t) => (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-        <p style={{ margin: 0, fontSize: '0.9rem' }}>¿Estás seguro de eliminar este proveedor?</p>
+        <p style={{ margin: 0, fontSize: '0.9rem' }}>
+          ¿Estás seguro de eliminar permanentemente al proveedor <strong>{nombre}</strong>?
+        </p>
         <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
           <button 
-            onClick={() => { toast.dismiss(t.id); ejecutarEliminacion(id); }}
-            style={{ padding: '4px 12px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}
+            onClick={() => { toast.dismiss(t.id); ejecutarEliminacion(pObj); }}
+            style={{ padding: '6px 14px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}
           >
             ELIMINAR
           </button>
-          <button onClick={() => toast.dismiss(t.id)} style={{ padding: '4px 12px', background: '#f1f5f9', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}>CANCELAR</button>
+          <button onClick={() => toast.dismiss(t.id)} style={{ padding: '6px 14px', background: '#f1f5f9', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: '600' }}>
+            CANCELAR
+          </button>
         </div>
       </div>
-    ), { duration: 5000 });
+    ), { duration: 6000 });
   };
 
-  const ejecutarEliminacion = async (id) => {
+  const ejecutarEliminacion = async (pObj) => {
     try {
-      await eliminarProveedorService(id);
-      setProveedores(prev => prev.filter(p => String(p.id) !== String(id)));
-      toast.success('Proveedor eliminado');
+      await eliminarProveedorService(pObj);
+      setProveedores(prev => prev.filter(item => {
+        if (pObj.id && String(item.id) === String(pObj.id)) return false;
+        if (pObj.rif && item.rif && item.rif.toUpperCase() === pObj.rif.toUpperCase()) return false;
+        if (pObj.razon_social && normalizarNombreEmpresa(item.razon_social) === normalizarNombreEmpresa(pObj.razon_social)) return false;
+        return true;
+      }));
+      toast.success('Proveedor eliminado exitosamente.');
     } catch (error) {
       toast.error('Error al eliminar: ' + error.message);
     }
@@ -900,7 +926,7 @@ const Proveedores = ({ currentUser }) => {
   };
 
   const cargarHistorialCompras = async (p) => {
-    // Buscar la ficha completa del proveedor en la lista general con coincidencia inteligente para garantizar que tenga todos los datos (teléfono, ciudad, dirección, contacto, etc.)
+    // Buscar la ficha completa del proveedor en la lista general con coincidencia inteligente para garantizar que tenga todos los datos
     const provCompleto = proveedores.find(item => sonProveedoresCoincidentes(item, p)) || p;
     const merged = { ...provCompleto, ...p };
     const pNormalizado = normalizarProveedor(merged);
@@ -908,13 +934,113 @@ const Proveedores = ({ currentUser }) => {
     setLoadingHistorial(true);
     setShowHistoryModal(true);
     try {
-      const { data: reqs, error } = await supabase
+      // 1. Requisiciones directas aprobadas
+      const { data: reqs, error: reqError } = await supabase
         .from('requisiciones')
         .select('*')
         .eq('estado_aprobacion', 'aprobado_final');
       
-      if (error) throw error;
+      if (reqError) console.warn("Error consultando requisiciones:", reqError);
 
+      // 2. ÓRDENES DE COMPRA (ODCs) vinculadas al proveedor
+      const { data: odcs, error: odcErr } = await supabase
+        .from('ordenes_compra')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (odcErr) console.warn("Error consultando ordenes_compra:", odcErr);
+
+      // Procesar ODCs vinculadas
+      const odcsFiltradas = [];
+      (odcs || []).forEach(o => {
+        const provOdcObj = {
+          id: o.proveedor_id,
+          rif: o.proveedor_rif,
+          razon_social: o.proveedor_nombre
+        };
+        const matchesOdc = sonProveedoresCoincidentes(pNormalizado, provOdcObj) ||
+                           sonProveedoresCoincidentes(provCompleto, provOdcObj) ||
+                           (o.proveedor_id && String(o.proveedor_id) === String(pNormalizado.id)) ||
+                           (o.proveedor_rif && pNormalizado.rif && o.proveedor_rif.trim().toUpperCase() === pNormalizado.rif.trim().toUpperCase() && pNormalizado.rif.toUpperCase() !== 'SIN RIF');
+
+        if (matchesOdc) {
+          let abonos = [];
+          if (Array.isArray(o.detalles_pago)) abonos = o.detalles_pago;
+          else if (Array.isArray(o.datos_pago)) abonos = o.datos_pago;
+          else if (typeof o.detalles_pago === 'string') {
+            try { abonos = JSON.parse(o.detalles_pago); } catch { abonos = []; }
+          } else if (typeof o.datos_pago === 'string') {
+            try { abonos = JSON.parse(o.datos_pago); } catch { abonos = []; }
+          }
+          if (!Array.isArray(abonos)) abonos = [];
+
+          const sumaAbonos = abonos.reduce((s, a) => s + (Number(a.monto) || 0), 0);
+          const totalOdc = Number(o.total_general ?? o.total ?? 0);
+          const saldoPend = Math.max(0, totalOdc - sumaAbonos);
+          const tipoPagoLimpio = String(o.tipo_pago || 'CONTADO').trim().toUpperCase();
+          const esCredito = tipoPagoLimpio === 'CREDITO';
+          const esAnulada = String(o.estatus_orden || o.estado_aprobacion_precio || '').toUpperCase().includes('ANULAD');
+
+          let estatusPagoFinal = o.estatus_pago || o.status_pago;
+          if (!estatusPagoFinal) {
+            if (esAnulada) estatusPagoFinal = 'ANULADA';
+            else if (saldoPend <= 0.01 && totalOdc > 0) estatusPagoFinal = 'PAGADO';
+            else if (sumaAbonos > 0) estatusPagoFinal = 'PAGADO PARCIAL';
+            else estatusPagoFinal = 'PENDIENTE';
+          }
+
+          odcsFiltradas.push({
+            id: o.id,
+            numero_odc: o.numero_odc || `ODC-${o.id}`,
+            fecha: o.fecha_emision ? o.fecha_emision.split('T')[0] : (o.created_at ? o.created_at.split('T')[0] : '—'),
+            requisicion: o.requisicion_correlativo || (o.requisicion_id ? `REQ-${o.requisicion_id}` : '—'),
+            tipo_pago: tipoPagoLimpio,
+            es_credito: esCredito,
+            dias_credito: Number(o.dias_credito) || 0,
+            moneda: o.moneda || 'USD',
+            total: totalOdc,
+            total_abonado: sumaAbonos,
+            saldo_pendiente: saldoPend,
+            estatus_pago: estatusPagoFinal,
+            estatus_orden: o.estatus_orden || 'ACTIVA',
+            es_anulada: esAnulada,
+            abonos: abonos,
+            items: Array.isArray(o.items) ? o.items : []
+          });
+        }
+      });
+
+      // Calcular métricas de contabilidad ODC
+      const odcsValidas = odcsFiltradas.filter(o => !o.es_anulada);
+      const totalCompradoOdc = odcsValidas.reduce((sum, o) => sum + o.total, 0);
+      const totalAbonadoOdc = odcsValidas.reduce((sum, o) => sum + o.total_abonado, 0);
+      const saldoPendienteTotalOdc = odcsValidas.reduce((sum, o) => sum + o.saldo_pendiente, 0);
+
+      const odcsCredito = odcsValidas.filter(o => o.es_credito);
+      const totalCreditoOdc = odcsCredito.reduce((sum, o) => sum + o.total, 0);
+      const abonadoCreditoOdc = odcsCredito.reduce((sum, o) => sum + o.total_abonado, 0);
+      const deudaPendienteCreditoOdc = odcsCredito.reduce((sum, o) => sum + o.saldo_pendiente, 0);
+
+      const odcsContado = odcsValidas.filter(o => !o.es_credito);
+      const totalContadoOdc = odcsContado.reduce((sum, o) => sum + o.total, 0);
+      const pagadoContadoOdc = odcsContado.reduce((sum, o) => sum + o.total_abonado, 0);
+      const pendienteContadoOdc = odcsContado.reduce((sum, o) => sum + o.saldo_pendiente, 0);
+
+      setMetricasOdcProv({
+        totalCompradoOdc,
+        totalAbonadoOdc,
+        saldoPendienteTotalOdc,
+        totalCreditoOdc,
+        abonadoCreditoOdc,
+        deudaPendienteCreditoOdc,
+        totalContadoOdc,
+        pagadoContadoOdc,
+        pendienteContadoOdc,
+        cantidadOdcs: odcsFiltradas.length
+      });
+      setOdcsDelProveedor(odcsFiltradas);
+
+      // 3. Compras históricas por líneas de requisición
       const comprasFiltradas = [];
       (reqs || []).forEach(r => {
         const items = Array.isArray(r.items) ? r.items : [];
@@ -923,8 +1049,8 @@ const Proveedores = ({ currentUser }) => {
           hist.forEach(h => {
             if (h.tipo === 'JUSTIFICACION' || h.tipo === 'ANULACION') return;
             
-            const matches = sonProveedoresCoincidentes(p, { id: h.proveedor_id, razon_social: h.proveedor_nombre }) ||
-                            sonProveedoresCoincidentes(provCompleto, { id: h.proveedor_id, razon_social: h.proveedor_nombre });
+            const matches = sonProveedoresCoincidentes(pNormalizado, { id: h.proveedor_id, razon_social: h.proveedor_nombre, rif: h.proveedor_rif }) ||
+                            sonProveedoresCoincidentes(provCompleto, { id: h.proveedor_id, razon_social: h.proveedor_nombre, rif: h.proveedor_rif });
             
             if (matches) {
               comprasFiltradas.push({
@@ -948,7 +1074,7 @@ const Proveedores = ({ currentUser }) => {
       comprasFiltradas.sort((a, b) => b.fecha.localeCompare(a.fecha));
       setHistorialCompras(comprasFiltradas);
     } catch (err) {
-      console.error(err);
+      console.error("Error al cargar historial:", err);
       toast.error("Error al cargar historial: " + err.message);
     } finally {
       setLoadingHistorial(false);
@@ -2720,7 +2846,7 @@ const Proveedores = ({ currentUser }) => {
                         <button onClick={() => handleEdit(p)} style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', padding: '5px', transition: 'transform 0.2s' }} title={diag.esCompleto ? "Editar Proveedor" : "Completar Datos Faltantes"} className="action-hover">
                           <Edit size={16} />
                         </button>
-                        <button onClick={() => eliminarProveedor(p.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '5px', transition: 'transform 0.2s' }} title="Eliminar" className="action-hover">
+                        <button onClick={() => eliminarProveedor(p)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '5px', transition: 'transform 0.2s' }} title="Eliminar Proveedor" className="action-hover">
                           <Trash2 size={16} />
                         </button>
                       </div>
@@ -4484,21 +4610,24 @@ const Proveedores = ({ currentUser }) => {
                 </div>
               ) : (
                 <div>
-                  {/* PESTAÑA 1: DATOS FINANCIEROS Y CRÉDITO */}
+                  {/* PESTAÑA 1: DATOS FINANCIEROS, CRÉDITO Y CONTABILIDAD ODC */}
                   {subTabFicha === 'credito' && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
                       {(() => {
                         const limite = Number(provSeleccionado.monto_limite_credito ?? provSeleccionado.limite_credito) || 0;
                         const dias = Number(provSeleccionado.dias_credito ?? provSeleccionado.dias_credito_habituales) || 0;
                         const ctasModal = parseCuentasBancarias(provSeleccionado.cuentas_bancarias);
-                        const gastado = historialCompras.reduce((sum, c) => sum + c.total, 0);
-                        const disponible = limite > 0 ? (limite - gastado) : 0;
+                        
+                        // Deuda pendiente calculada desde Órdenes de Compra
+                        const deudaOdcCredito = metricasOdcProv.deudaPendienteCreditoOdc || 0;
+                        const deudaOdcTotal = metricasOdcProv.saldoPendienteTotalOdc || 0;
+                        const disponible = limite > 0 ? (limite - deudaOdcCredito) : 0;
                         const pctDisp = limite > 0 ? (disponible / limite) * 100 : 0;
 
                         let semaforoBg = '#f0fdf4';
                         let semaforoBorder = '#86efac';
                         let semaforoColor = '#166534';
-                        let semaforoTexto = '🟢 CRÉDITO SALUDABLE Y DISPONIBLE';
+                        let semaforoTexto = '🟢 LÍNEA DE CRÉDITO SALUDABLE Y DISPONIBLE';
 
                         if (limite <= 0 && dias > 0) {
                           semaforoBg = '#f0f9ff';
@@ -4525,45 +4654,158 @@ const Proveedores = ({ currentUser }) => {
                         return (
                           <>
                             {/* BANNER DE SEMÁFORO DE CRÉDITO */}
-                            <div style={{ backgroundColor: semaforoBg, border: `2px solid ${semaforoBorder}`, borderRadius: '16px', padding: '16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
+                            <div style={{ backgroundColor: semaforoBg, border: `1.5px solid ${semaforoBorder}`, borderRadius: '16px', padding: '16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
                               <div>
                                 <div style={{ fontSize: '11px', fontWeight: '900', color: semaforoColor, letterSpacing: '0.05em' }}>
                                   {semaforoTexto}
                                 </div>
                                 <div style={{ fontSize: '0.85rem', color: '#334155', fontWeight: '600', marginTop: '4px' }}>
-                                  Plazo de Pago Acordado: <strong>{dias > 0 ? `${dias} Días Crédito` : 'Contado / Inmediato'}</strong>
+                                  Término Acordado: <strong>{dias > 0 ? `${dias} Días de Crédito` : 'Contado / Inmediato'}</strong> {limite > 0 && `| Límite Aprobado: $ ${limite.toLocaleString('de-DE', { minimumFractionDigits: 2 })}`}
                                 </div>
                               </div>
 
                               <div style={{ textAlign: 'right' }}>
                                 <div style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: '700' }}>Crédito Disponible</div>
-                                <div style={{ fontSize: '1.5rem', fontWeight: '950', color: (limite > 0 && disponible < 0) ? '#dc2626' : '#0f172a' }}>
+                                <div style={{ fontSize: '1.45rem', fontWeight: '950', color: (limite > 0 && disponible < 0) ? '#dc2626' : '#0f172a' }}>
                                   {limite > 0 ? `$ ${disponible.toLocaleString('de-DE', { minimumFractionDigits: 2 })}` : (dias > 0 ? 'Sin límite fijo' : '$ 0,00')}
                                 </div>
                               </div>
                             </div>
 
-                            {/* GRILLA DE TARJETAS FINANCIERAS */}
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '15px' }}>
-                              <div style={{ backgroundColor: '#f8fafc', padding: '16px', borderRadius: '14px', border: '1px solid #e2e8f0' }}>
-                                <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '800', textTransform: 'uppercase' }}>Límite de Crédito Aprobado</div>
-                                <div style={{ fontSize: '1.3rem', fontWeight: '900', color: '#0f172a', marginTop: '6px' }}>
-                                  {limite > 0 ? `$ ${limite.toLocaleString('de-DE', { minimumFractionDigits: 2 })}` : (dias > 0 ? 'Sin límite fijo' : '$ 0,00')}
+                            {/* CONTABILIDAD DE ÓRDENES DE COMPRA (ODC) */}
+                            <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', border: '1px solid #e2e8f0', padding: '18px 20px', boxShadow: '0 2px 8px rgba(0,0,0,0.03)' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <DollarSign size={18} color="#0284c7" />
+                                  <h4 style={{ margin: 0, fontSize: '0.9rem', fontWeight: '900', color: '#0f172a' }}>
+                                    Contabilidad & Cuentas por Pagar en Órdenes de Compra (ODC)
+                                  </h4>
                                 </div>
+                                <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#0369a1', backgroundColor: '#e0f2fe', padding: '3px 10px', borderRadius: '8px', border: '1px solid #bae6fd' }}>
+                                  {metricasOdcProv.cantidadOdcs} Órdenes de Compra
+                                </span>
                               </div>
 
-                              <div style={{ backgroundColor: '#f8fafc', padding: '16px', borderRadius: '14px', border: '1px solid #e2e8f0' }}>
-                                <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '800', textTransform: 'uppercase' }}>Crédito Utilizado / Saldo</div>
-                                <div style={{ fontSize: '1.3rem', fontWeight: '900', color: '#eab308', marginTop: '6px' }}>
-                                  $ {gastado.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                              {/* GRILLA DE KPI CONTABLE DE ODCs */}
+                              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', marginBottom: '16px' }}>
+                                
+                                {/* 1. Total Comprado en ODCs */}
+                                <div style={{ backgroundColor: '#f8fafc', padding: '14px', borderRadius: '12px', border: '1px solid #cbd5e1' }}>
+                                  <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '800', textTransform: 'uppercase' }}>
+                                    Total Facturado en ODCs
+                                  </div>
+                                  <div style={{ fontSize: '1.25rem', fontWeight: '900', color: '#0f172a', marginTop: '4px' }}>
+                                    $ {metricasOdcProv.totalCompradoOdc.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                                  </div>
+                                  <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: '2px' }}>
+                                    Total compras formalizadas
+                                  </div>
                                 </div>
+
+                                {/* 2. Deuda Pendiente a Crédito */}
+                                <div style={{ backgroundColor: metricasOdcProv.deudaPendienteCreditoOdc > 0 ? '#fef2f2' : '#f8fafc', padding: '14px', borderRadius: '12px', border: metricasOdcProv.deudaPendienteCreditoOdc > 0 ? '1.5px solid #fca5a5' : '1px solid #cbd5e1' }}>
+                                  <div style={{ fontSize: '0.7rem', color: metricasOdcProv.deudaPendienteCreditoOdc > 0 ? '#991b1b' : '#64748b', fontWeight: '800', textTransform: 'uppercase' }}>
+                                    Deuda Pendiente (Crédito)
+                                  </div>
+                                  <div style={{ fontSize: '1.25rem', fontWeight: '900', color: metricasOdcProv.deudaPendienteCreditoOdc > 0 ? '#dc2626' : '#15803d', marginTop: '4px' }}>
+                                    $ {metricasOdcProv.deudaPendienteCreditoOdc.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                                  </div>
+                                  <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: '2px' }}>
+                                    Comprado: $ {metricasOdcProv.totalCreditoOdc.toLocaleString('de-DE', { minimumFractionDigits: 2 })} | Abono: $ {metricasOdcProv.abonadoCreditoOdc.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                                  </div>
+                                </div>
+
+                                {/* 3. Compras de Contado */}
+                                <div style={{ backgroundColor: '#f8fafc', padding: '14px', borderRadius: '12px', border: '1px solid #cbd5e1' }}>
+                                  <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '800', textTransform: 'uppercase' }}>
+                                    Compras de Contado
+                                  </div>
+                                  <div style={{ fontSize: '1.25rem', fontWeight: '900', color: '#0369a1', marginTop: '4px' }}>
+                                    $ {metricasOdcProv.totalContadoOdc.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                                  </div>
+                                  <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: '2px' }}>
+                                    Pagado: $ {metricasOdcProv.pagadoContadoOdc.toLocaleString('de-DE', { minimumFractionDigits: 2 })} | Pendiente: $ {metricasOdcProv.pendienteContadoOdc.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                                  </div>
+                                </div>
+
+                                {/* 4. Total Abonado / Pagado */}
+                                <div style={{ backgroundColor: '#f0fdf4', padding: '14px', borderRadius: '12px', border: '1px solid #bbf7d0' }}>
+                                  <div style={{ fontSize: '0.7rem', color: '#166534', fontWeight: '800', textTransform: 'uppercase' }}>
+                                    Total Abonado / Pagado
+                                  </div>
+                                  <div style={{ fontSize: '1.25rem', fontWeight: '900', color: '#15803d', marginTop: '4px' }}>
+                                    $ {metricasOdcProv.totalAbonadoOdc.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                                  </div>
+                                  <div style={{ fontSize: '0.72rem', color: '#166534', marginTop: '2px' }}>
+                                    Saldo Deudor Global: <strong>$ {deudaOdcTotal.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</strong>
+                                  </div>
+                                </div>
+
                               </div>
 
-                              <div style={{ backgroundColor: '#f8fafc', padding: '16px', borderRadius: '14px', border: '1px solid #e2e8f0' }}>
-                                <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '800', textTransform: 'uppercase' }}>Días de Crédito (Plazo)</div>
-                                <div style={{ fontSize: '1.3rem', fontWeight: '900', color: '#0ea5e9', marginTop: '6px' }}>
-                                  {dias} días
-                                </div>
+                              {/* TABLA DE ÓRDENES DE COMPRA DEL PROVEEDOR */}
+                              <div style={{ overflowX: 'auto', border: '1px solid #e2e8f0', borderRadius: '12px' }}>
+                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem', textAlign: 'left' }}>
+                                  <thead>
+                                    <tr style={{ backgroundColor: '#f1f5f9', color: '#334155', borderBottom: '1px solid #cbd5e1' }}>
+                                      <th style={{ padding: '8px 10px', fontWeight: '800' }}>N° ODC</th>
+                                      <th style={{ padding: '8px 10px', fontWeight: '800' }}>FECHA</th>
+                                      <th style={{ padding: '8px 10px', fontWeight: '800' }}>REQ. ORIGEN</th>
+                                      <th style={{ padding: '8px 10px', fontWeight: '800' }}>TÉRMINO</th>
+                                      <th style={{ padding: '8px 10px', fontWeight: '800', textAlign: 'right' }}>TOTAL ODC</th>
+                                      <th style={{ padding: '8px 10px', fontWeight: '800', textAlign: 'right' }}>ABONADO</th>
+                                      <th style={{ padding: '8px 10px', fontWeight: '800', textAlign: 'right' }}>SALDO DEUDOR</th>
+                                      <th style={{ padding: '8px 10px', fontWeight: '800', textAlign: 'center' }}>ESTATUS PAGO</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {odcsDelProveedor.length === 0 ? (
+                                      <tr>
+                                        <td colSpan="8" style={{ padding: '24px', textAlign: 'center', color: '#94a3b8', fontStyle: 'italic' }}>
+                                          No se registran Órdenes de Compra formalizadas con este proveedor.
+                                        </td>
+                                      </tr>
+                                    ) : (
+                                      odcsDelProveedor.map((odcItem, idxOdc) => {
+                                        const badgeColor = odcItem.estatus_pago === 'PAGADO' ? '#15803d' : (odcItem.estatus_pago === 'PAGADO PARCIAL' ? '#d97706' : (odcItem.es_anulada ? '#64748b' : '#dc2626'));
+                                        const badgeBg = odcItem.estatus_pago === 'PAGADO' ? '#dcfce7' : (odcItem.estatus_pago === 'PAGADO PARCIAL' ? '#fef3c7' : (odcItem.es_anulada ? '#f1f5f9' : '#fee2e2'));
+
+                                        return (
+                                          <tr key={idxOdc} style={{ borderBottom: '1px solid #f1f5f9', backgroundColor: idxOdc % 2 === 0 ? '#ffffff' : '#f8fafc' }}>
+                                            <td style={{ padding: '8px 10px', fontWeight: '800', color: '#0f172a' }}>
+                                              {odcItem.numero_odc}
+                                            </td>
+                                            <td style={{ padding: '8px 10px', color: '#475569' }}>
+                                              {odcItem.fecha}
+                                            </td>
+                                            <td style={{ padding: '8px 10px', color: '#0369a1', fontWeight: '700' }}>
+                                              {odcItem.requisicion}
+                                            </td>
+                                            <td style={{ padding: '8px 10px' }}>
+                                              <span style={{ fontSize: '0.72rem', fontWeight: '700', padding: '2px 6px', borderRadius: '4px', backgroundColor: odcItem.es_credito ? '#eff6ff' : '#f8fafc', color: odcItem.es_credito ? '#1d4ed8' : '#475569', border: `1px solid ${odcItem.es_credito ? '#bfdbfe' : '#e2e8f0'}` }}>
+                                                {odcItem.es_credito ? `Crédito (${odcItem.dias_credito} días)` : 'Contado'}
+                                              </span>
+                                            </td>
+                                            <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: '800', color: '#0f172a' }}>
+                                              $ {odcItem.total.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                                            </td>
+                                            <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: '700', color: '#15803d' }}>
+                                              $ {odcItem.total_abonado.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                                            </td>
+                                            <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: '900', color: odcItem.saldo_pendiente > 0 ? '#dc2626' : '#15803d' }}>
+                                              $ {odcItem.saldo_pendiente.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                                            </td>
+                                            <td style={{ padding: '8px 10px', textAlign: 'center' }}>
+                                              <span style={{ fontSize: '0.7rem', fontWeight: '900', padding: '2px 8px', borderRadius: '6px', backgroundColor: badgeBg, color: badgeColor, border: `1px solid ${badgeColor}40` }}>
+                                                {odcItem.estatus_pago}
+                                              </span>
+                                            </td>
+                                          </tr>
+                                        );
+                                      })
+                                    )}
+                                  </tbody>
+                                </table>
                               </div>
                             </div>
 
@@ -4629,129 +4871,235 @@ const Proveedores = ({ currentUser }) => {
                     </div>
                   )}
 
-                  {/* PESTAÑA 2: HISTORIAL DE COMPRAS Y FACTURAS */}
+                  {/* PESTAÑA 2: HISTORIAL DE COMPRAS (ODCs Y REQUISICIONES) */}
                   {subTabFicha === 'historial' && (
                     <div>
-                      {/* FILTRO DE FECHAS EN HISTORIAL DE PROVEEDOR */}
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', flexWrap: 'wrap', gap: '12px', backgroundColor: '#f8fafc', padding: '12px 16px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', fontWeight: '800', color: '#475569' }}>
-                            <Calendar size={14} style={{ color: '#0ea5e9' }} />
-                            <span>Desde:</span>
-                            <input
-                              type="date"
-                              value={fechaDesdeHistorial}
-                              onChange={(e) => setFechaDesdeHistorial(e.target.value)}
-                              style={{ padding: '5px 8px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.75rem', fontWeight: '600', outline: 'none' }}
-                            />
-                          </div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', fontWeight: '800', color: '#475569' }}>
-                            <span>Hasta:</span>
-                            <input
-                              type="date"
-                              value={fechaHastaHistorial}
-                              onChange={(e) => setFechaHastaHistorial(e.target.value)}
-                              style={{ padding: '5px 8px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.75rem', fontWeight: '600', outline: 'none' }}
-                            />
-                          </div>
-                          {(fechaDesdeHistorial || fechaHastaHistorial) && (
-                            <button
-                              type="button"
-                              onClick={() => { setFechaDesdeHistorial(''); setFechaHastaHistorial(''); }}
-                              style={{ background: '#fee2e2', color: '#991b1b', border: '1px solid #fecaca', borderRadius: '8px', padding: '5px 10px', fontSize: '0.72rem', fontWeight: '800', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
-                            >
-                              <RotateCcw size={12} /> Limpiar
-                            </button>
-                          )}
-                        </div>
-
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-                          <div style={{ fontSize: '0.85rem', fontWeight: '700', color: '#475569' }}>
-                            Total: <strong style={{ color: '#15803d' }}>$ {historialComprasFiltrado.reduce((sum, c) => sum + c.total, 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</strong> ({historialComprasFiltrado.length}{historialComprasFiltrado.length !== historialCompras.length ? ` de ${historialCompras.length}` : ''} transacciones)
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => exportHistoryToExcel(provSeleccionado)}
-                            style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '6px',
-                              padding: '8px 16px',
-                              backgroundColor: '#16a34a',
-                              color: 'white',
-                              border: 'none',
-                              borderRadius: '8px',
-                              fontWeight: 'bold',
-                              fontSize: '0.75rem',
-                              cursor: 'pointer'
-                            }}
-                          >
-                            <FileSpreadsheet size={14} />
-                            Exportar Excel
-                          </button>
-                        </div>
+                      {/* Sub-selector de tipo de historial: ODCs vs Líneas de Requisición */}
+                      <div style={{ display: 'flex', gap: '8px', marginBottom: '14px', borderBottom: '1px solid #e2e8f0', paddingBottom: '10px' }}>
+                        <button
+                          type="button"
+                          onClick={() => setVistaHistorialTipo('odc')}
+                          style={{
+                            padding: '6px 14px',
+                            borderRadius: '8px',
+                            fontSize: '0.78rem',
+                            fontWeight: '800',
+                            cursor: 'pointer',
+                            border: vistaHistorialTipo === 'odc' ? '1px solid #0284c7' : '1px solid #e2e8f0',
+                            backgroundColor: vistaHistorialTipo === 'odc' ? '#f0f9ff' : '#ffffff',
+                            color: vistaHistorialTipo === 'odc' ? '#0369a1' : '#64748b'
+                          }}
+                        >
+                          📑 Órdenes de Compra ({odcsDelProveedor.length})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setVistaHistorialTipo('requisiciones')}
+                          style={{
+                            padding: '6px 14px',
+                            borderRadius: '8px',
+                            fontSize: '0.78rem',
+                            fontWeight: '800',
+                            cursor: 'pointer',
+                            border: vistaHistorialTipo === 'requisiciones' ? '1px solid #0284c7' : '1px solid #e2e8f0',
+                            backgroundColor: vistaHistorialTipo === 'requisiciones' ? '#f0f9ff' : '#ffffff',
+                            color: vistaHistorialTipo === 'requisiciones' ? '#0369a1' : '#64748b'
+                          }}
+                        >
+                          📋 Líneas de Requisición ({historialCompras.length})
+                        </button>
                       </div>
 
-                      <div style={{ overflowY: 'auto', maxHeight: '350px', border: '1px solid #e2e8f0', borderRadius: '14px' }}>
-                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem', textAlign: 'left' }}>
-                          <thead>
-                            <tr style={{ backgroundColor: '#1e293b', color: '#f8fafc', position: 'sticky', top: 0 }}>
-                              <th style={{ padding: '10px 12px', textAlign: 'center' }}>FECHA EMISIÓN</th>
-                              <th style={{ padding: '10px 12px', textAlign: 'center' }}>VENCIMIENTO</th>
-                              <th style={{ padding: '10px 12px', textAlign: 'center' }}>REQ</th>
-                              <th style={{ padding: '10px 12px' }}>DESCRIPCIÓN</th>
-                              <th style={{ padding: '10px 12px', textAlign: 'right' }}>CANT.</th>
-                              <th style={{ padding: '10px 12px', textAlign: 'right' }}>P. UNIT</th>
-                              <th style={{ padding: '10px 12px', textAlign: 'right' }}>TOTAL</th>
-                              <th style={{ padding: '10px 12px', textAlign: 'center' }}>FACTURA</th>
-                              <th style={{ padding: '10px 12px', textAlign: 'center' }}>SOPORTE</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {historialComprasFiltrado.length === 0 ? (
-                              <tr>
-                                <td colSpan="9" style={{ padding: '40px', textAlign: 'center', color: '#94a3b8', fontWeight: 'bold' }}>
-                                  No se registran compras para este proveedor en el período seleccionado.
-                                </td>
-                              </tr>
-                            ) : (
-                              historialComprasFiltrado.map((c, i) => {
-                                const diasCred = Number(provSeleccionado.dias_credito) || 0;
-                                let fechaVencStr = '—';
-                                if (c.fecha !== '—') {
-                                  const fDate = new Date(c.fecha + 'T12:00:00');
-                                  fDate.setDate(fDate.getDate() + diasCred);
-                                  fechaVencStr = fDate.toISOString().split('T')[0].split('-').reverse().join('/');
-                                }
-
-                                return (
-                                  <tr key={i} style={{ borderBottom: '1px solid #e2e8f0' }}>
-                                    <td style={{ padding: '10px 12px', textAlign: 'center', color: '#475569', fontWeight: '500' }}>
-                                      {c.fecha !== '—' ? c.fecha.split('-').reverse().join('/') : '—'}
-                                    </td>
-                                    <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: '700', color: '#d97706' }}>
-                                      {fechaVencStr}
-                                    </td>
-                                    <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 'bold', color: '#1e40af' }}>{c.requisicion}</td>
-                                    <td style={{ padding: '10px 12px', color: '#0f172a', fontWeight: '600' }}>{c.descripcion}</td>
-                                    <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 'bold' }}>{c.cantidad}</td>
-                                    <td style={{ padding: '10px 12px', textAlign: 'right', color: '#475569' }}>$ {c.pu.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
-                                    <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: '800', color: '#16a34a' }}>$ {c.total.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
-                                    <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: '700', color: '#2563eb' }}>{c.factura}</td>
-                                    <td style={{ padding: '10px 12px', textAlign: 'center' }}>
-                                      {c.facturaUrl ? (
-                                        <a href={c.facturaUrl} target="_blank" rel="noreferrer" style={{ padding: '4px 8px', backgroundColor: '#eff6ff', color: '#2563eb', borderRadius: '6px', fontWeight: 'bold', fontSize: '0.7rem', textDecoration: 'none' }}>Ver 📄</a>
-                                      ) : (
-                                        <span style={{ color: '#cbd5e1', fontSize: '0.7rem' }}>S/S</span>
-                                      )}
+                      {vistaHistorialTipo === 'odc' ? (
+                        <div>
+                          <div style={{ overflowY: 'auto', maxHeight: '380px', border: '1px solid #e2e8f0', borderRadius: '14px' }}>
+                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem', textAlign: 'left' }}>
+                              <thead>
+                                <tr style={{ backgroundColor: '#1e293b', color: '#f8fafc', position: 'sticky', top: 0 }}>
+                                  <th style={{ padding: '10px 12px' }}>N° ODC</th>
+                                  <th style={{ padding: '10px 12px', textAlign: 'center' }}>FECHA</th>
+                                  <th style={{ padding: '10px 12px' }}>REQ. ORIGEN</th>
+                                  <th style={{ padding: '10px 12px' }}>TIPO PAGO</th>
+                                  <th style={{ padding: '10px 12px', textAlign: 'right' }}>TOTAL FACTURADO</th>
+                                  <th style={{ padding: '10px 12px', textAlign: 'right' }}>ABONADO</th>
+                                  <th style={{ padding: '10px 12px', textAlign: 'right' }}>SALDO PENDIENTE</th>
+                                  <th style={{ padding: '10px 12px', textAlign: 'center' }}>ESTATUS</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {odcsDelProveedor.length === 0 ? (
+                                  <tr>
+                                    <td colSpan="8" style={{ padding: '40px', textAlign: 'center', color: '#94a3b8', fontWeight: 'bold' }}>
+                                      No se registran Órdenes de Compra para este proveedor.
                                     </td>
                                   </tr>
-                                );
-                              })
-                            )}
-                          </tbody>
-                        </table>
-                      </div>
+                                ) : (
+                                  odcsDelProveedor.map((odcItem, idx) => (
+                                    <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
+                                      <td style={{ padding: '10px 12px', fontWeight: '800', color: '#0f172a' }}>
+                                        {odcItem.numero_odc}
+                                      </td>
+                                      <td style={{ padding: '10px 12px', textAlign: 'center', color: '#475569' }}>
+                                        {odcItem.fecha}
+                                      </td>
+                                      <td style={{ padding: '10px 12px', color: '#0369a1', fontWeight: '700' }}>
+                                        {odcItem.requisicion}
+                                      </td>
+                                      <td style={{ padding: '10px 12px' }}>
+                                        {odcItem.es_credito ? `Crédito (${odcItem.dias_credito} d)` : 'Contado'}
+                                      </td>
+                                      <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: '800', color: '#0f172a' }}>
+                                        $ {odcItem.total.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                                      </td>
+                                      <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: '700', color: '#15803d' }}>
+                                        $ {odcItem.total_abonado.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                                      </td>
+                                      <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: '900', color: odcItem.saldo_pendiente > 0 ? '#dc2626' : '#15803d' }}>
+                                        $ {odcItem.saldo_pendiente.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                                      </td>
+                                      <td style={{ padding: '10px 12px', textAlign: 'center' }}>
+                                        <span style={{ 
+                                          fontSize: '0.72rem', 
+                                          fontWeight: '800', 
+                                          padding: '3px 8px', 
+                                          borderRadius: '6px', 
+                                          backgroundColor: odcItem.estatus_pago === 'PAGADO' ? '#dcfce7' : (odcItem.estatus_pago === 'PAGADO PARCIAL' ? '#fef3c7' : '#fee2e2'),
+                                          color: odcItem.estatus_pago === 'PAGADO' ? '#15803d' : (odcItem.estatus_pago === 'PAGADO PARCIAL' ? '#b45309' : '#dc2626')
+                                        }}>
+                                          {odcItem.estatus_pago}
+                                        </span>
+                                      </td>
+                                    </tr>
+                                  ))
+                                )}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      ) : (
+                        <div>
+                          {/* FILTRO DE FECHAS EN HISTORIAL DE PROVEEDOR */}
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', flexWrap: 'wrap', gap: '12px', backgroundColor: '#f8fafc', padding: '12px 16px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', fontWeight: '800', color: '#475569' }}>
+                                <Calendar size={14} style={{ color: '#0ea5e9' }} />
+                                <span>Desde:</span>
+                                <input
+                                  type="date"
+                                  value={fechaDesdeHistorial}
+                                  onChange={(e) => setFechaDesdeHistorial(e.target.value)}
+                                  style={{ padding: '5px 8px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.75rem', fontWeight: '600', outline: 'none' }}
+                                />
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', fontWeight: '800', color: '#475569' }}>
+                                <span>Hasta:</span>
+                                <input
+                                  type="date"
+                                  value={fechaHastaHistorial}
+                                  onChange={(e) => setFechaHastaHistorial(e.target.value)}
+                                  style={{ padding: '5px 8px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.75rem', fontWeight: '600', outline: 'none' }}
+                                />
+                              </div>
+                              {(fechaDesdeHistorial || fechaHastaHistorial) && (
+                                <button
+                                  type="button"
+                                  onClick={() => { setFechaDesdeHistorial(''); setFechaHastaHistorial(''); }}
+                                  style={{ background: '#fee2e2', color: '#991b1b', border: '1px solid #fecaca', borderRadius: '8px', padding: '5px 10px', fontSize: '0.72rem', fontWeight: '800', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                >
+                                  <RotateCcw size={12} /> Limpiar
+                                </button>
+                              )}
+                            </div>
+
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+                              <div style={{ fontSize: '0.85rem', fontWeight: '700', color: '#475569' }}>
+                                Total: <strong style={{ color: '#15803d' }}>$ {historialComprasFiltrado.reduce((sum, c) => sum + c.total, 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</strong> ({historialComprasFiltrado.length}{historialComprasFiltrado.length !== historialCompras.length ? ` de ${historialCompras.length}` : ''} transacciones)
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => exportHistoryToExcel(provSeleccionado)}
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '6px',
+                                  padding: '8px 16px',
+                                  backgroundColor: '#16a34a',
+                                  color: 'white',
+                                  border: 'none',
+                                  borderRadius: '8px',
+                                  fontWeight: 'bold',
+                                  fontSize: '0.75rem',
+                                  cursor: 'pointer'
+                                }}
+                              >
+                                <FileSpreadsheet size={14} />
+                                Exportar Excel
+                              </button>
+                            </div>
+                          </div>
+
+                          <div style={{ overflowY: 'auto', maxHeight: '350px', border: '1px solid #e2e8f0', borderRadius: '14px' }}>
+                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem', textAlign: 'left' }}>
+                              <thead>
+                                <tr style={{ backgroundColor: '#1e293b', color: '#f8fafc', position: 'sticky', top: 0 }}>
+                                  <th style={{ padding: '10px 12px', textAlign: 'center' }}>FECHA EMISIÓN</th>
+                                  <th style={{ padding: '10px 12px', textAlign: 'center' }}>VENCIMIENTO</th>
+                                  <th style={{ padding: '10px 12px', textAlign: 'center' }}>REQ</th>
+                                  <th style={{ padding: '10px 12px' }}>DESCRIPCIÓN</th>
+                                  <th style={{ padding: '10px 12px', textAlign: 'right' }}>CANT.</th>
+                                  <th style={{ padding: '10px 12px', textAlign: 'right' }}>P. UNIT</th>
+                                  <th style={{ padding: '10px 12px', textAlign: 'right' }}>TOTAL</th>
+                                  <th style={{ padding: '10px 12px', textAlign: 'center' }}>FACTURA</th>
+                                  <th style={{ padding: '10px 12px', textAlign: 'center' }}>SOPORTE</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {historialComprasFiltrado.length === 0 ? (
+                                  <tr>
+                                    <td colSpan="9" style={{ padding: '40px', textAlign: 'center', color: '#94a3b8', fontWeight: 'bold' }}>
+                                      No se registran compras para este proveedor en el período seleccionado.
+                                    </td>
+                                  </tr>
+                                ) : (
+                                  historialComprasFiltrado.map((c, i) => {
+                                    const diasCred = Number(provSeleccionado.dias_credito) || 0;
+                                    let fechaVencStr = '—';
+                                    if (c.fecha !== '—') {
+                                      const fDate = new Date(c.fecha + 'T12:00:00');
+                                      fDate.setDate(fDate.getDate() + diasCred);
+                                      fechaVencStr = fDate.toISOString().split('T')[0].split('-').reverse().join('/');
+                                    }
+
+                                    return (
+                                      <tr key={i} style={{ borderBottom: '1px solid #e2e8f0' }}>
+                                        <td style={{ padding: '10px 12px', textAlign: 'center', color: '#475569', fontWeight: '500' }}>
+                                          {c.fecha !== '—' ? c.fecha.split('-').reverse().join('/') : '—'}
+                                        </td>
+                                        <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: '700', color: '#d97706' }}>
+                                          {fechaVencStr}
+                                        </td>
+                                        <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 'bold', color: '#1e40af' }}>{c.requisicion}</td>
+                                        <td style={{ padding: '10px 12px', color: '#0f172a', fontWeight: '600' }}>{c.descripcion}</td>
+                                        <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 'bold' }}>{c.cantidad}</td>
+                                        <td style={{ padding: '10px 12px', textAlign: 'right', color: '#475569' }}>$ {c.pu.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
+                                        <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: '800', color: '#16a34a' }}>$ {c.total.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
+                                        <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: '700', color: '#2563eb' }}>{c.factura}</td>
+                                        <td style={{ padding: '10px 12px', textAlign: 'center' }}>
+                                          {c.facturaUrl ? (
+                                            <a href={c.facturaUrl} target="_blank" rel="noreferrer" style={{ padding: '4px 8px', backgroundColor: '#eff6ff', color: '#2563eb', borderRadius: '6px', fontWeight: 'bold', fontSize: '0.7rem', textDecoration: 'none' }}>Ver 📄</a>
+                                          ) : (
+                                            <span style={{ color: '#cbd5e1', fontSize: '0.7rem' }}>S/S</span>
+                                          )}
+                                        </td>
+                                      </tr>
+                                    );
+                                  })
+                                )}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
 

@@ -1,57 +1,17 @@
-import { supabase } from '../supabaseClient';
+import { createClient } from '@supabase/supabase-js';
+import fs from 'fs';
 
-export const requisicionesService = {
-  async getAllRequisiciones(userContext) {
-    let query = supabase.from('requisiciones').select('*');
-    // Implementación simplificada para el dashboard
-    const { data, error } = await query.order('fecha_emision', { ascending: false });
-    if (error) throw error;
-    return (data || []).map(req => ({
-      ...req,
-      items: this.sanitizeItems(req.items)
-    }));
-  },
+const envContent = fs.readFileSync('.env.local', 'utf8');
+let envUrl = '', envKey = '';
+for (const line of envContent.split('\n')) {
+  if (line.startsWith('VITE_SUPABASE_URL=')) envUrl = line.split('=')[1].trim().replace(/^["']|["']$/g, '');
+  if (line.startsWith('VITE_SUPABASE_ANON_KEY=')) envKey = line.split('=')[1].trim().replace(/^["']|["']$/g, '');
+}
+const supabase = createClient(envUrl, envKey);
 
-  sanitizeItems(items) {
-    if (!items) return [];
-    if (Array.isArray(items)) return items;
-    try {
-      let parsed = typeof items === 'string' ? JSON.parse(items) : items;
-      if (typeof parsed === 'string') parsed = JSON.parse(parsed);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch (e) {
-      return [];
-    }
-  },
-
-  async updateStatus(id, nuevoEstado, metadata = {}) {
-    const { error } = await supabase.from('requisiciones').update({ estado_aprobacion: nuevoEstado, ...metadata }).eq('id', id);
-    if (error) throw error;
-    return true;
-  },
-
-  async saveRequisicion(data, isEditing) {
-    const payload = { ...data, items: JSON.stringify(data.items) };
-    if (isEditing) {
-      const { error } = await supabase.from('requisiciones').update(payload).eq('id', data.id);
-      if (error) throw error;
-      return data.id;
-    } else {
-      const { data: newReq, error } = await supabase.from('requisiciones').insert([payload]).select().single();
-      if (error) throw error;
-      return newReq.id;
-    }
-  }
-};
-
-/**
- * Consolida todos los soportes y facturas de una requisición, unificando los cargados
- * a nivel de cabecera con los adjuntados en el historial de compras de los renglones individuales.
- */
-export const consolidarSoportesRequisicion = (facturas_url, items) => {
+const consolidarSoportesRequisicion = (facturas_url, items) => {
   const soportesMap = new Map();
 
-  // 1. Soportes a nivel de cabecera / generales de la requisición
   const arrayFacturas = Array.isArray(facturas_url) 
     ? facturas_url 
     : (facturas_url ? [facturas_url] : []);
@@ -81,7 +41,6 @@ export const consolidarSoportesRequisicion = (facturas_url, items) => {
     }
   });
 
-  // 2. Soportes adjuntados a los renglones individuales durante compras
   let safeItems = items;
   if (typeof safeItems === 'string') {
     try { safeItems = JSON.parse(safeItems); } catch { safeItems = []; }
@@ -113,3 +72,24 @@ export const consolidarSoportesRequisicion = (facturas_url, items) => {
 
   return Array.from(soportesMap.values());
 };
+
+async function sync682() {
+  const { data: req, error } = await supabase.from('requisiciones').select('*').eq('id', 682).single();
+  if (error) {
+    console.error(error);
+    return;
+  }
+
+  const consolidados = consolidarSoportesRequisicion(req.facturas_url, req.items);
+  console.log('Consolidados para 682 (RR-MTT-26-0271):', consolidados);
+
+  const { error: updateErr } = await supabase
+    .from('requisiciones')
+    .update({ facturas_url: consolidados })
+    .eq('id', 682);
+
+  if (updateErr) console.error('Error updating:', updateErr);
+  else console.log('Successfully synchronized 682 in database!');
+}
+
+sync682();

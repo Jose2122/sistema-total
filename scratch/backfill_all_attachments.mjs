@@ -1,57 +1,17 @@
-import { supabase } from '../supabaseClient';
+import { createClient } from '@supabase/supabase-js';
+import fs from 'fs';
 
-export const requisicionesService = {
-  async getAllRequisiciones(userContext) {
-    let query = supabase.from('requisiciones').select('*');
-    // Implementación simplificada para el dashboard
-    const { data, error } = await query.order('fecha_emision', { ascending: false });
-    if (error) throw error;
-    return (data || []).map(req => ({
-      ...req,
-      items: this.sanitizeItems(req.items)
-    }));
-  },
+const envContent = fs.readFileSync('.env.local', 'utf8');
+let envUrl = '', envKey = '';
+for (const line of envContent.split('\n')) {
+  if (line.startsWith('VITE_SUPABASE_URL=')) envUrl = line.split('=')[1].trim().replace(/^["']|["']$/g, '');
+  if (line.startsWith('VITE_SUPABASE_ANON_KEY=')) envKey = line.split('=')[1].trim().replace(/^["']|["']$/g, '');
+}
+const supabase = createClient(envUrl, envKey);
 
-  sanitizeItems(items) {
-    if (!items) return [];
-    if (Array.isArray(items)) return items;
-    try {
-      let parsed = typeof items === 'string' ? JSON.parse(items) : items;
-      if (typeof parsed === 'string') parsed = JSON.parse(parsed);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch (e) {
-      return [];
-    }
-  },
-
-  async updateStatus(id, nuevoEstado, metadata = {}) {
-    const { error } = await supabase.from('requisiciones').update({ estado_aprobacion: nuevoEstado, ...metadata }).eq('id', id);
-    if (error) throw error;
-    return true;
-  },
-
-  async saveRequisicion(data, isEditing) {
-    const payload = { ...data, items: JSON.stringify(data.items) };
-    if (isEditing) {
-      const { error } = await supabase.from('requisiciones').update(payload).eq('id', data.id);
-      if (error) throw error;
-      return data.id;
-    } else {
-      const { data: newReq, error } = await supabase.from('requisiciones').insert([payload]).select().single();
-      if (error) throw error;
-      return newReq.id;
-    }
-  }
-};
-
-/**
- * Consolida todos los soportes y facturas de una requisición, unificando los cargados
- * a nivel de cabecera con los adjuntados en el historial de compras de los renglones individuales.
- */
-export const consolidarSoportesRequisicion = (facturas_url, items) => {
+const consolidarSoportesRequisicion = (facturas_url, items) => {
   const soportesMap = new Map();
 
-  // 1. Soportes a nivel de cabecera / generales de la requisición
   const arrayFacturas = Array.isArray(facturas_url) 
     ? facturas_url 
     : (facturas_url ? [facturas_url] : []);
@@ -81,7 +41,6 @@ export const consolidarSoportesRequisicion = (facturas_url, items) => {
     }
   });
 
-  // 2. Soportes adjuntados a los renglones individuales durante compras
   let safeItems = items;
   if (typeof safeItems === 'string') {
     try { safeItems = JSON.parse(safeItems); } catch { safeItems = []; }
@@ -113,3 +72,48 @@ export const consolidarSoportesRequisicion = (facturas_url, items) => {
 
   return Array.from(soportesMap.values());
 };
+
+async function backfillAll() {
+  let page = 0;
+  const pageSize = 500;
+  let hasMore = true;
+  let updatedCount = 0;
+
+  while (hasMore) {
+    const { data, error } = await supabase
+      .from('requisiciones')
+      .select('id, facturas_url, items')
+      .range(page * pageSize, (page + 1) * pageSize - 1);
+
+    if (error) {
+      console.error('Error fetching chunk:', error);
+      break;
+    }
+
+    if (data && data.length > 0) {
+      for (const req of data) {
+        const rawFacturas = req.facturas_url || [];
+        const countRaw = Array.isArray(rawFacturas) ? rawFacturas.length : (rawFacturas ? 1 : 0);
+        const consolidados = consolidarSoportesRequisicion(req.facturas_url, req.items);
+
+        if (consolidados.length > countRaw) {
+          const { error: upErr } = await supabase
+            .from('requisiciones')
+            .update({ facturas_url: consolidados })
+            .eq('id', req.id);
+          
+          if (!upErr) updatedCount++;
+        }
+      }
+
+      if (data.length < pageSize) hasMore = false;
+      else page++;
+    } else {
+      hasMore = false;
+    }
+  }
+
+  console.log(`Sincronización masiva finalizada. ${updatedCount} requisiciones actualizadas en base de datos.`);
+}
+
+backfillAll();

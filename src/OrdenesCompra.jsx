@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { supabase } from './supabaseClient';
 import toast from 'react-hot-toast';
 import jsPDF from 'jspdf';
@@ -40,6 +40,7 @@ const OrdenesCompra = ({ currentUser }) => {
   const [loadingItems, setLoadingItems] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [guardandoFirmaCarlos, setGuardandoFirmaCarlos] = useState(false);
+  const [guardandoFirmaRicardo, setGuardandoFirmaRicardo] = useState(false);
 
   // Modal y estado para Edición Completa de ODC
   const [showEditModal, setShowEditModal] = useState(false);
@@ -53,6 +54,11 @@ const OrdenesCompra = ({ currentUser }) => {
   const [sourceReqSelected, setSourceReqSelected] = useState(null);
   const [showReqItemsPicker, setShowReqItemsPicker] = useState(false);
 
+  // Destinos de Despacho compartidos con Compras
+  const [destinosDespacho, setDestinosDespacho] = useState([]);
+  const [showNuevoDestinoModal, setShowNuevoDestinoModal] = useState(false);
+  const [nuevoDestinoForm, setNuevoDestinoForm] = useState({ nombre: '', direccion: '', contacto_nombre: '', contacto_telefono: '' });
+
   // Modal y estado para Asignación de Prioridad y Aprobación de Precios de ODC
   const [subtabPrioridad, setSubtabPrioridad] = useState('pendientes'); // 'pendientes' | 'aprobadas' | 'rechazadas' | 'todas'
   const [modalPrioridadOpen, setModalPrioridadOpen] = useState(false);
@@ -63,6 +69,20 @@ const OrdenesCompra = ({ currentUser }) => {
   const [itemsOdcPrioridad, setItemsOdcPrioridad] = useState([]);
   const [loadingItemsPrioridad, setLoadingItemsPrioridad] = useState(false);
   const [guardandoPrioridadOdc, setGuardandoPrioridadOdc] = useState(false);
+
+  // Modal y estado para Vista Previa PDF F-ADM-01-2
+  const [showPdfPreviewModal, setShowPdfPreviewModal] = useState(false);
+  const [pdfPreviewUrl, setPdfPreviewUrl] = useState(null);
+  const [pdfDocInstance, setPdfDocInstance] = useState(null);
+  const [generandoPdfPreview, setGenerandoPdfPreview] = useState(false);
+  const pdfIframeRef = useRef(null);
+
+  // Modal y estado para Anulación de ODC con lista desplegable
+  const [modalAnularOpen, setModalAnularOpen] = useState(false);
+  const [odcParaAnular, setOdcParaAnular] = useState(null);
+  const [motivoAnulacionSelect, setMotivoAnulacionSelect] = useState('Error en montos, precios unitarios o cotización');
+  const [motivoAnulacionDetalle, setMotivoAnulacionDetalle] = useState('');
+  const [guardandoAnulacion, setGuardandoAnulacion] = useState(false);
 
   const categoriasDisponibles = useMemo(() => {
     const setCat = new Set();
@@ -127,36 +147,65 @@ const OrdenesCompra = ({ currentUser }) => {
   // Imprimir / PDF ref
   const printRef = useRef(null);
 
-  // Verificación RBAC para Impresión y Gestión (Exclusivo Compras / Admins)
+  // Verificación RBAC para Prioridad, Impresión y Gestión ODC
   const deptoUser = (currentUser?.departamento || '').toLowerCase().trim();
   const rolUser = (currentUser?.rol || '').toLowerCase().trim();
-  const emailUser = (currentUser?.correo || '').toLowerCase().trim();
+  const emailUser = (currentUser?.correo || currentUser?.email || '').toLowerCase().trim();
+  const nombreUser = (currentUser?.nombre || '').toLowerCase().trim();
+  const apellidoUser = (currentUser?.apellido || '').toLowerCase().trim();
+  const cargoUser = (currentUser?.cargo || '').toLowerCase().trim();
 
-  const esAdmin = currentUser?.esAdminReal || 
-                  currentUser?.rol === 'Admin' || 
-                  currentUser?.rol === 'Gerente General' ||
-                  deptoUser.includes('administra') ||
-                  emailUser === 'jcontreras.totalclean@gmail.com' ||
-                  emailUser === 'cvega@totalclean.com.ve';
-  
-  // Capacidad de Eliminación Exclusiva para Administrador Principal (José)
-  const esAdminSuper = emailUser === 'jcontreras.totalclean@gmail.com' || currentUser?.esAdminReal || (currentUser?.rol || '').toUpperCase() === 'SUPERADMIN';
+  // 1. Super Admin (José Contreras / Superadmin)
+  const esSuperAdmin = emailUser === 'jcontreras.totalclean@gmail.com' || 
+                       currentUser?.esAdminReal || 
+                       rolUser === 'superadmin' || 
+                       rolUser === 'admin' ||
+                       (rolUser.includes('admin') && !rolUser.includes('analista'));
 
-  const esUsuarioCompras = esAdmin || deptoUser.includes('compra') || rolUser.includes('compra') || rolUser.includes('gerente de compras') || rolUser.includes('gerente compras');
+  // 2. Gerente General (Carlos Vega)
+  const esGerenteGeneral = emailUser === 'cvega@totalclean.com.ve' || 
+                           emailUser === 'cvega.totalclean@gmail.com' ||
+                           emailUser === 'cvega@totalclean.com' ||
+                           emailUser.includes('cvega') ||
+                           (nombreUser.includes('carlos') && apellidoUser.includes('vega')) ||
+                           rolUser.includes('gerente general') || 
+                           cargoUser.includes('gerente general');
 
-  // Es Gerente General (Carlos Vega)
-  const esCarlosVega = esAdmin || 
-                       rolUser.includes('gerente general') || 
-                       emailUser === 'cvega@totalclean.com.ve';
+  // 3. Gerente de Compras (Ricardo Herrera)
+  // NOTA: Excluye a los Analistas de Compras
+  const esGerenteCompras = (nombreUser.includes('ricardo') && apellidoUser.includes('herrera')) ||
+                           emailUser.includes('rherrera') ||
+                           rolUser === 'gerente de compras' ||
+                           rolUser === 'gerente compras' ||
+                           cargoUser === 'gerente de compras' ||
+                           cargoUser === 'gerente compras' ||
+                           (rolUser.includes('gerente') && deptoUser.includes('compra') && !rolUser.includes('analista'));
 
-  // Apartado Exclusivo de Asignación de Prioridad ODC (Super Admin, Gerente Compras, Carlos Vega)
-  const puedeAprobarPrioridadODC = esAdminSuper || esCarlosVega || esUsuarioCompras;
+  // EXCLUSIVO PARA: Super Admin, Gerente General y Gerente de Compras (NO analistas de compras)
+  const puedeAprobarPrioridadODC = esSuperAdmin || esGerenteGeneral || esGerenteCompras;
+  const puedeExportarODCOriginal = esSuperAdmin || esGerenteGeneral || esGerenteCompras;
+
+  // Acceso general para analistas y compras
+  const esUsuarioCompras = esSuperAdmin || esGerenteGeneral || esGerenteCompras || deptoUser.includes('compra') || rolUser.includes('compra');
+
+  // EXCLUSIVO PARA: Super Admin (José) y Gerente General (Carlos Vega)
+  const puedeActivarFirmaCarlos = esSuperAdmin || esGerenteGeneral;
+  const esCarlosVega = puedeActivarFirmaCarlos;
+
+  // EXCLUSIVO PARA: Super Admin (José) y Gerente de Compras (Ricardo Herrera)
+  const puedeActivarFirmaRicardo = esSuperAdmin || esGerenteCompras;
+  const esRicardoHerrera = puedeActivarFirmaRicardo;
+
+  const esAdminSuper = esSuperAdmin;
+  const esAdmin = esSuperAdmin || esGerenteGeneral;
 
   useEffect(() => {
     cargarOrdenes();
+    cargarDestinosDespacho();
 
     const handleProvActualizados = () => {
       cargarOrdenes();
+      cargarDestinosDespacho();
     };
     window.addEventListener('proveedores_actualizados', handleProvActualizados);
 
@@ -227,6 +276,38 @@ const OrdenesCompra = ({ currentUser }) => {
       });
       setRequisicionesList(reqsData || []);
 
+      // 2.5 Cargar renglones de ordenes_compra_items para mapeo de descripción directa
+      let itemsOdcData = [];
+      let pageItems = 0;
+      let keepItems = true;
+      while (keepItems) {
+        const { data: chunkItems, error: itemsErr } = await supabase
+          .from('ordenes_compra_items')
+          .select('id, orden_compra_id, item_numero, descripcion, cantidad, unidad, precio_unitario, subtotal, total_fila')
+          .order('item_numero', { ascending: true })
+          .range(pageItems * 1000, (pageItems + 1) * 1000 - 1);
+        if (itemsErr) {
+          console.warn("Aviso al cargar ítems globales de ODC:", itemsErr.message);
+          break;
+        }
+        if (chunkItems && chunkItems.length > 0) {
+          itemsOdcData = itemsOdcData.concat(chunkItems);
+          if (chunkItems.length < 1000) keepItems = false;
+          else pageItems++;
+        } else {
+          keepItems = false;
+        }
+      }
+
+      const odcItemsMap = {};
+      (itemsOdcData || []).forEach(it => {
+        if (it.orden_compra_id) {
+          const key = String(it.orden_compra_id);
+          if (!odcItemsMap[key]) odcItemsMap[key] = [];
+          odcItemsMap[key].push(it);
+        }
+      });
+
       // 3. Cargar órdenes de compra sin pedir relaciones embebidas
       let data = [];
       let pageOdc = 0;
@@ -263,6 +344,47 @@ const OrdenesCompra = ({ currentUser }) => {
                        (o.correlativo_req ? reqMap[String(o.correlativo_req).trim().toUpperCase()] : null) || 
                        (o.requisicion_correlativo ? reqMap[String(o.requisicion_correlativo).trim().toUpperCase()] : null);
 
+        let itemsThisOdc = odcItemsMap[String(o.id)] || [];
+
+        // Fallback: Si no hay ítems en la tabla ordenes_compra_items, buscar en items de requisición
+        if (itemsThisOdc.length === 0 && reqObj?.items) {
+          const rawItems = Array.isArray(reqObj.items) ? reqObj.items : parsearJsonSeguro(reqObj.items);
+          const matchingReqItems = (rawItems || []).filter(it => 
+            (it.historial_compras || []).some(h => String(h.odc_id) === String(o.id) || h.odc_numero === o.numero_odc)
+          );
+          if (matchingReqItems.length > 0) {
+            itemsThisOdc = matchingReqItems.map((it, idx) => ({
+              id: it.id || `req_it_${idx}`,
+              orden_compra_id: o.id,
+              item_numero: idx + 1,
+              descripcion: it.descripcion || it.nombre || it.material || 'Material / Servicio',
+              cantidad: it.cantidad || it.cant || 1,
+              unidad: it.unidad || it.uni || 'UND',
+              precio_unitario: it.precio_unitario || it.pu || 0
+            }));
+          } else if (rawItems && rawItems.length > 0) {
+            itemsThisOdc = rawItems.map((it, idx) => ({
+              id: it.id || `req_it_${idx}`,
+              orden_compra_id: o.id,
+              item_numero: idx + 1,
+              descripcion: it.descripcion || it.nombre || it.material || 'Material / Servicio',
+              cantidad: it.cantidad || it.cant || 1,
+              unidad: it.unidad || it.uni || 'UND',
+              precio_unitario: it.precio_unitario || it.pu || 0
+            }));
+          }
+        }
+
+        let descResumen = '';
+        if (itemsThisOdc.length === 1) {
+          const it = itemsThisOdc[0];
+          descResumen = `${it.cantidad ? it.cantidad + ' ' + (it.unidad || 'UND') + ' - ' : ''}${it.descripcion || ''}`.trim();
+        } else if (itemsThisOdc.length > 1) {
+          descResumen = itemsThisOdc.map(it => `${it.cantidad ? it.cantidad + ' ' + (it.unidad || 'UND') + ' - ' : ''}${it.descripcion}`).join(', ');
+        } else {
+          descResumen = o.observaciones || o.destino_despacho || 'Sin descripción detallada';
+        }
+
         const nombreVal = (o.proveedor_nombre && o.proveedor_nombre !== 'N/A') 
           ? o.proveedor_nombre 
           : (prov?.razon_social || prov?.nombre || 'N/A');
@@ -293,6 +415,20 @@ const OrdenesCompra = ({ currentUser }) => {
         const prioStatusLocal = localStorage.getItem(`odc_prio_status_${o.id}`);
         const prioUserLocal = localStorage.getItem(`odc_prio_user_${o.id}`);
         const motivoRechazoLocal = localStorage.getItem(`odc_prio_motivo_${o.id}`);
+        const pasaAlmacenLocal = localStorage.getItem(`odc_pasa_almacen_${o.id}`) || localStorage.getItem(`odc_pasa_almacen_${o.numero_odc}`);
+
+        let pasaAlmacenVal = true;
+        if (o.pasa_por_almacen !== undefined && o.pasa_por_almacen !== null) {
+          pasaAlmacenVal = o.pasa_por_almacen !== false;
+        } else if (pasaAlmacenLocal !== null) {
+          pasaAlmacenVal = pasaAlmacenLocal === 'true';
+        } else if (reqObj?.items && Array.isArray(reqObj.items)) {
+          const directItem = reqObj.items.find(it => 
+            (it.historial_compras || []).some(h => (String(h.odc_id) === String(o.id) || h.odc_numero === o.numero_odc) && h.pasa_por_almacen === false) ||
+            (it.pasa_por_almacen === false && (it.historial_compras || []).some(h => String(h.odc_id) === String(o.id) || h.odc_numero === o.numero_odc))
+          );
+          if (directItem) pasaAlmacenVal = false;
+        }
 
         const stOrden = String(o.estatus_orden || '').trim().toUpperCase();
         const tieneRechazoEnComentario = typeof o.carlos_comentario_aprobacion === 'string' && o.carlos_comentario_aprobacion.startsWith('[RECHAZADO]:');
@@ -324,8 +460,27 @@ const OrdenesCompra = ({ currentUser }) => {
           prioridadPago = esEmergencia ? 1 : 2;
         }
 
+        let datosBancariosVal = o.datos_bancarios || o.cuenta_bancaria || o.cuenta_bancaria_proveedor || null;
+        if (!datosBancariosVal && prov?.cuentas_bancarias) {
+          let ctas = [];
+          if (Array.isArray(prov.cuentas_bancarias)) ctas = prov.cuentas_bancarias;
+          else if (typeof prov.cuentas_bancarias === 'string') {
+            try { ctas = JSON.parse(prov.cuentas_bancarias); } catch { ctas = []; }
+          }
+          if (ctas.length > 0) {
+            const c0 = ctas[0];
+            datosBancariosVal = `${c0.banco || 'Banco'} (${c0.moneda || 'USD'}) - N° Cuenta: ${c0.nro_cuenta || 'N/A'} - Titular: ${c0.titular || 'N/A'} (${c0.rif || 'N/A'}) ${c0.tipo_cuenta ? `[${c0.tipo_cuenta}]` : ''}`.trim();
+          }
+        }
+
         return {
           ...o,
+          items: itemsThisOdc,
+          items_count: itemsThisOdc.length,
+          descripcion_resumen: descResumen,
+          datos_bancarios: datosBancariosVal,
+          cuenta_bancaria: datosBancariosVal,
+          pasa_por_almacen: pasaAlmacenVal,
           requisicion_id: reqIdResolved || o.requisicion_id || (reqObj ? reqObj.id : null),
           proveedor_nombre: nombreVal,
           proveedor_rif: rifVal,
@@ -343,7 +498,9 @@ const OrdenesCompra = ({ currentUser }) => {
           estado_aprobacion_precio: estadoAprobacion,
           prioridad_pago: prioridadPago,
           aprobado_compras_por: o.aprobado_compras_por || o.aprobado_por_nombre || prioUserLocal || null,
-          motivo_rechazo_compras: motivoRechazo
+          motivo_rechazo_compras: motivoRechazo,
+          ricardo_firma_digital_activa: o.ricardo_firma_digital_activa !== undefined && o.ricardo_firma_digital_activa !== null ? Boolean(o.ricardo_firma_digital_activa) : (localStorage.getItem(`odc_ricardo_firma_${o.id}`) === 'true'),
+          carlos_firma_digital_activa: Boolean(o.carlos_firma_digital_activa)
         };
       });
       setOrdenes(mapeadas);
@@ -421,12 +578,23 @@ const OrdenesCompra = ({ currentUser }) => {
           if (foundReq.solicitante && (!odcCompleta.solicitante || odcCompleta.solicitante === 'Total Clean C.A.')) {
             odcCompleta.solicitante = foundReq.solicitante;
           }
-          if (foundReq.centro_costo || foundReq.obra) {
-            odcCompleta.destino_despacho = foundReq.centro_costo || foundReq.obra;
-          }
+          odcCompleta.centro_costo = foundReq.centro_costo || foundReq.obra || null;
         }
       } catch (e) {
         console.error("Error al buscar requisición vinculada:", e);
+      }
+    }
+
+    const pasaAlmacenLocal = localStorage.getItem(`odc_pasa_almacen_${odcCompleta.id}`) || localStorage.getItem(`odc_pasa_almacen_${odcCompleta.numero_odc}`);
+    if (odcCompleta.pasa_por_almacen === undefined || odcCompleta.pasa_por_almacen === null) {
+      if (pasaAlmacenLocal !== null) {
+        odcCompleta.pasa_por_almacen = pasaAlmacenLocal === 'true';
+      } else if (odcCompleta.requisicion_obj?.items) {
+        const direct = (odcCompleta.requisicion_obj.items || []).some(it => 
+          (it.historial_compras || []).some(h => (String(h.odc_id) === String(odcCompleta.id) || h.odc_numero === odcCompleta.numero_odc) && h.pasa_por_almacen === false) ||
+          (it.pasa_por_almacen === false && (it.historial_compras || []).some(h => String(h.odc_id) === String(odcCompleta.id) || h.odc_numero === odcCompleta.numero_odc))
+        );
+        if (direct) odcCompleta.pasa_por_almacen = false;
       }
     }
 
@@ -519,6 +687,77 @@ const OrdenesCompra = ({ currentUser }) => {
   };
 
   // -------------------------------------------------------------
+  // DESTINOS DE DESPACHO PREDETERMINADOS (COMPARTIDOS CON COMPRAS)
+  // -------------------------------------------------------------
+  const cargarDestinosDespacho = useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from('destinos_despacho_predeterminados')
+        .select('*')
+        .order('es_predeterminado', { ascending: false });
+      if (!error && data) {
+        setDestinosDespacho(data);
+      }
+    } catch (err) {
+      console.warn("Tabla destinos_despacho_predeterminados no disponible:", err.message);
+    }
+  }, []);
+
+  const guardarNuevoDestino = async () => {
+    if (!nuevoDestinoForm.nombre || !nuevoDestinoForm.direccion) {
+      return toast.error("Ingrese el nombre y la dirección del destino.");
+    }
+    try {
+      const { data, error } = await supabase.from('destinos_despacho_predeterminados').insert([{
+        nombre: nuevoDestinoForm.nombre.trim(),
+        direccion: nuevoDestinoForm.direccion.trim(),
+        contacto_nombre: nuevoDestinoForm.contacto_nombre?.trim() || null,
+        contacto_telefono: nuevoDestinoForm.contacto_telefono?.trim() || null
+      }]).select().single();
+      if (error) throw error;
+      toast.success("Nuevo destino guardado.");
+      setDestinosDespacho(prev => [...prev, data]);
+      setEditOdcTarget(prev => ({
+        ...prev,
+        despachar_a_id: data.id,
+        destino_despacho: data.nombre,
+        despachar_a_direccion: data.direccion && data.direccion !== 'null' ? `${data.nombre} - ${data.direccion}` : data.nombre
+      }));
+      setShowNuevoDestinoModal(false);
+      setNuevoDestinoForm({ nombre: '', direccion: '', contacto_nombre: '', contacto_telefono: '' });
+    } catch (err) {
+      toast.error("Error al guardar destino: " + err.message);
+    }
+  };
+
+  const eliminarDestino = async (destinoId) => {
+    if (!destinoId) return;
+    const dest = destinosDespacho.find(d => String(d.id) === String(destinoId));
+    if (!dest) return;
+    if (!window.confirm(`¿Está seguro de eliminar el destino de despacho "${dest.nombre}"?`)) return;
+
+    try {
+      const { error } = await supabase
+        .from('destinos_despacho_predeterminados')
+        .delete()
+        .eq('id', destinoId);
+      if (error) throw error;
+      toast.success("Destino de despacho eliminado.");
+      setDestinosDespacho(prev => prev.filter(d => String(d.id) !== String(destinoId)));
+      if (String(editOdcTarget?.despachar_a_id) === String(destinoId)) {
+        setEditOdcTarget(prev => ({
+          ...prev,
+          despachar_a_id: '',
+          destino_despacho: '',
+          despachar_a_direccion: ''
+        }));
+      }
+    } catch (err) {
+      toast.error("Error al eliminar destino: " + err.message);
+    }
+  };
+
+  // -------------------------------------------------------------
   // FUNCIONALIDAD DE EDICIÓN COMPLETA DE ORDEN DE COMPRA (ODC)
   // -------------------------------------------------------------
   const abrirModalEditarOdc = async (odc) => {
@@ -538,6 +777,23 @@ const OrdenesCompra = ({ currentUser }) => {
       // 1. Cargar lista de proveedores para el selector
       const provs = await obtenerTodosProveedores();
       setProveedoresList(provs || []);
+
+      // 1.1 Cargar destinos de despacho si aún no están en memoria
+      let currentDestinos = destinosDespacho;
+      if (!currentDestinos || currentDestinos.length === 0) {
+        try {
+          const { data: dData } = await supabase
+            .from('destinos_despacho_predeterminados')
+            .select('*')
+            .order('es_predeterminado', { ascending: false });
+          if (dData && dData.length > 0) {
+            setDestinosDespacho(dData);
+            currentDestinos = dData;
+          }
+        } catch (e) {
+          console.warn("Error cargando destinos en abrirModalEditarOdc:", e);
+        }
+      }
 
       // 2. Cargar lista de requisiciones aprobadas/activas para vincular o importar renglones (Paginación completa)
       let reqsAll = [];
@@ -618,6 +874,43 @@ const OrdenesCompra = ({ currentUser }) => {
 
       const aplicaIva = (pctIva > 0) && (odc.iva_monto > 0 || odc.monto_iva > 0 || pctIva > 0);
 
+      // Cuentas bancarias del proveedor
+      const provSeleccionado = (proveedoresList || []).find(p => String(p.id) === String(odc.proveedor_id));
+      let ctasProv = [];
+      if (provSeleccionado?.cuentas_bancarias) {
+        if (Array.isArray(provSeleccionado.cuentas_bancarias)) ctasProv = provSeleccionado.cuentas_bancarias;
+        else if (typeof provSeleccionado.cuentas_bancarias === 'string') {
+          try { ctasProv = JSON.parse(provSeleccionado.cuentas_bancarias); } catch { ctasProv = []; }
+        }
+      }
+      let defaultCtaStr = '';
+      if (ctasProv.length > 0) {
+        const c0 = ctasProv[0];
+        defaultCtaStr = `${c0.banco || 'Banco'} (${c0.moneda || 'USD'}) - N° Cuenta: ${c0.nro_cuenta || 'N/A'} - Titular: ${c0.titular || 'N/A'} (${c0.rif || 'N/A'}) ${c0.tipo_cuenta ? `[${c0.tipo_cuenta}]` : ''}`;
+      }
+
+      const ctaBancariaFinal = odc.datos_bancarios || odc.cuenta_bancaria || odc.cuenta_bancaria_proveedor || defaultCtaStr;
+
+      // Buscar coincidencia en destinos predeterminados
+      const destMatch = (currentDestinos || []).find(d => 
+        (odc.despachar_a_id && String(d.id) === String(odc.despachar_a_id)) ||
+        (odc.destino_despacho && d.nombre && (
+          odc.destino_despacho.toLowerCase().trim() === d.nombre.toLowerCase().trim() ||
+          odc.destino_despacho.toLowerCase().includes(d.nombre.toLowerCase())
+        )) ||
+        (odc.despachar_a_direccion && d.nombre && (
+          odc.despachar_a_direccion.toLowerCase().trim() === d.nombre.toLowerCase().trim() ||
+          odc.despachar_a_direccion.toLowerCase().includes(d.nombre.toLowerCase())
+        ))
+      );
+
+      const monActual = odc.moneda || 'USD';
+      const isStandardMon = ['USD', 'BS'].includes(monActual);
+      const defaultDest = currentDestinos?.find(d => d.es_predeterminado) || currentDestinos?.[0];
+      const initialDestId = destMatch ? destMatch.id : (odc.despachar_a_id || (defaultDest ? defaultDest.id : ''));
+      const initialDestNombre = destMatch ? destMatch.nombre : (odc.destino_despacho || (defaultDest ? defaultDest.nombre : 'Campo Boscán'));
+      const initialDestDir = destMatch ? (destMatch.direccion && destMatch.direccion !== 'null' ? `${destMatch.nombre} - ${destMatch.direccion}` : destMatch.nombre) : (odc.despachar_a_direccion || initialDestNombre);
+
       setEditOdcTarget({
         ...odc,
         requisicion_id: resolvedReqId,
@@ -627,14 +920,20 @@ const OrdenesCompra = ({ currentUser }) => {
         proveedor_contacto: odc.proveedor_contacto || '',
         proveedor_ciudad: odc.proveedor_ciudad || '',
         proveedor_direccion: odc.proveedor_direccion || '',
+        datos_bancarios: ctaBancariaFinal,
+        cuenta_bancaria: ctaBancariaFinal,
         cotizacion_ref: odc.cotizacion_ref || '',
         fecha_cotizacion: odc.fecha_cotizacion || '',
         fecha_despacho: odc.fecha_despacho || odc.fecha_emision || '',
         tipo_pago: odc.tipo_pago || 'CONTADO',
         dias_credito: odc.dias_credito || 0,
-        moneda: odc.moneda || 'USD',
+        moneda: monActual,
+        moneda_custom: isStandardMon ? '' : monActual,
         tasa_cambio: odc.tasa_cambio || odc.tasa_bcv || 1,
-        destino_despacho: odc.destino_despacho || odc.despachar_a_direccion || 'Galpones Riese - Av. Los Haticos',
+        despachar_a_id: initialDestId,
+        destino_despacho: initialDestNombre,
+        despachar_a_direccion: initialDestDir,
+        pasa_por_almacen: odc.pasa_por_almacen !== false,
         terminos_condiciones: odc.terminos_condiciones || "Precios incluyen entrega en el sitio de destino especificado. Mercancía sujeta a inspección de calidad y conteo físico.",
         observaciones: odc.observaciones || localStorage.getItem(`odc_obs_${odc.id}`) || '',
         aplica_iva: aplicaIva,
@@ -918,6 +1217,8 @@ const OrdenesCompra = ({ currentUser }) => {
         (r.correlativo_req && String(r.correlativo_req).trim().toUpperCase() === String(editOdcTarget.requisicion_id).trim().toUpperCase())
       );
 
+      const itemPasaAlmacen = editOdcTarget.pasa_por_almacen !== false;
+
       const payloadOdc = {
         requisicion_id: reqObjTarget ? reqObjTarget.id : (editOdcTarget.requisicion_id && !isNaN(parseInt(editOdcTarget.requisicion_id)) ? parseInt(editOdcTarget.requisicion_id) : null),
         proveedor_id: editOdcTarget.proveedor_id || null,
@@ -935,8 +1236,10 @@ const OrdenesCompra = ({ currentUser }) => {
         fecha_vencimiento_pago: fechaVenc,
         moneda: editOdcTarget.moneda || 'USD',
         tasa_bcv: parseFloat(editOdcTarget.tasa_cambio || editOdcTarget.tasa_bcv) || 1,
-        despachar_a_direccion: editOdcTarget.destino_despacho || null,
-        destino_despacho: editOdcTarget.destino_despacho || null,
+        despachar_a_id: editOdcTarget.despachar_a_id || null,
+        despachar_a_direccion: editOdcTarget.despachar_a_direccion || editOdcTarget.destino_despacho || null,
+        destino_despacho: editOdcTarget.destino_despacho || editOdcTarget.despachar_a_direccion || null,
+        pasa_por_almacen: itemPasaAlmacen,
         datos_bancarios: editOdcTarget.datos_bancarios || editOdcTarget.cuenta_bancaria || null,
         cuenta_bancaria: editOdcTarget.datos_bancarios || editOdcTarget.cuenta_bancaria || null,
         terminos_condiciones: editOdcTarget.terminos_condiciones || null,
@@ -963,6 +1266,11 @@ const OrdenesCompra = ({ currentUser }) => {
       // 1. Actualizar ordenes_compra con fallback automático de columnas
       const { error: errUpdate } = await safeSupabaseUpdate(supabase, 'ordenes_compra', payloadOdc, 'id', editOdcTarget.id);
       if (errUpdate) throw errUpdate;
+
+      localStorage.setItem(`odc_pasa_almacen_${editOdcTarget.id}`, itemPasaAlmacen ? 'true' : 'false');
+      if (editOdcTarget.numero_odc) {
+        localStorage.setItem(`odc_pasa_almacen_${editOdcTarget.numero_odc}`, itemPasaAlmacen ? 'true' : 'false');
+      }
 
       if (editOdcTarget.observaciones !== undefined) {
         localStorage.setItem(`odc_obs_${editOdcTarget.id}`, editOdcTarget.observaciones || '');
@@ -1011,25 +1319,51 @@ const OrdenesCompra = ({ currentUser }) => {
             const itemCoincidente = itemsValidos.find(it => String(it.requisicion_item_id) === String(r.id));
             if (itemCoincidente) {
               const historialPrevio = Array.isArray(r.historial_compras) ? r.historial_compras : [];
-              const yaExiste = historialPrevio.some(h => h.odc_id === editOdcTarget.id || h.odc_numero === editOdcTarget.numero_odc);
-              if (!yaExiste) {
-                return {
-                  ...r,
-                  historial_compras: [
-                    ...historialPrevio,
-                    {
-                      fecha: new Date().toISOString(),
-                      tipo: 'ODC',
-                      odc_numero: editOdcTarget.numero_odc,
-                      odc_id: editOdcTarget.id,
-                      proveedor_nombre: editOdcTarget.proveedor_nombre || 'Proveedor',
+              const yaExiste = historialPrevio.some(h => String(h.odc_id) === String(editOdcTarget.id) || h.odc_numero === editOdcTarget.numero_odc);
+              let historialActualizado = [];
+              if (yaExiste) {
+                historialActualizado = historialPrevio.map(h => {
+                  if (String(h.odc_id) === String(editOdcTarget.id) || h.odc_numero === editOdcTarget.numero_odc) {
+                    return {
+                      ...h,
+                      proveedor_nombre: editOdcTarget.proveedor_nombre || h.proveedor_nombre || 'Proveedor',
                       cantidad: parseFloat(itemCoincidente.cantidad) || 0,
+                      cant: parseFloat(itemCoincidente.cantidad) || 0,
                       pu: parseFloat(itemCoincidente.precio_unitario) || 0,
+                      pasa_por_almacen: itemPasaAlmacen,
+                      estatus_almacen: itemPasaAlmacen ? (h.estatus_almacen === 'no_aplica' ? 'Por_Clasificar_Almacen' : (h.estatus_almacen || 'Por_Clasificar_Almacen')) : 'no_aplica',
+                      ubicacion_almacen: itemPasaAlmacen ? (h.ubicacion_almacen === 'ENTREGA DIRECTA (Sin paso por almacén)' ? null : h.ubicacion_almacen) : 'ENTREGA DIRECTA (Sin paso por almacén)',
                       usuario: `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim()
-                    }
-                  ]
-                };
+                    };
+                  }
+                  return h;
+                });
+              } else {
+                historialActualizado = [
+                  ...historialPrevio,
+                  {
+                    fecha: new Date().toISOString(),
+                    tipo: 'ODC',
+                    odc_numero: editOdcTarget.numero_odc,
+                    odc_id: editOdcTarget.id,
+                    proveedor_nombre: editOdcTarget.proveedor_nombre || 'Proveedor',
+                    cantidad: parseFloat(itemCoincidente.cantidad) || 0,
+                    cant: parseFloat(itemCoincidente.cantidad) || 0,
+                    pu: parseFloat(itemCoincidente.precio_unitario) || 0,
+                    pasa_por_almacen: itemPasaAlmacen,
+                    estatus_almacen: itemPasaAlmacen ? 'Por_Clasificar_Almacen' : 'no_aplica',
+                    ubicacion_almacen: itemPasaAlmacen ? null : 'ENTREGA DIRECTA (Sin paso por almacén)',
+                    usuario: `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim()
+                  }
+                ];
               }
+              return {
+                ...r,
+                pasa_por_almacen: itemPasaAlmacen,
+                estatus_almacen: itemPasaAlmacen ? (r.estatus_almacen === 'no_aplica' ? 'Por_Clasificar_Almacen' : (r.estatus_almacen || 'Por_Clasificar_Almacen')) : 'no_aplica',
+                ubicacion_almacen: itemPasaAlmacen ? (r.ubicacion_almacen === 'ENTREGA DIRECTA (Sin paso por almacén)' ? null : r.ubicacion_almacen) : 'ENTREGA DIRECTA (Sin paso por almacén)',
+                historial_compras: historialActualizado
+              };
             }
             return r;
           });
@@ -1049,11 +1383,24 @@ const OrdenesCompra = ({ currentUser }) => {
 
       // 4. Refrescar estado local
       const reqObjNuevo = reqObjTarget || (requisicionesList || []).find(r => String(r.id) === String(editOdcTarget.requisicion_id));
+      let descResumenEdit = '';
+      if (newItemsPayload.length === 1) {
+        const it = newItemsPayload[0];
+        descResumenEdit = `${it.cantidad ? it.cantidad + ' ' + (it.unidad || 'UND') + ' - ' : ''}${it.descripcion || ''}`.trim();
+      } else if (newItemsPayload.length > 1) {
+        descResumenEdit = newItemsPayload.map(it => `${it.cantidad ? it.cantidad + ' ' + (it.unidad || 'UND') + ' - ' : ''}${it.descripcion}`).join(', ');
+      } else {
+        descResumenEdit = payloadOdc.observaciones || 'Sin descripción detallada';
+      }
+
       const odcRefrescada = {
         ...editOdcTarget,
         ...payloadOdc,
         requisicion_correlativo: reqObjNuevo?.correlativo_req || null,
-        requisicion_obj: reqObjNuevo || null
+        requisicion_obj: reqObjNuevo || null,
+        items: newItemsPayload,
+        items_count: newItemsPayload.length,
+        descripcion_resumen: descResumenEdit
       };
 
       setOrdenes(prev => prev.map(o => o.id === editOdcTarget.id ? odcRefrescada : o));
@@ -1111,44 +1458,162 @@ const OrdenesCompra = ({ currentUser }) => {
     }
   };
 
-  // Anular Órden de Compra (Exclusivo Compras / Admin)
-  const manejarAnularOdc = async (odcTarget = odcSeleccionada) => {
+  // Abrir modal de confirmación y selección de motivo de anulación
+  const abrirModalAnularOdc = (odcTarget = odcSeleccionada) => {
     if (!odcTarget) return;
     if (!esUsuarioCompras) {
-      toast.error("Solo el personal del departamento de Compras tiene autorización para anular Órdenes de Compra.");
+      toast.error("Solo el personal del departamento de Compras o Administración tiene autorización para anular Órdenes de Compra.");
+      return;
+    }
+    setOdcParaAnular(odcTarget);
+    setMotivoAnulacionSelect('Error en montos, precios unitarios o cotización');
+    setMotivoAnulacionDetalle('');
+    setModalAnularOpen(true);
+  };
+
+  // Ejecutar anulación oficial de la ODC persistiendo motivo y liberando saldo en requisición
+  const ejecutarAnulacionOdc = async () => {
+    if (!odcParaAnular) return;
+    if (!motivoAnulacionSelect) {
+      toast.error("Debe seleccionar un motivo de anulación de la lista.");
+      return;
+    }
+    if (motivoAnulacionSelect === 'Otro motivo (especificar en detalle)' && !motivoAnulacionDetalle.trim()) {
+      toast.error("Por favor detalle el motivo de la anulación en el campo de texto.");
       return;
     }
 
-    const confirmar = window.confirm(`¿Está seguro de ANULAR la Órden de Compra ${odcTarget.numero_odc}?`);
-    if (!confirmar) return;
-
+    setGuardandoAnulacion(true);
     try {
+      const usuarioNombre = currentUser ? `${currentUser.nombre || ''} ${currentUser.apellido || ''}`.trim() || 'Compras' : 'Compras';
+      const usuarioId = currentUser?.id || null;
+      const nowIso = new Date().toISOString();
+
+      const motivoCompleto = motivoAnulacionSelect === 'Otro motivo (especificar en detalle)'
+        ? `Otro: ${motivoAnulacionDetalle.trim()}`
+        : (motivoAnulacionDetalle.trim() ? `${motivoAnulacionSelect} - ${motivoAnulacionDetalle.trim()}` : motivoAnulacionSelect);
+
+      // 1. Actualizar estado de la ODC a ANULADA en base de datos
       const dbPayload = {
-        estatus_pago: 'ANULADO',
-        status_pago: 'ANULADO'
+        estatus_orden: 'ANULADA',
+        estatus_pago: 'ANULADA',
+        status_pago: 'ANULADA',
+        estatus_recepcion: 'ANULADA',
+        estado_aprobacion_precio: 'anulada',
+        prioridad_pago: null,
+        motivo_anulacion: motivoCompleto,
+        motivo_rechazo_compras: motivoCompleto,
+        carlos_comentario_aprobacion: `[ANULADA]: ${motivoCompleto}`,
+        anulado_por: usuarioNombre,
+        anulado_por_id: usuarioId,
+        fecha_anulacion: nowIso,
+        anulado: true
       };
 
-      const { error } = await supabase
-        .from('ordenes_compra')
-        .update(dbPayload)
-        .eq('id', odcTarget.id);
-
+      const { error } = await safeSupabaseUpdate(supabase, 'ordenes_compra', dbPayload, 'id', odcParaAnular.id);
       if (error) throw error;
 
-      const odcActualizada = { ...odcTarget, ...dbPayload, estatus_pago: 'ANULADA', status_pago: 'ANULADA', estatus_recepcion: 'ANULADA' };
-      if (odcSeleccionada && odcSeleccionada.id === odcTarget.id) {
+      localStorage.setItem(`odc_prio_status_${odcParaAnular.id}`, 'anulada');
+      localStorage.setItem(`odc_prio_motivo_${odcParaAnular.id}`, motivoCompleto);
+      localStorage.removeItem(`odc_prio_${odcParaAnular.id}`);
+
+      // 2. Sincronizar Requisición asociada para registrar la anulación en el historial y liberar cantidades
+      const rawReqId = odcParaAnular.requisicion_id || odcParaAnular.requisicion_correlativo;
+      if (rawReqId) {
+        let numOnly = String(rawReqId).replace(/^REQ-?/i, '').trim();
+        let q = supabase.from('requisiciones').select('id, items, correlativo_req');
+        if (!isNaN(Number(numOnly)) && Number(numOnly) > 0) {
+          q = q.or(`id.eq.${Number(numOnly)},correlativo_req.eq.${rawReqId}`);
+        } else {
+          q = q.eq('correlativo_req', rawReqId);
+        }
+        const { data: reqData } = await q.maybeSingle();
+
+        if (reqData && Array.isArray(reqData.items)) {
+          const odcIdStr = String(odcParaAnular.id);
+          const odcNumStr = String(odcParaAnular.numero_odc).trim().toUpperCase();
+
+          const updatedItems = reqData.items.map(it => {
+            const hist = Array.isArray(it.historial_compras) ? it.historial_compras : [];
+            let itemModificado = false;
+
+            const newHist = hist.map(h => {
+              const matchOdc = (h.odc_id && String(h.odc_id) === odcIdStr) ||
+                               (h.odc_numero && String(h.odc_numero).trim().toUpperCase() === odcNumStr) ||
+                               (h.doc_numero && String(h.doc_numero).trim().toUpperCase() === odcNumStr);
+              if (matchOdc && h.tipo !== 'ANULACION') {
+                itemModificado = true;
+                return {
+                  ...h,
+                  tipo: 'ANULACION',
+                  doc_tipo: 'ANULACION_ODC',
+                  motivo: `ODC ${odcParaAnular.numero_odc} Anulada: ${motivoCompleto}`,
+                  comentario: `Órden de Compra ${odcParaAnular.numero_odc} anulada (${motivoCompleto}). Saldo liberado para re-compra.`,
+                  fecha_anulacion: nowIso,
+                  usuario_anulo_nombre: usuarioNombre,
+                  usuario_anulo_id: usuarioId,
+                  anulado: true
+                };
+              }
+              return h;
+            });
+
+            if (!itemModificado) return it;
+
+            // Recalcular cantidad comprada activa
+            const comprasActivas = newHist.filter(h => h.tipo !== 'JUSTIFICACION' && h.tipo !== 'ANULACION' && h.tipo !== 'DIRECTRIZ' && !h.anulado);
+            const totalComprado = comprasActivas.reduce((acc, h) => acc + (parseFloat(h.cant) || 0), 0);
+            const cantPedida = parseFloat(it.cantidad_pedida ?? it.cant) || 0;
+            const nuevaPendiente = Math.max(0, cantPedida - totalComprado);
+
+            return {
+              ...it,
+              historial_compras: newHist,
+              cantidad_comprada: totalComprado,
+              cantidad_pendiente: nuevaPendiente,
+              estado_item: nuevaPendiente > 0 ? 'pendiente' : (totalComprado > 0 ? 'comprado' : 'pendiente'),
+              estatus_almacen: totalComprado > 0 ? (it.estatus_almacen || 'no_aplica') : 'pendiente_asignar'
+            };
+          });
+
+          await supabase
+            .from('requisiciones')
+            .update({ items: updatedItems })
+            .eq('id', reqData.id);
+        }
+      }
+
+      const odcActualizada = { 
+        ...odcParaAnular, 
+        ...dbPayload, 
+        estatus_pago: 'ANULADA', 
+        status_pago: 'ANULADA', 
+        estatus_recepcion: 'ANULADA', 
+        estatus_orden: 'ANULADA', 
+        estado_aprobacion_precio: 'anulada' 
+      };
+
+      if (odcSeleccionada && odcSeleccionada.id === odcParaAnular.id) {
         setOdcSeleccionada(odcActualizada);
       }
-      setOrdenes(prev => prev.map(o => o.id === odcTarget.id ? odcActualizada : o));
-      toast.success(`Órden de Compra ${odcTarget.numero_odc} ANULADA correctamente.`);
+      setOrdenes(prev => prev.map(o => o.id === odcParaAnular.id ? odcActualizada : o));
+      setModalAnularOpen(false);
+      setOdcParaAnular(null);
+      toast.success(`🚫 Órden de Compra ${odcParaAnular.numero_odc} ANULADA y saldo liberado a la requisición.`);
     } catch (err) {
       console.error("Error al anular ODC:", err);
       toast.error("Error al anular la Órden de Compra: " + err.message);
+    } finally {
+      setGuardandoAnulacion(false);
     }
   };
 
   // Alternar Firma Digital Remota de Carlos Vega
   const toggleFirmaDigitalCarlos = async (activa) => {
+    if (!puedeActivarFirmaCarlos) {
+      toast.error("Acceso no autorizado: solo el Super Admin o la Gerencia General pueden activar la Firma Digital.");
+      return;
+    }
     if (!odcSeleccionada) return;
     setGuardandoFirmaCarlos(true);
     try {
@@ -1181,6 +1646,48 @@ const OrdenesCompra = ({ currentUser }) => {
     }
   };
 
+  // Alternar Firma Digital Remota de Ricardo Herrera (Gerente de Compras)
+  const toggleFirmaDigitalRicardo = async (activa) => {
+    if (!puedeActivarFirmaRicardo) {
+      toast.error("Acceso no autorizado: solo el Super Admin o el Gerente de Compras pueden activar el Aval Digital.");
+      return;
+    }
+    if (!odcSeleccionada) return;
+    setGuardandoFirmaRicardo(true);
+    try {
+      const hoyIso = new Date().toISOString();
+      const payload = {
+        ricardo_firma_digital_activa: activa,
+        ricardo_firma_fecha: activa ? hoyIso : null,
+        ricardo_firma_por: activa ? (currentUser?.nombre ? `${currentUser.nombre} ${currentUser.apellido || ''}`.trim() : 'Ricardo Herrera') : null
+      };
+
+      const { error } = await supabase
+        .from('ordenes_compra')
+        .update(payload)
+        .eq('id', odcSeleccionada.id);
+
+      if (error) {
+        console.warn("Aviso al guardar en Supabase (campo ricardo_firma_digital_activa):", error.message);
+        localStorage.setItem(`odc_ricardo_firma_${odcSeleccionada.id}`, activa ? 'true' : 'false');
+      }
+
+      const odcActualizada = { ...odcSeleccionada, ...payload };
+      setOdcSeleccionada(odcActualizada);
+      setOrdenes(prev => prev.map(o => o.id === odcSeleccionada.id ? odcActualizada : o));
+
+      toast.success(activa
+        ? "Aval Digital de Ricardo Herrera (Gerente de Compras) activado correctamente."
+        : "Aval Digital de Ricardo Herrera desactivado."
+      );
+    } catch (err) {
+      console.error("Error al actualizar aval digital de Ricardo Herrera:", err);
+      toast.error("Error al actualizar el aval digital: " + err.message);
+    } finally {
+      setGuardandoFirmaRicardo(false);
+    }
+  };
+
   // Eliminar Órden de Compra (Exclusivo Administrador Principal - José)
   const manejarEliminarOdc = async (odcTarget = odcSeleccionada) => {
     if (!odcTarget) return;
@@ -1189,17 +1696,64 @@ const OrdenesCompra = ({ currentUser }) => {
       return;
     }
 
-    const confirmar = window.confirm(`⚠️ ¡ATENCIÓN! ¿Está seguro de ELIMINAR PERMANENTEMENTE la Órden de Compra ${odcTarget.numero_odc}? Esta acción borra todos sus renglones y expediente.`);
+    const confirmar = window.confirm(`⚠️ ¡ATENCIÓN! ¿Está seguro de ELIMINAR PERMANENTEMENTE la Órden de Compra ${odcTarget.numero_odc}? Esta acción borrará el expediente y limpiará por completo el historial de la requisición.`);
     if (!confirmar) return;
 
     try {
-      // 1. Borrar renglones asociados
+      // 1. Borrar renglones asociados de la tabla ordenes_compra_items
       await supabase
         .from('ordenes_compra_items')
         .delete()
         .eq('orden_compra_id', odcTarget.id);
 
-      // 2. Borrar la ODC principal
+      // 2. Limpiar del historial_compras de la requisición asociada (borrado definitivo)
+      const rawReqId = odcTarget.requisicion_id || odcTarget.requisicion_correlativo;
+      if (rawReqId) {
+        let numOnly = String(rawReqId).replace(/^REQ-?/i, '').trim();
+        let q = supabase.from('requisiciones').select('id, items, correlativo_req');
+        if (!isNaN(Number(numOnly)) && Number(numOnly) > 0) {
+          q = q.or(`id.eq.${Number(numOnly)},correlativo_req.eq.${rawReqId}`);
+        } else {
+          q = q.eq('correlativo_req', rawReqId);
+        }
+        const { data: reqData } = await q.maybeSingle();
+
+        if (reqData && Array.isArray(reqData.items)) {
+          const odcIdStr = String(odcTarget.id);
+          const odcNumStr = String(odcTarget.numero_odc).trim().toUpperCase();
+
+          const updatedItems = reqData.items.map(it => {
+            const hist = Array.isArray(it.historial_compras) ? it.historial_compras : [];
+            const newHist = hist.filter(h => {
+              const matchOdc = (h.odc_id && String(h.odc_id) === odcIdStr) ||
+                               (h.odc_numero && String(h.odc_numero).trim().toUpperCase() === odcNumStr) ||
+                               (h.doc_numero && String(h.doc_numero).trim().toUpperCase() === odcNumStr);
+              return !matchOdc;
+            });
+
+            // Recalcular cantidad comprada activa
+            const comprasActivas = newHist.filter(h => h.tipo !== 'JUSTIFICACION' && h.tipo !== 'ANULACION' && h.tipo !== 'DIRECTRIZ' && !h.anulado);
+            const totalComprado = comprasActivas.reduce((acc, h) => acc + (parseFloat(h.cant) || 0), 0);
+            const cantPedida = parseFloat(it.cantidad_pedida ?? it.cant) || 0;
+            const nuevaPendiente = Math.max(0, cantPedida - totalComprado);
+
+            return {
+              ...it,
+              historial_compras: newHist,
+              cantidad_comprada: totalComprado,
+              cantidad_pendiente: nuevaPendiente,
+              estado_item: nuevaPendiente > 0 ? 'pendiente' : (totalComprado > 0 ? 'comprado' : 'pendiente')
+            };
+          });
+
+          await supabase
+            .from('requisiciones')
+            .update({ items: updatedItems })
+            .eq('id', reqData.id);
+        }
+      }
+
+      // 3. Borrar la ODC principal
       const { error } = await supabase
         .from('ordenes_compra')
         .delete()
@@ -1212,7 +1766,7 @@ const OrdenesCompra = ({ currentUser }) => {
         setOdcSeleccionada(null);
       }
       setOrdenes(prev => prev.filter(o => o.id !== odcTarget.id));
-      toast.success(`Órden de Compra ${odcTarget.numero_odc} eliminada permanentemente.`);
+      toast.success(`Órden de Compra ${odcTarget.numero_odc} eliminada y retirada del historial de la requisición.`);
     } catch (err) {
       console.error("Error al eliminar ODC:", err);
       toast.error("Error al eliminar la Órden de Compra: " + err.message);
@@ -1225,7 +1779,25 @@ const OrdenesCompra = ({ currentUser }) => {
 
   // Abrir Modal de Revisión y Aprobación de Prioridad ODC
   const abrirModalAprobacionPrioridad = async (odc) => {
-    setOdcPrioridadTarget(odc);
+    let target = { ...odc };
+    if (!target.datos_bancarios && !target.cuenta_bancaria) {
+      const provMatch = (proveedoresList || []).find(p => String(p.id) === String(target.proveedor_id));
+      let ctas = [];
+      if (provMatch?.cuentas_bancarias) {
+        if (Array.isArray(provMatch.cuentas_bancarias)) ctas = provMatch.cuentas_bancarias;
+        else if (typeof provMatch.cuentas_bancarias === 'string') {
+          try { ctas = JSON.parse(provMatch.cuentas_bancarias); } catch { ctas = []; }
+        }
+      }
+      if (ctas.length > 0) {
+        const c0 = ctas[0];
+        const ctaStr = `${c0.banco || 'Banco'} (${c0.moneda || 'USD'}) - N° Cuenta: ${c0.nro_cuenta || 'N/A'} - Titular: ${c0.titular || 'N/A'} (${c0.rif || 'N/A'}) ${c0.tipo_cuenta ? `[${c0.tipo_cuenta}]` : ''}`.trim();
+        target.datos_bancarios = ctaStr;
+        target.cuenta_bancaria = ctaStr;
+      }
+    }
+
+    setOdcPrioridadTarget(target);
     setPrioridadSeleccionada(odc.prioridad_pago ? Number(odc.prioridad_pago) : (odc.requisicion_es_emergencia ? 1 : 2));
     setMotivoRechazoInput(odc.motivo_rechazo_compras || '');
     setMostrarRechazoInput(false);
@@ -1513,16 +2085,11 @@ const OrdenesCompra = ({ currentUser }) => {
     });
   };
 
-  // Generación de PDF Formato Oficial F-ADM-01-2 (3 Copias en un solo documento)
-  const exportarPDF_F_ADM_01_2 = async () => {
-    if (!odcSeleccionada) return;
-    if (!esUsuarioCompras) {
-      toast.error("Acceso restringido: Solo el personal de Compras puede exportar la ODC");
-      return;
-    }
+  // Generación de documento PDF Formato Oficial F-ADM-01-2 (3 Copias en un solo documento)
+  const construirDocPDF_F_ADM_01_2 = async () => {
+    if (!odcSeleccionada) return null;
 
     try {
-      toast.loading("Generando documento oficial de Orden de Compra (3 copias)...", { id: 'pdf-odc' });
       const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
       const pageWidth = doc.internal.pageSize.getWidth();
       const pageHeight = doc.internal.pageSize.getHeight();
@@ -1554,12 +2121,17 @@ const OrdenesCompra = ({ currentUser }) => {
         rawReqOrigen = odcSeleccionada.requisicion_id ? (String(odcSeleccionada.requisicion_id).startsWith('REQ-') ? odcSeleccionada.requisicion_id : `REQ-${odcSeleccionada.requisicion_id}`) : 'N/A';
       }
 
-      const rawDestino = odcSeleccionada.requisicion_obj?.centro_costo || 
-                         odcSeleccionada.requisicion_obj?.obra || 
-                         odcSeleccionada.destino_despacho || 
+      const rawCentroCosto = odcSeleccionada.requisicion_obj?.centro_costo || 
+                             odcSeleccionada.requisicion_obj?.obra || 
+                             odcSeleccionada.centro_costo || 
+                             'No especificado';
+      const centroCostoLimpio = String(rawCentroCosto || '').replace(/\s*-\s*null/gi, '').replace(/\bnull\b/gi, '').trim() || 'No especificado';
+
+      const rawDestino = odcSeleccionada.destino_despacho || 
                          odcSeleccionada.despachar_a_direccion || 
+                         odcSeleccionada.despachar_a || 
                          'Galpones Riese - Av. Los Haticos';
-      const destinoObraLimpio = String(rawDestino || '').replace(/\s*-\s*null/gi, '').replace(/null/gi, '').trim() || 'Galpones Riese - Av. Los Haticos';
+      const destinoEntregaLimpio = String(rawDestino || '').replace(/\s*-\s*null/gi, '').replace(/\bnull\b/gi, '').trim() || 'Galpones Riese - Av. Los Haticos';
 
       const solicitanteNombre = odcSeleccionada.requisicion_obj?.solicitante || 
                                 odcSeleccionada.solicitante || 
@@ -1703,9 +2275,8 @@ const OrdenesCompra = ({ currentUser }) => {
           [`Teléfono: ${odcSeleccionada.proveedor_telefono || 'N/A'}`, `Fecha de Despacho:`],
           [`R.I.F.: ${odcSeleccionada.proveedor_rif || 'N/A'}`, `Forma de Pago: ${formaPagoTexto}`],
           [`Ciudad: ${odcSeleccionada.proveedor_ciudad || 'N/A'}`, `Cuenta / Pago Prov: ${datosBancariosTexto}`],
-          [`Despachar a: ${odcSeleccionada.despachar_a || 'Total Clean C.A.'}`, ``],
-          [`Solicitado por: ${solicitanteNombre}`, ``],
-          [`Destino a obra: ${destinoObraLimpio}`, ``]
+          [`Lugar de Entrega: ${destinoEntregaLimpio}`, `Centro de Costo: ${centroCostoLimpio}`],
+          [`Solicitado por: ${solicitanteNombre}`, ``]
         ];
 
         autoTable(doc, {
@@ -1903,9 +2474,22 @@ const OrdenesCompra = ({ currentUser }) => {
         doc.setFont("helvetica", "normal");
         doc.setFontSize(6.2);
         doc.text("Gerente de Compras", marginX + sigW + sigW / 2, sigY + 6.0, { align: 'center' });
-        doc.line(marginX + sigW + 6, sigY + 12.0, marginX + sigW * 2 - 6, sigY + 12.0);
-        doc.setFontSize(6.2);
-        doc.text("Ricardo Herrera (Gerente de Compras)", marginX + sigW + sigW / 2, sigY + 15.8, { align: 'center' });
+
+        if (odcSeleccionada.ricardo_firma_digital_activa) {
+          doc.setFillColor(240, 253, 244);
+          doc.setDrawColor(22, 101, 52);
+          doc.roundedRect(marginX + sigW + 3, sigY + 7.5, sigW - 6, 9.2, 1, 1, 'FD');
+          doc.setFont("helvetica", "bold");
+          doc.setFontSize(5.6);
+          doc.setTextColor(4, 120, 87);
+          doc.text("AVALADO DIGITALMENTE", marginX + sigW + sigW / 2, sigY + 11.0, { align: 'center' });
+          doc.setFontSize(5.2);
+          doc.text("Ricardo Herrera (Gerente de Compras)", marginX + sigW + sigW / 2, sigY + 14.8, { align: 'center' });
+        } else {
+          doc.line(marginX + sigW + 6, sigY + 12.0, marginX + sigW * 2 - 6, sigY + 12.0);
+          doc.setFontSize(6.2);
+          doc.text("Ricardo Herrera (Gerente de Compras)", marginX + sigW + sigW / 2, sigY + 15.8, { align: 'center' });
+        }
 
         // 3. Autorizado por Carlos Vega
         doc.rect(marginX + sigW * 2, sigY, sigW, sigH);
@@ -1945,17 +2529,101 @@ const OrdenesCompra = ({ currentUser }) => {
         doc.text(`— ${copiaLabel.toUpperCase()} —`, pageWidth / 2, pageHeight - 5.0, { align: 'center' });
       });
 
-      doc.save(`Orden_Compra_${odcSeleccionada.numero_odc || 'ODC'}.pdf`);
-      toast.success("Documento oficial (3 copias) generado con éxito.", { id: 'pdf-odc' });
+      return doc;
     } catch (err) {
-      console.error("Error al exportar PDF de ODC:", err);
+      console.error("Error al generar PDF de ODC:", err);
       toast.error("Error al generar PDF de la ODC: " + err.message, { id: 'pdf-odc' });
+      throw err;
     }
   };
 
-  // Subconjuntos para conteo de Prioridad ODC
+  // Abrir Modal de Vista Previa Interactiva de PDF
+  const abrirVistaPreviaPDF = async () => {
+    if (!odcSeleccionada) return;
+    if (!puedeExportarODCOriginal) {
+      toast.error("Acceso restringido: Solo Gerencia y Compras pueden exportar la ODC");
+      return;
+    }
+
+    try {
+      setGenerandoPdfPreview(true);
+      setShowPdfPreviewModal(true);
+      toast.loading("Cargando vista previa oficial de Orden de Compra...", { id: 'pdf-preview-load' });
+      
+      const doc = await construirDocPDF_F_ADM_01_2();
+      if (!doc) throw new Error("No se pudo generar el formato PDF.");
+      
+      const blobUrl = doc.output('bloburl');
+      setPdfDocInstance(doc);
+      setPdfPreviewUrl(blobUrl);
+      toast.success("Vista previa lista.", { id: 'pdf-preview-load' });
+    } catch (err) {
+      console.error("Error al generar vista previa de PDF:", err);
+      toast.error("Error al generar vista previa: " + err.message, { id: 'pdf-preview-load' });
+      setShowPdfPreviewModal(false);
+    } finally {
+      setGenerandoPdfPreview(false);
+    }
+  };
+
+  // Imprimir desde la Vista Previa
+  const imprimirPDFActual = () => {
+    if (pdfIframeRef.current && pdfIframeRef.current.contentWindow) {
+      try {
+        pdfIframeRef.current.contentWindow.focus();
+        pdfIframeRef.current.contentWindow.print();
+        return;
+      } catch (e) {
+        console.warn("Iframe print directo no disponible, abriendo blobUrl con autoPrint:", e);
+      }
+    }
+    if (pdfDocInstance) {
+      pdfDocInstance.autoPrint();
+      const printUrl = pdfDocInstance.output('bloburl');
+      const win = window.open(printUrl, '_blank');
+      if (win) {
+        win.focus();
+      }
+    }
+  };
+
+  // Descargar PDF desde la Vista Previa
+  const descargarPDFActual = () => {
+    if (pdfDocInstance && odcSeleccionada) {
+      pdfDocInstance.save(`Orden_Compra_${odcSeleccionada.numero_odc || 'ODC'}.pdf`);
+      toast.success("Descarga de PDF iniciada con éxito.");
+    }
+  };
+
+  // Cerrar Vista Previa y liberar memoria
+  const cerrarVistaPreviaPDF = () => {
+    setShowPdfPreviewModal(false);
+    if (pdfPreviewUrl) {
+      try {
+        URL.revokeObjectURL(pdfPreviewUrl);
+      } catch (e) {
+        // ignore
+      }
+    }
+    setPdfPreviewUrl(null);
+    setPdfDocInstance(null);
+  };
+
+  // Helper para verificar si una ODC está anulada
+  const esAnuladaOdc = (o) => Boolean(
+    o && (
+      o.estatus_orden === 'ANULADA' ||
+      o.estatus_pago === 'ANULADA' ||
+      o.status_pago === 'ANULADA' ||
+      o.estado_aprobacion_precio === 'anulada' ||
+      o.anulado === true
+    )
+  );
+
+  // Subconjuntos para conteo de Prioridad ODC (excluyendo anuladas)
   const odcsPendientesPrioridad = useMemo(() => {
     return ordenes.filter(o => {
+      if (esAnuladaOdc(o)) return false;
       const st = (o.estado_aprobacion_precio || '').toLowerCase();
       return st === 'pendiente' || (!st && o.estatus_pago !== 'PAGADO' && o.status_pago !== 'PAGADO');
     });
@@ -1963,6 +2631,7 @@ const OrdenesCompra = ({ currentUser }) => {
 
   const odcsAprobadasPrioridad = useMemo(() => {
     return ordenes.filter(o => {
+      if (esAnuladaOdc(o)) return false;
       const st = (o.estado_aprobacion_precio || '').toLowerCase();
       return st === 'aprobado' || (o.prioridad_pago !== null && o.prioridad_pago !== undefined);
     });
@@ -1970,6 +2639,7 @@ const OrdenesCompra = ({ currentUser }) => {
 
   const odcsRechazadasPrioridad = useMemo(() => {
     return ordenes.filter(o => {
+      if (esAnuladaOdc(o)) return false;
       const st = (o.estado_aprobacion_precio || '').toLowerCase();
       return st === 'rechazado';
     });
@@ -1977,29 +2647,41 @@ const OrdenesCompra = ({ currentUser }) => {
 
   // Filtrado de la Lista de Órdenes
   const ordenesFiltradas = useMemo(() => {
+    const bLower = (busqueda || '').toLowerCase().trim();
     return ordenes.filter(o => {
-      const matchBusqueda = (o.numero_odc || '').toLowerCase().includes(busqueda.toLowerCase()) ||
-                            (o.proveedor_nombre || '').toLowerCase().includes(busqueda.toLowerCase()) ||
-                            (o.cotizacion_ref || '').toLowerCase().includes(busqueda.toLowerCase()) ||
-                            (o.orden_pago_ref || '').toLowerCase().includes(busqueda.toLowerCase()) ||
-                            (o.destino_despacho || '').toLowerCase().includes(busqueda.toLowerCase()) ||
-                            (o.comprador_nombre || '').toLowerCase().includes(busqueda.toLowerCase()) ||
-                            (o.requisicion_correlativo || '').toLowerCase().includes(busqueda.toLowerCase());
+      if (bLower) {
+        const itemsMatch = (o.items || []).some(it => 
+          (it.descripcion || '').toLowerCase().includes(bLower)
+        );
+        const matchBusqueda = (o.numero_odc || '').toLowerCase().includes(bLower) ||
+                              (o.proveedor_nombre || '').toLowerCase().includes(bLower) ||
+                              (o.cotizacion_ref || '').toLowerCase().includes(bLower) ||
+                              (o.orden_pago_ref || '').toLowerCase().includes(bLower) ||
+                              (o.destino_despacho || '').toLowerCase().includes(bLower) ||
+                              (o.comprador_nombre || '').toLowerCase().includes(bLower) ||
+                              (o.requisicion_correlativo || '').toLowerCase().includes(bLower) ||
+                              (o.descripcion_resumen || '').toLowerCase().includes(bLower) ||
+                              itemsMatch;
 
-      if (!matchBusqueda) return false;
+        if (!matchBusqueda) return false;
+      }
 
       if (tabFiltro === 'contado') {
-        return o.tipo_pago === 'CONTADO';
+        return o.tipo_pago === 'CONTADO' && !esAnuladaOdc(o);
       }
       if (tabFiltro === 'credito') {
-        return o.tipo_pago === 'CREDITO';
+        return o.tipo_pago === 'CREDITO' && !esAnuladaOdc(o);
       }
       if (tabFiltro === 'por_vencer') {
-        if (o.tipo_pago !== 'CREDITO' || o.estatus_pago === 'PAGADO') return false;
+        if (o.tipo_pago !== 'CREDITO' || o.estatus_pago === 'PAGADO' || esAnuladaOdc(o)) return false;
         const sem = calcularSemaforoCredito(o);
         return sem.nivel === 'ambar' || sem.nivel === 'rojo';
       }
+      if (tabFiltro === 'anuladas') {
+        return esAnuladaOdc(o);
+      }
       if (tabFiltro === 'prioridad') {
+        if (esAnuladaOdc(o)) return false;
         const st = (o.estado_aprobacion_precio || '').toLowerCase();
         if (subtabPrioridad === 'pendientes') {
           return st === 'pendiente' || (!st && o.estatus_pago !== 'PAGADO' && o.status_pago !== 'PAGADO');
@@ -2074,13 +2756,13 @@ const OrdenesCompra = ({ currentUser }) => {
           className={`odc-tab-btn ${tabFiltro === 'contado' ? 'active' : ''}`}
           onClick={() => setTabFiltro('contado')}
         >
-          <DollarSign size={16} /> Cuentas de Contado ({ordenes.filter(o => o.tipo_pago === 'CONTADO').length})
+          <DollarSign size={16} /> Cuentas de Contado ({ordenes.filter(o => o.tipo_pago === 'CONTADO' && o.estatus_orden !== 'ANULADA').length})
         </button>
         <button 
           className={`odc-tab-btn ${tabFiltro === 'credito' ? 'active' : ''}`}
           onClick={() => setTabFiltro('credito')}
         >
-          <CreditCard size={16} /> Cuentas a Crédito ({ordenes.filter(o => o.tipo_pago === 'CREDITO').length})
+          <CreditCard size={16} /> Cuentas a Crédito ({ordenes.filter(o => o.tipo_pago === 'CREDITO' && o.estatus_orden !== 'ANULADA').length})
         </button>
         <button 
           className={`odc-tab-btn ${tabFiltro === 'por_vencer' ? 'active' : ''}`}
@@ -2088,6 +2770,18 @@ const OrdenesCompra = ({ currentUser }) => {
           style={{ borderColor: '#f59e0b', color: tabFiltro === 'por_vencer' ? 'white' : '#d97706' }}
         >
           <AlertTriangle size={16} /> Créditos por Vencer / Vencidos ⚠️
+        </button>
+        <button 
+          className={`odc-tab-btn ${tabFiltro === 'anuladas' ? 'active' : ''}`}
+          onClick={() => setTabFiltro('anuladas')}
+          style={{
+            borderColor: tabFiltro === 'anuladas' ? '#ef4444' : '#fca5a5',
+            backgroundColor: tabFiltro === 'anuladas' ? '#ef4444' : '#fef2f2',
+            color: tabFiltro === 'anuladas' ? '#ffffff' : '#dc2626',
+            fontWeight: '700'
+          }}
+        >
+          <Ban size={16} /> Anuladas ({ordenes.filter(o => o.estatus_orden === 'ANULADA' || o.estatus_pago === 'ANULADA' || o.estado_aprobacion_precio === 'anulada').length})
         </button>
         {puedeAprobarPrioridadODC && (
           <button 
@@ -2218,7 +2912,7 @@ const OrdenesCompra = ({ currentUser }) => {
             type="text"
             className="input-style"
             style={{ width: '100%', paddingLeft: '42px', height: '44px', borderRadius: '12px', fontSize: '0.85rem' }}
-            placeholder="Buscar por correlativo ODC, orden de pago, proveedor, ref. cotización, requisición o destino..."
+            placeholder="Buscar por correlativo ODC, descripción de compra, proveedor, ref. cotización, requisición o destino..."
             value={busqueda}
             onChange={(e) => setBusqueda(e.target.value)}
           />
@@ -2226,7 +2920,7 @@ const OrdenesCompra = ({ currentUser }) => {
       </div>
 
       {/* Tabla de Órdenes de Compra */}
-      <div style={{ backgroundColor: 'white', borderRadius: '16px', border: '1px solid #e2e8f0', overflow: 'hidden', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
+      <div style={{ backgroundColor: 'white', borderRadius: '16px', border: '1px solid #e2e8f0', overflowX: 'auto', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
         {loading ? (
           <div style={{ padding: '50px', textAlign: 'center', color: '#64748b' }}>
             <RefreshCw size={24} className="animate-spin" style={{ margin: '0 auto 10px auto' }} />
@@ -2241,28 +2935,30 @@ const OrdenesCompra = ({ currentUser }) => {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
             <thead>
               <tr style={{ backgroundColor: '#0f172a', color: 'white', textAlign: 'left' }}>
-                <th style={{ padding: '14px 16px' }}>Correlativo ODC</th>
-                <th style={{ padding: '14px 16px' }}>Proveedor & Condición</th>
-                <th style={{ padding: '14px 16px' }}>Requisición Origen</th>
-                <th style={{ padding: '14px 16px' }}>Tipo Pago</th>
-                <th style={{ padding: '14px 16px', textAlign: 'center' }}>Aprobación Precio & Prioridad</th>
-                <th style={{ padding: '14px 16px', textAlign: 'center' }}>Recepción & Pago</th>
-                <th style={{ padding: '14px 16px', textAlign: 'right' }}>Total General</th>
-                <th style={{ padding: '14px 16px', textAlign: 'center' }}>Firma Carlos</th>
-                <th style={{ padding: '14px 16px', textAlign: 'center' }}>Acciones</th>
+                <th style={{ padding: '14px 16px', whiteSpace: 'nowrap' }}>Correlativo ODC</th>
+                <th style={{ padding: '14px 16px', whiteSpace: 'nowrap' }}>Proveedor & Condición</th>
+                <th style={{ padding: '14px 16px', whiteSpace: 'nowrap' }}>Requisición Origen</th>
+                <th style={{ padding: '14px 16px', minWidth: '220px', maxWidth: '340px' }}>Descripción de Compra</th>
+                <th style={{ padding: '14px 16px', whiteSpace: 'nowrap' }}>Tipo Pago</th>
+                <th style={{ padding: '14px 16px', textAlign: 'center', whiteSpace: 'nowrap' }}>Aprobación Precio & Prioridad</th>
+                <th style={{ padding: '14px 16px', textAlign: 'center', whiteSpace: 'nowrap' }}>Recepción & Pago</th>
+                <th style={{ padding: '14px 16px', textAlign: 'right', whiteSpace: 'nowrap' }}>Total General</th>
+                <th style={{ padding: '14px 16px', textAlign: 'center', whiteSpace: 'nowrap' }}>Firmas Digitales</th>
+                <th style={{ padding: '14px 16px', textAlign: 'center', whiteSpace: 'nowrap' }}>Acciones</th>
               </tr>
             </thead>
             <tbody>
               {ordenesFiltradas.map((odc) => {
                 const sem = calcularSemaforoCredito(odc);
+                const esAnuladaRow = esAnuladaOdc(odc);
                 return (
-                  <tr key={odc.id} style={{ borderBottom: '1px solid #f1f5f9', transition: 'all 0.2s' }}>
+                  <tr key={odc.id} style={{ borderBottom: '1px solid #f1f5f9', transition: 'all 0.2s', backgroundColor: esAnuladaRow ? '#fffbfb' : 'transparent' }}>
                     <td style={{ padding: '14px 16px' }}>
                       <motion.span
                         onClick={() => abrirDetalleOdc(odc)}
                         whileHover={{
-                          scale: 1.1,
-                          x: 5,
+                          scale: 1.08,
+                          x: 4,
                           color: '#2563eb',
                           textShadow: '0 0 8px rgba(37, 99, 235, 0.2)'
                         }}
@@ -2271,17 +2967,21 @@ const OrdenesCompra = ({ currentUser }) => {
                         style={{
                           fontSize: '13px',
                           fontWeight: '900',
-                          color: '#1e40af',
+                          color: esAnuladaRow ? '#dc2626' : '#1e40af',
                           textDecoration: 'underline',
                           textUnderlineOffset: '3px',
-                          textDecorationColor: 'rgba(30, 64, 175, 0.4)',
+                          textDecorationColor: esAnuladaRow ? 'rgba(220, 38, 38, 0.4)' : 'rgba(30, 64, 175, 0.4)',
                           cursor: 'pointer',
                           display: 'inline-block'
                         }}
-                        title="Ver expediente y vista previa de esta ODC"
+                        title="Ver expediente y vista previa de esta ODC (Solo lectura)"
                       >
                         {odc.numero_odc}
                       </motion.span>
+                      <div style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: '600', marginTop: '3px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <User size={11} color="#0284c7" />
+                        <span>Emitido: <strong>{odc.elaborado_por_nombre || odc.comprador_nombre || odc.usuario_nombre || 'Comprador'}</strong></span>
+                      </div>
                     </td>
                     <td style={{ padding: '14px 16px' }}>
                       <div style={{ fontWeight: '700', color: '#0f172a' }}>{odc.proveedor_nombre || 'N/A'}</div>
@@ -2301,7 +3001,7 @@ const OrdenesCompra = ({ currentUser }) => {
                       <div style={{ fontWeight: '700', color: '#0f172a' }}>
                         {odc.requisicion_correlativo || odc.requisicion_obj?.correlativo_req || odc.numero_req || (odc.requisicion_id ? (String(odc.requisicion_id).startsWith('REQ-') ? odc.requisicion_id : `REQ-${odc.requisicion_id}`) : 'N/A')}
                       </div>
-                      <div style={{ marginTop: '3px' }}>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '3px' }}>
                         {odc.requisicion_es_emergencia ? (
                           <span style={{ fontSize: '0.68rem', fontWeight: '900', padding: '2px 6px', borderRadius: '4px', backgroundColor: '#fee2e2', color: '#dc2626', border: '1px solid #fecaca' }}>
                             🚨 EMERGENCIA
@@ -2311,7 +3011,98 @@ const OrdenesCompra = ({ currentUser }) => {
                             📋 NORMAL
                           </span>
                         )}
+                        {odc.pasa_por_almacen === false ? (
+                          <span style={{ fontSize: '0.68rem', fontWeight: '800', padding: '2px 6px', borderRadius: '4px', backgroundColor: '#fef3c7', color: '#92400e', border: '1px solid #fde68a' }} title="Entrega directa en sitio / servicio (No pasa por almacén)">
+                            🚚 DIRECTO
+                          </span>
+                        ) : (
+                          <span style={{ fontSize: '0.68rem', fontWeight: '700', padding: '2px 6px', borderRadius: '4px', backgroundColor: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0' }} title="Pasa por recepción física en Almacén">
+                            📦 ALMACÉN
+                          </span>
+                        )}
                       </div>
+                    </td>
+                    {/* Descripción Breve de la Compra / Renglones */}
+                    <td style={{ padding: '14px 16px', minWidth: '220px', maxWidth: '340px' }}>
+                      {odc.items && odc.items.length > 0 ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                          {odc.items.slice(0, 2).map((it, idx) => (
+                            <div 
+                              key={it.id || idx} 
+                              style={{ 
+                                fontSize: '0.8rem', 
+                                color: '#1e293b', 
+                                lineHeight: '1.25',
+                                display: 'flex',
+                                alignItems: 'baseline',
+                                gap: '6px'
+                              }}
+                            >
+                              <span style={{ 
+                                fontSize: '0.68rem', 
+                                fontWeight: '800', 
+                                color: '#0284c7', 
+                                backgroundColor: '#f0f9ff', 
+                                border: '1px solid #bae6fd',
+                                padding: '1px 5px', 
+                                borderRadius: '4px',
+                                whiteSpace: 'nowrap',
+                                flexShrink: 0
+                              }}>
+                                {it.cantidad} {it.unidad || 'UND'}
+                              </span>
+                              <span 
+                                style={{ 
+                                  fontWeight: '600',
+                                  overflow: 'hidden', 
+                                  textOverflow: 'ellipsis', 
+                                  whiteSpace: 'nowrap',
+                                  color: '#334155'
+                                }}
+                                title={`${it.cantidad || ''} ${it.unidad || 'UND'} - ${it.descripcion}`}
+                              >
+                                {it.descripcion}
+                              </span>
+                            </div>
+                          ))}
+                          {odc.items.length > 2 && (
+                            <div style={{ marginTop: '2px' }}>
+                              <span 
+                                onClick={() => abrirDetalleOdc(odc)}
+                                style={{ 
+                                  fontSize: '0.72rem', 
+                                  color: '#0369a1', 
+                                  fontWeight: '700', 
+                                  cursor: 'pointer',
+                                  backgroundColor: '#f8fafc',
+                                  padding: '1px 6px',
+                                  borderRadius: '4px',
+                                  border: '1px dashed #cbd5e1',
+                                  display: 'inline-block'
+                                }}
+                                title={odc.items.map((it, i) => `${i + 1}. ${it.cantidad || ''} ${it.unidad || 'UND'} - ${it.descripcion}`).join('\n')}
+                              >
+                                +{odc.items.length - 2} ítem{odc.items.length - 2 > 1 ? 's' : ''} más (ver todos)
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div 
+                          style={{ 
+                            fontSize: '0.78rem', 
+                            color: odc.descripcion_resumen && odc.descripcion_resumen !== 'Sin descripción detallada' ? '#334155' : '#94a3b8', 
+                            fontWeight: odc.descripcion_resumen && odc.descripcion_resumen !== 'Sin descripción detallada' ? '600' : '500',
+                            overflow: 'hidden', 
+                            textOverflow: 'ellipsis', 
+                            whiteSpace: 'nowrap',
+                            maxWidth: '320px'
+                          }}
+                          title={odc.descripcion_resumen || odc.observaciones || ''}
+                        >
+                          {odc.descripcion_resumen || odc.observaciones || 'Sin descripción'}
+                        </div>
+                      )}
                     </td>
                     <td style={{ padding: '14px 16px' }}>
                       <span style={{ 
@@ -2323,7 +3114,18 @@ const OrdenesCompra = ({ currentUser }) => {
                       </span>
                     </td>
                     <td style={{ padding: '14px 16px', textAlign: 'center' }}>
-                      {odc.estado_aprobacion_precio === 'aprobado' ? (
+                      {esAnuladaRow ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+                          <span style={{ padding: '4px 10px', borderRadius: '8px', fontSize: '0.75rem', fontWeight: '900', backgroundColor: '#fee2e2', color: '#991b1b', border: '1px solid #fecaca' }}>
+                            🚫 ANULADA
+                          </span>
+                          {odc.motivo_anulacion && (
+                            <span style={{ fontSize: '0.68rem', color: '#991b1b', maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`Motivo: ${odc.motivo_anulacion}`}>
+                              {odc.motivo_anulacion}
+                            </span>
+                          )}
+                        </div>
+                      ) : odc.estado_aprobacion_precio === 'aprobado' ? (
                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
                           {odc.prioridad_pago === 1 ? (
                             <span style={{ padding: '4px 10px', borderRadius: '8px', fontSize: '0.75rem', fontWeight: '900', backgroundColor: '#fee2e2', color: '#991b1b', border: '1px solid #fca5a5' }}>
@@ -2412,100 +3214,66 @@ const OrdenesCompra = ({ currentUser }) => {
                       )}
                     </td>
                     <td style={{ padding: '14px 16px', textAlign: 'center' }}>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'center' }}>
-                        <button
-                          type="button"
-                          onClick={() => cambiarEstatusRecepcion(odc.estatus_recepcion === 'RECIBIDO' ? 'PENDIENTE' : 'RECIBIDO', odc)}
-                          style={{
-                            padding: '3px 8px',
-                            fontSize: '0.68rem',
-                            fontWeight: '800',
-                            borderRadius: '6px',
-                            border: 'none',
-                            cursor: 'pointer',
-                            backgroundColor: odc.estatus_recepcion === 'RECIBIDO' ? '#dcfce7' : '#fef3c7',
-                            color: odc.estatus_recepcion === 'RECIBIDO' ? '#15803d' : '#b45309'
-                          }}
-                          title="Clic para cambiar recepción (desencadena cuenta regresiva de crédito)"
-                        >
-                          {odc.estatus_recepcion === 'RECIBIDO' ? '📦 RECIBIDO' : '🚚 MARCAR RECIBIDO'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => cambiarEstatusPago(odc.estatus_pago === 'PAGADO' ? 'PENDIENTE' : 'PAGADO', odc)}
-                          style={{
-                            padding: '3px 8px',
-                            fontSize: '0.68rem',
-                            fontWeight: '800',
-                            borderRadius: '6px',
-                            border: 'none',
-                            cursor: 'pointer',
-                            backgroundColor: odc.estatus_pago === 'PAGADO' ? '#e0f2fe' : '#f1f5f9',
-                            color: odc.estatus_pago === 'PAGADO' ? '#0369a1' : '#64748b'
-                          }}
-                          title="Clic para cambiar estatus de pago"
-                        >
-                          {odc.estatus_pago === 'PAGADO' ? '✅ PAGADO' : '💳 MARCAR PAGADO'}
-                        </button>
-                      </div>
+                      {esAnuladaRow ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'center' }}>
+                          <span style={{ padding: '4px 10px', fontSize: '0.72rem', fontWeight: '800', borderRadius: '8px', backgroundColor: '#fee2e2', color: '#991b1b', border: '1px solid #fecaca' }}>
+                            🚫 ANULADA
+                          </span>
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'center' }}>
+                          <button
+                            type="button"
+                            onClick={() => cambiarEstatusRecepcion(odc.estatus_recepcion === 'RECIBIDO' ? 'PENDIENTE' : 'RECIBIDO', odc)}
+                            style={{
+                              padding: '3px 8px',
+                              fontSize: '0.68rem',
+                              fontWeight: '800',
+                              borderRadius: '6px',
+                              border: 'none',
+                              cursor: 'pointer',
+                              backgroundColor: odc.estatus_recepcion === 'RECIBIDO' ? '#dcfce7' : '#fef3c7',
+                              color: odc.estatus_recepcion === 'RECIBIDO' ? '#15803d' : '#b45309'
+                            }}
+                            title="Clic para registrar recepción física de mercancía"
+                          >
+                            {odc.estatus_recepcion === 'RECIBIDO' ? '📦 RECIBIDO' : '🚚 MARCAR RECIBIDO'}
+                          </button>
+                          {odc.estatus_pago === 'PAGADO' || odc.status_pago === 'PAGADO' ? (
+                            <span style={{ padding: '3px 8px', fontSize: '0.68rem', fontWeight: '800', borderRadius: '6px', backgroundColor: '#e0f2fe', color: '#0369a1', border: '1px solid #bae6fd' }}>
+                              ✅ PAGADO
+                            </span>
+                          ) : (
+                            <span style={{ padding: '3px 8px', fontSize: '0.68rem', fontWeight: '700', borderRadius: '6px', backgroundColor: '#f1f5f9', color: '#64748b', border: '1px solid #e2e8f0' }} title="El pago es procesado por el departamento de Cuentas por Pagar">
+                              ⏳ PAGO PENDIENTE
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </td>
                     <td style={{ padding: '14px 16px', textAlign: 'right', fontWeight: '800', color: '#0f172a' }}>
                       $ {Number(odc.total_general || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
                     </td>
                     <td style={{ padding: '14px 16px', textAlign: 'center' }}>
-                      {odc.carlos_firma_digital_activa ? (
-                        <span style={{ color: '#16a34a', fontSize: '0.75rem', fontWeight: '700', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
-                          <ShieldCheck size={14} /> Digital
-                        </span>
-                      ) : (
-                        <span style={{ color: '#94a3b8', fontSize: '0.75rem' }}>Física</span>
-                      )}
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px' }}>
+                        {odc.ricardo_firma_digital_activa ? (
+                          <span style={{ color: '#16a34a', fontSize: '0.68rem', fontWeight: '800', display: 'inline-flex', alignItems: 'center', gap: '3px', backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', padding: '2px 6px', borderRadius: '6px' }} title="Aval Digital Gerente de Compras (Ricardo Herrera) Activo">
+                            <ShieldCheck size={12} /> Compras
+                          </span>
+                        ) : null}
+                        {odc.carlos_firma_digital_activa ? (
+                          <span style={{ color: '#16a34a', fontSize: '0.68rem', fontWeight: '800', display: 'inline-flex', alignItems: 'center', gap: '3px', backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', padding: '2px 6px', borderRadius: '6px' }} title="Firma Digital Gerente General (Carlos Vega) Activa">
+                            <ShieldCheck size={12} /> Gerencia
+                          </span>
+                        ) : null}
+                        {!odc.ricardo_firma_digital_activa && !odc.carlos_firma_digital_activa && (
+                          <span style={{ color: '#94a3b8', fontSize: '0.75rem' }}>Física</span>
+                        )}
+                      </div>
                     </td>
                     <td style={{ padding: '14px 16px', textAlign: 'center' }}>
                       <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', alignItems: 'center' }}>
-                        {puedeAprobarPrioridadODC && (
-                          <motion.button 
-                            whileHover={{ scale: 1.15 }}
-                            whileTap={{ scale: 0.9 }}
-                            style={{
-                              width: '32px',
-                              height: '32px',
-                              borderRadius: '8px',
-                              border: '1px solid #ddd6fe',
-                              backgroundColor: '#f5f3ff',
-                              color: '#7c3aed',
-                              cursor: 'pointer',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center'
-                            }}
-                            onClick={() => abrirModalAprobacionPrioridad(odc)}
-                            title="Asignar Prioridad / Aprobar Precio ODC"
-                          >
-                            <ShieldCheck size={16} />
-                          </motion.button>
-                        )}
-                        <motion.button 
-                          whileHover={{ scale: 1.15 }}
-                          whileTap={{ scale: 0.9 }}
-                          style={{
-                            width: '32px',
-                            height: '32px',
-                            borderRadius: '8px',
-                            border: '1px solid #bae6fd',
-                            backgroundColor: '#f0f9ff',
-                            color: '#0284c7',
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center'
-                          }}
-                          onClick={() => abrirDetalleOdc(odc)}
-                          title="Ver Expediente / Formato F-ADM-01-2"
-                        >
-                          <Eye size={16} />
-                        </motion.button>
-                        {esUsuarioCompras && (
+                        {esUsuarioCompras && !esAnuladaRow && (
                           <motion.button
                             type="button"
                             whileHover={{ scale: 1.15 }}
@@ -2528,12 +3296,12 @@ const OrdenesCompra = ({ currentUser }) => {
                             <Edit2 size={16} />
                           </motion.button>
                         )}
-                        {esUsuarioCompras && odc.estatus_pago !== 'ANULADA' && (
+                        {esUsuarioCompras && !esAnuladaRow && (
                           <motion.button
                             type="button"
                             whileHover={{ scale: 1.15 }}
                             whileTap={{ scale: 0.9 }}
-                            onClick={() => manejarAnularOdc(odc)}
+                            onClick={() => abrirModalAnularOdc(odc)}
                             style={{ 
                               width: '32px',
                               height: '32px',
@@ -2551,7 +3319,7 @@ const OrdenesCompra = ({ currentUser }) => {
                             <Ban size={16} />
                           </motion.button>
                         )}
-                        {esAdminSuper && (
+                        {esSuperAdmin && (
                           <motion.button
                             type="button"
                             whileHover={{ scale: 1.15 }}
@@ -2569,10 +3337,15 @@ const OrdenesCompra = ({ currentUser }) => {
                               alignItems: 'center',
                               justifyContent: 'center'
                             }}
-                            title="Eliminar permanentemente esta Órden de Compra"
+                            title="Eliminar permanentemente esta Órden de Compra (Super Admin)"
                           >
                             <Trash2 size={16} />
                           </motion.button>
+                        )}
+                        {esAnuladaRow && !esSuperAdmin && (
+                          <span style={{ fontSize: '0.72rem', color: '#94a3b8', fontStyle: 'italic' }}>
+                            —
+                          </span>
                         )}
                       </div>
                     </td>
@@ -2587,71 +3360,167 @@ const OrdenesCompra = ({ currentUser }) => {
       {/* Modal Expediente Detalle y Formato F-ADM-01-2 */}
       {modalOpen && odcSeleccionada && (
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999, padding: '20px' }}>
-          <div style={{ backgroundColor: 'white', borderRadius: '24px', width: '100%', maxWidth: '950px', maxHeight: '92vh', overflowY: 'auto', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.4)', padding: '28px' }}>
+          <div style={{ backgroundColor: 'white', borderRadius: '24px', width: '100%', maxWidth: '950px', maxHeight: '92vh', overflowY: 'auto', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.4)', padding: '28px', position: 'relative' }}>
             
+            {/* Botón Cerrar en la esquina superior derecha */}
+            <motion.button 
+              whileHover={{ scale: 1.1, rotate: 90 }}
+              whileTap={{ scale: 0.9 }}
+              transition={{ type: 'spring', stiffness: 400, damping: 15 }}
+              style={{ 
+                position: 'absolute', 
+                top: '20px', 
+                right: '20px', 
+                background: '#f1f5f9', 
+                border: 'none', 
+                borderRadius: '50%', 
+                width: '36px', 
+                height: '36px', 
+                cursor: 'pointer', 
+                display: 'flex', 
+                alignItems: 'center', 
+                justifyContent: 'center',
+                zIndex: 20
+              }}
+              onClick={() => setModalOpen(false)}
+              title="Cerrar ventana"
+            >
+              <XCircle size={22} color="#64748b" />
+            </motion.button>
+
             {/* Cabecera Acciones Modal */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: '1px solid #e2e8f0', paddingBottom: '16px' }}>
-              <div>
-                <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#0ea5e9', textTransform: 'uppercase', letterSpacing: '1px' }}>Expediente de Órden de Compra</span>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '2px' }}>
-                  <h2 style={{ margin: 0, fontSize: '1.4rem', fontWeight: '800' }}>{odcSeleccionada.numero_odc}</h2>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px', borderBottom: '1px solid #e2e8f0', paddingBottom: '18px', paddingRight: '45px', flexWrap: 'wrap', gap: '16px' }}>
+              
+              {/* Columna Izquierda: Título, Emitido por y Badges debajo */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#0ea5e9', textTransform: 'uppercase', letterSpacing: '1px' }}>
+                  Expediente de Órden de Compra
+                </span>
+                
+                <h2 style={{ margin: '2px 0 2px 0', fontSize: '1.5rem', fontWeight: '900', color: '#0f172a' }}>
+                  {odcSeleccionada.numero_odc}
+                </h2>
+                
+                <div style={{ fontSize: '0.82rem', color: '#64748b', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '5px', marginTop: '2px' }}>
+                  <User size={14} color="#0284c7" />
+                  <span>Emitido por: <strong style={{ color: '#0f172a' }}>{odcSeleccionada.elaborado_por_nombre || odcSeleccionada.comprador_nombre || odcSeleccionada.usuario_nombre || 'Departamento de Compras'}</strong></span>
+                </div>
+
+                {/* Badges de Requisición Origen y Entrega Directa / Almacén debajo de Emitido por */}
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center', marginTop: '6px' }}>
+                  {esAnuladaOdc(odcSeleccionada) && (
+                    <span style={{ backgroundColor: '#fee2e2', color: '#991b1b', padding: '4px 12px', borderRadius: '10px', fontSize: '0.78rem', fontWeight: '900', border: '1px solid #fecaca', display: 'inline-flex', alignItems: 'center', gap: '5px', boxShadow: '0 1px 2px rgba(0,0,0,0.04)' }}>
+                      🚫 ODC ANULADA (Solo Lectura)
+                    </span>
+                  )}
                   {(odcSeleccionada.requisicion_correlativo || odcSeleccionada.requisicion_id) && (
-                    <span style={{ backgroundColor: '#e0f2fe', color: '#0369a1', padding: '4px 12px', borderRadius: '12px', fontSize: '0.82rem', fontWeight: '800', border: '1px solid #bae6fd', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                    <span style={{ backgroundColor: '#e0f2fe', color: '#0369a1', padding: '4px 12px', borderRadius: '10px', fontSize: '0.78rem', fontWeight: '800', border: '1px solid #bae6fd', display: 'inline-flex', alignItems: 'center', gap: '5px', boxShadow: '0 1px 2px rgba(0,0,0,0.04)' }}>
                       📋 Requisición Origen: {odcSeleccionada.requisicion_correlativo || `REQ-${odcSeleccionada.requisicion_id}`}
+                    </span>
+                  )}
+                  {odcSeleccionada.pasa_por_almacen === false ? (
+                    <span style={{ backgroundColor: '#fef3c7', color: '#92400e', padding: '4px 12px', borderRadius: '10px', fontSize: '0.78rem', fontWeight: '800', border: '1px solid #fde68a', display: 'inline-flex', alignItems: 'center', gap: '5px', boxShadow: '0 1px 2px rgba(0,0,0,0.04)' }}>
+                      🚚 Entrega Directa en Obra (Sin paso por almacén)
+                    </span>
+                  ) : (
+                    <span style={{ backgroundColor: '#dcfce7', color: '#166534', padding: '4px 12px', borderRadius: '10px', fontSize: '0.78rem', fontWeight: '800', border: '1px solid #bbf7d0', display: 'inline-flex', alignItems: 'center', gap: '5px', boxShadow: '0 1px 2px rgba(0,0,0,0.04)' }}>
+                      📦 Recepción Física en Almacén
                     </span>
                   )}
                 </div>
               </div>
-              <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                {esUsuarioCompras && (
-                  <button
+
+              {/* Columna Derecha: Botones de Acción en armonía */}
+              <div style={{ display: 'flex', gap: '10px', alignItems: 'center', alignSelf: 'center', flexWrap: 'wrap' }}>
+                {esUsuarioCompras && !esAnuladaOdc(odcSeleccionada) && (
+                  <motion.button
                     type="button"
                     onClick={() => abrirModalEditarOdc(odcSeleccionada)}
+                    whileHover={{ scale: 1.04, y: -2, boxShadow: '0 6px 16px rgba(2, 132, 199, 0.2)' }}
+                    whileTap={{ scale: 0.96 }}
+                    transition={{ type: 'spring', stiffness: 400, damping: 15 }}
                     style={{
-                      padding: '8px 16px',
-                      fontSize: '0.8rem',
+                      padding: '9px 18px',
+                      fontSize: '0.82rem',
                       fontWeight: '800',
-                      borderRadius: '10px',
-                      border: '1px solid #38bdf8',
+                      borderRadius: '12px',
+                      border: '1.5px solid #cbd5e1',
                       cursor: 'pointer',
-                      backgroundColor: '#f0f9ff',
+                      background: '#ffffff',
                       color: '#0284c7',
                       display: 'inline-flex',
                       alignItems: 'center',
-                      gap: '6px'
+                      gap: '7px',
+                      boxShadow: '0 2px 6px rgba(0,0,0,0.05)'
                     }}
                     title="Editar datos, proveedor, ítems y montos de esta Órden de Compra"
                   >
-                    <Edit2 size={15} /> ✏️ Editar ODC
-                  </button>
+                    <Edit2 size={16} /> ✏️ Editar ODC
+                  </motion.button>
                 )}
 
-                {/* CONTROL RBAC DE IMPRESIÓN EXCLUSIVO PARA COMPRAS / ADMINS */}
-                {esUsuarioCompras ? (
-                  <button 
-                    className="btn-primary" 
-                    style={{ backgroundColor: '#0284c7', display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 18px', borderRadius: '12px', fontSize: '0.8rem', fontWeight: '800' }}
-                    onClick={exportarPDF_F_ADM_01_2}
+                {/* CONTROL RBAC DE IMPRESIÓN EXCLUSIVO PARA SUPERADMIN, GERENTE GENERAL Y GERENTE DE COMPRAS */}
+                {puedeExportarODCOriginal ? (
+                  <motion.button 
+                    type="button"
+                    whileHover={{ scale: 1.04, y: -2, boxShadow: '0 8px 20px rgba(2, 132, 199, 0.35)' }}
+                    whileTap={{ scale: 0.96 }}
+                    transition={{ type: 'spring', stiffness: 400, damping: 15 }}
+                    style={{ 
+                      background: 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)', 
+                      color: 'white',
+                      border: 'none',
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      gap: '8px', 
+                      padding: '10px 20px', 
+                      borderRadius: '12px', 
+                      fontSize: '0.82rem', 
+                      fontWeight: '800',
+                      cursor: 'pointer',
+                      boxShadow: '0 4px 12px rgba(2, 132, 199, 0.25)'
+                    }}
+                    onClick={abrirVistaPreviaPDF}
+                    title="Abrir vista previa interactiva antes de exportar o imprimir (F-ADM-01-2)"
                   >
                     <Printer size={16} /> Exportar / Imprimir F-ADM-01-2
-                  </button>
+                  </motion.button>
                 ) : (
                   <div style={{ fontSize: '0.75rem', color: '#94a3b8', fontStyle: 'italic', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <Lock size={14} /> Impresión exclusiva de Compras
+                    <Lock size={14} /> Impresión exclusiva de Gerencia y Compras
                   </div>
                 )}
-
-                <button 
-                  style={{ background: '#f1f5f9', border: 'none', borderRadius: '50%', width: '36px', height: '36px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                  onClick={() => setModalOpen(false)}
-                >
-                  <XCircle size={20} color="#64748b" />
-                </button>
               </div>
             </div>
 
+            {/* Banner de Órden de Compra ANULADA */}
+            {esAnuladaOdc(odcSeleccionada) && (
+              <div style={{ backgroundColor: '#fef2f2', border: '1.5px solid #fca5a5', borderRadius: '16px', padding: '16px 20px', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '14px', boxShadow: '0 2px 8px rgba(220, 38, 38, 0.08)' }}>
+                <div style={{ backgroundColor: '#fee2e2', padding: '10px', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#dc2626', flexShrink: 0 }}>
+                  <Ban size={26} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#991b1b', fontWeight: '900', fontSize: '0.95rem' }}>
+                    🚫 ESTA ÓRDEN DE COMPRA SE ENCUENTRA ANULADA
+                  </div>
+                  <div style={{ fontSize: '0.82rem', color: '#7f1d1d', marginTop: '3px' }}>
+                    <strong>Motivo de anulación:</strong> {odcSeleccionada.motivo_anulacion || odcSeleccionada.motivo_rechazo_compras || 'Orden de compra cancelada / anulada en Compras.'}
+                  </div>
+                  {(odcSeleccionada.anulado_por || odcSeleccionada.fecha_anulacion) && (
+                    <div style={{ fontSize: '0.75rem', color: '#991b1b', marginTop: '3px', fontWeight: '600' }}>
+                      {odcSeleccionada.anulado_por ? `Anulada por: ${odcSeleccionada.anulado_por}` : ''}
+                      {odcSeleccionada.fecha_anulacion ? ` • Fecha: ${new Date(odcSeleccionada.fecha_anulacion).toLocaleString('es-VE')}` : ''}
+                    </div>
+                  )}
+                  <div style={{ fontSize: '0.73rem', color: '#b91c1c', marginTop: '2px', fontStyle: 'italic' }}>
+                    ℹ️ Visualización en modo solo lectura. Todas las opciones de edición y modificación se encuentran deshabilitadas.
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Banner de ODC Rechazada con botón para modificar */}
-            {odcSeleccionada.estado_aprobacion_precio === 'rechazado' && (
+            {!esAnuladaOdc(odcSeleccionada) && odcSeleccionada.estado_aprobacion_precio === 'rechazado' && (
               <div style={{ backgroundColor: '#fef2f2', border: '1.5px solid #fca5a5', borderRadius: '16px', padding: '16px 20px', marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '14px' }}>
                 <div style={{ flex: 1, minWidth: '260px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#991b1b', fontWeight: '900', fontSize: '0.92rem' }}>
@@ -2690,9 +3559,33 @@ const OrdenesCompra = ({ currentUser }) => {
               </div>
             )}
 
-            {/* Panel de Control de Gobernanza (Switch de Carlos Vega) */}
-            {esCarlosVega && (
-              <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '16px', padding: '16px 20px', marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            {/* Panel de Control de Gobernanza (Switch de Ricardo Herrera - Gerencia de Compras) */}
+            {esRicardoHerrera && !esAnuladaOdc(odcSeleccionada) && (
+              <div style={{ backgroundColor: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '16px', padding: '16px 20px', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 2px 6px rgba(2, 132, 199, 0.06)' }}>
+                <div>
+                  <span style={{ fontWeight: '800', color: '#0369a1', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <ShieldCheck size={18} /> Gobernanza de Aval Digital - Ricardo Herrera (Gerencia de Compras)
+                  </span>
+                  <span style={{ fontSize: '0.75rem', color: '#0284c7', display: 'block', marginTop: '2px' }}>
+                    Al activar esta opción se estampará automáticamente tu aval digital en el casillero de Gerente de Compras en el formato F-ADM-01-2.
+                  </span>
+                </div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', fontWeight: '700', fontSize: '0.85rem', color: '#0369a1' }}>
+                  <input 
+                    type="checkbox" 
+                    style={{ width: '20px', height: '20px', cursor: 'pointer' }}
+                    checked={odcSeleccionada.ricardo_firma_digital_activa === true}
+                    disabled={guardandoFirmaRicardo}
+                    onChange={(e) => toggleFirmaDigitalRicardo(e.target.checked)}
+                  />
+                  Aval Digital Activo
+                </label>
+              </div>
+            )}
+
+            {/* Panel de Control de Gobernanza (Switch de Carlos Vega - Gerencia General) */}
+            {esCarlosVega && !esAnuladaOdc(odcSeleccionada) && (
+              <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '16px', padding: '16px 20px', marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 2px 6px rgba(22, 101, 52, 0.06)' }}>
                 <div>
                   <span style={{ fontWeight: '800', color: '#166534', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
                     <ShieldCheck size={18} /> Gobernanza de Firma Remota - Carlos Vega (Gerencia General)
@@ -2714,95 +3607,108 @@ const OrdenesCompra = ({ currentUser }) => {
               </div>
             )}
 
-            {/* Panel de Edición de Observaciones de la ODC */}
-            <div style={{ backgroundColor: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '16px', padding: '16px 20px', marginBottom: '16px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                <span style={{ fontWeight: '800', color: '#0f172a', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <FileText size={16} color="#0ea5e9" /> Observaciones de la Órden de Compra
-                </span>
-                <button 
-                  type="button" 
-                  onClick={() => setEditandoObservaciones(!editandoObservaciones)}
-                  style={{ padding: '6px 12px', fontSize: '0.75rem', fontWeight: '700', borderRadius: '8px', border: '1px solid #cbd5e1', backgroundColor: 'white', cursor: 'pointer' }}
-                >
-                  {editandoObservaciones ? 'Ocultar Editor' : '✏️ Editar Observaciones'}
-                </button>
+            {/* Paneles de Edición de Observaciones y Leyes/Condiciones (Lado a Lado) */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '16px', marginBottom: '24px' }}>
+              
+              {/* Panel de Edición de Observaciones de la ODC */}
+              <div style={{ backgroundColor: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '16px', padding: '16px 20px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                    <span style={{ fontWeight: '800', color: '#0f172a', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <FileText size={16} color="#0ea5e9" /> Observaciones de la Órden de Compra
+                    </span>
+                    {!esAnuladaOdc(odcSeleccionada) && (
+                      <button 
+                        type="button" 
+                        onClick={() => setEditandoObservaciones(!editandoObservaciones)}
+                        style={{ padding: '5px 10px', fontSize: '0.72rem', fontWeight: '700', borderRadius: '8px', border: '1px solid #cbd5e1', backgroundColor: 'white', cursor: 'pointer' }}
+                      >
+                        {editandoObservaciones ? 'Ocultar' : '✏️ Editar Observaciones'}
+                      </button>
+                    )}
+                  </div>
+
+                  {editandoObservaciones && !esAnuladaOdc(odcSeleccionada) ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                      <textarea
+                        rows={3}
+                        style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: '1px solid #0ea5e9', fontSize: '0.8rem', fontFamily: 'inherit', resize: 'vertical' }}
+                        value={textoObservaciones}
+                        onChange={(e) => setTextoObservaciones(e.target.value)}
+                        placeholder="Escriba aquí las observaciones especiales para esta orden de compra..."
+                      />
+                      <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                        <button
+                          type="button"
+                          disabled={guardandoObservaciones}
+                          onClick={() => guardarObservacionesOdc(textoObservaciones)}
+                          style={{ padding: '6px 14px', fontSize: '0.75rem', fontWeight: '800', backgroundColor: '#0ea5e9', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}
+                        >
+                          {guardandoObservaciones ? 'Guardando...' : '💾 Guardar Observaciones'}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: '0.8rem', color: '#334155', lineHeight: '1.4' }}>
+                      {odcSeleccionada.observaciones || <span style={{ color: '#94a3b8', fontStyle: 'italic' }}>Sin observaciones registradas (se mostrarán líneas para llenado manual).</span>}
+                    </div>
+                  )}
+                </div>
               </div>
 
-              {editandoObservaciones ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  <textarea
-                    rows={3}
-                    style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: '1px solid #0ea5e9', fontSize: '0.8rem', fontFamily: 'inherit', resize: 'vertical' }}
-                    value={textoObservaciones}
-                    onChange={(e) => setTextoObservaciones(e.target.value)}
-                    placeholder="Escriba aquí las observaciones especiales para esta orden de compra..."
-                  />
-                  <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-                    <button
-                      type="button"
-                      disabled={guardandoObservaciones}
-                      onClick={() => guardarObservacionesOdc(textoObservaciones)}
-                      style={{ padding: '6px 16px', fontSize: '0.75rem', fontWeight: '800', backgroundColor: '#0ea5e9', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}
-                    >
-                      {guardandoObservaciones ? 'Guardando...' : '💾 Guardar Observaciones'}
-                    </button>
+              {/* Panel de Edición de Leyes y Condiciones Comerciales */}
+              <div style={{ backgroundColor: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '16px', padding: '16px 20px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                    <span style={{ fontWeight: '800', color: '#0f172a', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <FileText size={16} color="#0ea5e9" /> Leyes, Términos & Condiciones Comerciales
+                    </span>
+                    {!esAnuladaOdc(odcSeleccionada) && (
+                      <button 
+                        type="button" 
+                        onClick={() => setEditandoTerminos(!editandoTerminos)}
+                        style={{ padding: '5px 10px', fontSize: '0.72rem', fontWeight: '700', borderRadius: '8px', border: '1px solid #cbd5e1', backgroundColor: 'white', cursor: 'pointer' }}
+                      >
+                        {editandoTerminos ? 'Ocultar' : '✏️ Editar Leyes / Condiciones'}
+                      </button>
+                    )}
                   </div>
-                </div>
-              ) : (
-                <div style={{ fontSize: '0.8rem', color: '#334155', lineHeight: '1.4' }}>
-                  {odcSeleccionada.observaciones || <span style={{ color: '#94a3b8', fontStyle: 'italic' }}>Sin observaciones registradas (se mostrarán líneas para llenado manual).</span>}
-                </div>
-              )}
-            </div>
 
-            {/* Panel de Edición de Leyes y Condiciones Comerciales */}
-            <div style={{ backgroundColor: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '16px', padding: '16px 20px', marginBottom: '24px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                <span style={{ fontWeight: '800', color: '#0f172a', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <FileText size={16} color="#0ea5e9" /> Leyes, Términos & Condiciones Comerciales
-                </span>
-                <button 
-                  type="button" 
-                  onClick={() => setEditandoTerminos(!editandoTerminos)}
-                  style={{ padding: '6px 12px', fontSize: '0.75rem', fontWeight: '700', borderRadius: '8px', border: '1px solid #cbd5e1', backgroundColor: 'white', cursor: 'pointer' }}
-                >
-                  {editandoTerminos ? 'Ocultar Editor' : '✏️ Editar Leyes / Condiciones'}
-                </button>
+                  {editandoTerminos && !esAnuladaOdc(odcSeleccionada) ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                      <textarea
+                        rows={3}
+                        style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: '1px solid #0ea5e9', fontSize: '0.8rem', fontFamily: 'inherit', resize: 'vertical' }}
+                        value={textoTerminos}
+                        onChange={(e) => setTextoTerminos(e.target.value)}
+                        placeholder="Escriba aquí los términos, leyes y condiciones comerciales..."
+                      />
+                      <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                        <button
+                          type="button"
+                          onClick={() => guardarTerminosPredeterminados(textoTerminos)}
+                          style={{ padding: '5px 12px', fontSize: '0.72rem', fontWeight: '700', backgroundColor: '#f59e0b', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}
+                        >
+                          ⭐ Predeterminado Global
+                        </button>
+                        <button
+                          type="button"
+                          disabled={guardandoTerminos}
+                          onClick={() => guardarTerminosOdc(textoTerminos)}
+                          style={{ padding: '5px 14px', fontSize: '0.75rem', fontWeight: '800', backgroundColor: '#0ea5e9', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}
+                        >
+                          {guardandoTerminos ? 'Guardando...' : '💾 Guardar para esta ODC'}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: '0.8rem', color: '#334155', lineHeight: '1.4' }}>
+                      {odcSeleccionada.terminos_condiciones || "Precios incluyen entrega en el sitio de destino especificado. Mercancía sujeta a inspección de calidad y conteo físico."}
+                    </div>
+                  )}
+                </div>
               </div>
 
-              {editandoTerminos ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  <textarea
-                    rows={3}
-                    style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: '1px solid #0ea5e9', fontSize: '0.8rem', fontFamily: 'inherit', resize: 'vertical' }}
-                    value={textoTerminos}
-                    onChange={(e) => setTextoTerminos(e.target.value)}
-                    placeholder="Escriba aquí los términos, leyes y condiciones comerciales..."
-                  />
-                  <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-                    <button
-                      type="button"
-                      onClick={() => guardarTerminosPredeterminados(textoTerminos)}
-                      style={{ padding: '6px 14px', fontSize: '0.75rem', fontWeight: '700', backgroundColor: '#f59e0b', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}
-                    >
-                      ⭐ Establecer Predeterminado Global
-                    </button>
-                    <button
-                      type="button"
-                      disabled={guardandoTerminos}
-                      onClick={() => guardarTerminosOdc(textoTerminos)}
-                      style={{ padding: '6px 16px', fontSize: '0.75rem', fontWeight: '800', backgroundColor: '#0ea5e9', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}
-                    >
-                      {guardandoTerminos ? 'Guardando...' : '💾 Guardar para esta ODC'}
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div style={{ fontSize: '0.8rem', color: '#334155', lineHeight: '1.4' }}>
-                  {odcSeleccionada.terminos_condiciones || "Precios incluyen entrega en el sitio de destino especificado. Mercancía sujeta a inspección de calidad y conteo físico."}
-                </div>
-              )}
             </div>
 
             {/* HOJA IMPRIMIBLE F-ADM-01-2 (Formato Físico de Referencia) */}
@@ -2877,9 +3783,9 @@ const OrdenesCompra = ({ currentUser }) => {
                       <div><strong>Teléfono:</strong> {odcSeleccionada.proveedor_telefono || 'N/A'}</div>
                       <div><strong>R.I.F.:</strong> {odcSeleccionada.proveedor_rif || 'N/A'}</div>
                       <div><strong>Ciudad:</strong> {odcSeleccionada.proveedor_ciudad || 'N/A'}</div>
-                      <div><strong>Despachar a:</strong> {odcSeleccionada.despachar_a || 'Total Clean C.A.'}</div>
+                      <div><strong>Lugar de Entrega (Destino):</strong> {String(odcSeleccionada.destino_despacho || odcSeleccionada.despachar_a_direccion || odcSeleccionada.despachar_a || 'Galpones Riese - Av. Los Haticos').replace(/\s*-\s*null/gi, '').replace(/\bnull\b/gi, '').trim()}</div>
+                      <div><strong>Centro de Costo:</strong> {odcSeleccionada.requisicion_obj?.centro_costo || odcSeleccionada.requisicion_obj?.obra || odcSeleccionada.centro_costo || 'No especificado'}</div>
                       <div><strong>Solicitado por:</strong> {odcSeleccionada.requisicion_obj?.solicitante || odcSeleccionada.solicitante || odcSeleccionada.solicitado_por || 'Total Clean C.A.'}</div>
-                      <div><strong>Destino a obra:</strong> {(odcSeleccionada.requisicion_obj?.centro_costo || odcSeleccionada.requisicion_obj?.obra || odcSeleccionada.destino_despacho || odcSeleccionada.despachar_a_direccion || 'Galpones Riese - Av. Los Haticos').replace(/\s*-\s*null/gi, '').replace(/null/gi, '').trim()}</div>
                     </td>
                     <td style={{ width: '44%', padding: '6px 10px', lineHeight: '1.45' }}>
                       <div><strong>Contacto:</strong> {odcSeleccionada.proveedor_contacto || 'N/A'}</div>
@@ -3009,9 +3915,20 @@ const OrdenesCompra = ({ currentUser }) => {
                     <div className="f-adm-sig-header-compact">Revisado y avalado por (nombre y firma)</div>
                     <div className="f-adm-sig-sub-compact">Gerente de Compras</div>
                   </div>
-                  <div className="f-adm-sig-name-compact">
-                    Ricardo Herrera (Gerente de Compras)
-                  </div>
+                  {odcSeleccionada.ricardo_firma_digital_activa ? (
+                    <div className="f-adm-digital-seal-img1" style={{ padding: '4px' }}>
+                      <div style={{ color: '#047857', fontWeight: '800', fontSize: '0.62rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '3px' }}>
+                        <ShieldCheck size={11} color="#047857" /> AVALADO DIGITALMENTE
+                      </div>
+                      <div style={{ color: '#0f766e', fontWeight: '700', fontSize: '0.60rem' }}>
+                        Ricardo Herrera (Gerente de Compras)
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="f-adm-sig-name-compact">
+                      Ricardo Herrera (Gerente de Compras)
+                    </div>
+                  )}
                 </div>
 
                 {/* 3. Carlos Vega - Gerente General */}
@@ -3112,53 +4029,56 @@ const OrdenesCompra = ({ currentUser }) => {
                 )}
 
                 {/* Sección 1: Encabezado y Datos del Proveedor */}
-                <div style={{ backgroundColor: '#f8fafc', padding: '18px 20px', borderRadius: '16px', border: '1px solid #e2e8f0' }}>
+                <div style={{ backgroundColor: '#ffffff', padding: '18px 20px', borderRadius: '16px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.03)' }}>
                   <h4 style={{ margin: '0 0 14px 0', fontSize: '0.88rem', fontWeight: '800', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <Building2 size={16} color="#0ea5e9" /> Datos del Proveedor & Encabezado ODC
+                    <Building2 size={16} color="#0284c7" /> Datos del Proveedor & Encabezado ODC
                   </h4>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '14px' }}>
                     
+                    {/* Requisición de Origen */}
                     <div>
-                      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '800', color: '#0369a1', marginBottom: '4px' }}>
+                      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '4px' }}>
                         📌 Requisición de Origen (Vínculo)
                       </label>
-                      <div style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #0284c7', fontSize: '0.82rem', backgroundColor: '#f0f9ff', fontWeight: '700', color: '#0369a1' }}>
+                      <div style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.82rem', backgroundColor: '#f8fafc', fontWeight: '700', color: '#1e293b' }}>
                         {sourceReqSelected ? `${sourceReqSelected.correlativo_req} - ${sourceReqSelected.solicitante || 'Sin solicitante'}` : (editOdcTarget?.requisicion_correlativo || (editOdcTarget?.requisicion_id ? `REQ-${editOdcTarget.requisicion_id}` : 'Sin Requisición Vinculada'))}
                       </div>
                     </div>
 
-                    <div>
-                      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '800', color: '#0ea5e9', marginBottom: '4px' }}>
-                        🔍 Categoría de Proveedor
-                      </label>
-                      <select
-                        style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #38bdf8', fontSize: '0.82rem', backgroundColor: '#f0f9ff', fontWeight: '700', color: '#0284c7' }}
-                        value={filtroCategoriaProveedor}
-                        onChange={(e) => setFiltroCategoriaProveedor(e.target.value)}
-                      >
-                        <option value="TODAS">-- Todas las Categorías ({proveedoresList.length}) --</option>
-                        {categoriasDisponibles.map(cat => (
-                          <option key={cat} value={cat}>{cat}</option>
-                        ))}
-                      </select>
-                    </div>
-
+                    {/* Subcuadro Dedicado: Centro de Costo */}
                     <div>
                       <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '4px' }}>
-                        Seleccionar Proveedor ({proveedoresFiltradosPorCategoria.length})
+                        🏢 Centro de Costo (Requisición)
                       </label>
-                      <select
-                        style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.82rem', backgroundColor: 'white' }}
-                        value={editOdcTarget.proveedor_id || ''}
-                        onChange={(e) => manejarCambioProveedorEdicion(e.target.value)}
-                      >
-                        <option value="">-- Proveedor Personalizado --</option>
-                        {proveedoresFiltradosPorCategoria.map(p => (
-                          <option key={p.id} value={p.id}>
-                            {p.razon_social || p.nombre} ({p.rif || 'Sin RIF'})
-                          </option>
-                        ))}
-                      </select>
+                      <div style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.82rem', backgroundColor: '#f8fafc', fontWeight: '700', color: '#1e293b' }}>
+                        {editOdcTarget.requisicion_obj?.centro_costo || editOdcTarget.centro_costo || sourceReqSelected?.centro_costo || 'No especificado'}
+                      </div>
+                    </div>
+
+                    {/* Categoría de Proveedor (Bloqueado / No Modificable) */}
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#64748b', marginBottom: '4px' }}>
+                        🔍 Categoría de Proveedor
+                      </label>
+                      <input
+                        type="text"
+                        readOnly
+                        style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.82rem', backgroundColor: '#f1f5f9', color: '#475569', fontWeight: '700', cursor: 'not-allowed' }}
+                        value={filtroCategoriaProveedor !== 'TODAS' ? filtroCategoriaProveedor : (proveedoresList.find(p => String(p.id) === String(editOdcTarget.proveedor_id))?.categoria || 'General / Preestablecida')}
+                      />
+                    </div>
+
+                    {/* Proveedor Seleccionado (Bloqueado / No Modificable) */}
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#64748b', marginBottom: '4px' }}>
+                        Proveedor Seleccionado
+                      </label>
+                      <input
+                        type="text"
+                        readOnly
+                        style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.82rem', backgroundColor: '#f1f5f9', color: '#0f172a', fontWeight: '700', cursor: 'not-allowed' }}
+                        value={editOdcTarget.proveedor_nombre || (proveedoresList.find(p => String(p.id) === String(editOdcTarget.proveedor_id))?.razon_social || 'Proveedor asignado')}
+                      />
                     </div>
 
                     {/* Cuenta Bancaria de Destino del Proveedor */}
@@ -3174,20 +4094,28 @@ const OrdenesCompra = ({ currentUser }) => {
 
                       return (
                         <div>
-                          <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', fontWeight: '700', color: '#0ea5e9', marginBottom: '4px' }}>
-                            <Landmark size={13} /> Cuenta Bancaria de Destino para Pago
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '4px' }}>
+                            <Landmark size={13} color="#0284c7" /> Cuenta Bancaria de Destino para Pago
                           </label>
                           <select
-                            style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #0ea5e9', fontSize: '0.82rem', backgroundColor: ctasProv.length > 0 ? '#f0f9ff' : 'white', fontWeight: '600' }}
+                            style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.82rem', backgroundColor: '#ffffff', color: '#0f172a', fontWeight: '600' }}
                             value={editOdcTarget.datos_bancarios || editOdcTarget.cuenta_bancaria || ''}
                             onChange={(e) => setEditOdcTarget(prev => ({ ...prev, datos_bancarios: e.target.value, cuenta_bancaria: e.target.value }))}
                           >
                             <option value="">-- Seleccionar Cuenta Bancaria de Pago --</option>
+                            {Boolean(editOdcTarget.datos_bancarios || editOdcTarget.cuenta_bancaria) && !ctasProv.some(c => {
+                              const label = `${c.banco || 'Banco'} (${c.moneda || 'USD'}) - N° Cuenta: ${c.nro_cuenta || 'N/A'} - Titular: ${c.titular || 'N/A'} (${c.rif || 'N/A'}) ${c.tipo_cuenta ? `[${c.tipo_cuenta}]` : ''}`;
+                              return label === (editOdcTarget.datos_bancarios || editOdcTarget.cuenta_bancaria);
+                            }) && (
+                              <option value={editOdcTarget.datos_bancarios || editOdcTarget.cuenta_bancaria}>
+                                {editOdcTarget.datos_bancarios || editOdcTarget.cuenta_bancaria} (Guardada)
+                              </option>
+                            )}
                             {ctasProv.map((c, idx) => {
                               const label = `${c.banco || 'Banco'} (${c.moneda || 'USD'}) - N° Cuenta: ${c.nro_cuenta || 'N/A'} - Titular: ${c.titular || 'N/A'} (${c.rif || 'N/A'}) ${c.tipo_cuenta ? `[${c.tipo_cuenta}]` : ''}`;
                               return <option key={idx} value={label}>{label}</option>;
                             })}
-                            {ctasProv.length === 0 && (
+                            {ctasProv.length === 0 && !editOdcTarget.datos_bancarios && !editOdcTarget.cuenta_bancaria && (
                               <option value="" disabled>Sin cuentas de banco guardadas</option>
                             )}
                           </select>
@@ -3195,45 +4123,49 @@ const OrdenesCompra = ({ currentUser }) => {
                       );
                     })()}
 
+                    {/* Razón Social (Bloqueado / No Modificable) */}
                     <div>
-                      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '4px' }}>
-                        Razón Social / Nombre Proveedor *
+                      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#64748b', marginBottom: '4px' }}>
+                        Razón Social / Nombre Proveedor
                       </label>
                       <input
                         type="text"
-                        style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.82rem' }}
+                        readOnly
+                        style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.82rem', backgroundColor: '#f1f5f9', color: '#334155', fontWeight: '600', cursor: 'not-allowed' }}
                         value={editOdcTarget.proveedor_nombre || ''}
-                        onChange={(e) => setEditOdcTarget(prev => ({ ...prev, proveedor_nombre: e.target.value }))}
                         placeholder="Nombre o Razón Social"
                       />
                     </div>
 
+                    {/* RIF Proveedor (Bloqueado / No Modificable) */}
                     <div>
-                      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '4px' }}>
+                      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#64748b', marginBottom: '4px' }}>
                         RIF Proveedor
                       </label>
                       <input
                         type="text"
-                        style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.82rem' }}
+                        readOnly
+                        style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.82rem', backgroundColor: '#f1f5f9', color: '#334155', fontWeight: '600', cursor: 'not-allowed' }}
                         value={editOdcTarget.proveedor_rif || ''}
-                        onChange={(e) => setEditOdcTarget(prev => ({ ...prev, proveedor_rif: e.target.value }))}
                         placeholder="J-12345678-0"
                       />
                     </div>
 
+                    {/* Persona de Contacto (Bloqueado / No Modificable) */}
                     <div>
-                      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '4px' }}>
+                      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#64748b', marginBottom: '4px' }}>
                         Persona de Contacto
                       </label>
                       <input
                         type="text"
-                        style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.82rem' }}
+                        readOnly
+                        style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.82rem', backgroundColor: '#f1f5f9', color: '#334155', fontWeight: '600', cursor: 'not-allowed' }}
                         value={editOdcTarget.proveedor_contacto || ''}
-                        onChange={(e) => setEditOdcTarget(prev => ({ ...prev, proveedor_contacto: e.target.value }))}
                         placeholder="Persona de Contacto"
                       />
                     </div>
 
+                    {/* Ref. Cotización Proveedor */}
                     <div>
                       <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '4px' }}>
                         Ref. Cotización Proveedor
@@ -3247,29 +4179,66 @@ const OrdenesCompra = ({ currentUser }) => {
                       />
                     </div>
 
+                    {/* Fecha de Despacho Estimada (Modificable) */}
                     <div>
                       <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '4px' }}>
-                        Fecha de Despacho Estimada
+                        📅 Fecha de Despacho Estimada
                       </label>
                       <input
                         type="date"
-                        style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.82rem' }}
+                        style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.82rem', backgroundColor: 'white', fontWeight: '600', color: '#0f172a' }}
                         value={editOdcTarget.fecha_despacho || ''}
                         onChange={(e) => setEditOdcTarget(prev => ({ ...prev, fecha_despacho: e.target.value }))}
                       />
                     </div>
 
+                    {/* Despachar a (Sincronizado con Compras y Base de Datos) */}
                     <div style={{ gridColumn: 'span 2' }}>
-                      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '4px' }}>
-                        Destino a Obra / Dirección de Despacho
-                      </label>
-                      <input
-                        type="text"
-                        style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.82rem' }}
-                        value={editOdcTarget.destino_despacho || ''}
-                        onChange={(e) => setEditOdcTarget(prev => ({ ...prev, destino_despacho: e.target.value }))}
-                        placeholder="Lugar de entrega / Galpones"
-                      />
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                        <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569' }}>DESPACHAR A *</label>
+                        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                          {editOdcTarget.despachar_a_id && (
+                            <button
+                              type="button"
+                              onClick={() => eliminarDestino(editOdcTarget.despachar_a_id)}
+                              style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: '0.75rem', fontWeight: '800', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                              title="Eliminar este destino de entrega"
+                            >
+                              <Trash2 size={13} /> Eliminar Destino
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setShowNuevoDestinoModal(true)}
+                            style={{ background: 'none', border: 'none', color: '#0ea5e9', fontSize: '0.75rem', fontWeight: '800', cursor: 'pointer' }}
+                          >
+                            + Nuevo Destino
+                          </button>
+                        </div>
+                      </div>
+                      <select
+                        className="input-tc"
+                        style={{ width: '100%', padding: '10px', fontWeight: '700', borderRadius: '8px', border: '1px solid #cbd5e1', backgroundColor: '#ffffff', color: '#0f172a' }}
+                        value={editOdcTarget.despachar_a_id || ''}
+                        onChange={(e) => {
+                          const destId = e.target.value;
+                          const dest = destinosDespacho.find(d => String(d.id) === String(destId));
+                          setEditOdcTarget(prev => ({
+                            ...prev,
+                            despachar_a_id: destId,
+                            destino_despacho: dest ? dest.nombre : '',
+                            despachar_a_direccion: dest ? (dest.direccion && dest.direccion !== 'null' ? `${dest.nombre} - ${dest.direccion}` : dest.nombre) : ''
+                          }));
+                        }}
+                      >
+                        <option value="">Seleccione Destino de Entrega...</option>
+                        {destinosDespacho.map(d => (
+                          <option key={d.id} value={d.id}>{d.nombre}{d.direccion && d.direccion !== 'null' ? ` (${d.direccion})` : ''}</option>
+                        ))}
+                        {Boolean(editOdcTarget.despachar_a_id) && !destinosDespacho.some(d => String(d.id) === String(editOdcTarget.despachar_a_id)) && (
+                          <option value={editOdcTarget.despachar_a_id}>{editOdcTarget.destino_despacho || 'Destino Actual'}</option>
+                        )}
+                      </select>
                     </div>
 
                   </div>
@@ -3313,57 +4282,43 @@ const OrdenesCompra = ({ currentUser }) => {
                     )}
 
                     <div>
-                      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#475569', marginBottom: '4px' }}>
-                        Moneda de Facturación
+                      <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '800', color: '#475569', marginBottom: '6px' }}>
+                        MONEDA
                       </label>
                       <select
-                        style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.82rem', backgroundColor: 'white' }}
-                        value={['USD', 'BS', 'EUR'].includes(editOdcTarget.moneda) ? editOdcTarget.moneda : 'OTRA'}
+                        className="input-tc"
+                        style={{ width: '100%', padding: '8px 12px', fontWeight: '800', borderRadius: '8px', border: '1px solid #cbd5e1', backgroundColor: '#ffffff' }}
+                        value={['USD', 'BS'].includes(editOdcTarget.moneda) ? editOdcTarget.moneda : 'OTRA'}
                         onChange={(e) => {
-                          const val = e.target.value;
-                          if (val === 'OTRA') {
-                            setEditOdcTarget(prev => ({ ...prev, moneda: 'OTRA', moneda_custom: prev.moneda_custom || '' }));
-                          } else {
-                            setEditOdcTarget(prev => ({ ...prev, moneda: val, tasa_cambio: val === 'USD' ? 1 : prev.tasa_cambio }));
-                          }
+                          const mon = e.target.value;
+                          setEditOdcTarget(prev => ({
+                            ...prev,
+                            moneda: mon === 'OTRA' ? (prev.moneda_custom || 'OTRA') : mon,
+                            tasa_cambio: mon === 'USD' ? 1 : prev.tasa_cambio
+                          }));
                         }}
                       >
-                        <option value="USD">💵 Dólares ($ / USD)</option>
-                        <option value="BS">🇻🇪 Bolívares (Bs / VES)</option>
-                        <option value="EUR">💶 Euros (€ / EUR)</option>
-                        <option value="OTRA">➕ Nuevo / Otra moneda...</option>
+                        <option value="USD">USD ($)</option>
+                        <option value="BS">VES (Bs)</option>
+                        <option value="OTRA">+ Nuevo / Otra moneda...</option>
                       </select>
                     </div>
 
-                    {(!['USD', 'BS', 'EUR'].includes(editOdcTarget.moneda) || editOdcTarget.moneda === 'OTRA') && (
+                    {(!['USD', 'BS'].includes(editOdcTarget.moneda) || editOdcTarget.moneda === 'OTRA') && (
                       <div>
-                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#0369a1', marginBottom: '4px' }}>
-                          Especifique Moneda Personalizada *
+                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '800', color: '#0284c7', marginBottom: '6px' }}>
+                          NOMBRE DE MONEDA *
                         </label>
                         <input
                           type="text"
-                          style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #0284c7', fontSize: '0.82rem', textTransform: 'uppercase' }}
-                          value={editOdcTarget.moneda_custom !== undefined ? editOdcTarget.moneda_custom : (['USD', 'BS', 'EUR'].includes(editOdcTarget.moneda) ? '' : editOdcTarget.moneda)}
+                          className="input-tc"
+                          placeholder="Ej: EUR, COP, BRL..."
+                          style={{ width: '100%', padding: '8px 12px', fontWeight: '800', borderRadius: '8px', border: '1px solid #0284c7', backgroundColor: '#f0f9ff' }}
+                          value={editOdcTarget.moneda_custom || (['USD', 'BS'].includes(editOdcTarget.moneda) ? '' : editOdcTarget.moneda)}
                           onChange={(e) => {
-                            const customVal = e.target.value.toUpperCase();
-                            setEditOdcTarget(prev => ({ ...prev, moneda_custom: customVal, moneda: customVal || 'OTRA' }));
+                            const val = e.target.value.toUpperCase();
+                            setEditOdcTarget(prev => ({ ...prev, moneda_custom: val, moneda: val || 'OTRA' }));
                           }}
-                          placeholder="Ej: COP, BRL, MXN"
-                        />
-                      </div>
-                    )}
-
-                    {editOdcTarget.moneda !== 'USD' && (
-                      <div>
-                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', color: '#b45309', marginBottom: '4px' }}>
-                          {editOdcTarget.moneda === 'BS' ? 'Tasa BCV (Bs/$)' : `Tasa Cambio (${editOdcTarget.moneda || 'MONEDA'}/$)`}
-                        </label>
-                        <input
-                          type="number"
-                          step="0.0001"
-                          style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #f59e0b', fontSize: '0.82rem', backgroundColor: '#fffbeb', fontWeight: '700' }}
-                          value={editOdcTarget.tasa_cambio || 1}
-                          onChange={(e) => setEditOdcTarget(prev => ({ ...prev, tasa_cambio: e.target.value }))}
                         />
                       </div>
                     )}
@@ -3383,126 +4338,241 @@ const OrdenesCompra = ({ currentUser }) => {
                   </div>
                 </div>
 
-                {/* Sección 3: Tabla de Renglones / Ítems de la ODC */}
-                <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                    <h4 style={{ margin: 0, fontSize: '0.88rem', fontWeight: '800', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <FileText size={16} color="#0ea5e9" /> Renglones de Productos / Servicios ({editItems.length})
-                    </h4>
-                    <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (!sourceReqSelected && editOdcTarget?.requisicion_id) {
-                            const match = (requisicionesList || []).find(r => 
-                              String(r.id) === String(editOdcTarget.requisicion_id) || 
-                              (r.correlativo_req && String(r.correlativo_req).trim().toUpperCase() === String(editOdcTarget.requisicion_id).trim().toUpperCase())
-                            );
-                            if (match) setSourceReqSelected(match);
-                          }
-                          setShowReqItemsPicker(true);
-                        }}
-                        style={{ padding: '6px 14px', fontSize: '0.75rem', fontWeight: '800', backgroundColor: '#0284c7', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px', boxShadow: '0 2px 4px rgba(2, 132, 199, 0.2)' }}
-                        title="Importar productos de la Requisición de Origen"
-                      >
-                        📋 Importar Renglones de Requisición
-                      </button>
-                    </div>
+                {/* Configuración de Paso por Almacén en Edición */}
+                <div style={{
+                  backgroundColor: '#f8fafc',
+                  border: '1.5px solid #e2e8f0',
+                  padding: '16px',
+                  borderRadius: '16px'
+                }}>
+                  <div style={{ fontSize: '0.82rem', fontWeight: '800', color: '#1e293b', marginBottom: '10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+                    <span>🚚 Logística & Recepción Física</span>
+                    <span style={{
+                      fontSize: '0.72rem',
+                      fontWeight: '900',
+                      padding: '3px 10px',
+                      borderRadius: '20px',
+                      backgroundColor: editOdcTarget.pasa_por_almacen !== false ? '#dcfce7' : '#fef3c7',
+                      color: editOdcTarget.pasa_por_almacen !== false ? '#15803d' : '#92400e',
+                      border: `1px solid ${editOdcTarget.pasa_por_almacen !== false ? '#bbf7d0' : '#fde68a'}`
+                    }}>
+                      {editOdcTarget.pasa_por_almacen !== false ? '📦 PASA POR ALMACÉN' : '⚡ ENTREGA DIRECTA (NO PASA POR ALMACÉN)'}
+                    </span>
                   </div>
 
-                  <div style={{ overflowX: 'auto', border: '1px solid #cbd5e1', borderRadius: '12px' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
-                      <thead>
-                        <tr style={{ backgroundColor: '#0f172a', color: 'white', textAlign: 'left' }}>
-                          <th style={{ padding: '10px', width: '5%', textAlign: 'center' }}>#</th>
-                          <th style={{ padding: '10px', width: '45%' }}>Descripción / Especificación Técnica</th>
-                          <th style={{ padding: '10px', width: '12%', textAlign: 'center' }}>Unidad</th>
-                          <th style={{ padding: '10px', width: '12%', textAlign: 'right' }}>Cantidad</th>
-                          <th style={{ padding: '10px', width: '14%', textAlign: 'right' }}>P. Unit ($)</th>
-                          <th style={{ padding: '10px', width: '14%', textAlign: 'right' }}>Total ($)</th>
-                          <th style={{ padding: '10px', width: '6%', textAlign: 'center' }}></th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {editItems.map((it, idx) => (
-                          <tr key={it.id || idx} style={{ borderBottom: '1px solid #e2e8f0', backgroundColor: idx % 2 === 0 ? 'white' : '#f8fafc' }}>
-                            <td style={{ padding: '8px 10px', textAlign: 'center', fontWeight: '700', color: '#64748b' }}>
-                              {idx + 1}
-                            </td>
-                            <td style={{ padding: '8px 10px' }}>
-                              <input
-                                type="text"
-                                style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.8rem' }}
-                                value={it.descripcion || ''}
-                                onChange={(e) => actualizarItemEdicion(idx, 'descripcion', e.target.value)}
-                                placeholder="Nombre o especificación del ítem"
-                              />
-                            </td>
-                            <td style={{ padding: '8px 10px', textAlign: 'center' }}>
-                              <input
-                                type="text"
-                                style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.8rem', textAlign: 'center' }}
-                                value={it.unidad || 'UNID'}
-                                onChange={(e) => actualizarItemEdicion(idx, 'unidad', e.target.value)}
-                              />
-                            </td>
-                            <td style={{ padding: '8px 10px' }}>
-                              <input
-                                type="number"
-                                step="0.01"
-                                min="0"
-                                style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.8rem', textAlign: 'right', fontWeight: '700' }}
-                                value={it.cantidad}
-                                onChange={(e) => actualizarItemEdicion(idx, 'cantidad', e.target.value)}
-                              />
-                            </td>
-                            <td style={{ padding: '8px 10px' }}>
-                              <input
-                                type="number"
-                                step="0.01"
-                                min="0"
-                                style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.8rem', textAlign: 'right' }}
-                                value={it.precio_unitario}
-                                onChange={(e) => actualizarItemEdicion(idx, 'precio_unitario', e.target.value)}
-                              />
-                            </td>
-                            <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: '800', color: '#0f172a' }}>
-                              $ {Number(it.total_fila || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
-                            </td>
-                            <td style={{ padding: '8px 10px', textAlign: 'center' }}>
-                              <button
-                                type="button"
-                                onClick={() => eliminarItemEdicion(idx)}
-                                style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px' }}
-                                title="Eliminar renglón"
-                              >
-                                <Trash2 size={16} />
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '12px' }}>
+                    {/* Opción 1: Pasa por Almacén */}
+                    <button
+                      type="button"
+                      onClick={() => setEditOdcTarget(prev => ({ ...prev, pasa_por_almacen: true }))}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'flex-start',
+                        gap: '10px',
+                        padding: '12px 14px',
+                        borderRadius: '12px',
+                        border: editOdcTarget.pasa_por_almacen !== false ? '2px solid #16a34a' : '1.5px solid #cbd5e1',
+                        backgroundColor: editOdcTarget.pasa_por_almacen !== false ? '#f0fdf4' : '#ffffff',
+                        cursor: 'pointer',
+                        textAlign: 'left',
+                        transition: 'all 0.15s ease',
+                        boxShadow: editOdcTarget.pasa_por_almacen !== false ? '0 2px 8px rgba(22, 163, 74, 0.15)' : 'none'
+                      }}
+                    >
+                      <input
+                        type="radio"
+                        name="edit_pasa_almacen_radio"
+                        checked={editOdcTarget.pasa_por_almacen !== false}
+                        onChange={() => setEditOdcTarget(prev => ({ ...prev, pasa_por_almacen: true }))}
+                        style={{ marginTop: '3px', cursor: 'pointer', accentColor: '#16a34a' }}
+                      />
+                      <div>
+                        <div style={{ fontSize: '0.85rem', fontWeight: '800', color: editOdcTarget.pasa_por_almacen !== false ? '#166534' : '#334155', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          📦 Pasa por Almacén
+                        </div>
+                        <div style={{ fontSize: '0.72rem', color: editOdcTarget.pasa_por_almacen !== false ? '#15803d' : '#64748b', marginTop: '3px', lineHeight: '1.3' }}>
+                          La mercancía ingresa físicamente a Almacén, requiere inspección, clasificación y entrega formal del almacenista.
+                        </div>
+                      </div>
+                    </button>
 
-                  {/* Cuadro de Totales Recalculados */}
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '14px' }}>
-                    <div style={{ width: '280px', backgroundColor: '#f1f5f9', border: '1px solid #cbd5e1', padding: '12px 16px', borderRadius: '12px', fontSize: '0.85rem' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', color: '#475569' }}>
-                        <span>Subtotal Renglones:</span>
-                        <strong>$ {subtotalEdit.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</strong>
+                    {/* Opción 2: No pasa por Almacén */}
+                    <button
+                      type="button"
+                      onClick={() => setEditOdcTarget(prev => ({ ...prev, pasa_por_almacen: false }))}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'flex-start',
+                        gap: '10px',
+                        padding: '12px 14px',
+                        borderRadius: '12px',
+                        border: editOdcTarget.pasa_por_almacen === false ? '2px solid #d97706' : '1.5px solid #cbd5e1',
+                        backgroundColor: editOdcTarget.pasa_por_almacen === false ? '#fffbeb' : '#ffffff',
+                        cursor: 'pointer',
+                        textAlign: 'left',
+                        transition: 'all 0.15s ease',
+                        boxShadow: editOdcTarget.pasa_por_almacen === false ? '0 2px 8px rgba(217, 119, 6, 0.15)' : 'none'
+                      }}
+                    >
+                      <input
+                        type="radio"
+                        name="edit_pasa_almacen_radio"
+                        checked={editOdcTarget.pasa_por_almacen === false}
+                        onChange={() => setEditOdcTarget(prev => ({ ...prev, pasa_por_almacen: false }))}
+                        style={{ marginTop: '3px', cursor: 'pointer', accentColor: '#d97706' }}
+                      />
+                      <div>
+                        <div style={{ fontSize: '0.85rem', fontWeight: '800', color: editOdcTarget.pasa_por_almacen === false ? '#92400e' : '#334155', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          🚚 No pasa por Almacén (Entrega Directa)
+                        </div>
+                        <div style={{ fontSize: '0.72rem', color: editOdcTarget.pasa_por_almacen === false ? '#b45309' : '#64748b', marginTop: '3px', lineHeight: '1.3' }}>
+                          Entrega directa en sitio, obra o servicio. No requiere recepción ni registro pendiente en Almacén.
+                        </div>
                       </div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', color: '#475569' }}>
-                        <span>IVA ({porcentajeIvaEdit}%):</span>
-                        <span>$ {montoIvaEdit.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span>
-                      </div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '2px solid #0f172a', paddingTop: '6px', fontSize: '0.95rem', fontWeight: '900', color: '#0f172a' }}>
-                        <span>TOTAL GENERAL:</span>
-                        <span style={{ color: '#0284c7' }}>$ {totalGeneralEdit.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span>
-                      </div>
-                    </div>
+                    </button>
                   </div>
                 </div>
+
+                {/* Sección 3: Tabla de Renglones / Ítems de la ODC */}
+                {(() => {
+                  const symMoneda = editOdcTarget.moneda === 'BS' ? 'Bs' : (editOdcTarget.moneda === 'EUR' ? '€' : (editOdcTarget.moneda === 'USD' ? '$' : (editOdcTarget.moneda || '$')));
+                  return (
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap', gap: '8px' }}>
+                        <h4 style={{ margin: 0, fontSize: '0.88rem', fontWeight: '800', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <FileText size={16} color="#0ea5e9" /> Renglones de Productos / Servicios ({editItems.length})
+                        </h4>
+                      </div>
+
+                      <div style={{ overflowX: 'auto', border: '1px solid #cbd5e1', borderRadius: '12px' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+                          <thead>
+                            <tr style={{ backgroundColor: '#0f172a', color: 'white', textAlign: 'left' }}>
+                              <th style={{ padding: '10px', width: '4%', textAlign: 'center' }}>#</th>
+                              <th style={{ padding: '10px', width: '46%' }}>DESCRIPCIÓN / ESPECIFICACIÓN TÉCNICA</th>
+                              <th style={{ padding: '10px', width: '12%', textAlign: 'center' }}>UNIDAD</th>
+                              <th style={{ padding: '10px', width: '12%', textAlign: 'center' }}>CANTIDAD</th>
+                              <th style={{ padding: '10px', width: '13%', textAlign: 'right' }}>P. UNIT ({symMoneda})</th>
+                              <th style={{ padding: '10px', width: '13%', textAlign: 'right' }}>TOTAL ({symMoneda})</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {editItems.map((it, idx) => (
+                              <tr key={it.id || idx} style={{ borderBottom: '1px solid #e2e8f0', backgroundColor: idx % 2 === 0 ? 'white' : '#f8fafc' }}>
+                                <td style={{ padding: '10px', textAlign: 'center', fontWeight: '700', color: '#64748b' }}>
+                                  {idx + 1}
+                                </td>
+                                {/* Descripción Bloqueada */}
+                                <td style={{ padding: '8px 10px' }}>
+                                  <div
+                                    style={{
+                                      width: '100%',
+                                      padding: '7px 12px',
+                                      borderRadius: '8px',
+                                      border: '1px solid #e2e8f0',
+                                      fontSize: '0.82rem',
+                                      fontWeight: '700',
+                                      color: '#0f172a',
+                                      backgroundColor: '#ffffff',
+                                      boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.02)'
+                                    }}
+                                  >
+                                    {it.descripcion || 'Sin descripción'}
+                                  </div>
+                                </td>
+                                {/* Unidad Bloqueada */}
+                                <td style={{ padding: '8px 10px', textAlign: 'center' }}>
+                                  <div
+                                    style={{
+                                      display: 'inline-block',
+                                      minWidth: '55px',
+                                      padding: '6px 10px',
+                                      borderRadius: '8px',
+                                      border: '1.5px solid #334155',
+                                      fontSize: '0.8rem',
+                                      fontWeight: '800',
+                                      textAlign: 'center',
+                                      color: '#0f172a',
+                                      backgroundColor: '#ffffff'
+                                    }}
+                                  >
+                                    {it.unidad || 'UNID'}
+                                  </div>
+                                </td>
+                                {/* Cantidad Bloqueada */}
+                                <td style={{ padding: '8px 10px', textAlign: 'center' }}>
+                                  <div
+                                    style={{
+                                      display: 'inline-block',
+                                      minWidth: '60px',
+                                      padding: '6px 12px',
+                                      borderRadius: '8px',
+                                      border: '1px solid #cbd5e1',
+                                      fontSize: '0.85rem',
+                                      fontWeight: '800',
+                                      textAlign: 'center',
+                                      color: '#0f172a',
+                                      backgroundColor: '#ffffff'
+                                    }}
+                                  >
+                                    {Number(it.cantidad !== undefined ? it.cantidad : 1).toLocaleString('de-DE')}
+                                  </div>
+                                </td>
+                                {/* Precio Unitario Editable */}
+                                <td style={{ padding: '8px 10px', textAlign: 'right' }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '4px' }}>
+                                    <span style={{ fontWeight: '800', color: '#0284c7', fontSize: '0.85rem' }}>{symMoneda}</span>
+                                    <input
+                                      type="number"
+                                      step="any"
+                                      min="0"
+                                      value={it.precio_unitario !== undefined ? it.precio_unitario : 0}
+                                      onChange={(e) => actualizarItemEdicion(idx, 'precio_unitario', e.target.value)}
+                                      placeholder="0.00"
+                                      style={{
+                                        width: '100px',
+                                        padding: '6px 8px',
+                                        borderRadius: '8px',
+                                        border: '1.5px solid #0284c7',
+                                        fontSize: '0.85rem',
+                                        fontWeight: '900',
+                                        textAlign: 'right',
+                                        color: '#0369a1',
+                                        backgroundColor: '#f0f9ff'
+                                      }}
+                                    />
+                                  </div>
+                                </td>
+                                {/* Total Fila Recalculado */}
+                                <td style={{ padding: '10px', textAlign: 'right', fontWeight: '900', color: '#0f172a' }}>
+                                  {symMoneda} {Number((parseFloat(it.cantidad) || 0) * (parseFloat(it.precio_unitario) || 0)).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {/* Cuadro de Totales Recalculados */}
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '14px' }}>
+                        <div style={{ width: '280px', backgroundColor: '#f1f5f9', border: '1px solid #cbd5e1', padding: '12px 16px', borderRadius: '12px', fontSize: '0.85rem' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', color: '#475569' }}>
+                            <span>Subtotal Renglones:</span>
+                            <strong>{symMoneda} {subtotalEdit.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', color: '#475569' }}>
+                            <span>IVA ({porcentajeIvaEdit}%):</span>
+                            <span>{symMoneda} {montoIvaEdit.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '2px solid #0f172a', paddingTop: '6px', fontSize: '0.95rem', fontWeight: '900', color: '#0f172a' }}>
+                            <span>TOTAL GENERAL:</span>
+                            <span style={{ color: '#0284c7' }}>{symMoneda} {totalGeneralEdit.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {/* Sección 4: Observaciones, Leyes & Términos */}
                 <div style={{ backgroundColor: '#f8fafc', padding: '18px 20px', borderRadius: '16px', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: '14px' }}>
@@ -3781,8 +4851,27 @@ const OrdenesCompra = ({ currentUser }) => {
                 <div style={{ fontSize: '0.78rem', color: '#475569', marginTop: '2px' }}>
                   <strong>RIF:</strong> {odcPrioridadTarget.proveedor_rif || 'N/A'} | <strong>Contacto:</strong> {odcPrioridadTarget.proveedor_contacto || 'N/A'}
                 </div>
-                <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '3px' }}>
-                  <strong>Cuenta Bancaria / Pago:</strong> {odcPrioridadTarget.datos_bancarios || odcPrioridadTarget.cuenta_bancaria || 'No especificada'}
+                <div style={{ fontSize: '0.78rem', color: '#334155', marginTop: '4px' }}>
+                  <strong style={{ color: '#0f172a' }}>Cuenta Bancaria / Pago:</strong>{' '}
+                  {(() => {
+                    const cta = odcPrioridadTarget.datos_bancarios || odcPrioridadTarget.cuenta_bancaria;
+                    if (cta) return <span style={{ color: '#0284c7', fontWeight: '700' }}>{cta}</span>;
+
+                    const provMatch = (proveedoresList || []).find(p => String(p.id) === String(odcPrioridadTarget.proveedor_id));
+                    let ctas = [];
+                    if (provMatch?.cuentas_bancarias) {
+                      if (Array.isArray(provMatch.cuentas_bancarias)) ctas = provMatch.cuentas_bancarias;
+                      else if (typeof provMatch.cuentas_bancarias === 'string') {
+                        try { ctas = JSON.parse(provMatch.cuentas_bancarias); } catch { ctas = []; }
+                      }
+                    }
+                    if (ctas.length > 0) {
+                      const c0 = ctas[0];
+                      const lbl = `${c0.banco || 'Banco'} (${c0.moneda || 'USD'}) - N° Cuenta: ${c0.nro_cuenta || 'N/A'} - Titular: ${c0.titular || 'N/A'} (${c0.rif || 'N/A'}) ${c0.tipo_cuenta ? `[${c0.tipo_cuenta}]` : ''}`.trim();
+                      return <span style={{ color: '#0284c7', fontWeight: '700' }}>{lbl}</span>;
+                    }
+                    return <span style={{ color: '#94a3b8', fontStyle: 'italic' }}>No especificada</span>;
+                  })()}
                 </div>
               </div>
 
@@ -3797,7 +4886,10 @@ const OrdenesCompra = ({ currentUser }) => {
                   <strong>Solicitante:</strong> {odcPrioridadTarget.solicitante || odcPrioridadTarget.requisicion_obj?.solicitante || 'Total Clean C.A.'}
                 </div>
                 <div style={{ fontSize: '0.75rem', color: '#166534', marginTop: '3px' }}>
-                  <strong>Destino / Centro de Costo:</strong> {odcPrioridadTarget.destino_despacho || odcPrioridadTarget.requisicion_obj?.centro_costo || 'Galpones Riese'}
+                  <strong>Centro de Costo:</strong> {odcPrioridadTarget.requisicion_obj?.centro_costo || odcPrioridadTarget.requisicion_obj?.obra || odcPrioridadTarget.centro_costo || 'No especificado'}
+                </div>
+                <div style={{ fontSize: '0.75rem', color: '#166534', marginTop: '2px' }}>
+                  <strong>Lugar de Entrega (Destino):</strong> {String(odcPrioridadTarget.destino_despacho || odcPrioridadTarget.despachar_a_direccion || odcPrioridadTarget.despachar_a || 'Galpones Riese - Av. Los Haticos').replace(/\s*-\s*null/gi, '').replace(/\bnull\b/gi, '').trim()}
                 </div>
               </div>
             </div>
@@ -4064,6 +5156,420 @@ const OrdenesCompra = ({ currentUser }) => {
               </div>
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE VISTA PREVIA INTERACTIVA F-ADM-01-2 */}
+      {showPdfPreviewModal && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          backgroundColor: 'rgba(15, 23, 42, 0.75)',
+          backdropFilter: 'blur(6px)',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          zIndex: 100000,
+          padding: '16px'
+        }}>
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95, y: 15 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 15 }}
+            transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+            style={{
+              backgroundColor: 'white',
+              borderRadius: '20px',
+              width: '100%',
+              maxWidth: '1100px',
+              height: '94vh',
+              display: 'flex',
+              flexDirection: 'column',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
+              overflow: 'hidden'
+            }}
+          >
+            {/* Header de Vista Previa */}
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              padding: '16px 24px',
+              borderBottom: '1px solid #e2e8f0',
+              backgroundColor: '#f8fafc',
+              flexWrap: 'wrap',
+              gap: '12px'
+            }}>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Printer size={20} color="#0284c7" />
+                  <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: '900', color: '#0f172a' }}>
+                    Vista Previa de Impresión — {odcSeleccionada?.numero_odc || 'Órden de Compra'}
+                  </h3>
+                </div>
+                <p style={{ margin: '2px 0 0 0', fontSize: '0.78rem', color: '#64748b', fontWeight: '600' }}>
+                  Formato oficial <strong>F-ADM-01-2</strong> con 3 copias automáticas (Original Cliente, Cuentas por Pagar, Control Compras)
+                </p>
+              </div>
+
+              {/* Botones de acción en la Vista Previa */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <motion.button
+                  type="button"
+                  onClick={imprimirPDFActual}
+                  whileHover={{ scale: 1.05, y: -1, boxShadow: '0 4px 14px rgba(2, 132, 199, 0.3)' }}
+                  whileTap={{ scale: 0.95 }}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '9px 18px',
+                    backgroundColor: '#0284c7',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '10px',
+                    fontSize: '0.85rem',
+                    fontWeight: '800',
+                    cursor: 'pointer',
+                    boxShadow: '0 2px 6px rgba(2, 132, 199, 0.2)'
+                  }}
+                  title="Abrir cuadro de diálogo de impresión"
+                >
+                  <Printer size={16} /> 🖨️ Imprimir
+                </motion.button>
+
+                <motion.button
+                  type="button"
+                  onClick={descargarPDFActual}
+                  whileHover={{ scale: 1.05, y: -1, boxShadow: '0 4px 14px rgba(16, 185, 129, 0.3)' }}
+                  whileTap={{ scale: 0.95 }}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '9px 18px',
+                    backgroundColor: '#10b981',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '10px',
+                    fontSize: '0.85rem',
+                    fontWeight: '800',
+                    cursor: 'pointer',
+                    boxShadow: '0 2px 6px rgba(16, 185, 129, 0.2)'
+                  }}
+                  title="Descargar archivo PDF en su computadora"
+                >
+                  <Download size={16} /> 📥 Descargar PDF
+                </motion.button>
+
+                <motion.button
+                  type="button"
+                  onClick={cerrarVistaPreviaPDF}
+                  whileHover={{ scale: 1.1, rotate: 90 }}
+                  whileTap={{ scale: 0.9 }}
+                  style={{
+                    background: '#e2e8f0',
+                    border: 'none',
+                    borderRadius: '50%',
+                    width: '36px',
+                    height: '36px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#475569',
+                    marginLeft: '8px'
+                  }}
+                  title="Cerrar vista previa"
+                >
+                  <XCircle size={20} />
+                </motion.button>
+              </div>
+            </div>
+
+            {/* Contenido del PDF en iframe */}
+            <div style={{ flex: 1, backgroundColor: '#525659', position: 'relative' }}>
+              {generandoPdfPreview ? (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'white', gap: '12px' }}>
+                  <RefreshCw size={32} style={{ animation: 'spin 1s linear infinite' }} />
+                  <span style={{ fontSize: '0.95rem', fontWeight: '700' }}>Generando las 3 copias oficiales del documento...</span>
+                </div>
+              ) : pdfPreviewUrl ? (
+                <iframe
+                  ref={pdfIframeRef}
+                  src={pdfPreviewUrl}
+                  title="Vista Previa de Orden de Compra F-ADM-01-2"
+                  style={{ width: '100%', height: '100%', border: 'none' }}
+                />
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'white' }}>
+                  No se pudo cargar la vista previa.
+                </div>
+              )}
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Modal Interactivo de Anulación de Órden de Compra con Selección de Motivo */}
+      {modalAnularOpen && odcParaAnular && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          backgroundColor: 'rgba(15, 23, 42, 0.75)',
+          backdropFilter: 'blur(5px)',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          zIndex: 10000,
+          padding: '20px'
+        }}>
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95, y: 10 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 10 }}
+            style={{
+              backgroundColor: '#ffffff',
+              borderRadius: '20px',
+              width: '100%',
+              maxWidth: '560px',
+              padding: '28px',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.35)',
+              border: '1.5px solid #fecaca',
+              position: 'relative'
+            }}
+          >
+            {/* Header */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
+              <div style={{
+                width: '44px',
+                height: '44px',
+                borderRadius: '12px',
+                backgroundColor: '#fee2e2',
+                color: '#dc2626',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0
+              }}>
+                <Ban size={24} />
+              </div>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: '900', color: '#991b1b' }}>
+                  Anular Órden de Compra
+                </h3>
+                <span style={{ fontSize: '0.85rem', color: '#dc2626', fontWeight: '700' }}>
+                  {odcParaAnular.numero_odc} {odcParaAnular.proveedor_nombre ? `• ${odcParaAnular.proveedor_nombre}` : ''}
+                </span>
+              </div>
+            </div>
+
+            {/* Warning note */}
+            <div style={{
+              backgroundColor: '#fff1f2',
+              border: '1px solid #fecdd3',
+              borderRadius: '12px',
+              padding: '12px 14px',
+              fontSize: '0.8rem',
+              color: '#9f1239',
+              lineHeight: '1.45',
+              marginBottom: '18px'
+            }}>
+              ⚠️ <strong>Atención:</strong> Esta acción cambiará el estado de la ODC a <strong>ANULADA</strong> y liberará automáticamente los renglones y cantidades en la requisición vinculada para permitir su cotización y re-compra.
+            </div>
+
+            {/* Dropdown de Motivos */}
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '800', color: '#334155', marginBottom: '6px' }}>
+                Motivo de Anulación <span style={{ color: '#dc2626' }}>*</span>
+              </label>
+              <select
+                value={motivoAnulacionSelect}
+                onChange={(e) => setMotivoAnulacionSelect(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '10px 12px',
+                  borderRadius: '10px',
+                  border: '1.5px solid #cbd5e1',
+                  fontSize: '0.85rem',
+                  fontWeight: '600',
+                  color: '#1e293b',
+                  backgroundColor: '#f8fafc',
+                  outline: 'none',
+                  boxSizing: 'border-box'
+                }}
+              >
+                <option value="Error en montos, precios unitarios o cotización">Error en montos, precios unitarios o cotización</option>
+                <option value="Cambio de proveedor seleccionado">Cambio de proveedor seleccionado</option>
+                <option value="Requisición cancelada o modificada por el solicitante">Requisición cancelada o modificada por el solicitante</option>
+                <option value="Duplicidad de orden de compra">Duplicidad de orden de compra</option>
+                <option value="Proveedor sin disponibilidad / tiempo de entrega no viable">Proveedor sin disponibilidad / tiempo de entrega no viable</option>
+                <option value="Condiciones comerciales o de pago no acordadas">Condiciones comerciales o de pago no acordadas</option>
+                <option value="Material o servicio no requerido / Desestimado">Material o servicio no requerido / Desestimado</option>
+                <option value="Otro motivo (especificar en detalle)">Otro motivo (especificar en detalle)</option>
+              </select>
+            </div>
+
+            {/* Textarea detalles adicionales */}
+            <div style={{ marginBottom: '22px' }}>
+              <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '800', color: '#334155', marginBottom: '6px' }}>
+                Detalles u Observaciones Adicionales {motivoAnulacionSelect === 'Otro motivo (especificar en detalle)' ? <span style={{ color: '#dc2626' }}>* (Obligatorio)</span> : <span style={{ color: '#94a3b8', fontWeight: '500' }}>(Opcional)</span>}
+              </label>
+              <textarea
+                rows={3}
+                value={motivoAnulacionDetalle}
+                onChange={(e) => setMotivoAnulacionDetalle(e.target.value)}
+                placeholder="Indique cualquier detalle adicional sobre las causas de anulación..."
+                style={{
+                  width: '100%',
+                  padding: '10px 12px',
+                  borderRadius: '10px',
+                  border: '1.5px solid #cbd5e1',
+                  fontSize: '0.82rem',
+                  fontFamily: 'inherit',
+                  resize: 'vertical',
+                  boxSizing: 'border-box'
+                }}
+              />
+            </div>
+
+            {/* Botones de acción */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+              <button
+                type="button"
+                disabled={guardandoAnulacion}
+                onClick={() => {
+                  setModalAnularOpen(false);
+                  setOdcParaAnular(null);
+                }}
+                style={{
+                  padding: '10px 18px',
+                  borderRadius: '10px',
+                  border: '1px solid #cbd5e1',
+                  backgroundColor: '#f1f5f9',
+                  color: '#475569',
+                  fontSize: '0.85rem',
+                  fontWeight: '700',
+                  cursor: 'pointer'
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={guardandoAnulacion}
+                onClick={ejecutarAnulacionOdc}
+                style={{
+                  padding: '10px 22px',
+                  borderRadius: '10px',
+                  border: 'none',
+                  backgroundColor: '#dc2626',
+                  color: '#ffffff',
+                  fontSize: '0.85rem',
+                  fontWeight: '800',
+                  cursor: 'pointer',
+                  boxShadow: '0 4px 12px rgba(220, 38, 38, 0.3)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}
+              >
+                {guardandoAnulacion ? (
+                  <>
+                    <RefreshCw size={15} style={{ animation: 'spin 1s linear infinite' }} /> Anulando...
+                  </>
+                ) : (
+                  <>
+                    <Ban size={15} /> Confirmar Anulación
+                  </>
+                )}
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Modal para Agregar Nuevo Destino de Despacho Predeterminado */}
+      {showNuevoDestinoModal && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15, 23, 42, 0.75)', backdropFilter: 'blur(4px)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 12000, padding: '20px' }}>
+          <div style={{ maxWidth: '520px', width: '100%', padding: '25px', backgroundColor: '#ffffff', borderRadius: '18px', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.35)' }}>
+            <h3 style={{ margin: '0 0 16px 0', color: '#0f172a', fontSize: '1.15rem', fontWeight: '800' }}>
+              📍 Agregar Nuevo Destino de Despacho
+            </h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginBottom: '22px' }}>
+              <div>
+                <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '6px' }}>
+                  NOMBRE DEL LUGAR / SEDE *
+                </label>
+                <input
+                  type="text"
+                  className="input-tc"
+                  placeholder="Ej: Campo Boscán, Planta Sur, Galpón Principal..."
+                  style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.85rem', fontWeight: '600' }}
+                  value={nuevoDestinoForm.nombre}
+                  onChange={(e) => setNuevoDestinoForm(prev => ({ ...prev, nombre: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '6px' }}>
+                  DIRECCIÓN COMPLETA *
+                </label>
+                <textarea
+                  className="input-tc"
+                  placeholder="Ej: Av 61 entre calle 147, Km 12..."
+                  style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', minHeight: '70px', fontSize: '0.85rem', resize: 'vertical' }}
+                  value={nuevoDestinoForm.direccion}
+                  onChange={(e) => setNuevoDestinoForm(prev => ({ ...prev, direccion: e.target.value }))}
+                />
+              </div>
+              <div style={{ display: 'flex', gap: '12px' }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '6px' }}>
+                    PERSONA DE CONTACTO
+                  </label>
+                  <input
+                    type="text"
+                    className="input-tc"
+                    placeholder="Nombre del receptor"
+                    style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
+                    value={nuevoDestinoForm.contacto_nombre}
+                    onChange={(e) => setNuevoDestinoForm(prev => ({ ...prev, contacto_nombre: e.target.value }))}
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '6px' }}>
+                    TELÉFONO DE CONTACTO
+                  </label>
+                  <input
+                    type="text"
+                    className="input-tc"
+                    placeholder="0414-XXXXXXX"
+                    style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.85rem' }}
+                    value={nuevoDestinoForm.contacto_telefono}
+                    onChange={(e) => setNuevoDestinoForm(prev => ({ ...prev, contacto_telefono: e.target.value }))}
+                  />
+                </div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+              <button
+                type="button"
+                className="btn-tc btn-tc-secondary"
+                onClick={() => setShowNuevoDestinoModal(false)}
+                style={{ padding: '9px 18px', borderRadius: '8px', border: '1px solid #cbd5e1', backgroundColor: '#f1f5f9', color: '#475569', fontWeight: '700', cursor: 'pointer' }}
+              >
+                CANCELAR
+              </button>
+              <button
+                type="button"
+                className="btn-tc btn-tc-success"
+                onClick={guardarNuevoDestino}
+                style={{ backgroundColor: '#0ea5e9', color: '#ffffff', padding: '9px 20px', borderRadius: '8px', border: 'none', fontWeight: '800', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+              >
+                ✓ GUARDAR DESTINO
+              </button>
+            </div>
           </div>
         </div>
       )}

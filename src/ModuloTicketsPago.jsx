@@ -3629,6 +3629,18 @@ const ModuloTicketsPago = () => {
                         <div style={{ display: 'flex', flexDirection: 'column' }}>
                           <div style={{ fontWeight: '700', color: '#1e293b', fontSize: '0.9rem' }}>{formatName(ticket.gerente_nombre)}</div>
                           <span style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '600', textTransform: 'uppercase' }}>{ticket.departamento || 'No especificado'}</span>
+                          {(() => {
+                            const comp = ticket.comprador_nombre || 
+                                         ticket.elaborado_por_nombre || 
+                                         (ticket.items || []).flatMap(r => (r.historial_compras || []).map(h => h.usuario_nombre || h.comprador)).filter(Boolean)[0] || 
+                                         null;
+                            if (!comp) return null;
+                            return (
+                              <span style={{ fontSize: '0.68rem', color: '#0369a1', fontWeight: '700', marginTop: '2px', display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+                                <User size={10} /> Comprador: {formatName(comp)}
+                              </span>
+                            );
+                          })()}
                         </div>
                       </td>
                       <td style={{ padding: '12px 15px' }}>
@@ -4065,6 +4077,41 @@ const ModuloTicketsPago = () => {
                 <span style={{ display: 'block', fontSize: '9px', fontWeight: '800', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>CENTRO DE COSTO</span>
                 <span style={{ fontSize: '0.88rem', fontWeight: '700', color: '#0ea5e9' }}>{t.centro_costo || t.items?.[0]?.cc || 'No especificado'}</span>
               </div>
+
+              {/* Asignado a / Comprador / Quién emitió */}
+              {(() => {
+                const compradorNombre = t.comprador_nombre || 
+                                        t.elaborado_por_nombre || 
+                                        (t.items || []).flatMap(r => (r.historial_compras || []).map(h => h.usuario_nombre || h.comprador)).filter(Boolean)[0] || 
+                                        t.usuario_nombre || 
+                                        null;
+                if (!compradorNombre) return null;
+                const inicialesC = compradorNombre.split(' ').filter(Boolean).slice(0, 2).map(n => n[0]).join('').toUpperCase();
+                return (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <div style={{
+                      width: '36px',
+                      height: '36px',
+                      borderRadius: '50%',
+                      backgroundColor: '#e0f2fe',
+                      color: '#0369a1',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontWeight: 'bold',
+                      fontSize: '0.85rem',
+                      border: '1px solid #bae6fd',
+                      flexShrink: 0
+                    }}>
+                      {inicialesC || <User size={16} />}
+                    </div>
+                    <div>
+                      <span style={{ display: 'block', fontSize: '9px', fontWeight: '800', color: '#0369a1', textTransform: 'uppercase', letterSpacing: '0.05em' }}>COMPRADOR / ASIGNADO A</span>
+                      <span style={{ fontSize: '0.88rem', fontWeight: '700', color: '#0f172a' }}>{formatName(compradorNombre)}</span>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Posee Observaciones Badge */}
               {t.justificacion && (
