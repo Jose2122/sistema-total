@@ -3343,52 +3343,48 @@ const OrdenesCompra = ({ currentUser }) => {
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999, padding: '20px' }}>
           <div style={{ backgroundColor: 'white', borderRadius: '24px', width: '100%', maxWidth: '950px', maxHeight: '92vh', overflowY: 'auto', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.4)', padding: '28px', position: 'relative' }}>
             
-            {/* Cabecera Principal del Expediente */}
-            <div style={{ 
-              marginBottom: '22px', 
-              borderBottom: '1px solid #e2e8f0', 
-              paddingBottom: '20px',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '14px'
-            }}>
-              {/* Fila Superior: Badges de Tipo y Estado + Botones de Acción y Cerrar */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
-                {/* Badges de Clasificación */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                  <span style={{ 
-                    backgroundColor: '#f0f9ff', 
-                    color: '#0369a1', 
-                    fontSize: '0.72rem', 
-                    fontWeight: '800', 
-                    padding: '4px 10px', 
-                    borderRadius: '8px', 
-                    letterSpacing: '0.6px',
-                    border: '1px solid #bae6fd',
-                    textTransform: 'uppercase',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '5px'
-                  }}>
-                    <FileText size={13} color="#0284c7" /> Expediente de Órden de Compra
-                  </span>
+            {/* Botón Cerrar en la esquina superior derecha */}
+            <motion.button 
+              whileHover={{ scale: 1.1, rotate: 90, backgroundColor: '#e2e8f0' }}
+              whileTap={{ scale: 0.9 }}
+              transition={{ type: 'spring', stiffness: 400, damping: 15 }}
+              style={{ 
+                position: 'absolute', 
+                top: '22px', 
+                right: '22px', 
+                background: '#f1f5f9', 
+                border: 'none', 
+                borderRadius: '50%', 
+                width: '36px', 
+                height: '36px', 
+                cursor: 'pointer', 
+                display: 'flex', 
+                alignItems: 'center', 
+                justifyContent: 'center',
+                zIndex: 30,
+                color: '#64748b'
+              }}
+              onClick={() => setModalOpen(false)}
+              title="Cerrar ventana"
+            >
+              <X size={20} />
+            </motion.button>
 
-                  {esAnuladaOdc(odcSeleccionada) ? (
-                    <span style={{ backgroundColor: '#fee2e2', color: '#991b1b', padding: '4px 10px', borderRadius: '8px', fontSize: '0.75rem', fontWeight: '800', border: '1px solid #fecaca', display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
-                      <Ban size={13} /> ODC ANULADA
-                    </span>
-                  ) : odcSeleccionada.pasa_por_almacen === false ? (
-                    <span style={{ backgroundColor: '#fef3c7', color: '#92400e', padding: '4px 10px', borderRadius: '8px', fontSize: '0.75rem', fontWeight: '800', border: '1px solid #fde68a', display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
-                      <Truck size={13} /> Entrega Directa en Obra
-                    </span>
-                  ) : (
-                    <span style={{ backgroundColor: '#dcfce7', color: '#166534', padding: '4px 10px', borderRadius: '8px', fontSize: '0.75rem', fontWeight: '800', border: '1px solid #bbf7d0', display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
-                      <Package size={13} /> Recepción en Almacén
-                    </span>
-                  )}
+            {/* Cabecera Principal del Expediente */}
+            <div style={{ marginBottom: '22px', borderBottom: '1px solid #e2e8f0', paddingBottom: '18px', paddingRight: '50px' }}>
+              
+              {/* Sección 1: Título de la ODC y Botones de Acción */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
+                <div>
+                  <div style={{ fontSize: '0.72rem', fontWeight: '800', color: '#0ea5e9', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: '4px' }}>
+                    Expediente de Órden de Compra
+                  </div>
+                  <h2 style={{ margin: 0, fontSize: '1.75rem', fontWeight: '900', color: '#0f172a', letterSpacing: '-0.5px' }}>
+                    {odcSeleccionada.numero_odc}
+                  </h2>
                 </div>
 
-                {/* Acciones y Botón Cerrar */}
+                {/* Botones de acción organizados a la derecha */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
                   {esUsuarioCompras && !esAnuladaOdc(odcSeleccionada) && (
                     <motion.button
@@ -3397,22 +3393,22 @@ const OrdenesCompra = ({ currentUser }) => {
                       whileHover={{ scale: 1.03, y: -1 }}
                       whileTap={{ scale: 0.97 }}
                       style={{
-                        padding: '7px 14px',
+                        padding: '8px 16px',
                         fontSize: '0.82rem',
                         fontWeight: '700',
                         borderRadius: '10px',
                         border: '1.5px solid #cbd5e1',
                         cursor: 'pointer',
                         background: '#ffffff',
-                        color: '#0f172a',
+                        color: '#0284c7',
                         display: 'inline-flex',
                         alignItems: 'center',
                         gap: '6px',
-                        boxShadow: '0 1px 3px rgba(0,0,0,0.05)'
+                        boxShadow: '0 1px 3px rgba(0,0,0,0.04)'
                       }}
                       title="Editar datos, proveedor, ítems y montos de esta Órden de Compra"
                     >
-                      <Edit2 size={14} color="#0284c7" /> Editar ODC
+                      <Edit2 size={15} /> Editar ODC
                     </motion.button>
                   )}
 
@@ -3427,8 +3423,8 @@ const OrdenesCompra = ({ currentUser }) => {
                         border: 'none',
                         display: 'inline-flex', 
                         alignItems: 'center', 
-                        gap: '6px', 
-                        padding: '8px 16px', 
+                        gap: '7px', 
+                        padding: '9px 18px', 
                         borderRadius: '10px', 
                         fontSize: '0.82rem', 
                         fontWeight: '700',
@@ -3445,88 +3441,86 @@ const OrdenesCompra = ({ currentUser }) => {
                       <Lock size={12} /> Impresión exclusiva de Gerencia
                     </div>
                   )}
+                </div>
+              </div>
 
-                  {/* Botón Cerrar */}
-                  <motion.button 
-                    whileHover={{ scale: 1.08, backgroundColor: '#e2e8f0' }}
-                    whileTap={{ scale: 0.92 }}
-                    style={{ 
-                      background: '#f1f5f9', 
-                      border: 'none', 
-                      borderRadius: '50%', 
-                      width: '32px', 
-                      height: '32px', 
-                      cursor: 'pointer', 
-                      display: 'flex', 
+              {/* Sección 2: Barra de Información y Metadatos en Cajas Separadas */}
+              <div style={{ 
+                marginTop: '16px', 
+                backgroundColor: '#f8fafc', 
+                border: '1px solid #e2e8f0', 
+                borderRadius: '14px', 
+                padding: '12px 16px',
+                display: 'flex', 
+                alignItems: 'center', 
+                justifyContent: 'space-between', 
+                flexWrap: 'wrap', 
+                gap: '12px' 
+              }}>
+                {/* Badges de Requisición y Almacén */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  {(odcSeleccionada.requisicion_correlativo || odcSeleccionada.requisicion_id) && (
+                    <span style={{ 
+                      backgroundColor: '#e0f2fe', 
+                      color: '#0369a1', 
+                      padding: '5px 12px', 
+                      borderRadius: '8px', 
+                      fontSize: '0.78rem', 
+                      fontWeight: '800', 
+                      border: '1px solid #bae6fd', 
+                      display: 'inline-flex', 
                       alignItems: 'center', 
-                      justifyContent: 'center',
-                      color: '#64748b',
-                      marginLeft: '4px'
-                    }}
-                    onClick={() => setModalOpen(false)}
-                    title="Cerrar ventana"
-                  >
-                    <X size={18} />
-                  </motion.button>
+                      gap: '5px' 
+                    }}>
+                      <ClipboardList size={13} color="#0284c7" />
+                      Requisición: {odcSeleccionada.requisicion_correlativo || `REQ-${odcSeleccionada.requisicion_id}`}
+                    </span>
+                  )}
+
+                  {esAnuladaOdc(odcSeleccionada) ? (
+                    <span style={{ backgroundColor: '#fee2e2', color: '#991b1b', padding: '5px 12px', borderRadius: '8px', fontSize: '0.78rem', fontWeight: '800', border: '1px solid #fecaca', display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                      <Ban size={13} /> ODC ANULADA
+                    </span>
+                  ) : odcSeleccionada.pasa_por_almacen === false ? (
+                    <span style={{ backgroundColor: '#fef3c7', color: '#92400e', padding: '5px 12px', borderRadius: '8px', fontSize: '0.78rem', fontWeight: '800', border: '1px solid #fde68a', display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                      <Truck size={13} /> Entrega Directa en Obra
+                    </span>
+                  ) : (
+                    <span style={{ backgroundColor: '#dcfce7', color: '#166534', padding: '5px 12px', borderRadius: '8px', fontSize: '0.78rem', fontWeight: '800', border: '1px solid #bbf7d0', display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                      <Package size={13} /> Recepción en Almacén
+                    </span>
+                  )}
+                </div>
+
+                {/* Metadatos (Emitido por, Fecha, Proveedor) */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap', fontSize: '0.82rem', color: '#475569' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                    <User size={14} color="#0284c7" />
+                    <span>Emitido por: <strong style={{ color: '#0f172a' }}>{odcSeleccionada.elaborado_por_nombre || odcSeleccionada.comprador_nombre || odcSeleccionada.usuario_nombre || 'Departamento de Compras'}</strong></span>
+                  </div>
+
+                  {(odcSeleccionada.fecha_emision || odcSeleccionada.created_at) && (
+                    <>
+                      <span style={{ color: '#cbd5e1' }}>•</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                        <Calendar size={14} color="#0284c7" />
+                        <span>Emisión: <strong style={{ color: '#0f172a' }}>{new Date(odcSeleccionada.fecha_emision || odcSeleccionada.created_at).toLocaleDateString('es-VE')}</strong></span>
+                      </div>
+                    </>
+                  )}
+
+                  {odcSeleccionada.proveedor_nombre && odcSeleccionada.proveedor_nombre !== 'N/A' && (
+                    <>
+                      <span style={{ color: '#cbd5e1' }}>•</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                        <Building2 size={14} color="#0284c7" />
+                        <span>Proveedor: <strong style={{ color: '#0f172a' }}>{odcSeleccionada.proveedor_nombre}</strong></span>
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
 
-              {/* Fila Inferior: Título Principal de la ODC y Metadatos en Barra Limpia */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '10px' }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-                    <h2 style={{ margin: 0, fontSize: '1.65rem', fontWeight: '900', color: '#0f172a', letterSpacing: '-0.5px' }}>
-                      {odcSeleccionada.numero_odc}
-                    </h2>
-
-                    {(odcSeleccionada.requisicion_correlativo || odcSeleccionada.requisicion_id) && (
-                      <span style={{ 
-                        backgroundColor: '#e0f2fe', 
-                        color: '#0369a1', 
-                        padding: '4px 10px', 
-                        borderRadius: '8px', 
-                        fontSize: '0.8rem', 
-                        fontWeight: '800', 
-                        border: '1px solid #bae6fd', 
-                        display: 'inline-flex', 
-                        alignItems: 'center', 
-                        gap: '5px' 
-                      }}>
-                        <ClipboardList size={13} color="#0284c7" />
-                        Requisición: {odcSeleccionada.requisicion_correlativo || `REQ-${odcSeleccionada.requisicion_id}`}
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Metadatos adicionales */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', fontSize: '0.83rem', color: '#64748b', marginTop: '2px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                      <User size={14} color="#0284c7" />
-                      <span>Emitido por: <strong style={{ color: '#1e293b' }}>{odcSeleccionada.elaborado_por_nombre || odcSeleccionada.comprador_nombre || odcSeleccionada.usuario_nombre || 'Departamento de Compras'}</strong></span>
-                    </div>
-
-                    {(odcSeleccionada.fecha_emision || odcSeleccionada.created_at) && (
-                      <>
-                        <span style={{ color: '#cbd5e1' }}>•</span>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                          <Calendar size={14} color="#0284c7" />
-                          <span>Emisión: <strong style={{ color: '#1e293b' }}>{new Date(odcSeleccionada.fecha_emision || odcSeleccionada.created_at).toLocaleDateString('es-VE')}</strong></span>
-                        </div>
-                      </>
-                    )}
-
-                    {odcSeleccionada.proveedor_nombre && odcSeleccionada.proveedor_nombre !== 'N/A' && (
-                      <>
-                        <span style={{ color: '#cbd5e1' }}>•</span>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                          <Building2 size={14} color="#0284c7" />
-                          <span>Proveedor: <strong style={{ color: '#1e293b' }}>{odcSeleccionada.proveedor_nombre}</strong></span>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                </div>
-              </div>
             </div>
 
             {/* Banner de Órden de Compra ANULADA */}
