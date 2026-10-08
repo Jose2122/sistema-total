@@ -2372,49 +2372,11 @@ const OrdenesCompra = ({ currentUser }) => {
         doc.text(totalGeneral.toLocaleString('de-DE', { minimumFractionDigits: 2 }), pageWidth - marginX - 3, totBoxY + 13.8, { align: 'right' });
 
         // --- BLOQUE INFERIOR SIEMPRE EN LA PARTE DE ABAJO (FIJO AL PIE) ---
-        const bottomBlockTopY = Math.max(totBoxY + totBoxH + 2.5, pageHeight - 69);
+        const bottomBlockTopY = Math.max(totBoxY + totBoxH + 3.0, pageHeight - 56);
 
-        // 1. Aviso de Documentos Exigidos
-        doc.setFont("helvetica", "italic");
-        doc.setFontSize(6.8);
-        doc.setTextColor(30, 58, 138);
-        doc.text("Favor comunicarnos de inmediato si existen problemas para el despacho exacto esta orden, Enviar los siguientes documentos:", marginX, bottomBlockTopY + 2.0);
-
-        // 2. Checklist de Documentos Exigidos
-        const docBoxY = bottomBlockTopY + 3.0;
-        const docBoxH = 9.5;
-        doc.setDrawColor(30, 58, 138);
-        doc.setLineWidth(0.3);
-        doc.setFillColor(255, 255, 255);
-        doc.rect(marginX, docBoxY, usableWidth, docBoxH, 'FD');
-
-        const docColW = usableWidth / 4;
-        const docCols = [
-          { title: "Nota de Entrega" },
-          { title: "Factura" },
-          { title: "Con. de Embarque:" },
-          { title: "Otros:" }
-        ];
-
-        docCols.forEach((dCol, dIdx) => {
-          const dX = marginX + (dIdx * docColW);
-          if (dIdx > 0) {
-            doc.line(dX, docBoxY, dX, docBoxY + docBoxH);
-          }
-          doc.setFont("helvetica", "bold");
-          doc.setFontSize(7.4);
-          doc.setTextColor(30, 58, 138);
-          doc.text(dCol.title, dX + (docColW / 2), docBoxY + 3.2, { align: 'center' });
-
-          doc.setFont("helvetica", "normal");
-          doc.setFontSize(6.4);
-          doc.setTextColor(0);
-          doc.text("No. _________  Copias: ____", dX + (docColW / 2), docBoxY + 7.2, { align: 'center' });
-        });
-
-        // 3. Leyes y Condiciones Comerciales
-        const terminosBoxY = docBoxY + docBoxH + 1.6;
-        const terminosBoxH = 9.0;
+        // 1. Leyes y Condiciones Comerciales
+        const terminosBoxY = bottomBlockTopY;
+        const terminosBoxH = 10.0;
         doc.setDrawColor(30, 58, 138);
         doc.setLineWidth(0.3);
         doc.rect(marginX, terminosBoxY, usableWidth, terminosBoxH);
@@ -2431,9 +2393,9 @@ const OrdenesCompra = ({ currentUser }) => {
         const splitTerms = doc.splitTextToSize(textoTerminosStr, usableWidth - 5);
         doc.text(splitTerms, marginX + 2.5, terminosBoxY + 6.3);
 
-        // 4. Campo de Observaciones
-        const obsBoxY = terminosBoxY + terminosBoxH + 1.6;
-        const obsBoxH = 11.5;
+        // 2. Campo de Observaciones
+        const obsBoxY = terminosBoxY + terminosBoxH + 1.8;
+        const obsBoxH = 13.0;
         doc.setDrawColor(30, 58, 138);
         doc.setLineWidth(0.3);
         doc.rect(marginX, obsBoxY, usableWidth, obsBoxH);
@@ -3861,29 +3823,6 @@ const OrdenesCompra = ({ currentUser }) => {
                     <strong style={{ color: '#1e3a8a' }}>TOTAL:</strong>
                     <strong style={{ color: '#0f172a' }}>{Number(odcSeleccionada.total_general || ((Number(odcSeleccionada.subtotal || 0)) * 1.16)).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</strong>
                   </div>
-                </div>
-              </div>
-
-              {/* Checklist de Documentos Exigidos */}
-              <div className="f-adm-doc-notice">
-                Favor comunicarnos de inmediato si existen problemas para el despacho exacto esta orden, Enviar los siguientes documentos:
-              </div>
-              <div className="f-adm-doc-checklist-box">
-                <div className="f-adm-doc-col">
-                  <div className="f-adm-doc-title">Nota de Entrega</div>
-                  <div className="f-adm-doc-fields">No. _________ Copias: ____</div>
-                </div>
-                <div className="f-adm-doc-col">
-                  <div className="f-adm-doc-title">Factura</div>
-                  <div className="f-adm-doc-fields">No. _________ Copias: ____</div>
-                </div>
-                <div className="f-adm-doc-col">
-                  <div className="f-adm-doc-title">Con. de Embarque:</div>
-                  <div className="f-adm-doc-fields">No. _________ Copias: ____</div>
-                </div>
-                <div className="f-adm-doc-col">
-                  <div className="f-adm-doc-title">Otros:</div>
-                  <div className="f-adm-doc-fields">No. _________ Copias: ____</div>
                 </div>
               </div>
 
