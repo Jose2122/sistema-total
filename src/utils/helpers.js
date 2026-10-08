@@ -287,8 +287,40 @@ export const extraerColumnaInexistente = (errMsg) => {
 };
 
 /**
+ * Extrae el nombre de la columna que causó una violación de clave foránea (foreign key)
+ */
+export const extraerColumnaForeignKey = (errMsg) => {
+  if (!errMsg) return null;
+  // Pattern 1: Key (col_name)=(val) is not present in table "xyz"
+  const m1 = errMsg.match(/Key\s*\(\s*([a-zA-Z0-9_]+)\s*\)\s*=/i);
+  if (m1 && m1[1]) return m1[1];
+
+  // Pattern 2: violates foreign key constraint "table_col_name_fkey"
+  const m2 = errMsg.match(/constraint\s*["']?([a-zA-Z0-9_]+)_fkey["']?/i);
+  if (m2 && m2[1]) {
+    const raw = m2[1];
+    const parts = raw.split('_');
+    if (parts.length >= 2 && parts[parts.length - 1] === 'id') {
+      return `${parts[parts.length - 2]}_id`;
+    }
+  }
+
+  // Pattern 3: Búsqueda de campos estándar de clave foránea en el mensaje
+  const knownCols = [
+    'proveedor_id', 'requisicion_id', 'despachar_a_id', 'orden_compra_id', 
+    'requisicion_item_id', 'obra_id', 'solicitud_id', 'cliente_id', 
+    'item_id', 'usuario_id', 'user_id', 'elaborado_por_id'
+  ];
+  for (const c of knownCols) {
+    if (errMsg.toLowerCase().includes(c)) return c;
+  }
+
+  return null;
+};
+
+/**
  * Realiza un update en Supabase eliminando automáticamente columnas que no existan en el esquema
- * o que violen check constraints de enumeración/valores permitidos.
+ * o que violen check constraints de enumeración/valores permitidos o claves foráneas inexistentes.
  */
 export const safeSupabaseUpdate = async (supabase, table, payload, matchField, matchValue) => {
   let currentPayload = { ...payload };
@@ -324,6 +356,16 @@ export const safeSupabaseUpdate = async (supabase, table, payload, matchField, m
       }
     }
 
+    // Manejo de violación de foreign key constraint (ej. ordenes_compra_proveedor_id_fkey)
+    if (error.message && (error.message.includes('foreign key constraint') || error.message.includes('violates foreign key constraint') || error.message.includes('is not present in table'))) {
+      const fkCol = extraerColumnaForeignKey(error.message);
+      if (fkCol && currentPayload[fkCol] !== undefined) {
+        console.warn(`[safeSupabaseUpdate] Anulando clave foránea inválida '${fkCol}' en tabla '${table}'`);
+        currentPayload[fkCol] = null;
+        continue;
+      }
+    }
+
     break;
   }
 
@@ -332,7 +374,7 @@ export const safeSupabaseUpdate = async (supabase, table, payload, matchField, m
 
 /**
  * Realiza un insert en Supabase eliminando automáticamente columnas que no existan en el esquema
- * o que violen check constraints de enumeración/valores permitidos.
+ * o que violen check constraints de enumeración/valores permitidos o claves foráneas inexistentes.
  */
 export const safeSupabaseInsert = async (supabase, table, payload) => {
   let currentPayload = Array.isArray(payload) ? payload.map(p => ({ ...p })) : { ...payload };
@@ -375,6 +417,20 @@ export const safeSupabaseInsert = async (supabase, table, payload) => {
           currentPayload.forEach(row => delete row[colConConstraint]);
         } else {
           delete currentPayload[colConConstraint];
+        }
+        continue;
+      }
+    }
+
+    // Manejo de violación de foreign key constraint en insert
+    if (res.error.message && (res.error.message.includes('foreign key constraint') || res.error.message.includes('violates foreign key constraint') || res.error.message.includes('is not present in table'))) {
+      const fkCol = extraerColumnaForeignKey(res.error.message);
+      if (fkCol) {
+        console.warn(`[safeSupabaseInsert] Anulando clave foránea inválida '${fkCol}' en tabla '${table}'`);
+        if (Array.isArray(currentPayload)) {
+          currentPayload.forEach(row => { row[fkCol] = null; });
+        } else {
+          currentPayload[fkCol] = null;
         }
         continue;
       }

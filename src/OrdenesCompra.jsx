@@ -10,7 +10,7 @@ import {
   Building2, Truck, CreditCard, User, ChevronRight, RefreshCw, Lock,
   Edit2, Trash2, Save, Ban, Landmark, Package, X, ClipboardList
 } from 'lucide-react';
-import { obtenerTodosProveedores } from './services/proveedoresService';
+import { obtenerTodosProveedores, asegurarProveedorEnBaseDeDatos } from './services/proveedoresService';
 import { safeSupabaseUpdate } from './utils/helpers';
 import './OrdenesCompra.css';
 
@@ -1229,11 +1229,15 @@ const OrdenesCompra = ({ currentUser }) => {
 
       const itemPasaAlmacen = editOdcTarget.pasa_por_almacen !== false;
 
+      const provEdit = (proveedoresList || []).find(p => String(p.id) === String(editOdcTarget.proveedor_id)) ||
+                       { id: editOdcTarget.proveedor_id, razon_social: editOdcTarget.proveedor_nombre, rif: editOdcTarget.proveedor_rif };
+      const realProvIdEdit = await asegurarProveedorEnBaseDeDatos(provEdit);
+
       const payloadOdc = {
         requisicion_id: reqObjTarget ? reqObjTarget.id : (editOdcTarget.requisicion_id && !isNaN(parseInt(editOdcTarget.requisicion_id)) ? parseInt(editOdcTarget.requisicion_id) : null),
-        proveedor_id: editOdcTarget.proveedor_id || null,
-        proveedor_nombre: editOdcTarget.proveedor_nombre || null,
-        proveedor_rif: editOdcTarget.proveedor_rif || null,
+        proveedor_id: realProvIdEdit || (provEdit && !isNaN(Number(provEdit.id)) && Number(provEdit.id) > 0 ? Number(provEdit.id) : null),
+        proveedor_nombre: editOdcTarget.proveedor_nombre || provEdit?.razon_social || null,
+        proveedor_rif: editOdcTarget.proveedor_rif || provEdit?.rif || null,
         proveedor_contacto: editOdcTarget.proveedor_contacto || null,
         proveedor_telefono: editOdcTarget.proveedor_telefono || null,
         proveedor_ciudad: editOdcTarget.proveedor_ciudad || null,

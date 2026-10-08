@@ -1689,5 +1689,103 @@ export const actualizarEntradaHistorialProveedor = (idEntrada, datosEditados = {
   }
 };
 
+/**
+ * Garantiza que un proveedor exista con un ID numérico válido en la tabla 'proveedores' de PostgreSQL
+ * para satisfacer restricciones de clave foránea (foreign key constraints) al generar o editar ODCs.
+ */
+export const asegurarProveedorEnBaseDeDatos = async (provData) => {
+  if (!provData) return null;
+
+  // 1. Si ya tiene un ID numérico válido, verificar si existe en la base de datos
+  const esNumId = !isNaN(Number(provData.id)) && Number(provData.id) > 0;
+  if (esNumId) {
+    try {
+      const { data: existing } = await supabase
+        .from('proveedores')
+        .select('id')
+        .eq('id', Number(provData.id))
+        .maybeSingle();
+      if (existing?.id) {
+        return Number(existing.id);
+      }
+    } catch {
+      // continuar
+    }
+  }
+
+  const rifLimpio = (provData.rif || provData.proveedor_rif || '').trim().toUpperCase();
+  const razonSocial = (provData.razon_social || provData.nombre || provData.proveedor_nombre || '').trim();
+
+  // 2. Buscar por RIF en Supabase si es válido
+  if (rifLimpio && rifLimpio !== 'N/A' && rifLimpio !== 'SIN RIF') {
+    try {
+      const { data: byRif } = await supabase
+        .from('proveedores')
+        .select('id')
+        .eq('rif', rifLimpio)
+        .limit(1);
+      if (byRif && byRif.length > 0 && byRif[0].id) {
+        return Number(byRif[0].id);
+      }
+    } catch {
+      // continuar
+    }
+  }
+
+  // 3. Buscar por Razón Social exacta
+  if (razonSocial && razonSocial !== 'N/A') {
+    try {
+      const { data: byName } = await supabase
+        .from('proveedores')
+        .select('id')
+        .ilike('razon_social', razonSocial)
+        .limit(1);
+      if (byName && byName.length > 0 && byName[0].id) {
+        return Number(byName[0].id);
+      }
+    } catch {
+      // continuar
+    }
+  }
+
+  // 4. Si no existe en la tabla proveedores de Supabase, crearlo automáticamente para generar la clave foránea
+  if (razonSocial && razonSocial !== 'N/A') {
+    try {
+      const dbPayload = {
+        razon_social: razonSocial,
+        rif: rifLimpio && rifLimpio !== 'N/A' ? rifLimpio : 'SIN RIF',
+        persona_contacto: (provData.persona_contacto || provData.contacto_nombre || provData.proveedor_contacto || '').trim(),
+        telefono: (provData.telefono || provData.proveedor_telefono || '').trim(),
+        correo: (provData.correo || provData.email || '').trim(),
+        direccion: (provData.direccion || provData.proveedor_direccion || '').trim(),
+        ciudad: (provData.ciudad || provData.localizacion || provData.proveedor_ciudad || 'Maracaibo').trim(),
+        categoria: provData.categoria || 'OTROS',
+        status: true
+      };
+
+      const { data: insData, error: insErr } = await supabase
+        .from('proveedores')
+        .insert([dbPayload])
+        .select('id');
+
+      if (!insErr && insData && insData[0]?.id) {
+        const nuevoId = Number(insData[0].id);
+        invalidarCacheProveedores();
+        try {
+          window.dispatchEvent(new CustomEvent('proveedores_actualizados'));
+        } catch {
+          // ignore
+        }
+        return nuevoId;
+      }
+    } catch (e) {
+      console.warn("Aviso al auto-registrar proveedor para clave foránea:", e);
+    }
+  }
+
+  return null;
+};
+
+
 
 

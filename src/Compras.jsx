@@ -9,7 +9,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Loader2, Upload, FileText, MessageSquare, Paperclip, Clock, CheckCircle2, AlertCircle, ShoppingBag, ChevronDown, X, Landmark, Trash2 } from 'lucide-react';
 import { getSemanaInfo, getSemanaInfoForWeek, safeSupabaseInsert } from './utils/helpers';
 import { compressImage } from './utils/compressImage';
-import { obtenerTodosProveedores } from './services/proveedoresService';
+import { obtenerTodosProveedores, asegurarProveedorEnBaseDeDatos } from './services/proveedoresService';
 import { consolidarSoportesRequisicion } from './services/requisicionesService';
 import './Requisiciones.css';
 import './ReportesMaestro.css';
@@ -782,15 +782,20 @@ const Compras = () => {
         fechaVenc = d.toISOString().split('T')[0];
       }
 
-      const prov = proveedores.find(p => String(p.id) === String(odcForm.proveedor_id));
+      const prov = proveedores.find(p => String(p.id) === String(odcForm.proveedor_id)) ||
+                   proveedores.find(p => p.rif && odcForm.proveedor_rif && p.rif.trim().toUpperCase() === odcForm.proveedor_rif.trim().toUpperCase()) ||
+                   { id: odcForm.proveedor_id, razon_social: odcForm.proveedor_nombre, rif: odcForm.proveedor_rif };
       const itemPasaAlmacen = odcForm.pasa_por_almacen !== false;
+
+      // Garantizar clave foránea válida en la tabla proveedores de PostgreSQL
+      const realProveedorDbId = await asegurarProveedorEnBaseDeDatos(prov);
 
       const baseOdcPayload = {
         numero_odc,
         requisicion_id: odcForm.requisicion_id || requisicionActiva?.id || null,
-        proveedor_id: odcForm.proveedor_id,
-        proveedor_nombre: prov?.razon_social || prov?.nombre || null,
-        proveedor_rif: prov?.rif || prov?.rif_nit || null,
+        proveedor_id: realProveedorDbId || (prov && !isNaN(Number(prov.id)) && Number(prov.id) > 0 ? Number(prov.id) : null),
+        proveedor_nombre: prov?.razon_social || prov?.nombre || odcForm.proveedor_nombre || null,
+        proveedor_rif: prov?.rif || prov?.rif_nit || odcForm.proveedor_rif || null,
         proveedor_contacto: prov?.persona_contacto || prov?.contacto_nombre || null,
         proveedor_telefono: prov?.telefono || prov?.contacto_telefono || null,
         proveedor_ciudad: prov?.ciudad || prov?.localizacion || null,
