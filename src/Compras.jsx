@@ -5937,399 +5937,396 @@ const Compras = () => {
       )}
       {showOdcModal && (
         <div className="modal-overlay" style={{ zIndex: 3500 }}>
-          <div className="modal-card animate-modal" style={{ maxWidth: '950px', maxHeight: '90vh', overflowY: 'auto', padding: '30px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '2px solid #e2e8f0', paddingBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
-              <div>
-                <span style={{ backgroundColor: '#0ea5e9', color: 'white', padding: '4px 10px', borderRadius: '6px', fontSize: '0.7rem', fontWeight: '900' }}>EMISIÓN DE ODC</span>
-                <h2 style={{ margin: '6px 0 0 0', color: '#0f172a', fontSize: '1.35rem', fontWeight: '900' }}>
-                  Generar Órden de Compra - {requisicionActiva?.correlativo_req || requisicionActiva?.correlativo || (requisicionActiva?.id ? `REQ-${requisicionActiva.id}` : '')}
+          <div className="modal-card animate-modal" style={{ maxWidth: '1180px', width: '96vw', maxHeight: '92vh', overflowY: 'auto', padding: '24px 28px' }}>
+            {/* Header del Modal */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1.5px solid #e2e8f0', paddingBottom: '12px', flexWrap: 'wrap', gap: '10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <span style={{ backgroundColor: '#0ea5e9', color: 'white', padding: '4px 10px', borderRadius: '6px', fontSize: '0.72rem', fontWeight: '900', letterSpacing: '0.5px' }}>EMISIÓN DE ODC</span>
+                <h2 style={{ margin: 0, color: '#0f172a', fontSize: '1.25rem', fontWeight: '900' }}>
+                  Generar Órden de Compra — <span style={{ color: '#0284c7' }}>{requisicionActiva?.correlativo_req || requisicionActiva?.correlativo || (requisicionActiva?.id ? `REQ-${requisicionActiva.id}` : '')}</span>
                 </h2>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <div style={{ backgroundColor: '#f1f5f9', border: '1px solid #cbd5e1', padding: '6px 12px', borderRadius: '8px', fontSize: '0.78rem', color: '#334155' }}>
+                <div style={{ backgroundColor: '#f1f5f9', border: '1px solid #cbd5e1', padding: '5px 12px', borderRadius: '8px', fontSize: '0.78rem', color: '#334155' }}>
                   <strong>Centro de Costo:</strong> <span style={{ color: '#0284c7', fontWeight: '800' }}>{requisicionActiva?.centro_costo || requisicionActiva?.centroCosto || requisicionActiva?.obra || 'No especificado'}</span>
                 </div>
-                <button onClick={() => setShowOdcModal(false)} style={{ border: 'none', background: '#f1f5f9', borderRadius: '50%', width: '32px', height: '32px', cursor: 'pointer', fontWeight: 'bold' }}>✕</button>
+                <button onClick={() => setShowOdcModal(false)} style={{ border: 'none', background: '#f1f5f9', borderRadius: '50%', width: '32px', height: '32px', cursor: 'pointer', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748b' }}>✕</button>
               </div>
             </div>
 
-            {/* Fila 1: Categoría, Proveedor, Cuenta Bancaria (Alineados en la misma base) */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.8fr 2.5fr', gap: '15px', alignItems: 'flex-end', marginBottom: '20px' }}>
-              {/* Categoría */}
-              <div style={{ display: 'flex', flexDirection: 'column' }}>
-                <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#0ea5e9', marginBottom: '6px' }}>🔍 CATEGORÍA</label>
-                <select
-                  className="input-tc"
-                  style={{ width: '100%', padding: '10px', fontWeight: '800', borderRadius: '8px', border: '1px solid #38bdf8', backgroundColor: '#f0f9ff', color: '#0284c7' }}
-                  value={filtroCatProvOdc}
-                  onChange={(e) => setFiltroCatProvOdc(e.target.value)}
-                >
-                  <option value="TODAS">Todas ({proveedores.length})</option>
-                  {categoriasProveedoresOdc.map(cat => (
-                    <option key={cat} value={cat}>{cat}</option>
-                  ))}
-                </select>
-              </div>
+            {/* CONTENEDOR HORIZONTAL PRINCIPAL DE 2 BOXES */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(460px, 1fr))', gap: '16px', marginBottom: '18px', alignItems: 'stretch' }}>
+              
+              {/* BOX 1 (IZQUIERDO): PROVEEDOR Y FINANZAS */}
+              <div style={{
+                backgroundColor: '#ffffff',
+                border: '1.5px solid #e2e8f0',
+                borderRadius: '16px',
+                padding: '16px 18px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '12px',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.03)'
+              }}>
+                <div style={{ fontSize: '0.8rem', fontWeight: '900', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '6px', borderBottom: '1px solid #f1f5f9', paddingBottom: '6px' }}>
+                  🏢 <span>Proveedor & Modalidad de Pago</span>
+                </div>
 
-              {/* Proveedor */}
-              <div style={{ display: 'flex', flexDirection: 'column' }}>
-                <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569', marginBottom: '6px' }}>PROVEEDOR * ({proveedoresOdcFiltrados.length})</label>
-                <select
-                  className="input-tc"
-                  style={{ width: '100%', padding: '10px', fontWeight: '700', borderRadius: '8px', border: '1px solid #cbd5e1' }}
-                  value={odcForm.proveedor_id}
-                  onChange={(e) => {
-                    const provId = e.target.value;
-                    const prov = proveedores.find(p => String(p.id) === String(provId));
-                    let defaultCtaStr = '';
-                    if (prov?.cuentas_bancarias) {
-                      let ctas = [];
-                      if (Array.isArray(prov.cuentas_bancarias)) ctas = prov.cuentas_bancarias;
-                      else if (typeof prov.cuentas_bancarias === 'string') {
-                        try { ctas = JSON.parse(prov.cuentas_bancarias); } catch { ctas = []; }
-                      }
-                      if (ctas.length > 0) {
-                        const c0 = ctas[0];
-                        defaultCtaStr = `${c0.banco || 'Banco'} (${c0.moneda || 'USD'}) - N° Cuenta: ${c0.nro_cuenta || 'N/A'} - Titular: ${c0.titular || 'N/A'} (${c0.rif || 'N/A'}) ${c0.tipo_cuenta ? `[${c0.tipo_cuenta}]` : ''}`;
-                      }
-                    }
-                    setOdcForm(prev => ({
-                      ...prev,
-                      proveedor_id: provId,
-                      cuenta_bancaria_proveedor: defaultCtaStr,
-                      tipo_pago: prov?.condicion_pago_defecto || prev.tipo_pago,
-                      dias_credito: prov?.dias_credito_habituales || prov?.dias_credito || 0
-                    }));
-                  }}
-                >
-                  <option value="">Seleccione Proveedor...</option>
-                  {proveedoresOdcFiltrados.map(p => (
-                    <option key={p.id} value={p.id}>{p.razon_social} {p.rif ? `(${p.rif})` : ''}</option>
-                  ))}
-                </select>
+                {/* Categoría y Proveedor */}
+                <div style={{ display: 'grid', gridTemplateColumns: '130px 1fr', gap: '10px', alignItems: 'flex-start' }}>
+                  <div>
+                    <label style={{ fontSize: '0.72rem', fontWeight: '800', color: '#0284c7', display: 'block', marginBottom: '4px' }}>CATEGORÍA</label>
+                    <select
+                      className="input-tc"
+                      style={{ width: '100%', padding: '8px 10px', fontWeight: '800', borderRadius: '8px', border: '1px solid #38bdf8', backgroundColor: '#f0f9ff', color: '#0284c7', fontSize: '0.78rem' }}
+                      value={filtroCatProvOdc}
+                      onChange={(e) => setFiltroCatProvOdc(e.target.value)}
+                    >
+                      <option value="TODAS">Todas ({proveedores.length})</option>
+                      {categoriasProveedoresOdc.map(cat => (
+                        <option key={cat} value={cat}>{cat}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: '0.72rem', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '4px' }}>PROVEEDOR * ({proveedoresOdcFiltrados.length})</label>
+                    <select
+                      className="input-tc"
+                      style={{ width: '100%', padding: '8px 10px', fontWeight: '700', borderRadius: '8px', border: '1.5px solid #cbd5e1', fontSize: '0.82rem' }}
+                      value={odcForm.proveedor_id}
+                      onChange={(e) => {
+                        const provId = e.target.value;
+                        const prov = proveedores.find(p => String(p.id) === String(provId));
+                        let defaultCtaStr = '';
+                        if (prov?.cuentas_bancarias) {
+                          let ctas = [];
+                          if (Array.isArray(prov.cuentas_bancarias)) ctas = prov.cuentas_bancarias;
+                          else if (typeof prov.cuentas_bancarias === 'string') {
+                            try { ctas = JSON.parse(prov.cuentas_bancarias); } catch { ctas = []; }
+                          }
+                          if (ctas.length > 0) {
+                            const c0 = ctas[0];
+                            defaultCtaStr = `${c0.banco || 'Banco'} (${c0.moneda || 'USD'}) - N° Cuenta: ${c0.nro_cuenta || 'N/A'} - Titular: ${c0.titular || 'N/A'} (${c0.rif || 'N/A'}) ${c0.tipo_cuenta ? `[${c0.tipo_cuenta}]` : ''}`;
+                          }
+                        }
+                        setOdcForm(prev => ({
+                          ...prev,
+                          proveedor_id: provId,
+                          cuenta_bancaria_proveedor: defaultCtaStr,
+                          tipo_pago: prov?.condicion_pago_defecto || prev.tipo_pago,
+                          dias_credito: prov?.dias_credito_habituales || prov?.dias_credito || 0
+                        }));
+                      }}
+                    >
+                      <option value="">Seleccione Proveedor...</option>
+                      {proveedoresOdcFiltrados.map(p => (
+                        <option key={p.id} value={p.id}>{p.razon_social} {p.rif ? `(${p.rif})` : ''}</option>
+                      ))}
+                    </select>
+
+                    {/* Chip Datos Contacto / Teléfono */}
+                    {(() => {
+                      const provSel = proveedores.find(p => String(p.id) === String(odcForm.proveedor_id));
+                      if (!provSel) return null;
+                      const tel = provSel.telefono || provSel.contacto_telefono;
+                      return (
+                        <div style={{ marginTop: '5px', fontSize: '0.70rem', color: '#0369a1', backgroundColor: '#f0f9ff', border: '1px solid #bae6fd', padding: '4px 8px', borderRadius: '6px', fontWeight: '700', display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                          <span>📞 <strong>{tel || 'Sin teléfono'}</strong></span>
+                          {provSel.persona_contacto && <span>👤 <strong>{provSel.persona_contacto}</strong></span>}
+                          {provSel.rif && <span>🆔 <strong>{provSel.rif}</strong></span>}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
+
+                {/* Cuenta Bancaria de Destino */}
                 {(() => {
-                  const provSel = proveedores.find(p => String(p.id) === String(odcForm.proveedor_id));
-                  if (!provSel) return null;
-                  const tel = provSel.telefono || provSel.contacto_telefono;
+                  const provSeleccionado = proveedores.find(p => String(p.id) === String(odcForm.proveedor_id));
+                  let ctasProv = [];
+                  if (provSeleccionado?.cuentas_bancarias) {
+                    if (Array.isArray(provSeleccionado.cuentas_bancarias)) ctasProv = provSeleccionado.cuentas_bancarias;
+                    else if (typeof provSeleccionado.cuentas_bancarias === 'string') {
+                      try { ctasProv = JSON.parse(provSeleccionado.cuentas_bancarias); } catch { ctasProv = []; }
+                    }
+                  }
+
                   return (
-                    <div style={{ marginTop: '4px', fontSize: '0.70rem', color: '#0369a1', backgroundColor: '#e0f2fe', padding: '3px 8px', borderRadius: '6px', fontWeight: '700', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                      <span>📞 Tel: <strong>{tel || 'No registrado'}</strong></span>
-                      {provSel.persona_contacto && <span>👤 Contacto: <strong>{provSel.persona_contacto}</strong></span>}
+                    <div>
+                      <label style={{ fontSize: '0.72rem', fontWeight: '800', color: '#0ea5e9', display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '4px' }}>
+                        <Landmark size={13} /> CUENTA BANCARIA DE DESTINO (PAGO PROVEEDOR)
+                      </label>
+                      <select
+                        className="input-tc"
+                        style={{ width: '100%', padding: '8px 10px', fontWeight: '700', borderRadius: '8px', border: '1px solid #0ea5e9', backgroundColor: ctasProv.length > 0 ? '#f0f9ff' : '#fff', fontSize: '0.78rem' }}
+                        value={odcForm.cuenta_bancaria_proveedor || ''}
+                        onChange={(e) => setOdcForm(prev => ({ ...prev, cuenta_bancaria_proveedor: e.target.value }))}
+                      >
+                        <option value="">-- Seleccionar Cuenta Bancaria de Pago --</option>
+                        {ctasProv.map((c, idx) => {
+                          const label = `${c.banco || 'Banco'} (${c.moneda || 'USD'}) - N° Cuenta: ${c.nro_cuenta || 'N/A'} - Titular: ${c.titular || 'N/A'} (${c.rif || 'N/A'}) ${c.tipo_cuenta ? `[${c.tipo_cuenta}]` : ''}`;
+                          return <option key={idx} value={label}>{label}</option>;
+                        })}
+                        {ctasProv.length === 0 && (
+                          <option value="" disabled>El proveedor no posee cuentas bancarias registradas</option>
+                        )}
+                      </select>
                     </div>
                   );
                 })()}
-              </div>
 
-              {/* Cuenta Bancaria de Destino del Proveedor */}
-              {(() => {
-                const provSeleccionado = proveedores.find(p => String(p.id) === String(odcForm.proveedor_id));
-                let ctasProv = [];
-                if (provSeleccionado?.cuentas_bancarias) {
-                  if (Array.isArray(provSeleccionado.cuentas_bancarias)) ctasProv = provSeleccionado.cuentas_bancarias;
-                  else if (typeof provSeleccionado.cuentas_bancarias === 'string') {
-                    try { ctasProv = JSON.parse(provSeleccionado.cuentas_bancarias); } catch { ctasProv = []; }
-                  }
-                }
-
-                return (
-                  <div style={{ display: 'flex', flexDirection: 'column' }}>
-                    <label style={{ fontSize: '0.72rem', fontWeight: '800', color: '#0ea5e9', display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '6px' }}>
-                      <Landmark size={14} /> CUENTA BANCARIA DE DESTINO PARA PAGO (PROVEEDOR)
-                    </label>
+                {/* Condición de Pago, Moneda e IVA en una fila horizontal compacta */}
+                <div style={{ display: 'grid', gridTemplateColumns: odcForm.tipo_pago === 'CREDITO' ? '1fr 75px 1.1fr auto' : '1fr 1.1fr auto', gap: '8px', alignItems: 'flex-end', paddingTop: '4px' }}>
+                  <div>
+                    <label style={{ fontSize: '0.70rem', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '4px' }}>CONDICIÓN PAGO *</label>
                     <select
                       className="input-tc"
-                      style={{ width: '100%', padding: '10px', fontWeight: '700', borderRadius: '8px', border: '1px solid #0ea5e9', backgroundColor: ctasProv.length > 0 ? '#f0f9ff' : '#fff' }}
-                      value={odcForm.cuenta_bancaria_proveedor || ''}
-                      onChange={(e) => setOdcForm(prev => ({ ...prev, cuenta_bancaria_proveedor: e.target.value }))}
+                      style={{ width: '100%', padding: '7px 8px', fontWeight: '700', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.78rem' }}
+                      value={odcForm.tipo_pago}
+                      onChange={(e) => setOdcForm(prev => ({ ...prev, tipo_pago: e.target.value }))}
                     >
-                      <option value="">-- Seleccionar Cuenta Bancaria de Pago --</option>
-                      {ctasProv.map((c, idx) => {
-                        const label = `${c.banco || 'Banco'} (${c.moneda || 'USD'}) - N° Cuenta: ${c.nro_cuenta || 'N/A'} - Titular: ${c.titular || 'N/A'} (${c.rif || 'N/A'}) ${c.tipo_cuenta ? `[${c.tipo_cuenta}]` : ''}`;
-                        return <option key={idx} value={label}>{label}</option>;
-                      })}
-                      {ctasProv.length === 0 && (
-                        <option value="" disabled>El proveedor no posee cuentas bancarias registradas</option>
-                      )}
+                      <option value="CONTADO">CONTADO</option>
+                      <option value="CREDITO">CRÉDITO</option>
                     </select>
-                    {odcForm.proveedor_id && ctasProv.length === 0 && (
-                      <p style={{ margin: '4px 0 0 0', fontSize: '0.72rem', color: '#f59e0b', fontWeight: '600' }}>
-                        ⚠️ Este proveedor no tiene cuentas bancarias guardadas en el sistema.
-                      </p>
-                    )}
                   </div>
-                );
-              })()}
-            </div>
 
-            {/* Fila 2: Condición de Pago y Despachar a */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '20px' }}>
-              {/* Tipo de Pago y Días Crédito */}
-              <div style={{ display: 'flex', gap: '15px' }}>
-                <div style={{ flex: 1 }}>
-                  <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '6px' }}>CONDICIÓN DE PAGO *</label>
-                  <select
-                    className="input-tc"
-                    style={{ width: '100%', padding: '10px', fontWeight: '700', borderRadius: '8px', border: '1px solid #cbd5e1' }}
-                    value={odcForm.tipo_pago}
-                    onChange={(e) => setOdcForm(prev => ({ ...prev, tipo_pago: e.target.value }))}
-                  >
-                    <option value="CONTADO">CONTADO</option>
-                    <option value="CREDITO">CRÉDITO</option>
-                  </select>
-                </div>
-                {odcForm.tipo_pago === 'CREDITO' && (
-                  <div style={{ width: '120px' }}>
-                    <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '6px' }}>DÍAS CRÉDITO</label>
-                    <input
-                      type="number"
+                  {odcForm.tipo_pago === 'CREDITO' && (
+                    <div>
+                      <label style={{ fontSize: '0.70rem', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '4px' }}>DÍAS</label>
+                      <input
+                        type="number"
+                        className="input-tc"
+                        style={{ width: '100%', padding: '7px 6px', fontWeight: '700', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.78rem', textAlign: 'center' }}
+                        value={odcForm.dias_credito}
+                        onChange={(e) => setOdcForm(prev => ({ ...prev, dias_credito: e.target.value }))}
+                      />
+                    </div>
+                  )}
+
+                  <div>
+                    <label style={{ fontSize: '0.70rem', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '4px' }}>MONEDA / MODALIDAD</label>
+                    <select
                       className="input-tc"
-                      style={{ width: '100%', padding: '10px', fontWeight: '700', borderRadius: '8px', border: '1px solid #cbd5e1' }}
-                      value={odcForm.dias_credito}
-                      onChange={(e) => setOdcForm(prev => ({ ...prev, dias_credito: e.target.value }))}
+                      style={{ width: '100%', padding: '7px 8px', fontWeight: '800', borderRadius: '8px', border: '1px solid #cbd5e1', backgroundColor: '#ffffff', fontSize: '0.78rem' }}
+                      value={['USD', '$/$'].includes(odcForm.moneda) ? '$/$' : (['BS', 'VES', 'Bs/$', 'BS/$', '$ / BS'].includes(odcForm.moneda) ? 'Bs/$' : 'OTRA')}
+                      onChange={(e) => {
+                        const mon = e.target.value;
+                        setOdcForm(prev => ({
+                          ...prev,
+                          moneda: mon === 'OTRA' ? (prev.moneda_custom || 'OTRA') : mon,
+                          tasa_bcv: 1
+                        }));
+                      }}
+                    >
+                      <option value="$/$">$ / $ (Pago $)</option>
+                      <option value="Bs/$">Bs / $ (Pago Bs ref $)</option>
+                      <option value="OTRA">+ Otra moneda...</option>
+                    </select>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', paddingBottom: '6px' }}>
+                    <input
+                      type="checkbox"
+                      id="aplica_iva_cb"
+                      checked={odcForm.aplica_iva}
+                      onChange={(e) => setOdcForm(prev => ({ ...prev, aplica_iva: e.target.checked }))}
+                      style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+                    />
+                    <label htmlFor="aplica_iva_cb" style={{ fontSize: '0.75rem', fontWeight: '800', color: '#1e293b', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                      IVA (16%)
+                    </label>
+                  </div>
+                </div>
+
+                {(!['USD', '$/$', 'BS', 'VES', 'Bs/$', 'BS/$', '$ / BS'].includes(odcForm.moneda) || odcForm.moneda === 'OTRA') && (
+                  <div>
+                    <label style={{ fontSize: '0.70rem', fontWeight: '800', color: '#0284c7', display: 'block', marginBottom: '4px' }}>NOMBRE DE MONEDA *</label>
+                    <input
+                      type="text"
+                      className="input-tc"
+                      placeholder="Ej: EUR, COP, BRL..."
+                      style={{ width: '100%', padding: '6px 10px', fontWeight: '800', borderRadius: '8px', border: '1px solid #0284c7', backgroundColor: '#f0f9ff', fontSize: '0.78rem' }}
+                      value={odcForm.moneda_custom || (['USD', '$/$', 'BS', 'VES', 'Bs/$', 'BS/$'].includes(odcForm.moneda) ? '' : odcForm.moneda)}
+                      onChange={(e) => {
+                        const val = e.target.value.toUpperCase();
+                        setOdcForm(prev => ({ ...prev, moneda_custom: val, moneda: val || 'OTRA' }));
+                      }}
                     />
                   </div>
                 )}
               </div>
 
-              {/* Despachar a */}
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                  <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569' }}>DESPACHAR A *</label>
-                  <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+              {/* BOX 2 (DERECHO): DESTINO, LOGÍSTICA & COTIZACIÓN */}
+              <div style={{
+                backgroundColor: '#ffffff',
+                border: '1.5px solid #e2e8f0',
+                borderRadius: '16px',
+                padding: '16px 18px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '12px',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.03)'
+              }}>
+                <div style={{ fontSize: '0.8rem', fontWeight: '900', color: '#0f172a', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid #f1f5f9', paddingBottom: '6px' }}>
+                  <span>📍 <span>Destino de Entrega & Logística</span></span>
+                  <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
                     {odcForm.despachar_a_id && (
                       <button
                         type="button"
                         onClick={() => eliminarDestino(odcForm.despachar_a_id)}
-                        style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: '0.75rem', fontWeight: '800', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                        style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: '0.70rem', fontWeight: '800', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}
                         title="Eliminar este destino de entrega"
                       >
-                        <Trash2 size={13} /> Eliminar Destino
+                        <Trash2 size={12} /> Eliminar
                       </button>
                     )}
                     <button
                       type="button"
                       onClick={() => setShowNuevoDestinoModal(true)}
-                      style={{ background: 'none', border: 'none', color: '#0ea5e9', fontSize: '0.75rem', fontWeight: '800', cursor: 'pointer' }}
+                      style={{ background: 'none', border: 'none', color: '#0ea5e9', fontSize: '0.70rem', fontWeight: '800', cursor: 'pointer' }}
                     >
                       + Nuevo Destino
                     </button>
                   </div>
                 </div>
-                <select
-                  className="input-tc"
-                  style={{ width: '100%', padding: '10px', fontWeight: '700', borderRadius: '8px', border: '1px solid #cbd5e1' }}
-                  value={odcForm.despachar_a_id}
-                  onChange={(e) => {
-                    const destId = e.target.value;
-                    const dest = destinosDespacho.find(d => String(d.id) === String(destId));
-                    setOdcForm(prev => ({
-                      ...prev,
-                      despachar_a_id: destId,
-                      despachar_a_direccion: dest ? (dest.direccion && dest.direccion !== 'null' ? `${dest.nombre} - ${dest.direccion}` : dest.nombre) : ''
-                    }));
-                  }}
-                >
-                  <option value="">Seleccione Destino de Entrega...</option>
-                  {destinosDespacho.map(d => (
-                    <option key={d.id} value={d.id}>{d.nombre}{d.direccion && d.direccion !== 'null' ? ` (${d.direccion})` : ''}</option>
-                  ))}
-                </select>
-              </div>
 
-              {/* Cotización Ref, Fecha Cotización y Fecha Despacho */}
-              <div style={{ display: 'flex', gap: '15px' }}>
-                <div style={{ flex: 1 }}>
-                  <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '6px' }}>COTIZACIÓN REF.</label>
-                  <input
-                    type="text"
+                {/* Despachar a Selector */}
+                <div>
+                  <label style={{ fontSize: '0.72rem', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '4px' }}>DESPACHAR A (LUGAR DE ENTREGA) *</label>
+                  <select
                     className="input-tc"
-                    placeholder="Ej: COT-2026-99"
-                    style={{ width: '100%', padding: '10px', fontWeight: '700', borderRadius: '8px', border: '1px solid #cbd5e1' }}
-                    value={odcForm.cotizacion_ref}
-                    onChange={(e) => setOdcForm(prev => ({ ...prev, cotizacion_ref: e.target.value }))}
-                  />
-                </div>
-                <div style={{ flex: 1 }}>
-                  <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '6px' }}>FECHA COTIZACIÓN</label>
-                  <input
-                    type="date"
-                    className="input-tc"
-                    style={{ width: '100%', padding: '10px', fontWeight: '700', borderRadius: '8px', border: '1px solid #cbd5e1' }}
-                    value={odcForm.fecha_cotizacion}
-                    onChange={(e) => setOdcForm(prev => ({ ...prev, fecha_cotizacion: e.target.value }))}
-                  />
-                </div>
-                <div style={{ flex: 1 }}>
-                  <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '6px' }}>FECHA DESPACHO</label>
-                  <input
-                    type="date"
-                    className="input-tc"
-                    style={{ width: '100%', padding: '10px', fontWeight: '700', borderRadius: '8px', border: '1px solid #cbd5e1' }}
-                    value={odcForm.fecha_despacho}
-                    onChange={(e) => setOdcForm(prev => ({ ...prev, fecha_despacho: e.target.value }))}
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Moneda & IVA */}
-            <div style={{ display: 'flex', gap: '15px', marginBottom: '20px', alignItems: 'center', flexWrap: 'wrap' }}>
-              <div style={{ width: '190px' }}>
-                <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '6px' }}>MONEDA / MODALIDAD</label>
-                <select
-                  className="input-tc"
-                  style={{ width: '100%', padding: '8px', fontWeight: '800', borderRadius: '8px', border: '1px solid #cbd5e1', backgroundColor: '#ffffff' }}
-                  value={['USD', '$/$'].includes(odcForm.moneda) ? '$/$' : (['BS', 'VES', 'Bs/$', 'BS/$', '$ / BS'].includes(odcForm.moneda) ? 'Bs/$' : 'OTRA')}
-                  onChange={(e) => {
-                    const mon = e.target.value;
-                    setOdcForm(prev => ({
-                      ...prev,
-                      moneda: mon === 'OTRA' ? (prev.moneda_custom || 'OTRA') : mon,
-                      tasa_bcv: 1
-                    }));
-                  }}
-                >
-                  <option value="$/$">$ / $ (Pago en $)</option>
-                  <option value="Bs/$">Bs / $ (Pago en Bs referenciado a $)</option>
-                  <option value="OTRA">+ Nuevo / Otra moneda...</option>
-                </select>
-              </div>
-
-              {(!['USD', '$/$', 'BS', 'VES', 'Bs/$', 'BS/$', '$ / BS'].includes(odcForm.moneda) || odcForm.moneda === 'OTRA') && (
-                <div style={{ width: '160px' }}>
-                  <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#0284c7', display: 'block', marginBottom: '6px' }}>NOMBRE DE MONEDA *</label>
-                  <input
-                    type="text"
-                    className="input-tc"
-                    placeholder="Ej: EUR, COP, BRL..."
-                    style={{ width: '100%', padding: '8px', fontWeight: '800', borderRadius: '8px', border: '1px solid #0284c7', backgroundColor: '#f0f9ff' }}
-                    value={odcForm.moneda_custom || (['USD', '$/$', 'BS', 'VES', 'Bs/$', 'BS/$'].includes(odcForm.moneda) ? '' : odcForm.moneda)}
+                    style={{ width: '100%', padding: '8px 10px', fontWeight: '700', borderRadius: '8px', border: '1.5px solid #cbd5e1', fontSize: '0.82rem' }}
+                    value={odcForm.despachar_a_id}
                     onChange={(e) => {
-                      const val = e.target.value.toUpperCase();
-                      setOdcForm(prev => ({ ...prev, moneda_custom: val, moneda: val || 'OTRA' }));
+                      const destId = e.target.value;
+                      const dest = destinosDespacho.find(d => String(d.id) === String(destId));
+                      setOdcForm(prev => ({
+                        ...prev,
+                        despachar_a_id: destId,
+                        despachar_a_direccion: dest ? (dest.direccion && dest.direccion !== 'null' ? `${dest.nombre} - ${dest.direccion}` : dest.nombre) : ''
+                      }));
                     }}
-                  />
+                  >
+                    <option value="">Seleccione Destino de Entrega...</option>
+                    {destinosDespacho.map(d => (
+                      <option key={d.id} value={d.id}>{d.nombre}{d.direccion && d.direccion !== 'null' ? ` (${d.direccion})` : ''}</option>
+                    ))}
+                  </select>
                 </div>
-              )}
 
-
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '20px' }}>
-                <input
-                  type="checkbox"
-                  id="aplica_iva_cb"
-                  checked={odcForm.aplica_iva}
-                  onChange={(e) => setOdcForm(prev => ({ ...prev, aplica_iva: e.target.checked }))}
-                  style={{ width: '18px', height: '18px', cursor: 'pointer' }}
-                />
-                <label htmlFor="aplica_iva_cb" style={{ fontSize: '0.85rem', fontWeight: '800', color: '#1e293b', cursor: 'pointer' }}>
-                  APLICA IVA (16%)
-                </label>
-              </div>
-            </div>
-
-            {/* Configuración de Paso por Almacén / Entrega Directa */}
-            <div style={{
-              backgroundColor: '#f8fafc',
-              border: '1.5px solid #e2e8f0',
-              padding: '16px',
-              borderRadius: '16px',
-              marginBottom: '20px'
-            }}>
-              <div style={{ fontSize: '0.82rem', fontWeight: '800', color: '#1e293b', marginBottom: '10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
-                <span>🚚 Logística & Recepción Física</span>
-                <span style={{
-                  fontSize: '0.72rem',
-                  fontWeight: '900',
-                  padding: '3px 10px',
-                  borderRadius: '20px',
-                  backgroundColor: odcForm.pasa_por_almacen !== false ? '#dcfce7' : '#fef3c7',
-                  color: odcForm.pasa_por_almacen !== false ? '#15803d' : '#92400e',
-                  border: `1px solid ${odcForm.pasa_por_almacen !== false ? '#bbf7d0' : '#fde68a'}`
-                }}>
-                  {odcForm.pasa_por_almacen !== false ? '📦 PASA POR ALMACÉN' : '⚡ ENTREGA DIRECTA (NO PASA POR ALMACÉN)'}
-                </span>
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '12px' }}>
-                {/* Opción 1: Pasa por Almacén */}
-                <button
-                  type="button"
-                  onClick={() => setOdcForm(prev => ({ ...prev, pasa_por_almacen: true }))}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'flex-start',
-                    gap: '10px',
-                    padding: '12px 14px',
-                    borderRadius: '12px',
-                    border: odcForm.pasa_por_almacen !== false ? '2px solid #16a34a' : '1.5px solid #cbd5e1',
-                    backgroundColor: odcForm.pasa_por_almacen !== false ? '#f0fdf4' : '#ffffff',
-                    cursor: 'pointer',
-                    textAlign: 'left',
-                    transition: 'all 0.15s ease',
-                    boxShadow: odcForm.pasa_por_almacen !== false ? '0 2px 8px rgba(22, 163, 74, 0.15)' : 'none'
-                  }}
-                >
-                  <input
-                    type="radio"
-                    name="compras_pasa_almacen_radio"
-                    checked={odcForm.pasa_por_almacen !== false}
-                    onChange={() => setOdcForm(prev => ({ ...prev, pasa_por_almacen: true }))}
-                    style={{ marginTop: '3px', cursor: 'pointer', accentColor: '#16a34a' }}
-                  />
+                {/* Cotización Ref, Fecha Cotización y Fecha Despacho */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr', gap: '10px' }}>
                   <div>
-                    <div style={{ fontSize: '0.85rem', fontWeight: '800', color: odcForm.pasa_por_almacen !== false ? '#166534' : '#334155', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      📦 Pasa por Almacén
-                    </div>
-                    <div style={{ fontSize: '0.72rem', color: odcForm.pasa_por_almacen !== false ? '#15803d' : '#64748b', marginTop: '3px', lineHeight: '1.3' }}>
-                      La mercancía ingresa físicamente a Almacén, requiere clasificación de ubicación y entrega formal del almacenista.
-                    </div>
+                    <label style={{ fontSize: '0.70rem', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '4px' }}>COTIZACIÓN REF.</label>
+                    <input
+                      type="text"
+                      className="input-tc"
+                      placeholder="Ej: COT-2026-99"
+                      style={{ width: '100%', padding: '7px 8px', fontWeight: '700', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.78rem' }}
+                      value={odcForm.cotizacion_ref}
+                      onChange={(e) => setOdcForm(prev => ({ ...prev, cotizacion_ref: e.target.value }))}
+                    />
                   </div>
-                </button>
-
-                {/* Opción 2: No pasa por Almacén */}
-                <button
-                  type="button"
-                  onClick={() => setOdcForm(prev => ({ ...prev, pasa_por_almacen: false }))}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'flex-start',
-                    gap: '10px',
-                    padding: '12px 14px',
-                    borderRadius: '12px',
-                    border: odcForm.pasa_por_almacen === false ? '2px solid #d97706' : '1.5px solid #cbd5e1',
-                    backgroundColor: odcForm.pasa_por_almacen === false ? '#fffbeb' : '#ffffff',
-                    cursor: 'pointer',
-                    textAlign: 'left',
-                    transition: 'all 0.15s ease',
-                    boxShadow: odcForm.pasa_por_almacen === false ? '0 2px 8px rgba(217, 119, 6, 0.15)' : 'none'
-                  }}
-                >
-                  <input
-                    type="radio"
-                    name="compras_pasa_almacen_radio"
-                    checked={odcForm.pasa_por_almacen === false}
-                    onChange={() => setOdcForm(prev => ({ ...prev, pasa_por_almacen: false }))}
-                    style={{ marginTop: '3px', cursor: 'pointer', accentColor: '#d97706' }}
-                  />
                   <div>
-                    <div style={{ fontSize: '0.85rem', fontWeight: '800', color: odcForm.pasa_por_almacen === false ? '#92400e' : '#334155', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      🚚 No pasa por Almacén (Entrega Directa)
-                    </div>
-                    <div style={{ fontSize: '0.72rem', color: odcForm.pasa_por_almacen === false ? '#b45309' : '#64748b', marginTop: '3px', lineHeight: '1.3' }}>
-                      Entrega directa en sitio, obra o servicio. No requiere recepción ni registro pendiente en Almacén.
-                    </div>
+                    <label style={{ fontSize: '0.70rem', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '4px' }}>FECHA COTIZ.</label>
+                    <input
+                      type="date"
+                      className="input-tc"
+                      style={{ width: '100%', padding: '7px 6px', fontWeight: '700', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.78rem' }}
+                      value={odcForm.fecha_cotizacion}
+                      onChange={(e) => setOdcForm(prev => ({ ...prev, fecha_cotizacion: e.target.value }))}
+                    />
                   </div>
-                </button>
+                  <div>
+                    <label style={{ fontSize: '0.70rem', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '4px' }}>FECHA DESPACHO</label>
+                    <input
+                      type="date"
+                      className="input-tc"
+                      style={{ width: '100%', padding: '7px 6px', fontWeight: '700', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.78rem' }}
+                      value={odcForm.fecha_despacho}
+                      onChange={(e) => setOdcForm(prev => ({ ...prev, fecha_despacho: e.target.value }))}
+                    />
+                  </div>
+                </div>
+
+                {/* Paso por Almacén / Entrega Directa (Compacto) */}
+                <div style={{ marginTop: 'auto' }}>
+                  <label style={{ fontSize: '0.70rem', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '4px' }}>RECEPCIÓN FÍSICA</label>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                    <button
+                      type="button"
+                      onClick={() => setOdcForm(prev => ({ ...prev, pasa_por_almacen: true }))}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        padding: '8px 10px',
+                        borderRadius: '10px',
+                        border: odcForm.pasa_por_almacen !== false ? '2px solid #16a34a' : '1.5px solid #cbd5e1',
+                        backgroundColor: odcForm.pasa_por_almacen !== false ? '#f0fdf4' : '#ffffff',
+                        cursor: 'pointer',
+                        textAlign: 'left',
+                        transition: 'all 0.15s ease'
+                      }}
+                    >
+                      <input
+                        type="radio"
+                        name="compras_pasa_almacen_radio"
+                        checked={odcForm.pasa_por_almacen !== false}
+                        onChange={() => setOdcForm(prev => ({ ...prev, pasa_por_almacen: true }))}
+                        style={{ cursor: 'pointer', accentColor: '#16a34a' }}
+                      />
+                      <div>
+                        <div style={{ fontSize: '0.75rem', fontWeight: '800', color: odcForm.pasa_por_almacen !== false ? '#166534' : '#334155' }}>
+                          📦 Pasa por Almacén
+                        </div>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setOdcForm(prev => ({ ...prev, pasa_por_almacen: false }))}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        padding: '8px 10px',
+                        borderRadius: '10px',
+                        border: odcForm.pasa_por_almacen === false ? '2px solid #d97706' : '1.5px solid #cbd5e1',
+                        backgroundColor: odcForm.pasa_por_almacen === false ? '#fffbeb' : '#ffffff',
+                        cursor: 'pointer',
+                        textAlign: 'left',
+                        transition: 'all 0.15s ease'
+                      }}
+                    >
+                      <input
+                        type="radio"
+                        name="compras_pasa_almacen_radio"
+                        checked={odcForm.pasa_por_almacen === false}
+                        onChange={() => setOdcForm(prev => ({ ...prev, pasa_por_almacen: false }))}
+                        style={{ cursor: 'pointer', accentColor: '#d97706' }}
+                      />
+                      <div>
+                        <div style={{ fontSize: '0.75rem', fontWeight: '800', color: odcForm.pasa_por_almacen === false ? '#92400e' : '#334155' }}>
+                          🚚 Entrega Directa
+                        </div>
+                      </div>
+                    </button>
+                  </div>
+                </div>
+
               </div>
+
             </div>
 
             {/* Ítems incluidos */}
-            <div style={{ marginBottom: '20px' }}>
-              <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '8px' }}>PRODUCTOS A INCLUIR EN LA ODC</label>
+            <div style={{ marginBottom: '18px' }}>
+              <label style={{ fontSize: '0.78rem', fontWeight: '900', color: '#0f172a', display: 'block', marginBottom: '8px' }}>📦 PRODUCTOS A INCLUIR EN LA ODC</label>
               <table className="tc-table" style={{ fontSize: '0.8rem' }}>
                 <thead>
-                  <tr style={{ backgroundColor: '#f8fafc' }}>
-                    <th style={{ textAlign: 'center', width: '60px' }}>INCLUIR</th>
+                  <tr style={{ backgroundColor: '#0f172a', color: 'white' }}>
+                    <th style={{ textAlign: 'center', width: '55px' }}>INCLUIR</th>
                     <th>DESCRIPCIÓN</th>
                     <th style={{ textAlign: 'center', width: '110px' }}>CANT.</th>
                     <th style={{ textAlign: 'right', width: '110px' }}>P.U. ($)</th>
@@ -6465,36 +6462,36 @@ const Compras = () => {
               const tot = sub + iva;
               const monedaEtiqueta = ['BS', 'VES', 'Bs/$', 'BS/$', '$ / BS'].includes(odcForm.moneda) ? 'Bs/$' : (['USD', '$/$'].includes(odcForm.moneda) ? '$/$' : odcForm.moneda);
               return (
-                <div style={{ backgroundColor: '#f8fafc', padding: '15px 20px', borderRadius: '12px', marginBottom: '18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: '1px solid #e2e8f0', flexWrap: 'wrap', gap: '10px' }}>
+                <div style={{ backgroundColor: '#f8fafc', padding: '14px 18px', borderRadius: '12px', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: '1px solid #e2e8f0', flexWrap: 'wrap', gap: '10px' }}>
                   <div style={{ fontSize: '0.8rem', color: '#64748b' }}>
                     <strong>Subtotal:</strong> $ {sub.toLocaleString('de-DE', { minimumFractionDigits: 2 })} | <strong>IVA (16%):</strong> $ {iva.toLocaleString('de-DE', { minimumFractionDigits: 2 })} | <strong style={{ color: '#0284c7' }}>Modalidad:</strong> {monedaEtiqueta}
                   </div>
-                  <div style={{ fontSize: '1.2rem', fontWeight: '900', color: '#0ea5e9' }}>
+                  <div style={{ fontSize: '1.15rem', fontWeight: '900', color: '#0ea5e9' }}>
                     TOTAL ODC: $ {tot.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
                   </div>
                 </div>
               );
             })()}
 
-            {/* Leyes, Términos y Condiciones & Observaciones */}
+            {/* Leyes, Términos y Condiciones & Observaciones en Grid Horizontal */}
             <div style={{
               backgroundColor: '#f8fafc',
               border: '1.5px solid #e2e8f0',
-              padding: '16px 18px',
+              padding: '14px 16px',
               borderRadius: '14px',
-              marginBottom: '20px',
-              display: 'flex',
-              flexDirection: 'column',
+              marginBottom: '18px',
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))',
               gap: '14px'
             }}>
               <div>
-                <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '800', color: '#1e293b', marginBottom: '6px' }}>
-                  ⚖️ LEYES, TÉRMINOS & CONDICIONES COMERCIALES (IMPRESOS EN LA ODC)
+                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '800', color: '#1e293b', marginBottom: '5px' }}>
+                  ⚖️ LEYES, TÉRMINOS & CONDICIONES COMERCIALES
                 </label>
                 <textarea
                   rows={2}
                   className="input-tc"
-                  style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.8rem', resize: 'vertical' }}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.78rem', resize: 'vertical' }}
                   value={odcForm.terminos_condiciones !== undefined ? odcForm.terminos_condiciones : 'Precios incluyen entrega en el sitio de destino especificado. Mercancía sujeta a inspección de calidad y conteo físico.'}
                   onChange={(e) => setOdcForm(prev => ({ ...prev, terminos_condiciones: e.target.value }))}
                   placeholder="Precios incluyen entrega en el sitio de destino especificado..."
@@ -6502,13 +6499,13 @@ const Compras = () => {
               </div>
 
               <div>
-                <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '800', color: '#1e293b', marginBottom: '6px' }}>
+                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '800', color: '#1e293b', marginBottom: '5px' }}>
                   📝 OBSERVACIONES DE LA ÓRDEN DE COMPRA
                 </label>
                 <textarea
                   rows={2}
                   className="input-tc"
-                  style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.8rem', resize: 'vertical' }}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.78rem', resize: 'vertical' }}
                   value={odcForm.observaciones || ''}
                   onChange={(e) => setOdcForm(prev => ({ ...prev, observaciones: e.target.value }))}
                   placeholder="Instrucciones especiales, notas de entrega, aclaratorias para el proveedor..."
