@@ -1356,11 +1356,38 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
         const fileName = `factura_${prefix}_${Date.now()}_${index}.${fileExt}`;
         const filePath = `${fileName}`;
 
-        const { error: uploadError } = await supabase.storage.from('facturas').upload(filePath, file);
-        if (uploadError) throw uploadError;
+        let publicUrl = null;
+        try {
+          const { error: uploadError } = await supabase.storage.from('facturas').upload(filePath, file, { upsert: true });
+          if (!uploadError) {
+            const { data } = supabase.storage.from('facturas').getPublicUrl(filePath);
+            publicUrl = data?.publicUrl;
+          } else {
+            console.warn("Aviso upload facturas:", uploadError.message);
+            const { error: uploadError2 } = await supabase.storage.from('tickets-evidencia').upload(`soportes/${filePath}`, file, { upsert: true });
+            if (!uploadError2) {
+              const { data: data2 } = supabase.storage.from('tickets-evidencia').getPublicUrl(`soportes/${filePath}`);
+              publicUrl = data2?.publicUrl;
+            }
+          }
+        } catch (err) {
+          console.warn("Aviso upload storage:", err);
+        }
 
-        const { data: { publicUrl } } = supabase.storage.from('facturas').getPublicUrl(filePath);
-        return publicUrl;
+        if (!publicUrl) {
+          try {
+            publicUrl = await new Promise((resolve) => {
+              const reader = new FileReader();
+              reader.onloadend = () => resolve(reader.result);
+              reader.onerror = () => resolve(null);
+              reader.readAsDataURL(file);
+            });
+          } catch {
+            // ignore
+          }
+        }
+
+        return publicUrl || '';
       });
 
       const nuevasDescargas = await Promise.all(uploadPromises);

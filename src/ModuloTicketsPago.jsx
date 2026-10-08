@@ -1145,20 +1145,46 @@ const ModuloTicketsPago = () => {
           const customName = fileObj.label || file.name.split('.')[0] || 'Factura';
           const fileName = `recibos/${Date.now()}_${sanitizeFileName(file.name)}`;
 
-          const compressedFile = await compressImage(file);
-          const { error: uploadError } = await supabase.storage
-            .from('tickets-evidencia')
-            .upload(fileName, compressedFile);
+          let publicUrl = null;
+          let compressedFile = null;
+          try {
+            compressedFile = await compressImage(file);
+            const { error: uploadError } = await supabase.storage
+              .from('tickets-evidencia')
+              .upload(fileName, compressedFile, { upsert: true });
 
-          if (uploadError) {
-            console.error("Error al subir archivo:", uploadError);
-            toast.error(`Error al subir la factura ${file.name}: ${uploadError.message}`);
-            throw uploadError;
+            if (!uploadError) {
+              const { data: publicUrlData } = supabase.storage.from('tickets-evidencia').getPublicUrl(fileName);
+              publicUrl = publicUrlData.publicUrl;
+            } else {
+              const { error: uploadError2 } = await supabase.storage
+                .from('facturas')
+                .upload(fileName, compressedFile, { upsert: true });
+              if (!uploadError2) {
+                const { data: publicUrlData2 } = supabase.storage.from('facturas').getPublicUrl(fileName);
+                publicUrl = publicUrlData2.publicUrl;
+              }
+            }
+          } catch (err) {
+            console.warn("Aviso upload storage:", err);
           }
 
-          const { data: publicUrlData } = supabase.storage.from('tickets-evidencia').getPublicUrl(fileName);
+          if (!publicUrl) {
+            try {
+              const fileToEncode = compressedFile || file;
+              publicUrl = await new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result);
+                reader.onerror = () => resolve(null);
+                reader.readAsDataURL(fileToEncode);
+              });
+            } catch {
+              // ignore
+            }
+          }
+
           return {
-            url: publicUrlData.publicUrl,
+            url: publicUrl || '',
             name: customName
           };
         });
@@ -1959,20 +1985,47 @@ const ModuloTicketsPago = () => {
           const file = imagenesArchivos[i];
           const customName = imagenesNombres[i] || file.name.split('.')[0] || 'Soporte';
           const fileName = `recibos/${Date.now()}_${sanitizeFileName(file.name)}`;
-          const compressedFile = await compressImage(file);
-          const { error: uploadError } = await supabase.storage
-            .from('tickets-evidencia')
-            .upload(fileName, compressedFile);
+          let publicUrl = null;
+          let compressedFile = null;
 
-          if (uploadError) {
-            console.error("Error al subir archivo:", uploadError);
-            toast.error(`Error al subir la imagen: ${uploadError.message}`);
-            throw uploadError;
+          try {
+            compressedFile = await compressImage(file);
+            const { error: uploadError } = await supabase.storage
+              .from('tickets-evidencia')
+              .upload(fileName, compressedFile, { upsert: true });
+
+            if (!uploadError) {
+              const { data: publicUrlData } = supabase.storage.from('tickets-evidencia').getPublicUrl(fileName);
+              publicUrl = publicUrlData.publicUrl;
+            } else {
+              const { error: uploadError2 } = await supabase.storage
+                .from('facturas')
+                .upload(fileName, compressedFile, { upsert: true });
+              if (!uploadError2) {
+                const { data: publicUrlData2 } = supabase.storage.from('facturas').getPublicUrl(fileName);
+                publicUrl = publicUrlData2.publicUrl;
+              }
+            }
+          } catch (err) {
+            console.warn("Aviso upload storage:", err);
           }
 
-          const { data: publicUrlData } = supabase.storage.from('tickets-evidencia').getPublicUrl(fileName);
+          if (!publicUrl) {
+            try {
+              const fileToEncode = compressedFile || file;
+              publicUrl = await new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result);
+                reader.onerror = () => resolve(null);
+                reader.readAsDataURL(fileToEncode);
+              });
+            } catch {
+              // ignore
+            }
+          }
+
           finalUrls.push({
-            url: publicUrlData.publicUrl,
+            url: publicUrl || '',
             name: customName
           });
         }

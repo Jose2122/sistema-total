@@ -570,8 +570,10 @@ const Compras = () => {
     despachar_a_id: '',
     despachar_a_direccion: '',
     pasa_por_almacen: true,
+    terminos_condiciones: 'Precios incluyen entrega en el sitio de destino especificado. Mercancía sujeta a inspección de calidad y conteo físico.',
     observaciones: '',
-    moneda: 'USD',
+    moneda: '$/$',
+    moneda_custom: '',
     tasa_bcv: 1,
     aplica_iva: true,
     items: []
@@ -634,11 +636,13 @@ const Compras = () => {
       dias_credito: provMatch?.dias_credito_habituales || provMatch?.dias_credito || 0,
       cotizacion_ref: '',
       fecha_cotizacion: new Date().toISOString().split('T')[0],
+      fecha_despacho: new Date().toISOString().split('T')[0],
       despachar_a_id: defaultDestino ? defaultDestino.id : '',
       despachar_a_direccion: defaultDestino ? (defaultDestino.direccion && defaultDestino.direccion !== 'null' ? `${defaultDestino.nombre} - ${defaultDestino.direccion}` : defaultDestino.nombre) : '',
       pasa_por_almacen: true,
+      terminos_condiciones: 'Precios incluyen entrega en el sitio de destino especificado. Mercancía sujeta a inspección de calidad y conteo físico.',
       observaciones: '',
-      moneda: 'USD',
+      moneda: '$/$',
       moneda_custom: '',
       tasa_bcv: 1,
       aplica_iva: true,
@@ -788,6 +792,7 @@ const Compras = () => {
         proveedor_nombre: prov?.razon_social || prov?.nombre || null,
         proveedor_rif: prov?.rif || prov?.rif_nit || null,
         proveedor_contacto: prov?.persona_contacto || prov?.contacto_nombre || null,
+        proveedor_telefono: prov?.telefono || prov?.contacto_telefono || null,
         proveedor_ciudad: prov?.ciudad || prov?.localizacion || null,
         proveedor_direccion: prov?.direccion || null,
         cotizacion_ref: odcForm.cotizacion_ref || null,
@@ -802,14 +807,17 @@ const Compras = () => {
         pasa_por_almacen: itemPasaAlmacen,
         datos_bancarios: odcForm.cuenta_bancaria_proveedor || null,
         cuenta_bancaria: odcForm.cuenta_bancaria_proveedor || null,
+        terminos_condiciones: odcForm.terminos_condiciones || 'Precios incluyen entrega en el sitio de destino especificado. Mercancía sujeta a inspección de calidad y conteo físico.',
         observaciones: odcForm.observaciones || null,
         subtotal: subtotalVal,
         iva_porcentaje: odcForm.aplica_iva ? 16 : 0,
         iva_monto: ivaVal,
         total: totalVal,
         total_general: totalVal,
-        moneda: odcForm.moneda === 'OTRA' ? (odcForm.moneda_custom?.trim().toUpperCase() || 'OTRA') : (odcForm.moneda || 'USD'),
-        tasa_bcv: odcForm.moneda === 'USD' ? 1 : (parseFloat(odcForm.tasa_bcv) || 1),
+        moneda: odcForm.moneda === 'OTRA' 
+          ? (odcForm.moneda_custom?.trim().toUpperCase() || 'OTRA') 
+          : (['USD', '$/$'].includes(odcForm.moneda) ? '$/$' : (['BS', 'VES', 'Bs/$', 'BS/$', '$ / BS'].includes(odcForm.moneda) ? 'Bs/$' : (odcForm.moneda || '$/$'))),
+        tasa_bcv: 1,
         elaborado_por_id: currentUser?.id || null,
         elaborado_por_nombre: `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim() || 'Comprador',
         revisado_por_nombre: 'Ricardo Herrera',
@@ -5999,6 +6007,17 @@ const Compras = () => {
                     <option key={p.id} value={p.id}>{p.razon_social} {p.rif ? `(${p.rif})` : ''}</option>
                   ))}
                 </select>
+                {(() => {
+                  const provSel = proveedores.find(p => String(p.id) === String(odcForm.proveedor_id));
+                  if (!provSel) return null;
+                  const tel = provSel.telefono || provSel.contacto_telefono;
+                  return (
+                    <div style={{ marginTop: '4px', fontSize: '0.70rem', color: '#0369a1', backgroundColor: '#e0f2fe', padding: '3px 8px', borderRadius: '6px', fontWeight: '700', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                      <span>📞 Tel: <strong>{tel || 'No registrado'}</strong></span>
+                      {provSel.persona_contacto && <span>👤 Contacto: <strong>{provSel.persona_contacto}</strong></span>}
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* Cuenta Bancaria de Destino del Proveedor */}
@@ -6155,28 +6174,28 @@ const Compras = () => {
 
             {/* Moneda & IVA */}
             <div style={{ display: 'flex', gap: '15px', marginBottom: '20px', alignItems: 'center', flexWrap: 'wrap' }}>
-              <div style={{ width: '160px' }}>
-                <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '6px' }}>MONEDA</label>
+              <div style={{ width: '190px' }}>
+                <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#475569', display: 'block', marginBottom: '6px' }}>MONEDA / MODALIDAD</label>
                 <select
                   className="input-tc"
-                  style={{ width: '100%', padding: '8px', fontWeight: '800', borderRadius: '8px', border: '1px solid #cbd5e1' }}
-                  value={['USD', 'BS'].includes(odcForm.moneda) ? odcForm.moneda : 'OTRA'}
+                  style={{ width: '100%', padding: '8px', fontWeight: '800', borderRadius: '8px', border: '1px solid #cbd5e1', backgroundColor: '#ffffff' }}
+                  value={['USD', '$/$'].includes(odcForm.moneda) ? '$/$' : (['BS', 'VES', 'Bs/$', 'BS/$', '$ / BS'].includes(odcForm.moneda) ? 'Bs/$' : 'OTRA')}
                   onChange={(e) => {
                     const mon = e.target.value;
                     setOdcForm(prev => ({
                       ...prev,
                       moneda: mon === 'OTRA' ? (prev.moneda_custom || 'OTRA') : mon,
-                      tasa_bcv: mon === 'USD' ? 1 : prev.tasa_bcv
+                      tasa_bcv: 1
                     }));
                   }}
                 >
-                  <option value="USD">USD ($)</option>
-                  <option value="BS">VES (Bs)</option>
+                  <option value="$/$">$ / $ (Pago en $)</option>
+                  <option value="Bs/$">Bs / $ (Pago en Bs referenciado a $)</option>
                   <option value="OTRA">+ Nuevo / Otra moneda...</option>
                 </select>
               </div>
 
-              {(!['USD', 'BS'].includes(odcForm.moneda) || odcForm.moneda === 'OTRA') && (
+              {(!['USD', '$/$', 'BS', 'VES', 'Bs/$', 'BS/$', '$ / BS'].includes(odcForm.moneda) || odcForm.moneda === 'OTRA') && (
                 <div style={{ width: '160px' }}>
                   <label style={{ fontSize: '0.75rem', fontWeight: '800', color: '#0284c7', display: 'block', marginBottom: '6px' }}>NOMBRE DE MONEDA *</label>
                   <input
@@ -6184,7 +6203,7 @@ const Compras = () => {
                     className="input-tc"
                     placeholder="Ej: EUR, COP, BRL..."
                     style={{ width: '100%', padding: '8px', fontWeight: '800', borderRadius: '8px', border: '1px solid #0284c7', backgroundColor: '#f0f9ff' }}
-                    value={odcForm.moneda_custom || (['USD', 'BS'].includes(odcForm.moneda) ? '' : odcForm.moneda)}
+                    value={odcForm.moneda_custom || (['USD', '$/$', 'BS', 'VES', 'Bs/$', 'BS/$'].includes(odcForm.moneda) ? '' : odcForm.moneda)}
                     onChange={(e) => {
                       const val = e.target.value.toUpperCase();
                       setOdcForm(prev => ({ ...prev, moneda_custom: val, moneda: val || 'OTRA' }));
@@ -6313,8 +6332,8 @@ const Compras = () => {
                     <th style={{ textAlign: 'center', width: '60px' }}>INCLUIR</th>
                     <th>DESCRIPCIÓN</th>
                     <th style={{ textAlign: 'center', width: '110px' }}>CANT.</th>
-                    <th style={{ textAlign: 'right', width: '110px' }}>P.U. ({odcForm.moneda === 'BS' ? 'Bs' : '$'})</th>
-                    <th style={{ textAlign: 'right', width: '120px' }}>SUBTOTAL ({odcForm.moneda === 'BS' ? 'Bs' : '$'})</th>
+                    <th style={{ textAlign: 'right', width: '110px' }}>P.U. ($)</th>
+                    <th style={{ textAlign: 'right', width: '120px' }}>SUBTOTAL ($)</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -6427,7 +6446,7 @@ const Compras = () => {
                           />
                         </td>
                         <td style={{ textAlign: 'right', fontWeight: '900', color: isInc ? '#0ea5e9' : '#94a3b8' }}>
-                          {odcForm.moneda === 'BS' ? 'Bs' : '$'} {subFila.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                          $ {subFila.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
                         </td>
                       </tr>
                     );
@@ -6444,18 +6463,58 @@ const Compras = () => {
               }, 0);
               const iva = odcForm.aplica_iva ? sub * 0.16 : 0;
               const tot = sub + iva;
-              const sym = odcForm.moneda === 'BS' ? 'Bs' : '$';
+              const monedaEtiqueta = ['BS', 'VES', 'Bs/$', 'BS/$', '$ / BS'].includes(odcForm.moneda) ? 'Bs/$' : (['USD', '$/$'].includes(odcForm.moneda) ? '$/$' : odcForm.moneda);
               return (
-                <div style={{ backgroundColor: '#f8fafc', padding: '15px 20px', borderRadius: '12px', marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: '1px solid #e2e8f0' }}>
+                <div style={{ backgroundColor: '#f8fafc', padding: '15px 20px', borderRadius: '12px', marginBottom: '18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: '1px solid #e2e8f0', flexWrap: 'wrap', gap: '10px' }}>
                   <div style={{ fontSize: '0.8rem', color: '#64748b' }}>
-                    <strong>Subtotal:</strong> {sym} {sub.toLocaleString('de-DE', { minimumFractionDigits: 2 })} | <strong>IVA (16%):</strong> {sym} {iva.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                    <strong>Subtotal:</strong> $ {sub.toLocaleString('de-DE', { minimumFractionDigits: 2 })} | <strong>IVA (16%):</strong> $ {iva.toLocaleString('de-DE', { minimumFractionDigits: 2 })} | <strong style={{ color: '#0284c7' }}>Modalidad:</strong> {monedaEtiqueta}
                   </div>
                   <div style={{ fontSize: '1.2rem', fontWeight: '900', color: '#0ea5e9' }}>
-                    TOTAL ODC: {sym} {tot.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                    TOTAL ODC: $ {tot.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
                   </div>
                 </div>
               );
             })()}
+
+            {/* Leyes, Términos y Condiciones & Observaciones */}
+            <div style={{
+              backgroundColor: '#f8fafc',
+              border: '1.5px solid #e2e8f0',
+              padding: '16px 18px',
+              borderRadius: '14px',
+              marginBottom: '20px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '14px'
+            }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '800', color: '#1e293b', marginBottom: '6px' }}>
+                  ⚖️ LEYES, TÉRMINOS & CONDICIONES COMERCIALES (IMPRESOS EN LA ODC)
+                </label>
+                <textarea
+                  rows={2}
+                  className="input-tc"
+                  style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.8rem', resize: 'vertical' }}
+                  value={odcForm.terminos_condiciones !== undefined ? odcForm.terminos_condiciones : 'Precios incluyen entrega en el sitio de destino especificado. Mercancía sujeta a inspección de calidad y conteo físico.'}
+                  onChange={(e) => setOdcForm(prev => ({ ...prev, terminos_condiciones: e.target.value }))}
+                  placeholder="Precios incluyen entrega en el sitio de destino especificado..."
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '800', color: '#1e293b', marginBottom: '6px' }}>
+                  📝 OBSERVACIONES DE LA ÓRDEN DE COMPRA
+                </label>
+                <textarea
+                  rows={2}
+                  className="input-tc"
+                  style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.8rem', resize: 'vertical' }}
+                  value={odcForm.observaciones || ''}
+                  onChange={(e) => setOdcForm(prev => ({ ...prev, observaciones: e.target.value }))}
+                  placeholder="Instrucciones especiales, notas de entrega, aclaratorias para el proveedor..."
+                />
+              </div>
+            </div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
               <button

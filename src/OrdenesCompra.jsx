@@ -904,8 +904,9 @@ const OrdenesCompra = ({ currentUser }) => {
         ))
       );
 
-      const monActual = odc.moneda || 'USD';
-      const isStandardMon = ['USD', 'BS'].includes(monActual);
+      const monRaw = odc.moneda || '$/$';
+      const monActual = ['USD', '$/$'].includes(monRaw) ? '$/$' : (['BS', 'VES', 'Bs/$', 'BS/$', '$ / BS'].includes(monRaw) ? 'Bs/$' : monRaw);
+      const isStandardMon = ['$/$', 'Bs/$', 'USD', 'BS'].includes(monActual);
       const defaultDest = currentDestinos?.find(d => d.es_predeterminado) || currentDestinos?.[0];
       const initialDestId = destMatch ? destMatch.id : (odc.despachar_a_id || (defaultDest ? defaultDest.id : ''));
       const initialDestNombre = destMatch ? destMatch.nombre : (odc.destino_despacho || (defaultDest ? defaultDest.nombre : 'Campo Boscán'));
@@ -918,6 +919,7 @@ const OrdenesCompra = ({ currentUser }) => {
         proveedor_nombre: odc.proveedor_nombre || '',
         proveedor_rif: odc.proveedor_rif || '',
         proveedor_contacto: odc.proveedor_contacto || '',
+        proveedor_telefono: odc.proveedor_telefono || odc.proveedores?.telefono || (proveedoresList?.find(p => String(p.id) === String(odc.proveedor_id))?.telefono) || '',
         proveedor_ciudad: odc.proveedor_ciudad || '',
         proveedor_direccion: odc.proveedor_direccion || '',
         datos_bancarios: ctaBancariaFinal,
@@ -969,6 +971,7 @@ const OrdenesCompra = ({ currentUser }) => {
         proveedor_nombre: p.razon_social || p.nombre || '',
         proveedor_rif: p.rif || p.rif_nit || '',
         proveedor_contacto: p.persona_contacto || p.contacto_nombre || '',
+        proveedor_telefono: p.telefono || p.contacto_telefono || '',
         proveedor_ciudad: p.ciudad || p.localizacion || '',
         proveedor_direccion: p.direccion || '',
         datos_bancarios: defaultCtaStr,
@@ -1225,6 +1228,7 @@ const OrdenesCompra = ({ currentUser }) => {
         proveedor_nombre: editOdcTarget.proveedor_nombre || null,
         proveedor_rif: editOdcTarget.proveedor_rif || null,
         proveedor_contacto: editOdcTarget.proveedor_contacto || null,
+        proveedor_telefono: editOdcTarget.proveedor_telefono || null,
         proveedor_ciudad: editOdcTarget.proveedor_ciudad || null,
         proveedor_direccion: editOdcTarget.proveedor_direccion || null,
         cotizacion_ref: editOdcTarget.cotizacion_ref || null,
@@ -1234,8 +1238,10 @@ const OrdenesCompra = ({ currentUser }) => {
         dias_credito: editOdcTarget.tipo_pago === 'CREDITO' ? (parseInt(editOdcTarget.dias_credito) || 0) : 0,
         fecha_vencimiento_credito: fechaVenc,
         fecha_vencimiento_pago: fechaVenc,
-        moneda: editOdcTarget.moneda || 'USD',
-        tasa_bcv: parseFloat(editOdcTarget.tasa_cambio || editOdcTarget.tasa_bcv) || 1,
+        moneda: editOdcTarget.moneda === 'OTRA'
+          ? (editOdcTarget.moneda_custom?.trim().toUpperCase() || 'OTRA')
+          : (['USD', '$/$'].includes(editOdcTarget.moneda) ? '$/$' : (['BS', 'VES', 'Bs/$', 'BS/$', '$ / BS'].includes(editOdcTarget.moneda) ? 'Bs/$' : (editOdcTarget.moneda || '$/$'))),
+        tasa_bcv: 1,
         despachar_a_id: editOdcTarget.despachar_a_id || null,
         despachar_a_direccion: editOdcTarget.despachar_a_direccion || editOdcTarget.destino_despacho || null,
         destino_despacho: editOdcTarget.destino_despacho || editOdcTarget.despachar_a_direccion || null,
@@ -2146,10 +2152,11 @@ const OrdenesCompra = ({ currentUser }) => {
         ? new Date(odcSeleccionada.fecha_cotizacion).toLocaleDateString('es-VE') 
         : '';
 
-      const monedaCode = odcSeleccionada.moneda || 'USD';
+      const rawMon = odcSeleccionada.moneda || '$/$';
+      const monedaCode = ['BS', 'VES', 'Bs/$', 'BS/$', '$ / BS'].includes(rawMon) ? 'Bs/$' : (['USD', '$/$'].includes(rawMon) ? '$/$' : rawMon);
       const formaPagoTexto = odcSeleccionada.tipo_pago === 'CREDITO'
-        ? `Crédito (${odcSeleccionada.dias_credito || 0} días)`
-        : 'Contado';
+        ? `Crédito (${odcSeleccionada.dias_credito || 0} días) [${monedaCode}]`
+        : `Contado [${monedaCode}]`;
 
       const subtotal = Number(odcSeleccionada.subtotal || 0);
       const percentageIva = Number(odcSeleccionada.porcentaje_iva !== undefined && odcSeleccionada.porcentaje_iva !== null ? odcSeleccionada.porcentaje_iva : (odcSeleccionada.iva_porcentaje || 16));
@@ -2267,12 +2274,17 @@ const OrdenesCompra = ({ currentUser }) => {
         doc.text("DATOS DEL PROVEEDOR", marginX + (usableWidth / 2), bannerY + 3.7, { align: 'center' });
 
         // --- TABLA DE DATOS DEL PROVEEDOR ---
+        const provTelefono = odcSeleccionada.proveedor_telefono || odcSeleccionada.proveedores?.telefono || (proveedoresList?.find(p => String(p.id) === String(odcSeleccionada.proveedor_id) || (p.razon_social && p.razon_social === odcSeleccionada.proveedor_nombre))?.telefono) || 'N/A';
+        const fechaDespachoStr = odcSeleccionada.fecha_despacho
+          ? (odcSeleccionada.fecha_despacho.includes('T') ? odcSeleccionada.fecha_despacho.split('T')[0] : odcSeleccionada.fecha_despacho)
+          : (odcSeleccionada.fecha_entrega_estimada || odcSeleccionada.fecha_cotizacion || 'N/A');
+
         const datosBancariosTexto = odcSeleccionada.datos_bancarios || odcSeleccionada.cuenta_bancaria || 'Ver datos bancarios registrados';
         const provDataY = bannerY + 5.2;
         const tablaProvBody = [
           [`Nombre: ${odcSeleccionada.proveedor_nombre || 'N/A'}`, `Contacto: ${odcSeleccionada.proveedor_contacto || 'N/A'}`],
           [`Dirección: ${odcSeleccionada.proveedor_direccion || 'N/A'}`, `País: ${odcSeleccionada.proveedor_pais || 'Venezuela'}`],
-          [`Teléfono: ${odcSeleccionada.proveedor_telefono || 'N/A'}`, `Fecha de Despacho:`],
+          [`Teléfono: ${provTelefono}`, `Fecha de Despacho: ${fechaDespachoStr}`],
           [`R.I.F.: ${odcSeleccionada.proveedor_rif || 'N/A'}`, `Forma de Pago: ${formaPagoTexto}`],
           [`Ciudad: ${odcSeleccionada.proveedor_ciudad || 'N/A'}`, `Cuenta / Pago Prov: ${datosBancariosTexto}`],
           [`Lugar de Entrega: ${destinoEntregaLimpio}`, `Centro de Costo: ${centroCostoLimpio}`],
@@ -3780,7 +3792,7 @@ const OrdenesCompra = ({ currentUser }) => {
                     <td style={{ width: '56%', padding: '6px 10px', lineHeight: '1.45' }}>
                       <div><strong>Nombre:</strong> {odcSeleccionada.proveedor_nombre || 'N/A'}</div>
                       <div><strong>Dirección:</strong> {odcSeleccionada.proveedor_direccion || 'N/A'}</div>
-                      <div><strong>Teléfono:</strong> {odcSeleccionada.proveedor_telefono || 'N/A'}</div>
+                      <div><strong>Teléfono:</strong> {odcSeleccionada.proveedor_telefono || odcSeleccionada.proveedores?.telefono || (proveedoresList?.find(p => String(p.id) === String(odcSeleccionada.proveedor_id) || (p.razon_social && p.razon_social === odcSeleccionada.proveedor_nombre))?.telefono) || 'N/A'}</div>
                       <div><strong>R.I.F.:</strong> {odcSeleccionada.proveedor_rif || 'N/A'}</div>
                       <div><strong>Ciudad:</strong> {odcSeleccionada.proveedor_ciudad || 'N/A'}</div>
                       <div><strong>Lugar de Entrega (Destino):</strong> {String(odcSeleccionada.destino_despacho || odcSeleccionada.despachar_a_direccion || odcSeleccionada.despachar_a || 'Galpones Riese - Av. Los Haticos').replace(/\s*-\s*null/gi, '').replace(/\bnull\b/gi, '').trim()}</div>
@@ -3790,7 +3802,7 @@ const OrdenesCompra = ({ currentUser }) => {
                     <td style={{ width: '44%', padding: '6px 10px', lineHeight: '1.45' }}>
                       <div><strong>Contacto:</strong> {odcSeleccionada.proveedor_contacto || 'N/A'}</div>
                       <div><strong>País:</strong> {odcSeleccionada.proveedor_pais || 'Venezuela'}</div>
-                      <div><strong>Fecha de Despacho:</strong> </div>
+                      <div><strong>Fecha de Despacho:</strong> {odcSeleccionada.fecha_despacho ? (odcSeleccionada.fecha_despacho.includes('T') ? odcSeleccionada.fecha_despacho.split('T')[0] : odcSeleccionada.fecha_despacho) : (odcSeleccionada.fecha_entrega_estimada || odcSeleccionada.fecha_cotizacion || 'N/A')}</div>
                       <div><strong>Forma de Pago:</strong> {odcSeleccionada.tipo_pago === 'CREDITO' ? `Crédito (${odcSeleccionada.dias_credito || 0} días)` : 'Contado'}</div>
                       <div><strong>Cuenta / Pago Prov:</strong> {odcSeleccionada.datos_bancarios || odcSeleccionada.cuenta_bancaria || 'Ver datos bancarios registrados'}</div>
                     </td>
@@ -4281,31 +4293,31 @@ const OrdenesCompra = ({ currentUser }) => {
                       </div>
                     )}
 
-                    <div>
+                    <div style={{ minWidth: '190px' }}>
                       <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '800', color: '#475569', marginBottom: '6px' }}>
-                        MONEDA
+                        MONEDA / MODALIDAD
                       </label>
                       <select
                         className="input-tc"
                         style={{ width: '100%', padding: '8px 12px', fontWeight: '800', borderRadius: '8px', border: '1px solid #cbd5e1', backgroundColor: '#ffffff' }}
-                        value={['USD', 'BS'].includes(editOdcTarget.moneda) ? editOdcTarget.moneda : 'OTRA'}
+                        value={['USD', '$/$'].includes(editOdcTarget.moneda) ? '$/$' : (['BS', 'VES', 'Bs/$', 'BS/$', '$ / BS'].includes(editOdcTarget.moneda) ? 'Bs/$' : 'OTRA')}
                         onChange={(e) => {
                           const mon = e.target.value;
                           setEditOdcTarget(prev => ({
                             ...prev,
                             moneda: mon === 'OTRA' ? (prev.moneda_custom || 'OTRA') : mon,
-                            tasa_cambio: mon === 'USD' ? 1 : prev.tasa_cambio
+                            tasa_cambio: 1
                           }));
                         }}
                       >
-                        <option value="USD">USD ($)</option>
-                        <option value="BS">VES (Bs)</option>
+                        <option value="$/$">$ / $ (Pago en $)</option>
+                        <option value="Bs/$">Bs / $ (Pago en Bs referenciado a $)</option>
                         <option value="OTRA">+ Nuevo / Otra moneda...</option>
                       </select>
                     </div>
 
-                    {(!['USD', 'BS'].includes(editOdcTarget.moneda) || editOdcTarget.moneda === 'OTRA') && (
-                      <div>
+                    {(!['USD', '$/$', 'BS', 'VES', 'Bs/$', 'BS/$', '$ / BS'].includes(editOdcTarget.moneda) || editOdcTarget.moneda === 'OTRA') && (
+                      <div style={{ minWidth: '160px' }}>
                         <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '800', color: '#0284c7', marginBottom: '6px' }}>
                           NOMBRE DE MONEDA *
                         </label>
@@ -4314,7 +4326,7 @@ const OrdenesCompra = ({ currentUser }) => {
                           className="input-tc"
                           placeholder="Ej: EUR, COP, BRL..."
                           style={{ width: '100%', padding: '8px 12px', fontWeight: '800', borderRadius: '8px', border: '1px solid #0284c7', backgroundColor: '#f0f9ff' }}
-                          value={editOdcTarget.moneda_custom || (['USD', 'BS'].includes(editOdcTarget.moneda) ? '' : editOdcTarget.moneda)}
+                          value={editOdcTarget.moneda_custom || (['USD', '$/$', 'BS', 'VES', 'Bs/$', 'BS/$'].includes(editOdcTarget.moneda) ? '' : editOdcTarget.moneda)}
                           onChange={(e) => {
                             const val = e.target.value.toUpperCase();
                             setEditOdcTarget(prev => ({ ...prev, moneda_custom: val, moneda: val || 'OTRA' }));
@@ -4435,13 +4447,17 @@ const OrdenesCompra = ({ currentUser }) => {
 
                 {/* Sección 3: Tabla de Renglones / Ítems de la ODC */}
                 {(() => {
-                  const symMoneda = editOdcTarget.moneda === 'BS' ? 'Bs' : (editOdcTarget.moneda === 'EUR' ? '€' : (editOdcTarget.moneda === 'USD' ? '$' : (editOdcTarget.moneda || '$')));
+                  const symMoneda = '$';
+                  const monModalidad = ['BS', 'VES', 'Bs/$', 'BS/$', '$ / BS'].includes(editOdcTarget.moneda) ? 'Bs/$' : (['USD', '$/$'].includes(editOdcTarget.moneda) ? '$/$' : editOdcTarget.moneda);
                   return (
                     <div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap', gap: '8px' }}>
                         <h4 style={{ margin: 0, fontSize: '0.88rem', fontWeight: '800', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '8px' }}>
                           <FileText size={16} color="#0ea5e9" /> Renglones de Productos / Servicios ({editItems.length})
                         </h4>
+                        <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#0369a1', backgroundColor: '#e0f2fe', padding: '3px 10px', borderRadius: '12px', border: '1px solid #bae6fd' }}>
+                          Modalidad: {monModalidad}
+                        </span>
                       </div>
 
                       <div style={{ overflowX: 'auto', border: '1px solid #cbd5e1', borderRadius: '12px' }}>
@@ -4452,8 +4468,8 @@ const OrdenesCompra = ({ currentUser }) => {
                               <th style={{ padding: '10px', width: '46%' }}>DESCRIPCIÓN / ESPECIFICACIÓN TÉCNICA</th>
                               <th style={{ padding: '10px', width: '12%', textAlign: 'center' }}>UNIDAD</th>
                               <th style={{ padding: '10px', width: '12%', textAlign: 'center' }}>CANTIDAD</th>
-                              <th style={{ padding: '10px', width: '13%', textAlign: 'right' }}>P. UNIT ({symMoneda})</th>
-                              <th style={{ padding: '10px', width: '13%', textAlign: 'right' }}>TOTAL ({symMoneda})</th>
+                              <th style={{ padding: '10px', width: '13%', textAlign: 'right' }}>P. UNIT ($)</th>
+                              <th style={{ padding: '10px', width: '13%', textAlign: 'right' }}>TOTAL ($)</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -4521,7 +4537,7 @@ const OrdenesCompra = ({ currentUser }) => {
                                 {/* Precio Unitario Editable */}
                                 <td style={{ padding: '8px 10px', textAlign: 'right' }}>
                                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '4px' }}>
-                                    <span style={{ fontWeight: '800', color: '#0284c7', fontSize: '0.85rem' }}>{symMoneda}</span>
+                                    <span style={{ fontWeight: '800', color: '#0284c7', fontSize: '0.85rem' }}>$</span>
                                     <input
                                       type="number"
                                       step="any"
@@ -4545,7 +4561,7 @@ const OrdenesCompra = ({ currentUser }) => {
                                 </td>
                                 {/* Total Fila Recalculado */}
                                 <td style={{ padding: '10px', textAlign: 'right', fontWeight: '900', color: '#0f172a' }}>
-                                  {symMoneda} {Number((parseFloat(it.cantidad) || 0) * (parseFloat(it.precio_unitario) || 0)).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  $ {Number((parseFloat(it.cantidad) || 0) * (parseFloat(it.precio_unitario) || 0)).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                 </td>
                               </tr>
                             ))}
@@ -4558,15 +4574,15 @@ const OrdenesCompra = ({ currentUser }) => {
                         <div style={{ width: '280px', backgroundColor: '#f1f5f9', border: '1px solid #cbd5e1', padding: '12px 16px', borderRadius: '12px', fontSize: '0.85rem' }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', color: '#475569' }}>
                             <span>Subtotal Renglones:</span>
-                            <strong>{symMoneda} {subtotalEdit.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+                            <strong>$ {subtotalEdit.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
                           </div>
                           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', color: '#475569' }}>
                             <span>IVA ({porcentajeIvaEdit}%):</span>
-                            <span>{symMoneda} {montoIvaEdit.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                            <span>$ {montoIvaEdit.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                           </div>
                           <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '2px solid #0f172a', paddingTop: '6px', fontSize: '0.95rem', fontWeight: '900', color: '#0f172a' }}>
                             <span>TOTAL GENERAL:</span>
-                            <span style={{ color: '#0284c7' }}>{symMoneda} {totalGeneralEdit.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                            <span style={{ color: '#0284c7' }}>$ {totalGeneralEdit.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                           </div>
                         </div>
                       </div>
