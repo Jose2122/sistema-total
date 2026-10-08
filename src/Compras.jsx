@@ -793,7 +793,7 @@ const Compras = () => {
       const baseOdcPayload = {
         numero_odc,
         requisicion_id: odcForm.requisicion_id || requisicionActiva?.id || null,
-        proveedor_id: realProveedorDbId || (prov && !isNaN(Number(prov.id)) && Number(prov.id) > 0 ? Number(prov.id) : null),
+        proveedor_id: realProveedorDbId ? Number(realProveedorDbId) : null,
         proveedor_nombre: prov?.razon_social || prov?.nombre || odcForm.proveedor_nombre || null,
         proveedor_rif: prov?.rif || prov?.rif_nit || odcForm.proveedor_rif || null,
         proveedor_contacto: prov?.persona_contacto || prov?.contacto_nombre || null,

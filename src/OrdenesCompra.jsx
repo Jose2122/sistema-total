@@ -1235,7 +1235,7 @@ const OrdenesCompra = ({ currentUser }) => {
 
       const payloadOdc = {
         requisicion_id: reqObjTarget ? reqObjTarget.id : (editOdcTarget.requisicion_id && !isNaN(parseInt(editOdcTarget.requisicion_id)) ? parseInt(editOdcTarget.requisicion_id) : null),
-        proveedor_id: realProvIdEdit || (provEdit && !isNaN(Number(provEdit.id)) && Number(provEdit.id) > 0 ? Number(provEdit.id) : null),
+        proveedor_id: realProvIdEdit ? Number(realProvIdEdit) : null,
         proveedor_nombre: editOdcTarget.proveedor_nombre || provEdit?.razon_social || null,
         proveedor_rif: editOdcTarget.proveedor_rif || provEdit?.rif || null,
         proveedor_contacto: editOdcTarget.proveedor_contacto || null,
