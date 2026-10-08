@@ -8,7 +8,7 @@ import {
   FileText, Search, Filter, Printer, Download, Eye, CheckCircle2, 
   Clock, AlertTriangle, XCircle, ShieldCheck, Plus, Calendar, DollarSign,
   Building2, Truck, CreditCard, User, ChevronRight, RefreshCw, Lock,
-  Edit2, Trash2, Save, Ban, Landmark
+  Edit2, Trash2, Save, Ban, Landmark, Package, X, ClipboardList
 } from 'lucide-react';
 import { obtenerTodosProveedores } from './services/proveedoresService';
 import { safeSupabaseUpdate } from './utils/helpers';
@@ -3343,134 +3343,189 @@ const OrdenesCompra = ({ currentUser }) => {
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999, padding: '20px' }}>
           <div style={{ backgroundColor: 'white', borderRadius: '24px', width: '100%', maxWidth: '950px', maxHeight: '92vh', overflowY: 'auto', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.4)', padding: '28px', position: 'relative' }}>
             
-            {/* Botón Cerrar en la esquina superior derecha */}
-            <motion.button 
-              whileHover={{ scale: 1.1, rotate: 90 }}
-              whileTap={{ scale: 0.9 }}
-              transition={{ type: 'spring', stiffness: 400, damping: 15 }}
-              style={{ 
-                position: 'absolute', 
-                top: '20px', 
-                right: '20px', 
-                background: '#f1f5f9', 
-                border: 'none', 
-                borderRadius: '50%', 
-                width: '36px', 
-                height: '36px', 
-                cursor: 'pointer', 
-                display: 'flex', 
-                alignItems: 'center', 
-                justifyContent: 'center',
-                zIndex: 20
-              }}
-              onClick={() => setModalOpen(false)}
-              title="Cerrar ventana"
-            >
-              <XCircle size={22} color="#64748b" />
-            </motion.button>
+            {/* Cabecera Principal del Expediente */}
+            <div style={{ 
+              marginBottom: '22px', 
+              borderBottom: '1px solid #e2e8f0', 
+              paddingBottom: '20px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '14px'
+            }}>
+              {/* Fila Superior: Badges de Tipo y Estado + Botones de Acción y Cerrar */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+                {/* Badges de Clasificación */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  <span style={{ 
+                    backgroundColor: '#f0f9ff', 
+                    color: '#0369a1', 
+                    fontSize: '0.72rem', 
+                    fontWeight: '800', 
+                    padding: '4px 10px', 
+                    borderRadius: '8px', 
+                    letterSpacing: '0.6px',
+                    border: '1px solid #bae6fd',
+                    textTransform: 'uppercase',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '5px'
+                  }}>
+                    <FileText size={13} color="#0284c7" /> Expediente de Órden de Compra
+                  </span>
 
-            {/* Cabecera Acciones Modal */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px', borderBottom: '1px solid #e2e8f0', paddingBottom: '18px', paddingRight: '45px', flexWrap: 'wrap', gap: '16px' }}>
-              
-              {/* Columna Izquierda: Título, Emitido por y Badges debajo */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#0ea5e9', textTransform: 'uppercase', letterSpacing: '1px' }}>
-                  Expediente de Órden de Compra
-                </span>
-                
-                <h2 style={{ margin: '2px 0 2px 0', fontSize: '1.5rem', fontWeight: '900', color: '#0f172a' }}>
-                  {odcSeleccionada.numero_odc}
-                </h2>
-                
-                <div style={{ fontSize: '0.82rem', color: '#64748b', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '5px', marginTop: '2px' }}>
-                  <User size={14} color="#0284c7" />
-                  <span>Emitido por: <strong style={{ color: '#0f172a' }}>{odcSeleccionada.elaborado_por_nombre || odcSeleccionada.comprador_nombre || odcSeleccionada.usuario_nombre || 'Departamento de Compras'}</strong></span>
-                </div>
-
-                {/* Badges de Requisición Origen y Entrega Directa / Almacén debajo de Emitido por */}
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center', marginTop: '6px' }}>
-                  {esAnuladaOdc(odcSeleccionada) && (
-                    <span style={{ backgroundColor: '#fee2e2', color: '#991b1b', padding: '4px 12px', borderRadius: '10px', fontSize: '0.78rem', fontWeight: '900', border: '1px solid #fecaca', display: 'inline-flex', alignItems: 'center', gap: '5px', boxShadow: '0 1px 2px rgba(0,0,0,0.04)' }}>
-                      🚫 ODC ANULADA (Solo Lectura)
+                  {esAnuladaOdc(odcSeleccionada) ? (
+                    <span style={{ backgroundColor: '#fee2e2', color: '#991b1b', padding: '4px 10px', borderRadius: '8px', fontSize: '0.75rem', fontWeight: '800', border: '1px solid #fecaca', display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                      <Ban size={13} /> ODC ANULADA
                     </span>
-                  )}
-                  {(odcSeleccionada.requisicion_correlativo || odcSeleccionada.requisicion_id) && (
-                    <span style={{ backgroundColor: '#e0f2fe', color: '#0369a1', padding: '4px 12px', borderRadius: '10px', fontSize: '0.78rem', fontWeight: '800', border: '1px solid #bae6fd', display: 'inline-flex', alignItems: 'center', gap: '5px', boxShadow: '0 1px 2px rgba(0,0,0,0.04)' }}>
-                      📋 Requisición Origen: {odcSeleccionada.requisicion_correlativo || `REQ-${odcSeleccionada.requisicion_id}`}
-                    </span>
-                  )}
-                  {odcSeleccionada.pasa_por_almacen === false ? (
-                    <span style={{ backgroundColor: '#fef3c7', color: '#92400e', padding: '4px 12px', borderRadius: '10px', fontSize: '0.78rem', fontWeight: '800', border: '1px solid #fde68a', display: 'inline-flex', alignItems: 'center', gap: '5px', boxShadow: '0 1px 2px rgba(0,0,0,0.04)' }}>
-                      🚚 Entrega Directa en Obra (Sin paso por almacén)
+                  ) : odcSeleccionada.pasa_por_almacen === false ? (
+                    <span style={{ backgroundColor: '#fef3c7', color: '#92400e', padding: '4px 10px', borderRadius: '8px', fontSize: '0.75rem', fontWeight: '800', border: '1px solid #fde68a', display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                      <Truck size={13} /> Entrega Directa en Obra
                     </span>
                   ) : (
-                    <span style={{ backgroundColor: '#dcfce7', color: '#166534', padding: '4px 12px', borderRadius: '10px', fontSize: '0.78rem', fontWeight: '800', border: '1px solid #bbf7d0', display: 'inline-flex', alignItems: 'center', gap: '5px', boxShadow: '0 1px 2px rgba(0,0,0,0.04)' }}>
-                      📦 Recepción Física en Almacén
+                    <span style={{ backgroundColor: '#dcfce7', color: '#166534', padding: '4px 10px', borderRadius: '8px', fontSize: '0.75rem', fontWeight: '800', border: '1px solid #bbf7d0', display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                      <Package size={13} /> Recepción en Almacén
                     </span>
                   )}
+                </div>
+
+                {/* Acciones y Botón Cerrar */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                  {esUsuarioCompras && !esAnuladaOdc(odcSeleccionada) && (
+                    <motion.button
+                      type="button"
+                      onClick={() => abrirModalEditarOdc(odcSeleccionada)}
+                      whileHover={{ scale: 1.03, y: -1 }}
+                      whileTap={{ scale: 0.97 }}
+                      style={{
+                        padding: '7px 14px',
+                        fontSize: '0.82rem',
+                        fontWeight: '700',
+                        borderRadius: '10px',
+                        border: '1.5px solid #cbd5e1',
+                        cursor: 'pointer',
+                        background: '#ffffff',
+                        color: '#0f172a',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        boxShadow: '0 1px 3px rgba(0,0,0,0.05)'
+                      }}
+                      title="Editar datos, proveedor, ítems y montos de esta Órden de Compra"
+                    >
+                      <Edit2 size={14} color="#0284c7" /> Editar ODC
+                    </motion.button>
+                  )}
+
+                  {puedeExportarODCOriginal ? (
+                    <motion.button 
+                      type="button"
+                      whileHover={{ scale: 1.03, y: -1, boxShadow: '0 6px 16px rgba(2, 132, 199, 0.3)' }}
+                      whileTap={{ scale: 0.97 }}
+                      style={{ 
+                        background: 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)', 
+                        color: 'white',
+                        border: 'none',
+                        display: 'inline-flex', 
+                        alignItems: 'center', 
+                        gap: '6px', 
+                        padding: '8px 16px', 
+                        borderRadius: '10px', 
+                        fontSize: '0.82rem', 
+                        fontWeight: '700',
+                        cursor: 'pointer',
+                        boxShadow: '0 2px 8px rgba(2, 132, 199, 0.2)'
+                      }}
+                      onClick={abrirVistaPreviaPDF}
+                      title="Abrir vista previa interactiva antes de exportar o imprimir (F-ADM-01-2)"
+                    >
+                      <Printer size={15} /> Exportar / Imprimir F-ADM-01-2
+                    </motion.button>
+                  ) : (
+                    <div style={{ fontSize: '0.73rem', color: '#94a3b8', fontStyle: 'italic', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <Lock size={12} /> Impresión exclusiva de Gerencia
+                    </div>
+                  )}
+
+                  {/* Botón Cerrar */}
+                  <motion.button 
+                    whileHover={{ scale: 1.08, backgroundColor: '#e2e8f0' }}
+                    whileTap={{ scale: 0.92 }}
+                    style={{ 
+                      background: '#f1f5f9', 
+                      border: 'none', 
+                      borderRadius: '50%', 
+                      width: '32px', 
+                      height: '32px', 
+                      cursor: 'pointer', 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      justifyContent: 'center',
+                      color: '#64748b',
+                      marginLeft: '4px'
+                    }}
+                    onClick={() => setModalOpen(false)}
+                    title="Cerrar ventana"
+                  >
+                    <X size={18} />
+                  </motion.button>
                 </div>
               </div>
 
-              {/* Columna Derecha: Botones de Acción en armonía */}
-              <div style={{ display: 'flex', gap: '10px', alignItems: 'center', alignSelf: 'center', flexWrap: 'wrap' }}>
-                {esUsuarioCompras && !esAnuladaOdc(odcSeleccionada) && (
-                  <motion.button
-                    type="button"
-                    onClick={() => abrirModalEditarOdc(odcSeleccionada)}
-                    whileHover={{ scale: 1.04, y: -2, boxShadow: '0 6px 16px rgba(2, 132, 199, 0.2)' }}
-                    whileTap={{ scale: 0.96 }}
-                    transition={{ type: 'spring', stiffness: 400, damping: 15 }}
-                    style={{
-                      padding: '9px 18px',
-                      fontSize: '0.82rem',
-                      fontWeight: '800',
-                      borderRadius: '12px',
-                      border: '1.5px solid #cbd5e1',
-                      cursor: 'pointer',
-                      background: '#ffffff',
-                      color: '#0284c7',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '7px',
-                      boxShadow: '0 2px 6px rgba(0,0,0,0.05)'
-                    }}
-                    title="Editar datos, proveedor, ítems y montos de esta Órden de Compra"
-                  >
-                    <Edit2 size={16} /> ✏️ Editar ODC
-                  </motion.button>
-                )}
+              {/* Fila Inferior: Título Principal de la ODC y Metadatos en Barra Limpia */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '10px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                    <h2 style={{ margin: 0, fontSize: '1.65rem', fontWeight: '900', color: '#0f172a', letterSpacing: '-0.5px' }}>
+                      {odcSeleccionada.numero_odc}
+                    </h2>
 
-                {/* CONTROL RBAC DE IMPRESIÓN EXCLUSIVO PARA SUPERADMIN, GERENTE GENERAL Y GERENTE DE COMPRAS */}
-                {puedeExportarODCOriginal ? (
-                  <motion.button 
-                    type="button"
-                    whileHover={{ scale: 1.04, y: -2, boxShadow: '0 8px 20px rgba(2, 132, 199, 0.35)' }}
-                    whileTap={{ scale: 0.96 }}
-                    transition={{ type: 'spring', stiffness: 400, damping: 15 }}
-                    style={{ 
-                      background: 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)', 
-                      color: 'white',
-                      border: 'none',
-                      display: 'flex', 
-                      alignItems: 'center', 
-                      gap: '8px', 
-                      padding: '10px 20px', 
-                      borderRadius: '12px', 
-                      fontSize: '0.82rem', 
-                      fontWeight: '800',
-                      cursor: 'pointer',
-                      boxShadow: '0 4px 12px rgba(2, 132, 199, 0.25)'
-                    }}
-                    onClick={abrirVistaPreviaPDF}
-                    title="Abrir vista previa interactiva antes de exportar o imprimir (F-ADM-01-2)"
-                  >
-                    <Printer size={16} /> Exportar / Imprimir F-ADM-01-2
-                  </motion.button>
-                ) : (
-                  <div style={{ fontSize: '0.75rem', color: '#94a3b8', fontStyle: 'italic', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <Lock size={14} /> Impresión exclusiva de Gerencia y Compras
+                    {(odcSeleccionada.requisicion_correlativo || odcSeleccionada.requisicion_id) && (
+                      <span style={{ 
+                        backgroundColor: '#e0f2fe', 
+                        color: '#0369a1', 
+                        padding: '4px 10px', 
+                        borderRadius: '8px', 
+                        fontSize: '0.8rem', 
+                        fontWeight: '800', 
+                        border: '1px solid #bae6fd', 
+                        display: 'inline-flex', 
+                        alignItems: 'center', 
+                        gap: '5px' 
+                      }}>
+                        <ClipboardList size={13} color="#0284c7" />
+                        Requisición: {odcSeleccionada.requisicion_correlativo || `REQ-${odcSeleccionada.requisicion_id}`}
+                      </span>
+                    )}
                   </div>
-                )}
+
+                  {/* Metadatos adicionales */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', fontSize: '0.83rem', color: '#64748b', marginTop: '2px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                      <User size={14} color="#0284c7" />
+                      <span>Emitido por: <strong style={{ color: '#1e293b' }}>{odcSeleccionada.elaborado_por_nombre || odcSeleccionada.comprador_nombre || odcSeleccionada.usuario_nombre || 'Departamento de Compras'}</strong></span>
+                    </div>
+
+                    {(odcSeleccionada.fecha_emision || odcSeleccionada.created_at) && (
+                      <>
+                        <span style={{ color: '#cbd5e1' }}>•</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                          <Calendar size={14} color="#0284c7" />
+                          <span>Emisión: <strong style={{ color: '#1e293b' }}>{new Date(odcSeleccionada.fecha_emision || odcSeleccionada.created_at).toLocaleDateString('es-VE')}</strong></span>
+                        </div>
+                      </>
+                    )}
+
+                    {odcSeleccionada.proveedor_nombre && odcSeleccionada.proveedor_nombre !== 'N/A' && (
+                      <>
+                        <span style={{ color: '#cbd5e1' }}>•</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                          <Building2 size={14} color="#0284c7" />
+                          <span>Proveedor: <strong style={{ color: '#1e293b' }}>{odcSeleccionada.proveedor_nombre}</strong></span>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
 
