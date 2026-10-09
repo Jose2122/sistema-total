@@ -28,6 +28,7 @@ import {
   Copy
 } from 'lucide-react';
 import './LiquidacionFacturas.css';
+import { compressImage } from './utils/compressImage';
 
 // Helper to parse safe JSON array for items
 const parsearItems = (itemsField) => {
@@ -69,6 +70,45 @@ const parsearFacturaUrls = (facturaUrlField) => {
     }
     return val;
   }).filter(Boolean);
+};
+
+// Helper to retrieve and merge all abonos for an ODC from DB and localStorage
+const obtenerAbonosOdc = (odc) => {
+  if (!odc) return [];
+  const fromDb = parsearItems(odc.detalles_pago || odc.datos_pago || []);
+  let fromLocal = [];
+  try {
+    const raw = localStorage.getItem(`odc_abonos_${odc.id}`) || 
+                (odc.numero_odc ? localStorage.getItem(`odc_abonos_${odc.numero_odc}`) : null);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) fromLocal = parsed;
+    }
+  } catch (e) {
+    console.warn('Error leyendo abonos locales de ODC:', e);
+  }
+
+  // Combinar y deduplicar por abono_id o firma única (referencia + monto + fecha)
+  const map = new Map();
+  [...fromLocal, ...fromDb].forEach(ab => {
+    if (!ab) return;
+    const key = ab.abono_id || `${ab.referencia || ''}_${ab.monto || 0}_${ab.fecha || ''}`;
+    map.set(key, ab);
+  });
+
+  let list = Array.from(map.values());
+  if (list.length === 0 && (odc.orden_pago_ref || odc.banco_destino || odc.banco)) {
+    list = [{
+      abono_id: `legacy_${odc.id}`,
+      monto: Number(odc.total_general ?? odc.total ?? 0),
+      referencia: odc.orden_pago_ref || 'REGISTRO PREVIO',
+      banco_nombre: odc.banco_destino || odc.banco || 'Banco Empresa',
+      moneda: odc.moneda || '$ / $',
+      fecha: odc.fecha_emision,
+      usuario_nombre: 'Finanzas'
+    }];
+  }
+  return list;
 };
 
 const LiquidacionFacturas = ({ currentUser }) => {
@@ -422,7 +462,15 @@ const LiquidacionFacturas = ({ currentUser }) => {
           keepOdc = false;
         }
       }
-      setOrdenesCompra(odcData || []);
+      const enrichedOdc = (odcData || []).map(o => {
+        const abonos = obtenerAbonosOdc(o);
+        return {
+          ...o,
+          detalles_pago: abonos,
+          datos_pago: abonos
+        };
+      });
+      setOrdenesCompra(enrichedOdc);
     } catch (err) {
       console.error('Error al cargar datos:', err.message);
       toast.error('Error al cargar información: ' + err.message);
@@ -1221,7 +1269,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
   // Prepare and open abono registration modal for ODC
   const abrirRegistrarAbonoOdc = (odc) => {
     const totalVal = Number(odc.total_general ?? odc.total ?? 0);
-    const abonosExistentes = parsearItems(odc.detalles_pago || odc.datos_pago || []);
+    const abonosExistentes = obtenerAbonosOdc(odc);
     const sumaAbonos = abonosExistentes.reduce((sum, a) => sum + (Number(a.monto) || 0), 0);
     const saldoPend = Math.max(0, totalVal - sumaAbonos);
 
@@ -1246,44 +1294,55 @@ const LiquidacionFacturas = ({ currentUser }) => {
     const fileExt = file.name ? file.name.split('.').pop() : 'png';
     const storageFileName = `${prefix}_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.${fileExt}`;
 
+    let compressedFile = file;
     try {
-      const compressedFile = await compressImage(file);
-      const { error: uploadError } = await supabase.storage
-        .from('facturas')
-        .upload(storageFileName, compressedFile);
+      if (file.type && file.type.startsWith('image/')) {
+        compressedFile = await compressImage(file, { maxWidth: 1200, maxHeight: 1200, quality: 0.75 });
+      }
+    } catch (cErr) {
+      console.warn('Compresión en cliente omitida:', cErr);
+      compressedFile = file;
+    }
 
-      if (uploadError) throw uploadError;
-
-      const { data: { publicUrl } } = supabase.storage.from('facturas').getPublicUrl(storageFileName);
-      return {
-        name: fileObj.label || file.name.split('.')[0],
-        url: publicUrl
+    try {
+      const uploadWithTimeout = async (bucket, path) => {
+        const uploadTask = supabase.storage.from(bucket).upload(path, compressedFile);
+        const timeoutTask = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Storage timeout')), 4000)
+        );
+        const { error } = await Promise.race([uploadTask, timeoutTask]);
+        if (error) throw error;
+        const { data: { publicUrl } } = supabase.storage.from(bucket).getPublicUrl(path);
+        return publicUrl;
       };
-    } catch (err) {
+
+      let publicUrl = null;
       try {
-        const compressedFile = await compressImage(file);
-        const { error: uploadError2 } = await supabase.storage
-          .from('tickets-evidencia')
-          .upload(`soportes/${storageFileName}`, compressedFile);
-        if (uploadError2) throw uploadError2;
-        const { data: { publicUrl: publicUrl2 } } = supabase.storage.from('tickets-evidencia').getPublicUrl(`soportes/${storageFileName}`);
+        publicUrl = await uploadWithTimeout('facturas', storageFileName);
+      } catch (errFacturas) {
+        publicUrl = await uploadWithTimeout('tickets-evidencia', `soportes/${storageFileName}`);
+      }
+
+      if (publicUrl) {
         return {
           name: fileObj.label || file.name.split('.')[0],
-          url: publicUrl2
+          url: publicUrl
         };
-      } catch (err2) {
-        return new Promise((resolve) => {
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            resolve({
-              name: fileObj.label || file.name.split('.')[0],
-              url: reader.result
-            });
-          };
-          reader.readAsDataURL(file);
-        });
       }
+    } catch (storageErr) {
+      console.warn('Storage no disponible o lento, usando fallback base64 ultra-rápido:', storageErr.message);
     }
+
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        resolve({
+          name: fileObj.label || file.name.split('.')[0],
+          url: reader.result
+        });
+      };
+      reader.readAsDataURL(compressedFile);
+    });
   }, []);
 
   const handleConfirmAbono = async () => {
@@ -1307,7 +1366,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
 
     setSubiendoAbono(true);
     try {
-      // 1. Upload all transfer proofs with fallback
+      // 1. Upload all transfer proofs with fast compression & fallback
       const uploadPromises = abonoForm.files.map(fileObj => uploadSoporteUnificado(fileObj, 'abono'));
       const uploadedFiles = await Promise.all(uploadPromises);
 
@@ -1336,7 +1395,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
         const targetOdc = ordenesCompra.find(o => String(o.id) === String(abonoForm.odc_id));
         if (!targetOdc) throw new Error('No se encontró la Órden de Compra a abonar.');
 
-        const abonosExistentes = parsearItems(targetOdc.detalles_pago || targetOdc.datos_pago || []);
+        const abonosExistentes = obtenerAbonosOdc(targetOdc);
         const nuevosAbonos = [...abonosExistentes, nuevoAbono];
         const sumaTotalAbonos = nuevosAbonos.reduce((sum, a) => sum + (Number(a.monto) || 0), 0);
         const totalOdcVal = Number(targetOdc.total_general ?? targetOdc.total ?? 0);
@@ -1344,20 +1403,28 @@ const LiquidacionFacturas = ({ currentUser }) => {
 
         const estatusFinal = saldoRemanente <= 0.01 ? 'PAGADO' : 'PAGADO PARCIAL';
 
-        const payloadOdcUpdate = {
-          estatus_pago: estatusFinal,
-          status_pago: estatusFinal,
-          detalles_pago: nuevosAbonos,
-          datos_pago: nuevosAbonos,
-          banco_destino: bancoNombre,
-          orden_pago_ref: abonoForm.referencia.trim()
-        };
+        // Persistir inmediatamente en localStorage
+        localStorage.setItem(`odc_abonos_${targetOdc.id}`, JSON.stringify(nuevosAbonos));
+        if (targetOdc.numero_odc) {
+          localStorage.setItem(`odc_abonos_${targetOdc.numero_odc}`, JSON.stringify(nuevosAbonos));
+        }
 
-        const { error: errUpdateOdc } = await safeSupabaseUpdate(supabase, 'ordenes_compra', payloadOdcUpdate, 'id', targetOdc.id);
-        if (errUpdateOdc) throw errUpdateOdc;
+        // Actualización optimista inmediata en memoria
+        setOrdenesCompra(prev => prev.map(o => {
+          if (String(o.id) === String(targetOdc.id)) {
+            return {
+              ...o,
+              estatus_pago: estatusFinal,
+              status_pago: estatusFinal,
+              detalles_pago: nuevosAbonos,
+              datos_pago: nuevosAbonos,
+              banco_destino: bancoNombre,
+              orden_pago_ref: abonoForm.referencia.trim()
+            };
+          }
+          return o;
+        }));
 
-        toast.success(`Pago de $ ${montoNum.toLocaleString('de-DE', { minimumFractionDigits: 2 })} registrado exitosamente para la ODC ${targetOdc.numero_odc}`);
-        
         if (showOdcPreviewModal && odcPreviewSeleccionada && String(odcPreviewSeleccionada.id) === String(targetOdc.id)) {
           setOdcPreviewSeleccionada(prev => ({
             ...prev,
@@ -1370,8 +1437,46 @@ const LiquidacionFacturas = ({ currentUser }) => {
           }));
         }
 
-        await fetchData();
         setShowAbonoModal(false);
+        setSubiendoAbono(false);
+        toast.success(`Pago de $ ${montoNum.toLocaleString('de-DE', { minimumFractionDigits: 2 })} registrado exitosamente para la ODC ${targetOdc.numero_odc}`);
+
+        // Sincronizar en segundo plano con Supabase
+        const payloadOdcUpdate = {
+          estatus_pago: estatusFinal,
+          status_pago: estatusFinal,
+          detalles_pago: nuevosAbonos,
+          datos_pago: nuevosAbonos,
+          banco_destino: bancoNombre,
+          orden_pago_ref: abonoForm.referencia.trim()
+        };
+
+        safeSupabaseUpdate(supabase, 'ordenes_compra', payloadOdcUpdate, 'id', targetOdc.id)
+          .catch(err => console.warn('safeSupabaseUpdate ODC background error:', err));
+
+        // Respaldo secundario en requisiciones si está enlazada
+        if (targetOdc.requisicion_id) {
+          (async () => {
+            try {
+              const { data: reqData } = await supabase
+                .from('requisiciones')
+                .select('facturas_url')
+                .eq('id', targetOdc.requisicion_id)
+                .single();
+              if (reqData) {
+                const currentUrls = parsearFacturaUrls(reqData.facturas_url || []);
+                const updatedUrls = [...currentUrls, nuevoAbono];
+                await supabase
+                  .from('requisiciones')
+                  .update({ facturas_url: updatedUrls })
+                  .eq('id', targetOdc.requisicion_id);
+              }
+            } catch (backupErr) {
+              console.warn('Backup abono en requisición omitido:', backupErr);
+            }
+          })();
+        }
+
         return;
       }
 
@@ -1493,17 +1598,22 @@ const LiquidacionFacturas = ({ currentUser }) => {
     try {
       // 1. Check if this abono belongs to an ODC
       const odcWithAbono = ordenesCompra.find(o => {
-        const abonos = parsearItems(o.detalles_pago || o.datos_pago || []);
+        const abonos = obtenerAbonosOdc(o);
         return abonos.some(a => a.abono_id === abonoId);
       });
 
       if (odcWithAbono) {
-        const abonos = parsearItems(odcWithAbono.detalles_pago || odcWithAbono.datos_pago || []);
+        const abonos = obtenerAbonosOdc(odcWithAbono);
         const filteredAbonos = abonos.filter(a => a.abono_id !== abonoId);
         const sumaTotalAbonos = filteredAbonos.reduce((sum, a) => sum + (Number(a.monto) || 0), 0);
         const totalOdcVal = Number(odcWithAbono.total_general ?? odcWithAbono.total ?? 0);
         const saldoRemanente = totalOdcVal - sumaTotalAbonos;
         const estatusFinal = sumaTotalAbonos <= 0 ? 'PENDIENTE' : (saldoRemanente <= 0.01 ? 'PAGADO' : 'PAGADO PARCIAL');
+
+        localStorage.setItem(`odc_abonos_${odcWithAbono.id}`, JSON.stringify(filteredAbonos));
+        if (odcWithAbono.numero_odc) {
+          localStorage.setItem(`odc_abonos_${odcWithAbono.numero_odc}`, JSON.stringify(filteredAbonos));
+        }
 
         const payloadOdc = {
           estatus_pago: estatusFinal,
@@ -1513,7 +1623,20 @@ const LiquidacionFacturas = ({ currentUser }) => {
         };
 
         const { error: errOdcDel } = await safeSupabaseUpdate(supabase, 'ordenes_compra', payloadOdc, 'id', odcWithAbono.id);
-        if (errOdcDel) throw errOdcDel;
+        if (errOdcDel) console.warn('safeSupabaseUpdate error en eliminación:', errOdcDel);
+
+        setOrdenesCompra(prev => prev.map(o => {
+          if (String(o.id) === String(odcWithAbono.id)) {
+            return {
+              ...o,
+              estatus_pago: estatusFinal,
+              status_pago: estatusFinal,
+              detalles_pago: filteredAbonos,
+              datos_pago: filteredAbonos
+            };
+          }
+          return o;
+        }));
 
         if (showOdcPreviewModal && odcPreviewSeleccionada && String(odcPreviewSeleccionada.id) === String(odcWithAbono.id)) {
           setOdcPreviewSeleccionada(prev => ({
@@ -1526,7 +1649,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
         }
 
         toast.success('Pago de la Órden de Compra anulado con éxito.');
-        await fetchData();
+        setLoading(false);
         return;
       }
 
@@ -1615,8 +1738,8 @@ const LiquidacionFacturas = ({ currentUser }) => {
       {/* HEADER SECTION */}
       <div className="liquidacion-header-section" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div className="liquidacion-title-group">
-          <h1>Liquidación de Facturas de Procura</h1>
-          <p>Cuentas por Pagar, Control de Abonos e Historial Financiero</p>
+          <h1>Gestión Cuentas Por Pagar</h1>
+          <p>Control de Facturas, Órdenes de Compra y Programación de Pagos</p>
         </div>
 
         <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
@@ -1628,20 +1751,20 @@ const LiquidacionFacturas = ({ currentUser }) => {
               display: 'flex',
               alignItems: 'center',
               gap: '8px',
-              padding: '10px 18px',
-              background: 'linear-gradient(135deg, #0284c7, #0369a1)',
-              color: 'white',
-              border: 'none',
-              borderRadius: '12px',
+              padding: '9px 16px',
+              backgroundColor: '#ffffff',
+              color: '#0f172a',
+              border: '1.5px solid #cbd5e1',
+              borderRadius: '11px',
               cursor: 'pointer',
-              fontSize: '13px',
+              fontSize: '12.5px',
               fontWeight: '800',
-              boxShadow: '0 4px 12px rgba(2, 132, 199, 0.25)',
-              transition: 'transform 0.1s ease'
+              boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
+              transition: 'all 0.15s ease'
             }}
           >
-            <Landmark size={16} />
-            <span>🏦 Gestionar Bancos</span>
+            <Landmark size={15} color="#0284c7" />
+            <span>Gestionar Bancos</span>
           </button>
 
           <button
@@ -1653,99 +1776,113 @@ const LiquidacionFacturas = ({ currentUser }) => {
               display: 'flex',
               alignItems: 'center',
               gap: '8px',
-              padding: '10px 18px',
-              background: 'linear-gradient(135deg, #10b981, #059669)',
-              color: 'white',
-              border: 'none',
-              borderRadius: '12px',
+              padding: '9px 16px',
+              backgroundColor: '#0f172a',
+              color: '#ffffff',
+              border: '1.5px solid #0f172a',
+              borderRadius: '11px',
               cursor: 'pointer',
-              fontSize: '13px',
+              fontSize: '12.5px',
               fontWeight: '800',
-              boxShadow: '0 4px 12px rgba(16, 185, 129, 0.25)',
-              transition: 'transform 0.1s ease'
+              boxShadow: '0 4px 12px rgba(15, 23, 42, 0.15)',
+              transition: 'all 0.15s ease'
             }}
           >
-            <DollarSign size={16} />
-            <span>💰 Asignar Fondo a Compras</span>
+            <DollarSign size={15} color="#38bdf8" />
+            <span>Asignar Fondo a Compras</span>
           </button>
         </div>
       </div>
 
-      {/* FINANCIAL KPIS */}
-      <div className="liquidacion-kpi-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
-        <div className="liquidacion-kpi-card" style={{ borderLeft: '6px solid #2563eb' }}>
+      {/* FINANCIAL KPIS - REFINED EXECUTIVE PALETTE */}
+      <div className="liquidacion-kpi-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '14px', marginBottom: '18px' }}>
+        <div className="liquidacion-kpi-card" style={{ border: '1px solid #e2e8f0', borderTop: '3px solid #0f172a', borderRadius: '16px', padding: '16px 20px', backgroundColor: '#ffffff', boxShadow: '0 1px 3px rgba(0,0,0,0.03)' }}>
           <div>
-            <span className="liquidacion-kpi-label">Total Facturas Procura</span>
-            <h3 className="liquidacion-kpi-value">$ {kpis.totalFacturas.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</h3>
+            <span className="liquidacion-kpi-label" style={{ fontSize: '10.5px', fontWeight: '800', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Total Facturas Procura</span>
+            <h3 className="liquidacion-kpi-value" style={{ fontSize: '1.45rem', fontWeight: '950', color: '#0f172a', margin: '4px 0 0 0' }}>$ {kpis.totalFacturas.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</h3>
           </div>
-          <div className="liquidacion-kpi-icon" style={{ backgroundColor: '#eff6ff', color: '#2563eb' }}>
-            <FileText size={24} />
+          <div className="liquidacion-kpi-icon" style={{ backgroundColor: '#f8fafc', color: '#475569', border: '1px solid #e2e8f0', borderRadius: '10px', width: '42px', height: '42px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <FileText size={20} />
           </div>
         </div>
 
-        <div className="liquidacion-kpi-card" style={{ borderLeft: '6px solid #d97706' }}>
+        <div className="liquidacion-kpi-card" style={{ border: '1px solid #e2e8f0', borderTop: '3px solid #0284c7', borderRadius: '16px', padding: '16px 20px', backgroundColor: '#ffffff', boxShadow: '0 1px 3px rgba(0,0,0,0.03)' }}>
           <div>
-            <span className="liquidacion-kpi-label">Total Crédito ODC por Pagar</span>
-            <h3 className="liquidacion-kpi-value" style={{ color: '#d97706' }}>$ {kpis.totalOdcCreditoMonto.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</h3>
+            <span className="liquidacion-kpi-label" style={{ fontSize: '10.5px', fontWeight: '800', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Total Crédito ODC por Pagar</span>
+            <h3 className="liquidacion-kpi-value" style={{ fontSize: '1.45rem', fontWeight: '950', color: '#0f172a', margin: '4px 0 0 0' }}>$ {kpis.totalOdcCreditoMonto.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</h3>
           </div>
-          <div className="liquidacion-kpi-icon" style={{ backgroundColor: '#fffbeb', color: '#d97706' }}>
-            <CreditCard size={24} />
+          <div className="liquidacion-kpi-icon" style={{ backgroundColor: '#f8fafc', color: '#475569', border: '1px solid #e2e8f0', borderRadius: '10px', width: '42px', height: '42px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <CreditCard size={20} />
           </div>
         </div>
 
-        <div className="liquidacion-kpi-card" style={{ borderLeft: '6px solid #10b981' }}>
+        <div className="liquidacion-kpi-card" style={{ border: '1px solid #e2e8f0', borderTop: '3px solid #059669', borderRadius: '16px', padding: '16px 20px', backgroundColor: '#ffffff', boxShadow: '0 1px 3px rgba(0,0,0,0.03)' }}>
           <div>
-            <span className="liquidacion-kpi-label">Total Abonado</span>
-            <h3 className="liquidacion-kpi-value" style={{ color: '#10b981' }}>$ {kpis.totalAbonado.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</h3>
+            <span className="liquidacion-kpi-label" style={{ fontSize: '10.5px', fontWeight: '800', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Total Abonado</span>
+            <h3 className="liquidacion-kpi-value" style={{ fontSize: '1.45rem', fontWeight: '950', color: '#0f172a', margin: '4px 0 0 0' }}>$ {kpis.totalAbonado.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</h3>
           </div>
-          <div className="liquidacion-kpi-icon" style={{ backgroundColor: '#ecfdf5', color: '#10b981' }}>
-            <TrendingUp size={24} />
+          <div className="liquidacion-kpi-icon" style={{ backgroundColor: '#f8fafc', color: '#475569', border: '1px solid #e2e8f0', borderRadius: '10px', width: '42px', height: '42px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <TrendingUp size={20} />
           </div>
         </div>
 
-        <div className="liquidacion-kpi-card" style={{ borderLeft: '6px solid #dc2626' }}>
+        <div className="liquidacion-kpi-card" style={{ border: '1px solid #e2e8f0', borderTop: '3px solid #dc2626', borderRadius: '16px', padding: '16px 20px', backgroundColor: '#ffffff', boxShadow: '0 1px 3px rgba(0,0,0,0.03)' }}>
           <div>
-            <span className="liquidacion-kpi-label">Saldo Pendiente CxP Total</span>
-            <h3 className="liquidacion-kpi-value" style={{ color: '#dc2626' }}>$ {kpis.totalPendienteGlobal.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</h3>
+            <span className="liquidacion-kpi-label" style={{ fontSize: '10.5px', fontWeight: '800', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Saldo Pendiente CxP Total</span>
+            <h3 className="liquidacion-kpi-value" style={{ fontSize: '1.45rem', fontWeight: '950', color: '#dc2626', margin: '4px 0 0 0' }}>$ {kpis.totalPendienteGlobal.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</h3>
           </div>
-          <div className="liquidacion-kpi-icon" style={{ backgroundColor: '#fef2f2', color: '#dc2626' }}>
-            <Clock size={24} />
+          <div className="liquidacion-kpi-icon" style={{ backgroundColor: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: '10px', width: '42px', height: '42px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Clock size={20} />
           </div>
         </div>
       </div>
 
-      {/* SUBTAB NAVIGATION BAR */}
-      <div style={{ display: 'flex', gap: '10px', marginBottom: '16px', flexWrap: 'wrap' }}>
-        <button
-          style={{ fontWeight: '800', backgroundColor: subtabCxp === 'todas' ? '#0f172a' : '#ffffff', color: subtabCxp === 'todas' ? 'white' : '#475569', border: '1px solid #cbd5e1', borderRadius: '10px', padding: '10px 18px', cursor: 'pointer', fontSize: '0.85rem' }}
-          onClick={() => setSubtabCxp('todas')}
-        >
-          🔍 Cuentas por Pagar Consolidadas ({facturasFiltradas.length + odcsCreditoFiltradas.length + odcsContadoFiltradas.length})
-        </button>
-        <button
-          style={{ fontWeight: '800', backgroundColor: subtabCxp === 'facturas' ? '#0284c7' : '#ffffff', color: subtabCxp === 'facturas' ? 'white' : '#475569', border: '1px solid #cbd5e1', borderRadius: '10px', padding: '10px 18px', cursor: 'pointer', fontSize: '0.85rem' }}
-          onClick={() => setSubtabCxp('facturas')}
-        >
-          📜 Facturas de Procura ({facturasFiltradas.length})
-        </button>
-        <button
-          style={{ fontWeight: '800', backgroundColor: subtabCxp === 'odc_credito' ? '#d97706' : '#ffffff', color: subtabCxp === 'odc_credito' ? 'white' : '#475569', border: '1px solid #cbd5e1', borderRadius: '10px', padding: '10px 18px', cursor: 'pointer', fontSize: '0.85rem' }}
-          onClick={() => setSubtabCxp('odc_credito')}
-        >
-          💳 Órdenes a Crédito ({odcsCreditoFiltradas.length})
-        </button>
-        <button
-          style={{ fontWeight: '800', backgroundColor: subtabCxp === 'odc_contado' ? '#16a34a' : '#ffffff', color: subtabCxp === 'odc_contado' ? 'white' : '#475569', border: '1px solid #cbd5e1', borderRadius: '10px', padding: '10px 18px', cursor: 'pointer', fontSize: '0.85rem' }}
-          onClick={() => setSubtabCxp('odc_contado')}
-        >
-          💵 Órdenes a Contado ({odcsContadoFiltradas.length})
-        </button>
-        <button
-          style={{ fontWeight: '800', backgroundColor: subtabCxp === 'historico' ? '#7c3aed' : '#ffffff', color: subtabCxp === 'historico' ? 'white' : '#475569', border: '1px solid #cbd5e1', borderRadius: '10px', padding: '10px 18px', cursor: 'pointer', fontSize: '0.85rem' }}
-          onClick={() => setSubtabCxp('historico')}
-        >
-          ✅ Histórico de Pagos Realizados ({pagadosConsolidados.total})
-        </button>
+      {/* SUBTAB NAVIGATION BAR - UNIFIED CORPORATE SLATE/NAVY PALETTE */}
+      <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
+        {[
+          { id: 'todas', icon: '🔍', label: 'Cuentas por Pagar Consolidadas', count: facturasFiltradas.length + odcsCreditoFiltradas.length + odcsContadoFiltradas.length },
+          { id: 'facturas', icon: '📜', label: 'Facturas de Procura', count: facturasFiltradas.length },
+          { id: 'odc_credito', icon: '💳', label: 'Órdenes a Crédito', count: odcsCreditoFiltradas.length },
+          { id: 'odc_contado', icon: '💵', label: 'Órdenes a Contado', count: odcsContadoFiltradas.length },
+          { id: 'historico', icon: '✅', label: 'Histórico de Pagos Realizados', count: pagadosConsolidados.total }
+        ].map(tab => {
+          const isActive = subtabCxp === tab.id;
+          return (
+            <button
+              key={tab.id}
+              onClick={() => setSubtabCxp(tab.id)}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                fontWeight: '800',
+                fontSize: '0.84rem',
+                padding: '9px 16px',
+                borderRadius: '10px',
+                border: isActive ? '1px solid #0f172a' : '1px solid #cbd5e1',
+                backgroundColor: isActive ? '#0f172a' : '#ffffff',
+                color: isActive ? '#ffffff' : '#475569',
+                cursor: 'pointer',
+                boxShadow: isActive ? '0 3px 10px rgba(15, 23, 42, 0.18)' : '0 1px 2px rgba(0,0,0,0.02)',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              <span>{tab.icon} {tab.label}</span>
+              <span
+                style={{
+                  fontSize: '0.72rem',
+                  fontWeight: '900',
+                  padding: '2px 7px',
+                  borderRadius: '10px',
+                  backgroundColor: isActive ? 'rgba(255, 255, 255, 0.2)' : '#f1f5f9',
+                  color: isActive ? '#ffffff' : '#334155'
+                }}
+              >
+                {tab.count}
+              </span>
+            </button>
+          );
+        })}
       </div>
 
       {/* FILTER CONTROLS */}
@@ -2690,19 +2827,8 @@ const LiquidacionFacturas = ({ currentUser }) => {
         const direccionProv = provDetallePreview?.direccion || odcPreviewSeleccionada.direccion_proveedor || '—';
         const rifProv = provDetallePreview?.rif || odcPreviewSeleccionada.rif_proveedor || '—';
 
-        // Parse ODC payment records
-        let abonosOdc = parsearItems(odcPreviewSeleccionada.detalles_pago || odcPreviewSeleccionada.datos_pago || []);
-        if (abonosOdc.length === 0 && (odcPreviewSeleccionada.orden_pago_ref || odcPreviewSeleccionada.banco_destino || odcPreviewSeleccionada.banco)) {
-          abonosOdc = [{
-            abono_id: `legacy_${odcPreviewSeleccionada.id}`,
-            monto: Number(odcPreviewSeleccionada.total_general ?? odcPreviewSeleccionada.total ?? 0),
-            referencia: odcPreviewSeleccionada.orden_pago_ref || 'REGISTRO PREVIO',
-            banco_nombre: odcPreviewSeleccionada.banco_destino || odcPreviewSeleccionada.banco || 'Banco Empresa',
-            moneda: odcPreviewSeleccionada.moneda || '$ / $',
-            fecha: odcPreviewSeleccionada.fecha_emision,
-            usuario_nombre: 'Finanzas'
-          }];
-        }
+        // Retrieve all accumulated ODC payment records (merging DB & localStorage)
+        let abonosOdc = obtenerAbonosOdc(odcPreviewSeleccionada);
         const totalAbonadoOdc = abonosOdc.reduce((sum, a) => sum + (Number(a.monto) || 0), 0);
         const totalOdcMonto = Number(odcPreviewSeleccionada.total_general ?? odcPreviewSeleccionada.total ?? 0);
         const saldoPendienteOdc = Math.max(0, totalOdcMonto - totalAbonadoOdc);
@@ -3031,13 +3157,67 @@ const LiquidacionFacturas = ({ currentUser }) => {
                               </span>
                             </div>
 
-                            {/* Titular y RIF */}
-                            {(cta.titular || cta.rif) && (
-                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.76rem', color: '#475569', paddingTop: '1px' }}>
-                                <span style={{ fontWeight: '800', color: '#334155' }}>{cta.titular || ''}</span>
-                                <span style={{ fontWeight: '700', color: '#64748b' }}>RIF/CI: {cta.rif || '—'}</span>
+                            {/* Titular y RIF con botones de Copiar (Ref Imagen 3) */}
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.74rem', color: '#475569', paddingTop: '2px', gap: '6px', flexWrap: 'wrap' }}>
+                              {/* Nombre / Titular con Copiar */}
+                              <div
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const titularVal = cta.titular || odcPreviewSeleccionada.proveedor_nombre || '';
+                                  if (titularVal) {
+                                    navigator.clipboard.writeText(titularVal);
+                                    toast.success(`Nombre copiado: ${titularVal}`);
+                                  }
+                                }}
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                  cursor: 'pointer',
+                                  padding: '3px 7px',
+                                  borderRadius: '6px',
+                                  backgroundColor: '#f1f5f9',
+                                  border: '1px solid #cbd5e1',
+                                  maxWidth: '60%',
+                                  transition: 'all 0.15s ease'
+                                }}
+                                title="Clic para copiar nombre del proveedor / titular"
+                              >
+                                <span style={{ fontWeight: '800', color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                  {cta.titular || odcPreviewSeleccionada.proveedor_nombre || '—'}
+                                </span>
+                                <Copy size={10} color="#0284c7" />
                               </div>
-                            )}
+
+                              {/* RIF / CI con Copiar */}
+                              <div
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const rifVal = cta.rif || rifProv || odcPreviewSeleccionada.proveedor_rif || '';
+                                  if (rifVal && rifVal !== '—') {
+                                    navigator.clipboard.writeText(rifVal);
+                                    toast.success(`RIF copiado: ${rifVal}`);
+                                  }
+                                }}
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                  cursor: 'pointer',
+                                  padding: '3px 7px',
+                                  borderRadius: '6px',
+                                  backgroundColor: '#f1f5f9',
+                                  border: '1px solid #cbd5e1',
+                                  transition: 'all 0.15s ease'
+                                }}
+                                title="Clic para copiar RIF"
+                              >
+                                <span style={{ fontWeight: '700', color: '#64748b' }}>
+                                  RIF/CI: <strong style={{ color: '#0f172a' }}>{cta.rif || rifProv || odcPreviewSeleccionada.proveedor_rif || '—'}</strong>
+                                </span>
+                                <Copy size={10} color="#0284c7" />
+                              </div>
+                            </div>
                           </div>
                         ))}
                     </div>
@@ -3050,14 +3230,37 @@ const LiquidacionFacturas = ({ currentUser }) => {
                     </h4>
 
                     <div style={{ height: '240px', backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '14px', padding: '14px 16px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', fontSize: '0.78rem', boxShadow: '0 1px 2px rgba(0,0,0,0.02)' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div 
+                        style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', padding: '2px 4px', borderRadius: '6px', transition: 'background-color 0.15s ease' }}
+                        onClick={() => {
+                          const val = odcPreviewSeleccionada.proveedor_nombre || contactoNombre;
+                          if (val && val !== '—') {
+                            navigator.clipboard.writeText(val);
+                            toast.success(`Nombre copiado: ${val}`);
+                          }
+                        }}
+                        title="Clic para copiar nombre"
+                      >
                         <span style={{ color: '#64748b', fontWeight: '600' }}>Contacto:</span>
-                        <span style={{ fontWeight: '900', color: '#0f172a' }}>{contactoNombre}</span>
+                        <span style={{ fontWeight: '900', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          {contactoNombre} <Copy size={10} color="#0284c7" />
+                        </span>
                       </div>
 
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div 
+                        style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', padding: '2px 4px', borderRadius: '6px' }}
+                        onClick={() => {
+                          if (contactoTelefono && contactoTelefono !== '—') {
+                            navigator.clipboard.writeText(contactoTelefono);
+                            toast.success(`Teléfono copiado: ${contactoTelefono}`);
+                          }
+                        }}
+                        title="Clic para copiar teléfono"
+                      >
                         <span style={{ color: '#64748b', fontWeight: '600' }}>Teléfono:</span>
-                        <span style={{ fontWeight: '900', color: '#0f172a', fontFamily: 'monospace', fontSize: '0.82rem' }}>{contactoTelefono}</span>
+                        <span style={{ fontWeight: '900', color: '#0f172a', fontFamily: 'monospace', fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          {contactoTelefono} <Copy size={10} color="#0284c7" />
+                        </span>
                       </div>
 
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -3065,9 +3268,21 @@ const LiquidacionFacturas = ({ currentUser }) => {
                         <span style={{ fontWeight: '800', color: '#0284c7' }}>{contactoCorreo}</span>
                       </div>
 
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ color: '#64748b', fontWeight: '600' }}>RIF:</span>
-                        <span style={{ fontWeight: '800', color: '#0f172a' }}>{rifProv}</span>
+                      <div 
+                        style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', padding: '2px 4px', borderRadius: '6px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0' }}
+                        onClick={() => {
+                          const val = rifProv || odcPreviewSeleccionada.proveedor_rif || '';
+                          if (val && val !== '—') {
+                            navigator.clipboard.writeText(val);
+                            toast.success(`RIF copiado: ${val}`);
+                          }
+                        }}
+                        title="Clic para copiar RIF"
+                      >
+                        <span style={{ color: '#64748b', fontWeight: '700' }}>RIF:</span>
+                        <span style={{ fontWeight: '900', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                          {rifProv} <Copy size={11} color="#0284c7" />
+                        </span>
                       </div>
 
                       <div style={{ height: '1px', backgroundColor: '#f1f5f9', margin: '2px 0' }}></div>

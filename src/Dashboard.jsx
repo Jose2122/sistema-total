@@ -609,7 +609,7 @@ function Dashboard() {
       reportestickets: { titulo: "Reporte de Tickets", icon: "fa-file-contract", color: "#f59e0b" },
       usuarios: { titulo: "Gestión de Usuarios", icon: "fa-users-gear", color: "#64748b" },
       administracion: { titulo: "Administración Central", icon: "fa-gears", color: "#8b5cf6" },
-      liquidacion: { titulo: "Liquidación de Facturas", icon: "fa-file-invoice-dollar", color: "#2563eb" }
+      liquidacion: { titulo: "Gestión Cuentas Por Pagar", icon: "fa-file-invoice-dollar", color: "#2563eb" }
     };
 
     if (seccionActiva === 'requisiciones') return <Requisiciones currentUserProp={usuario} />;
@@ -1147,7 +1147,7 @@ function Dashboard() {
                   { id: 'requisiciones', icon: 'fa-file-signature', label: 'Requisiciones' },
                   { id: 'fondos', icon: 'fa-hand-holding-dollar', label: 'Solicitud de Fondos' },
                   { id: 'tickets', icon: 'fa-ticket', label: 'Ticket de Pago' },
-                  { id: 'liquidacion', icon: 'fa-file-invoice-dollar', label: 'Cuentas por Pagar (Procura)' },
+                  { id: 'liquidacion', icon: 'fa-file-invoice-dollar', label: 'Gestión Cuentas Por Pagar' },
                   { id: 'almacen', icon: 'fa-warehouse', label: 'Almacén' }
                 ]
               },
