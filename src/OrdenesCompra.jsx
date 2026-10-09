@@ -2182,7 +2182,7 @@ const OrdenesCompra = ({ currentUser }) => {
     });
   };
 
-  // Generación de documento PDF Formato Oficial F-ADM-01-2 (2 Copias: Original y Control)
+  // Generación de documento PDF Formato Oficial F-ADM-01-2 (3 Copias: Original Cliente, Original para Pagos, Copia Válida para Compras)
   const construirDocPDF_F_ADM_01_2 = async () => {
     if (!odcSeleccionada) return null;
 
@@ -2195,8 +2195,9 @@ const OrdenesCompra = ({ currentUser }) => {
       const firmaRicardoImg = await cargarImagenFirmaRicardo();
 
       const copias = [
-        "original para el cliente",
-        "copia para control de compras"
+        "ORIGINAL CLIENTE",
+        "ORIGINAL PARA PAGOS",
+        "COPIA VÁLIDA PARA COMPRAS"
       ];
 
       let rawReqOrigen = odcSeleccionada.requisicion_correlativo || 
@@ -4061,7 +4062,7 @@ const OrdenesCompra = ({ currentUser }) => {
 
               {/* Identificador de Copias al Pie */}
               <div className="f-adm-copy-footer-label">
-                &mdash; ORIGINAL PARA EL CLIENTE &bull; COPIA PARA CONTROL DE COMPRAS &mdash;
+                &mdash; 1. ORIGINAL CLIENTE &bull; 2. ORIGINAL PARA PAGOS &bull; 3. COPIA VÁLIDA PARA COMPRAS &mdash;
               </div>
 
             </div>
@@ -5312,7 +5313,7 @@ const OrdenesCompra = ({ currentUser }) => {
                   </h3>
                 </div>
                 <p style={{ margin: '2px 0 0 0', fontSize: '0.78rem', color: '#64748b', fontWeight: '600' }}>
-                  Formato oficial <strong>F-ADM-01-2</strong> con 3 copias automáticas (Original Cliente, Cuentas por Pagar, Control Compras)
+                  Formato oficial <strong>F-ADM-01-2</strong> con 3 copias oficiales (1. Original Cliente, 2. Original para Pagos, 3. Copia Válida para Compras)
                 </p>
               </div>
 

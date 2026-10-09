@@ -12,6 +12,7 @@ import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
 import { 
   normalizarNombreEmpresa, 
+  extraerCoreRif,
   sonProveedoresCoincidentes, 
   parseCuentasBancarias, 
   getStoredSrm, 
@@ -652,19 +653,42 @@ const Proveedores = ({ currentUser }) => {
       const esEdicion = Boolean(formData.id);
       const rifLimpio = formData.rif.trim().toUpperCase();
 
-      // Validación de duplicidad de RIF en la lista activa
-      if (!esEdicion) {
-        const yaExisteLocal = proveedores.find(p => p.rif && p.rif.trim().toUpperCase() === rifLimpio);
-        if (yaExisteLocal) {
-          setSaving(false);
-          return toast.error(`⚠️ El RIF ${rifLimpio} ya está registrado para "${yaExisteLocal.razon_social}".`);
+      // Validación estricta anti-duplicados por RIF y Razón Social
+      const cRifNuevo = extraerCoreRif(rifLimpio);
+      const nombreNormNuevo = normalizarNombreEmpresa(formData.razon_social);
+
+      const proveedorDuplicado = proveedores.find(p => {
+        // En edición, omitir el mismo registro que se está editando
+        if (formData.id && String(p.id) === String(formData.id)) return false;
+
+        // 1. Verificación por RIF
+        if (p.rif && rifLimpio && p.rif.toUpperCase() !== 'SIN RIF' && rifLimpio !== 'SIN RIF') {
+          const cRifExistente = extraerCoreRif(p.rif);
+          if (cRifExistente.nums && cRifNuevo.nums && cRifExistente.nums.length >= 7 && cRifNuevo.nums.length >= 7) {
+            if (cRifExistente.nums === cRifNuevo.nums) return true;
+          }
+          if (cRifExistente.raw && cRifNuevo.raw && cRifExistente.raw === cRifNuevo.raw) return true;
+          if (p.rif.trim().toUpperCase() === rifLimpio) return true;
         }
-      } else {
-        const otroConMismoRif = proveedores.find(p => String(p.id) !== String(formData.id) && p.rif && p.rif.trim().toUpperCase() === rifLimpio);
-        if (otroConMismoRif) {
-          setSaving(false);
-          return toast.error(`⚠️ El RIF ${rifLimpio} ya está registrado a otro proveedor ("${otroConMismoRif.razon_social}").`);
+
+        // 2. Verificación por Razón Social normalizada
+        if (p.razon_social && nombreNormNuevo) {
+          const nombreNormExistente = normalizarNombreEmpresa(p.razon_social);
+          if (nombreNormExistente && nombreNormExistente === nombreNormNuevo) return true;
         }
+
+        // 3. Verificación de coincidencia heurística de empresa
+        if (sonProveedoresCoincidentes(p, { ...formData, rif: rifLimpio })) return true;
+
+        return false;
+      });
+
+      if (proveedorDuplicado) {
+        setSaving(false);
+        return toast.error(
+          `⚠️ Ya existe un proveedor registrado: "${proveedorDuplicado.razon_social}" (RIF: ${proveedorDuplicado.rif || 'N/A'}). No se permite crear proveedores repetidos.`,
+          { duration: 5000 }
+        );
       }
 
       const catsLimpias = (Array.isArray(formData.categoria) ? formData.categoria : (formData.categoria ? [formData.categoria] : []))
@@ -728,10 +752,10 @@ const Proveedores = ({ currentUser }) => {
   const ejecutarEliminacion = async (pObj) => {
     try {
       await eliminarProveedorService(pObj);
+      // Eliminar estrictamente por ID único para no borrar accidentalmente duplicados u otros registros
       setProveedores(prev => prev.filter(item => {
-        if (pObj.id && String(item.id) === String(pObj.id)) return false;
-        if (pObj.rif && item.rif && item.rif.toUpperCase() === pObj.rif.toUpperCase()) return false;
-        if (pObj.razon_social && normalizarNombreEmpresa(item.razon_social) === normalizarNombreEmpresa(pObj.razon_social)) return false;
+        if (pObj.id) return String(item.id) !== String(pObj.id);
+        if (pObj.rif && item.rif) return item.rif.toUpperCase() !== pObj.rif.toUpperCase();
         return true;
       }));
       toast.success('Proveedor eliminado exitosamente.');

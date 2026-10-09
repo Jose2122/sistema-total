@@ -917,7 +917,8 @@ export const eliminarProveedorCloud = async (idOrProv) => {
     if (!existingId) return false;
 
     const listaActualizada = provsCloud.filter(p => {
-      if (targetId && String(p.id) === String(targetId)) return false;
+      // Si se especifica targetId, eliminar ESTRICTAMENTE por targetId para no borrar duplicados no intencionados
+      if (targetId) return String(p.id) !== String(targetId);
       if (targetRif && p.rif && p.rif.trim().toUpperCase() === targetRif) return false;
       if (targetNormKey && normalizarNombreEmpresa(p.razon_social) === targetNormKey) return false;
       return true;
@@ -1230,10 +1231,14 @@ export const obtenerTodosProveedores = async (options = {}) => {
       const parsedElim = JSON.parse(rawElim);
       if (Array.isArray(parsedElim)) {
         parsedElim.forEach(e => {
-          if (e.id) eliminadosSet.add(String(e.id));
-          if (e.rif && e.rif.toUpperCase() !== 'SIN RIF') eliminadosRifSet.add(e.rif.toUpperCase());
-          if (e.normKey) eliminadosNormSet.add(e.normKey);
-          if (e.razon_social) eliminadosNormSet.add(normalizarNombreEmpresa(e.razon_social));
+          if (e.id) {
+            eliminadosSet.add(String(e.id));
+          } else {
+            // Solo considerar RIF/nombre si fue una eliminación explícita sin ID
+            if (e.rif && e.rif.toUpperCase() !== 'SIN RIF') eliminadosRifSet.add(e.rif.toUpperCase());
+            if (e.normKey) eliminadosNormSet.add(e.normKey);
+            if (e.razon_social) eliminadosNormSet.add(normalizarNombreEmpresa(e.razon_social));
+          }
         });
       }
     }
@@ -1244,9 +1249,11 @@ export const obtenerTodosProveedores = async (options = {}) => {
   const esProveedorEliminado = (p) => {
     if (!p) return true;
     if (p.id && eliminadosSet.has(String(p.id))) return true;
-    if (p.rif && p.rif.trim() && eliminadosRifSet.has(p.rif.trim().toUpperCase())) return true;
-    const norm = normalizarNombreEmpresa(p.razon_social || '');
-    if (norm && eliminadosNormSet.has(norm)) return true;
+    if (!p.id) {
+      if (p.rif && p.rif.trim() && eliminadosRifSet.has(p.rif.trim().toUpperCase())) return true;
+      const norm = normalizarNombreEmpresa(p.razon_social || '');
+      if (norm && eliminadosNormSet.has(norm)) return true;
+    }
     if (p.razon_social && String(p.razon_social).startsWith('[ELIMINADO]')) return true;
     if (p.status === false && p.eliminado === true) return true;
     return false;
@@ -1511,17 +1518,18 @@ export const eliminarProveedorService = async (idOrProv) => {
   try {
     const rawElim = localStorage.getItem(STORAGE_KEY_PROVEEDORES_ELIMINADOS);
     const listaElim = rawElim ? JSON.parse(rawElim) : [];
+    // CRÍTICO: Si se tiene targetId, SOLO registrar targetId en la lista de eliminados.
+    // NO registrar rif ni normKey para que un duplicado legítimo u otro registro no se oculte ni borre.
     const nuevoElim = {
-      id: targetId,
-      rif: targetRif,
-      razon_social: targetNombre,
-      normKey: targetNormKey,
+      id: targetId ? String(targetId) : null,
+      rif: targetId ? null : (targetRif || null),
+      razon_social: targetId ? null : (targetNombre || null),
+      normKey: targetId ? null : (targetNormKey || null),
       fecha_eliminacion: new Date().toISOString()
     };
     const sinDuplicados = listaElim.filter(e => {
       if (targetId && String(e.id) === String(targetId)) return false;
-      if (targetRif && e.rif && e.rif.toUpperCase() === targetRif) return false;
-      if (targetNormKey && e.normKey && e.normKey === targetNormKey) return false;
+      if (!targetId && targetRif && e.rif && e.rif.toUpperCase() === targetRif) return false;
       return true;
     });
     sinDuplicados.push(nuevoElim);
@@ -1534,15 +1542,13 @@ export const eliminarProveedorService = async (idOrProv) => {
   try {
     const localList = JSON.parse(localStorage.getItem('local_proveedores_registrados') || '[]');
     const provEliminado = localList.find(p => {
-      if (targetId && String(p.id) === String(targetId)) return true;
+      if (targetId) return String(p.id) === String(targetId);
       if (targetRif && p.rif && p.rif.trim().toUpperCase() === targetRif) return true;
-      if (targetNormKey && normalizarNombreEmpresa(p.razon_social) === targetNormKey) return true;
       return false;
     });
     const updated = localList.filter(p => {
-      if (targetId && String(p.id) === String(targetId)) return false;
+      if (targetId) return String(p.id) !== String(targetId);
       if (targetRif && p.rif && p.rif.trim().toUpperCase() === targetRif) return false;
-      if (targetNormKey && normalizarNombreEmpresa(p.razon_social) === targetNormKey) return false;
       return true;
     });
     localStorage.setItem('local_proveedores_registrados', JSON.stringify(updated));
@@ -1569,13 +1575,14 @@ export const eliminarProveedorService = async (idOrProv) => {
   // 4. Eliminar de Supabase tabla proveedores
   try {
     if (targetId && !isNaN(Number(targetId)) && Number(targetId) > 0) {
+      // Eliminar estrictamente por ID para proteger registros duplicados u otros
       const { error: errDelId } = await supabase.from('proveedores').delete().eq('id', Number(targetId));
       if (errDelId) {
         console.warn('Supabase delete by ID error:', errDelId);
         await supabase.from('proveedores').update({ status: false, activo: false, razon_social: `[ELIMINADO] ${targetNombre || targetId}` }).eq('id', Number(targetId));
       }
-    }
-    if (targetRif && targetRif !== 'SIN RIF') {
+    } else if (targetRif && targetRif !== 'SIN RIF') {
+      // Solo si NO hay ID numérico se borra por RIF
       const { error: errDelRif } = await supabase.from('proveedores').delete().eq('rif', targetRif);
       if (errDelRif) {
         console.warn('Supabase delete by RIF warn:', errDelRif);

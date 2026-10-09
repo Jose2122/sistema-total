@@ -72,6 +72,20 @@ const parsearFacturaUrls = (facturaUrlField) => {
   }).filter(Boolean);
 };
 
+// Helper para formatear fecha y hora exacta con trazabilidad completa
+const formatearFechaHora = (fechaIso) => {
+  if (!fechaIso) return { fecha: 'N/A', hora: '--:--', textoCompleto: 'N/A' };
+  try {
+    const d = new Date(fechaIso);
+    if (isNaN(d.getTime())) return { fecha: String(fechaIso), hora: '--:--', textoCompleto: String(fechaIso) };
+    const fecha = d.toLocaleDateString('es-VE', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    const hora = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
+    return { fecha, hora, textoCompleto: `${fecha} ${hora}` };
+  } catch {
+    return { fecha: String(fechaIso), hora: '--:--', textoCompleto: String(fechaIso) };
+  }
+};
+
 // Helper to retrieve and merge all abonos for an ODC from DB and localStorage
 const obtenerAbonosOdc = (odc) => {
   if (!odc) return [];
@@ -96,7 +110,14 @@ const obtenerAbonosOdc = (odc) => {
     map.set(key, ab);
   });
 
-  let list = Array.from(map.values());
+  let list = Array.from(map.values()).map(ab => ({
+    ...ab,
+    proveedor_nombre: ab.proveedor_nombre || odc.proveedor_nombre || '',
+    tipo_pago: ab.tipo_pago || odc.tipo_pago || 'CONTADO',
+    estatus: ab.estatus || odc.estatus_pago || odc.status_pago || 'PAGADO',
+    usuario_nombre: ab.usuario_nombre || odc.comprador_nombre || odc.elaborado_por_nombre || 'Finanzas'
+  }));
+
   if (list.length === 0 && (odc.orden_pago_ref || odc.banco_destino || odc.banco)) {
     list = [{
       abono_id: `legacy_${odc.id}`,
@@ -104,8 +125,11 @@ const obtenerAbonosOdc = (odc) => {
       referencia: odc.orden_pago_ref || 'REGISTRO PREVIO',
       banco_nombre: odc.banco_destino || odc.banco || 'Banco Empresa',
       moneda: odc.moneda || '$ / $',
-      fecha: odc.fecha_emision,
-      usuario_nombre: 'Finanzas'
+      fecha: odc.fecha_emision || odc.updated_at || odc.created_at,
+      proveedor_nombre: odc.proveedor_nombre || '',
+      tipo_pago: odc.tipo_pago || 'CONTADO',
+      estatus: odc.estatus_pago || odc.status_pago || 'PAGADO',
+      usuario_nombre: odc.comprador_nombre || odc.elaborado_por_nombre || 'Finanzas'
     }];
   }
   return list;
@@ -1373,6 +1397,10 @@ const LiquidacionFacturas = ({ currentUser }) => {
       // 2. Build abono object
       const abonoId = `ab_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       const bancoNombre = bancos.find(b => b.id === abonoForm.banco_id)?.nombre || 'Desconocido';
+      const targetOdcFound = abonoForm.es_odc ? ordenesCompra.find(o => String(o.id) === String(abonoForm.odc_id)) : null;
+      const targetInvoiceFound = !abonoForm.es_odc ? facturasAgrupadas.find(f => f.doc_numero?.trim().toUpperCase() === abonoForm.factura_num?.trim().toUpperCase()) : null;
+      const usuarioActualNombre = currentUser ? `${currentUser.nombre} ${currentUser.apellido}`.trim() : 'Finanzas';
+
       const nuevoAbono = {
         abono_id: abonoId,
         url: uploadedFiles[0]?.url || null,
@@ -1386,13 +1414,15 @@ const LiquidacionFacturas = ({ currentUser }) => {
         moneda: abonoForm.moneda,
         referencia: abonoForm.referencia.trim(),
         factura_num: abonoForm.factura_num.trim(),
-        proveedor_nombre: abonoForm.proveedor_nombre.trim(),
-        usuario_nombre: currentUser ? `${currentUser.nombre} ${currentUser.apellido}` : 'Administración'
+        proveedor_nombre: (abonoForm.proveedor_nombre || targetOdcFound?.proveedor_nombre || targetInvoiceFound?.proveedor_nombre || '').trim(),
+        tipo_pago: abonoForm.es_odc ? (targetOdcFound?.tipo_pago || 'CONTADO') : (targetInvoiceFound?.es_credito ? 'CREDITO' : 'CONTADO'),
+        estatus: 'PAGADO',
+        usuario_nombre: usuarioActualNombre
       };
 
       // Si es un abono/pago de ODC
       if (abonoForm.es_odc) {
-        const targetOdc = ordenesCompra.find(o => String(o.id) === String(abonoForm.odc_id));
+        const targetOdc = targetOdcFound || ordenesCompra.find(o => String(o.id) === String(abonoForm.odc_id));
         if (!targetOdc) throw new Error('No se encontró la Órden de Compra a abonar.');
 
         const abonosExistentes = obtenerAbonosOdc(targetOdc);
@@ -1402,6 +1432,9 @@ const LiquidacionFacturas = ({ currentUser }) => {
         const saldoRemanente = totalOdcVal - sumaTotalAbonos;
 
         const estatusFinal = saldoRemanente <= 0.01 ? 'PAGADO' : 'PAGADO PARCIAL';
+        nuevoAbono.estatus = estatusFinal;
+        nuevoAbono.tipo_pago = targetOdc.tipo_pago || 'CONTADO';
+        nuevoAbono.proveedor_nombre = targetOdc.proveedor_nombre || nuevoAbono.proveedor_nombre;
 
         // Persistir inmediatamente en localStorage
         localStorage.setItem(`odc_abonos_${targetOdc.id}`, JSON.stringify(nuevosAbonos));
@@ -2514,97 +2547,150 @@ const LiquidacionFacturas = ({ currentUser }) => {
                 <tr>
                   <th>Tipo / Documento</th>
                   <th>Proveedor</th>
-                  <th>Fecha Registro</th>
-                  <th>Monto Total Pagado</th>
-                  <th>Estatus Finanzas</th>
+                  <th>Modalidad</th>
+                  <th>Monto Pagado</th>
+                  <th>Quién lo Realizó</th>
+                  <th>Fecha y Hora</th>
+                  <th>Estatus</th>
                   <th style={{ textAlign: 'center' }}>Acciones</th>
                 </tr>
               </thead>
               <tbody>
-                {pagadosConsolidados.facturas.map(fac => (
-                  <tr key={`fac_${fac.key}`} style={{ backgroundColor: '#faf5ff' }}>
-                    <td>
-                      <span style={{ fontSize: '11px', backgroundColor: '#f3e8ff', color: '#7e22ce', padding: '3px 8px', borderRadius: '5px', fontWeight: '800', border: '1px solid #d8b4fe' }}>
-                        📜 FACTURA: {fac.doc_numero}
-                      </span>
-                    </td>
-                    <td style={{ fontWeight: '700' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <Building2 size={16} color="#64748b" />
-                        {fac.proveedor_nombre}
-                      </div>
-                    </td>
-                    <td style={{ color: '#64748b', fontSize: '0.8rem' }}>
-                      {fac.fecha_compra ? new Date(fac.fecha_compra).toLocaleDateString() : 'N/A'}
-                    </td>
-                    <td style={{ fontWeight: '900', color: '#16a34a' }}>
-                      $ {fac.total_factura.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
-                    </td>
-                    <td>
-                      <span style={{ padding: '4px 10px', borderRadius: '8px', fontSize: '0.75rem', fontWeight: '900', backgroundColor: '#dcfce7', color: '#15803d' }}>
-                        ✅ LIQUIDADO
-                      </span>
-                    </td>
-                    <td style={{ textAlign: 'center' }}>
-                      <button
-                        className="liquidacion-action-btn view"
-                        title="Ver Comprobantes y Abonos"
-                        onClick={() => setInvoiceSeleccionada(fac)}
-                      >
-                        <Eye size={15} />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {pagadosConsolidados.facturas.map(fac => {
+                  const ultAbono = fac.abonos && fac.abonos.length > 0 ? fac.abonos[fac.abonos.length - 1] : null;
+                  const fechaRaw = ultAbono?.fecha || fac.fecha_compra;
+                  const { fecha: fStr, hora: hStr } = formatearFechaHora(fechaRaw);
+                  const usuarioPago = ultAbono?.usuario_nombre || fac.comprador || fac.usuario_compra || 'Compras / Finanzas';
+                  const modalidad = fac.es_credito ? 'CREDITO' : 'CONTADO';
 
-                {pagadosConsolidados.odcs.map(odc => (
-                  <tr key={`odc_${odc.id}`} style={{ backgroundColor: '#faf5ff' }}>
-                    <td>
-                      <button
-                        type="button"
-                        onClick={() => abrirDetalleOdcPreview(odc)}
-                        style={{
-                          background: 'none',
-                          border: 'none',
-                          color: '#7e22ce',
-                          fontWeight: '900',
-                          fontSize: '0.85rem',
-                          cursor: 'pointer',
-                          padding: 0,
-                          textDecoration: 'underline'
-                        }}
-                      >
-                        🛍️ ODC ({odc.tipo_pago}): {odc.numero_odc}
-                      </button>
-                    </td>
-                    <td style={{ fontWeight: '700' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <Building2 size={16} color="#64748b" />
-                        {odc.proveedor_nombre || 'N/A'}
-                      </div>
-                    </td>
-                    <td style={{ color: '#64748b', fontSize: '0.8rem' }}>
-                      {odc.fecha_emision ? new Date(odc.fecha_emision).toLocaleDateString() : 'N/A'}
-                    </td>
-                    <td style={{ fontWeight: '900', color: '#16a34a' }}>
-                      $ {Number(odc.total_general ?? odc.total ?? 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
-                    </td>
-                    <td>
-                      <span style={{ padding: '4px 10px', borderRadius: '8px', fontSize: '0.75rem', fontWeight: '900', backgroundColor: '#dcfce7', color: '#15803d' }}>
-                        ✅ PAGADO TOTAL
-                      </span>
-                    </td>
-                    <td style={{ textAlign: 'center' }}>
-                      <button
-                        className="liquidacion-action-btn view"
-                        title="Ver Vista Previa ODC"
-                        onClick={() => abrirDetalleOdcPreview(odc)}
-                      >
-                        <Eye size={15} />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                  return (
+                    <tr key={`fac_${fac.key}`} style={{ backgroundColor: '#faf5ff' }}>
+                      <td>
+                        <span style={{ fontSize: '11px', backgroundColor: '#f3e8ff', color: '#7e22ce', padding: '3px 8px', borderRadius: '5px', fontWeight: '800', border: '1px solid #d8b4fe' }}>
+                          📜 FACTURA: {fac.doc_numero}
+                        </span>
+                      </td>
+                      <td style={{ fontWeight: '700' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <Building2 size={16} color="#64748b" />
+                          {fac.proveedor_nombre}
+                        </div>
+                      </td>
+                      <td>
+                        <span style={{ 
+                          fontSize: '0.72rem', 
+                          fontWeight: '800', 
+                          padding: '2px 8px', 
+                          borderRadius: '6px', 
+                          backgroundColor: modalidad === 'CREDITO' ? '#ede9fe' : '#e0f2fe', 
+                          color: modalidad === 'CREDITO' ? '#6d28d9' : '#0284c7',
+                          border: `1px solid ${modalidad === 'CREDITO' ? '#ddd6fe' : '#bae6fd'}`
+                        }}>
+                          {modalidad === 'CREDITO' ? '💳 CRÉDITO' : '💵 CONTADO'}
+                        </span>
+                      </td>
+                      <td style={{ fontWeight: '900', color: '#16a34a', fontSize: '0.9rem' }}>
+                        $ {fac.total_factura.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                      </td>
+                      <td style={{ fontSize: '0.8rem', color: '#1e293b', fontWeight: '700' }}>
+                        👤 {usuarioPago}
+                      </td>
+                      <td style={{ color: '#0369a1', fontSize: '0.8rem', fontWeight: '600' }}>
+                        <div>📅 {fStr}</div>
+                        <div style={{ fontSize: '0.74rem', color: '#64748b' }}>⏰ {hStr}</div>
+                      </td>
+                      <td>
+                        <span style={{ padding: '4px 10px', borderRadius: '8px', fontSize: '0.75rem', fontWeight: '900', backgroundColor: '#dcfce7', color: '#15803d' }}>
+                          ✅ LIQUIDADO
+                        </span>
+                      </td>
+                      <td style={{ textAlign: 'center' }}>
+                        <button
+                          className="liquidacion-action-btn view"
+                          title="Ver Comprobantes y Abonos"
+                          onClick={() => setInvoiceSeleccionada(fac)}
+                        >
+                          <Eye size={15} />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+
+                {pagadosConsolidados.odcs.map(odc => {
+                  const abonos = obtenerAbonosOdc(odc);
+                  const ultAbono = abonos && abonos.length > 0 ? abonos[abonos.length - 1] : null;
+                  const fechaRaw = ultAbono?.fecha || odc.updated_at || odc.fecha_emision;
+                  const { fecha: fStr, hora: hStr } = formatearFechaHora(fechaRaw);
+                  const usuarioPago = ultAbono?.usuario_nombre || odc.comprador_nombre || odc.elaborado_por_nombre || 'Finanzas';
+                  const modalidad = (odc.tipo_pago || 'CONTADO').toUpperCase();
+
+                  return (
+                    <tr key={`odc_${odc.id}`} style={{ backgroundColor: '#faf5ff' }}>
+                      <td>
+                        <button
+                          type="button"
+                          onClick={() => abrirDetalleOdcPreview(odc)}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            color: '#7e22ce',
+                            fontWeight: '900',
+                            fontSize: '0.85rem',
+                            cursor: 'pointer',
+                            padding: 0,
+                            textDecoration: 'underline'
+                          }}
+                        >
+                          🛍️ ODC: {odc.numero_odc}
+                        </button>
+                      </td>
+                      <td style={{ fontWeight: '700' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <Building2 size={16} color="#64748b" />
+                          {odc.proveedor_nombre || 'N/A'}
+                        </div>
+                      </td>
+                      <td>
+                        <span style={{ 
+                          fontSize: '0.72rem', 
+                          fontWeight: '800', 
+                          padding: '2px 8px', 
+                          borderRadius: '6px', 
+                          backgroundColor: modalidad === 'CREDITO' ? '#ede9fe' : '#e0f2fe', 
+                          color: modalidad === 'CREDITO' ? '#6d28d9' : '#0284c7',
+                          border: `1px solid ${modalidad === 'CREDITO' ? '#ddd6fe' : '#bae6fd'}`
+                        }}>
+                          {modalidad === 'CREDITO' ? '💳 CRÉDITO' : '💵 CONTADO'}
+                        </span>
+                      </td>
+                      <td style={{ fontWeight: '900', color: '#16a34a', fontSize: '0.9rem' }}>
+                        $ {Number(odc.total_general ?? odc.total ?? 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                      </td>
+                      <td style={{ fontSize: '0.8rem', color: '#1e293b', fontWeight: '700' }}>
+                        👤 {usuarioPago}
+                      </td>
+                      <td style={{ color: '#0369a1', fontSize: '0.8rem', fontWeight: '600' }}>
+                        <div>📅 {fStr}</div>
+                        <div style={{ fontSize: '0.74rem', color: '#64748b' }}>⏰ {hStr}</div>
+                      </td>
+                      <td>
+                        <span style={{ padding: '4px 10px', borderRadius: '8px', fontSize: '0.75rem', fontWeight: '900', backgroundColor: '#dcfce7', color: '#15803d' }}>
+                          ✅ PAGADO
+                        </span>
+                      </td>
+                      <td style={{ textAlign: 'center' }}>
+                        <button
+                          className="liquidacion-action-btn view"
+                          title="Ver Vista Previa ODC"
+                          onClick={() => abrirDetalleOdcPreview(odc)}
+                        >
+                          <Eye size={15} />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           )}
@@ -2702,30 +2788,76 @@ const LiquidacionFacturas = ({ currentUser }) => {
                   </div>
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    {invoiceSeleccionada.abonos.map((ab, idx) => (
-                      <div key={ab.abono_id || idx} className="liquidacion-abono-history-item">
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-                          <div style={{ fontSize: '14px', fontWeight: '800', color: '#10b981' }}>
-                            + $ {(Number(ab.monto) || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
-                          </div>
-                          <div style={{ fontSize: '11px', color: '#64748b', display: 'flex', flexDirection: 'column' }}>
-                            <span style={{ fontWeight: '700', color: '#475569' }}>Ref: {ab.referencia}</span>
-                            <span>{ab.banco_nombre} ({ab.moneda})</span>
-                          </div>
-                        </div>
+                    {invoiceSeleccionada.abonos.map((ab, idx) => {
+                      const { fecha: fStr, hora: hStr } = formatearFechaHora(ab.fecha);
+                      const provNom = invoiceSeleccionada.proveedor_nombre || ab.proveedor_nombre || 'N/A';
+                      const modPago = invoiceSeleccionada.es_credito ? 'CREDITO' : 'CONTADO';
+                      const stPago = (invoiceSeleccionada.estatus || 'LIQUIDADO').toUpperCase();
+                      const respNom = ab.usuario_nombre || 'Finanzas';
 
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-                          <div style={{ fontSize: '11px', color: '#64748b', display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
-                            <span style={{ fontWeight: '700' }}>Registrado por: {ab.usuario_nombre}</span>
-                            <span>{ab.fecha ? new Date(ab.fecha).toLocaleDateString() : 'N/A'}</span>
-                          </div>
-                          
-                          {ab.urls && ab.urls.length > 0 ? (
-                            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                              {ab.urls.map((u, uIdx) => (
+                      return (
+                        <div key={ab.abono_id || idx} className="liquidacion-abono-history-item" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '8px', padding: '12px 14px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                              <div style={{ fontSize: '15px', fontWeight: '900', color: '#10b981' }}>
+                                + $ {(Number(ab.monto) || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                              </div>
+                              <span style={{ 
+                                fontSize: '10px', 
+                                fontWeight: '800', 
+                                padding: '2px 8px', 
+                                borderRadius: '5px', 
+                                backgroundColor: modPago === 'CREDITO' ? '#ede9fe' : '#e0f2fe', 
+                                color: modPago === 'CREDITO' ? '#6d28d9' : '#0284c7',
+                                border: `1px solid ${modPago === 'CREDITO' ? '#ddd6fe' : '#bae6fd'}`
+                              }}>
+                                {modPago === 'CREDITO' ? '💳 CRÉDITO' : '💵 CONTADO'}
+                              </span>
+                              <span style={{ 
+                                fontSize: '10px', 
+                                fontWeight: '800', 
+                                padding: '2px 8px', 
+                                borderRadius: '5px', 
+                                backgroundColor: '#dcfce7', 
+                                color: '#15803d',
+                                border: '1px solid #bbf7d0'
+                              }}>
+                                ✅ {stPago}
+                              </span>
+                            </div>
+
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              {ab.urls && ab.urls.length > 0 ? (
+                                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                                  {ab.urls.map((u, uIdx) => (
+                                    <a
+                                      key={uIdx}
+                                      href={u.url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '4px',
+                                        textDecoration: 'none',
+                                        color: '#2563eb',
+                                        backgroundColor: '#eff6ff',
+                                        padding: '4px 8px',
+                                        borderRadius: '6px',
+                                        fontSize: '10px',
+                                        fontWeight: '700',
+                                        border: '1px solid #bfdbfe'
+                                      }}
+                                      title={u.name}
+                                    >
+                                      <FileText size={11} />
+                                      {(u.name || 'Archivo').length > 15 ? `${(u.name || 'Archivo').slice(0, 12)}...` : (u.name || 'Archivo')}
+                                    </a>
+                                  ))}
+                                </div>
+                              ) : ab.url ? (
                                 <a
-                                  key={uIdx}
-                                  href={u.url}
+                                  href={ab.url}
                                   target="_blank"
                                   rel="noopener noreferrer"
                                   style={{
@@ -2735,67 +2867,64 @@ const LiquidacionFacturas = ({ currentUser }) => {
                                     textDecoration: 'none',
                                     color: '#2563eb',
                                     backgroundColor: '#eff6ff',
-                                    padding: '4px 8px',
-                                    borderRadius: '6px',
-                                    fontSize: '10px',
+                                    padding: '6px 12px',
+                                    borderRadius: '8px',
+                                    fontSize: '11px',
                                     fontWeight: '700',
                                     border: '1px solid #bfdbfe'
                                   }}
-                                  title={u.name}
                                 >
-                                  <FileText size={11} />
-                                  {(u.name || 'Archivo').length > 15 ? `${(u.name || 'Archivo').slice(0, 12)}...` : (u.name || 'Archivo')}
-                                </a>
-                              ))}
-                            </div>
-                          ) : ab.url ? (
-                            <a
-                              href={ab.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '4px',
-                                textDecoration: 'none',
-                                color: '#2563eb',
-                                backgroundColor: '#eff6ff',
-                                padding: '6px 12px',
-                                borderRadius: '8px',
-                                fontSize: '11px',
-                                fontWeight: '700',
-                                border: '1px solid #bfdbfe'
-                              }}
-                            >
-                              <FileText size={12} />
-                              Comprobante
-                            </a>
-                          ) : null}
+                                <FileText size={12} />
+                                Comprobante
+                              </a>
+                            ) : null}
 
-                          {esAdmin && (
-                            <button
-                              onClick={() => handleEliminarAbono(ab.abono_id)}
-                              style={{
-                                background: 'none',
-                                border: 'none',
-                                cursor: 'pointer',
-                                color: '#ef4444',
-                                padding: '6px',
-                                borderRadius: '5px',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center'
-                              }}
-                              title="Anular Abono"
-                            >
-                              <X size={16} />
-                            </button>
-                          )}
+                            {esAdmin && ab.abono_id && (
+                              <button
+                                onClick={() => handleEliminarAbono(ab.abono_id)}
+                                style={{
+                                  backgroundColor: '#fee2e2',
+                                  border: '1px solid #fca5a5',
+                                  cursor: 'pointer',
+                                  color: '#dc2626',
+                                  padding: '4px 6px',
+                                  borderRadius: '5px',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center'
+                                }}
+                                title="Anular Abono"
+                              >
+                                <X size={14} />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '6px', fontSize: '11px', backgroundColor: '#f8fafc', padding: '6px 10px', borderRadius: '8px', border: '1px solid #f1f5f9' }}>
+                          <div>
+                            <span style={{ color: '#64748b' }}>Proveedor: </span>
+                            <strong style={{ color: '#0f172a' }}>{provNom}</strong>
+                          </div>
+                          <div>
+                            <span style={{ color: '#64748b' }}>Realizado por: </span>
+                            <strong style={{ color: '#1e293b' }}>👤 {respNom}</strong>
+                          </div>
+                          <div>
+                            <span style={{ color: '#64748b' }}>Fecha y Hora: </span>
+                            <strong style={{ color: '#0369a1' }}>📅 {fStr} ⏰ {hStr}</strong>
+                          </div>
+                          <div>
+                            <span style={{ color: '#64748b' }}>Ref: </span>
+                            <span style={{ fontWeight: '700', color: '#334155' }}>{ab.referencia || 'N/A'}</span>
+                            <span style={{ color: '#94a3b8', fontSize: '10px' }}> ({ab.banco_nombre || 'Banco'} - {ab.moneda || 'USD'})</span>
+                          </div>
                         </div>
                       </div>
-                    ))}
-                  </div>
-                )}
+                    );
+                  })}
+                </div>
+              )}
               </div>
             </div>
 
@@ -2977,103 +3106,158 @@ const LiquidacionFacturas = ({ currentUser }) => {
                         <div style={{ margin: 'auto', padding: '16px 20px', textAlign: 'center', color: '#94a3b8', fontSize: '0.76rem', fontStyle: 'italic', border: '1px dashed #cbd5e1', borderRadius: '10px', backgroundColor: 'white' }}>
                           No se han registrado pagos o abonos para esta Órden de Compra todavía.
                         </div>
-                      ) : abonosOdc.map((ab, idx) => (
-                          <div key={ab.abono_id || idx} style={{ padding: '9px 12px', backgroundColor: 'white', border: '1px solid #e2e8f0', borderRadius: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', boxShadow: '0 1px 2px rgba(0,0,0,0.02)' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                              <div style={{ fontSize: '0.95rem', fontWeight: '950', color: '#10b981' }}>
-                                + $ {(Number(ab.monto) || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
-                              </div>
-                              <div style={{ fontSize: '0.72rem', color: '#475569', display: 'flex', flexDirection: 'column' }}>
-                                <span style={{ fontWeight: '800', color: '#0f172a' }}>Ref: {ab.referencia || 'Sin Referencia'}</span>
-                                <span style={{ fontSize: '0.68rem', color: '#64748b' }}>
-                                  {ab.banco_nombre || 'Banco Empresa'} | {ab.moneda || 'USD'}
+                      ) : abonosOdc.map((ab, idx) => {
+                        const { fecha: fStr, hora: hStr } = formatearFechaHora(ab.fecha);
+                        const provNom = ab.proveedor_nombre || odcPreviewSeleccionada?.proveedor_nombre || 'N/A';
+                        const modPago = (ab.tipo_pago || odcPreviewSeleccionada?.tipo_pago || 'CONTADO').toUpperCase();
+                        const stPago = (ab.estatus || odcPreviewSeleccionada?.estatus_pago || 'PAGADO').toUpperCase();
+                        const respNom = ab.usuario_nombre || odcPreviewSeleccionada?.comprador_nombre || odcPreviewSeleccionada?.elaborado_por_nombre || 'Finanzas';
+
+                        return (
+                          <div 
+                            key={ab.abono_id || idx} 
+                            style={{ 
+                              padding: '10px 12px', 
+                              backgroundColor: 'white', 
+                              border: '1px solid #e2e8f0', 
+                              borderRadius: '12px', 
+                              display: 'flex', 
+                              flexDirection: 'column', 
+                              gap: '6px', 
+                              boxShadow: '0 1px 3px rgba(0,0,0,0.02)' 
+                            }}
+                          >
+                            {/* Fila Superior: Monto + Modalidad + Estatus + Comprobantes */}
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                                <span style={{ fontSize: '1rem', fontWeight: '950', color: '#10b981' }}>
+                                  + $ {(Number(ab.monto) || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                                </span>
+                                <span style={{ 
+                                  fontSize: '0.66rem', 
+                                  fontWeight: '900', 
+                                  padding: '2px 7px', 
+                                  borderRadius: '5px', 
+                                  backgroundColor: modPago === 'CREDITO' ? '#ede9fe' : '#e0f2fe', 
+                                  color: modPago === 'CREDITO' ? '#6d28d9' : '#0284c7',
+                                  border: `1px solid ${modPago === 'CREDITO' ? '#ddd6fe' : '#bae6fd'}`
+                                }}>
+                                  {modPago === 'CREDITO' ? '💳 CRÉDITO' : '💵 CONTADO'}
+                                </span>
+                                <span style={{ 
+                                  fontSize: '0.66rem', 
+                                  fontWeight: '900', 
+                                  padding: '2px 7px', 
+                                  borderRadius: '5px', 
+                                  backgroundColor: stPago === 'PAGADO' ? '#dcfce7' : stPago.includes('PARCIAL') ? '#fef3c7' : '#f1f5f9', 
+                                  color: stPago === 'PAGADO' ? '#15803d' : stPago.includes('PARCIAL') ? '#b45309' : '#475569',
+                                  border: `1px solid ${stPago === 'PAGADO' ? '#bbf7d0' : stPago.includes('PARCIAL') ? '#fde68a' : '#cbd5e1'}`
+                                }}>
+                                  {stPago === 'PAGADO' ? '✅ PAGADO' : stPago.includes('PARCIAL') ? '🟡 PARCIAL' : stPago}
                                 </span>
                               </div>
+
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                {ab.urls && ab.urls.length > 0 ? (
+                                  <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                                    {ab.urls.map((u, uIdx) => (
+                                      <a
+                                        key={uIdx}
+                                        href={u.url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        style={{
+                                          display: 'inline-flex',
+                                          alignItems: 'center',
+                                          gap: '3px',
+                                          textDecoration: 'none',
+                                          color: '#0284c7',
+                                          backgroundColor: '#e0f2fe',
+                                          padding: '3px 8px',
+                                          borderRadius: '6px',
+                                          fontSize: '0.66rem',
+                                          fontWeight: '800',
+                                          border: '1px solid #bae6fd'
+                                        }}
+                                        title={u.name}
+                                      >
+                                        <FileText size={11} />
+                                        Comprobante
+                                      </a>
+                                    ))}
+                                  </div>
+                                ) : ab.url ? (
+                                  <a
+                                    href={ab.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    style={{
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '3px',
+                                      textDecoration: 'none',
+                                      color: '#0284c7',
+                                      backgroundColor: '#e0f2fe',
+                                      padding: '3px 8px',
+                                      borderRadius: '6px',
+                                      fontSize: '0.66rem',
+                                      fontWeight: '800',
+                                      border: '1px solid #bae6fd'
+                                    }}
+                                  >
+                                    <FileText size={11} />
+                                    Comprobante
+                                  </a>
+                                ) : (
+                                  <span style={{ fontSize: '0.65rem', color: '#94a3b8', fontStyle: 'italic' }}>Sin comprobante</span>
+                                )}
+
+                                {esAdmin && ab.abono_id && (
+                                  <button
+                                    onClick={() => handleEliminarAbono(ab.abono_id)}
+                                    title="Anular este pago / abono"
+                                    style={{
+                                      backgroundColor: '#fee2e2',
+                                      color: '#dc2626',
+                                      border: '1px solid #fca5a5',
+                                      borderRadius: '5px',
+                                      padding: '3px 6px',
+                                      cursor: 'pointer',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      transition: 'all 0.15s ease'
+                                    }}
+                                  >
+                                    <Trash2 size={11} />
+                                  </button>
+                                )}
+                              </div>
                             </div>
 
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                              <div style={{ fontSize: '0.68rem', color: '#64748b', textAlign: 'right' }}>
-                                <div style={{ fontWeight: '700', color: '#334155' }}>{ab.usuario_nombre || 'Finanzas'}</div>
-                                <div>{ab.fecha ? new Date(ab.fecha).toLocaleDateString() : 'N/A'}</div>
+                            {/* Fila Inferior: Trazabilidad Completa (Proveedor, Responsable, Fecha, Hora, Ref/Banco) */}
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '4px 8px', fontSize: '0.7rem', backgroundColor: '#f8fafc', padding: '5px 8px', borderRadius: '7px', border: '1px solid #f1f5f9' }}>
+                              <div>
+                                <span style={{ color: '#64748b' }}>Proveedor: </span>
+                                <strong style={{ color: '#0f172a' }}>{provNom}</strong>
                               </div>
-
-                              {ab.urls && ab.urls.length > 0 ? (
-                                <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                                  {ab.urls.map((u, uIdx) => (
-                                    <a
-                                      key={uIdx}
-                                      href={u.url}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      style={{
-                                        display: 'inline-flex',
-                                        alignItems: 'center',
-                                        gap: '3px',
-                                        textDecoration: 'none',
-                                        color: '#0284c7',
-                                        backgroundColor: '#e0f2fe',
-                                        padding: '4px 9px',
-                                        borderRadius: '6px',
-                                        fontSize: '0.68rem',
-                                        fontWeight: '800',
-                                        border: '1px solid #bae6fd'
-                                      }}
-                                      title={u.name}
-                                    >
-                                      <FileText size={11} />
-                                      Comprobante
-                                    </a>
-                                  ))}
-                                </div>
-                              ) : ab.url ? (
-                                <a
-                                  href={ab.url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  style={{
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: '3px',
-                                    textDecoration: 'none',
-                                    color: '#0284c7',
-                                    backgroundColor: '#e0f2fe',
-                                    padding: '4px 9px',
-                                    borderRadius: '6px',
-                                    fontSize: '0.68rem',
-                                    fontWeight: '800',
-                                    border: '1px solid #bae6fd'
-                                  }}
-                                >
-                                  <FileText size={11} />
-                                  Comprobante
-                                </a>
-                              ) : (
-                                <span style={{ fontSize: '0.65rem', color: '#94a3b8', fontStyle: 'italic' }}>Sin comprobante</span>
-                              )}
-
-                              {esAdmin && ab.abono_id && (
-                                <button
-                                  onClick={() => handleEliminarAbono(ab.abono_id)}
-                                  title="Anular este pago / abono"
-                                  style={{
-                                    backgroundColor: '#fee2e2',
-                                    color: '#dc2626',
-                                    border: '1px solid #fca5a5',
-                                    borderRadius: '5px',
-                                    padding: '4px 6px',
-                                    cursor: 'pointer',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    transition: 'all 0.15s ease'
-                                  }}
-                                >
-                                  <Trash2 size={12} />
-                                </button>
-                              )}
+                              <div>
+                                <span style={{ color: '#64748b' }}>Realizado por: </span>
+                                <strong style={{ color: '#1e293b' }}>👤 {respNom}</strong>
+                              </div>
+                              <div>
+                                <span style={{ color: '#64748b' }}>Fecha y Hora: </span>
+                                <strong style={{ color: '#0369a1' }}>📅 {fStr} ⏰ {hStr}</strong>
+                              </div>
+                              <div>
+                                <span style={{ color: '#64748b' }}>Ref: </span>
+                                <span style={{ fontWeight: '700', color: '#334155' }}>{ab.referencia || 'N/A'}</span>
+                                <span style={{ color: '#94a3b8', fontSize: '0.65rem' }}> ({ab.banco_nombre || 'Banco'} - {ab.moneda || 'USD'})</span>
+                              </div>
                             </div>
                           </div>
-                        ))}
+                        );
+                      })}
                     </div>
                   </div>
 
