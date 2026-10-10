@@ -25,8 +25,12 @@ import {
   Save,
   Edit3,
   RefreshCw,
-  Copy
+  Copy,
+  FileSpreadsheet,
+  Download
 } from 'lucide-react';
+import ExcelJS from 'exceljs';
+import { saveAs } from 'file-saver';
 import './LiquidacionFacturas.css';
 import { compressImage } from './utils/compressImage';
 
@@ -149,6 +153,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
   const [subtabCxp, setSubtabCxp] = useState('todas'); // 'todas', 'facturas', 'odc_credito', 'odc_contado', 'historico'
   const [filtroSemaforo, setFiltroSemaforo] = useState('Todos'); // 'Todos', 'En Plazo', 'Por Vencer', 'Vencidos'
   const [filtroPrioridadOdc, setFiltroPrioridadOdc] = useState('todas'); // 'todas', '1', '2'
+  const [exportandoReporte, setExportandoReporte] = useState(false);
 
   // Modal detailed view
   const [invoiceSeleccionada, setInvoiceSeleccionada] = useState(null);
@@ -1766,6 +1771,596 @@ const LiquidacionFacturas = ({ currentUser }) => {
     }
   };
 
+  // --- REPORTE EXCEL DE DEUDAS PENDIENTES Y ÓRDENES DE CRÉDITO POR PROVEEDOR ---
+  const exportarReporteCreditoYDeudas = async () => {
+    try {
+      setExportandoReporte(true);
+      toast.loading('Generando reporte Excel de deudas pendientes por proveedor...', { id: 'rep-deuda' });
+
+      // Seleccionar órdenes pendientes de pago (Crédito y Contado aprobadas para CxP)
+      const odcsCreditoPends = odcsCredito.filter(o => {
+        const st = (o.estatus_pago || o.status_pago || 'PENDIENTE').toUpperCase();
+        return st !== 'PAGADO';
+      });
+
+      const odcsContadoPends = odcsContado.filter(o => {
+        const st = (o.estatus_pago || o.status_pago || 'PENDIENTE').toUpperCase();
+        return st !== 'PAGADO';
+      });
+
+      // Si el usuario aplicó búsqueda o filtro de proveedor específico en pantalla, priorizarlo
+      let todasPendientes = [...odcsCreditoPends, ...odcsContadoPends];
+      if (filtroProveedor !== 'Todos') {
+        todasPendientes = todasPendientes.filter(o => (o.proveedor_nombre || '').trim().toUpperCase() === filtroProveedor.trim().toUpperCase());
+      }
+      if (filtroBusqueda.trim()) {
+        const q = filtroBusqueda.toLowerCase().trim();
+        todasPendientes = todasPendientes.filter(o =>
+          (o.numero_odc || '').toLowerCase().includes(q) ||
+          (o.proveedor_nombre || '').toLowerCase().includes(q) ||
+          (o.requisicion_correlativo || '').toLowerCase().includes(q) ||
+          (o.centro_costo || '').toLowerCase().includes(q)
+        );
+      }
+
+      if (todasPendientes.length === 0) {
+        toast.dismiss('rep-deuda');
+        toast.error('No se encontraron órdenes de compra pendientes con los filtros actuales.');
+        setExportandoReporte(false);
+        return;
+      }
+
+      // Helper para calcular info de vencimiento y plazos
+      const getInfoVencimiento = (odc) => {
+        const tipo = (odc.tipo_pago || 'CONTADO').toUpperCase();
+        if (tipo !== 'CREDITO') {
+          return {
+            tipoPago: 'CONTADO',
+            diasCredito: 0,
+            fechaVencimiento: 'Inmediato (Contado)',
+            diasRestantesTexto: 'Contado Inmediato',
+            estadoAlerta: 'Contado',
+            diffDays: 999
+          };
+        }
+
+        let diasCred = Number(odc.dias_credito) || 0;
+        if (diasCred === 0 && odc.proveedor_id) {
+          const p = provMapById[String(odc.proveedor_id)];
+          if (p && Number(p.dias_credito) > 0) diasCred = Number(p.dias_credito);
+        }
+
+        let fVencDate = null;
+        let fechaVencStr = odc.fecha_vencimiento_credito || odc.fecha_vencimiento_pago;
+
+        if (fechaVencStr) {
+          fVencDate = new Date(fechaVencStr + (fechaVencStr.length <= 10 ? 'T12:00:00' : ''));
+        } else if (odc.fecha_emision && diasCred > 0) {
+          const d = new Date(odc.fecha_emision + (odc.fecha_emision.length <= 10 ? 'T12:00:00' : ''));
+          if (!isNaN(d.getTime())) {
+            d.setDate(d.getDate() + diasCred);
+            fVencDate = d;
+          }
+        }
+
+        if (!fVencDate || isNaN(fVencDate.getTime())) {
+          return {
+            tipoPago: 'CRÉDITO',
+            diasCredito: diasCred,
+            fechaVencimiento: 'No especificada',
+            diasRestantesTexto: diasCred > 0 ? `${diasCred} días pactados` : 'Crédito acordado',
+            estadoAlerta: 'En Plazo',
+            diffDays: 999
+          };
+        }
+
+        const hoy = new Date();
+        hoy.setHours(0, 0, 0, 0);
+        const fComp = new Date(fVencDate);
+        fComp.setHours(0, 0, 0, 0);
+
+        const diffTime = fComp.getTime() - hoy.getTime();
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        const fVencFmt = fComp.toLocaleDateString('es-VE', { day: '2-digit', month: '2-digit', year: 'numeric' });
+
+        if (diffDays < 0) {
+          const diasMora = Math.abs(diffDays);
+          return {
+            tipoPago: 'CRÉDITO',
+            diasCredito: diasCred,
+            fechaVencimiento: fVencFmt,
+            diasRestantesTexto: `🔴 Vencido (${diasMora}d mora)`,
+            estadoAlerta: diasMora > 15 ? 'Mora Crítica' : 'Vencido',
+            diffDays
+          };
+        } else if (diffDays === 0) {
+          return {
+            tipoPago: 'CRÉDITO',
+            diasCredito: diasCred,
+            fechaVencimiento: fVencFmt,
+            diasRestantesTexto: `🟡 Vence hoy (0d)`,
+            estadoAlerta: 'Vence Hoy',
+            diffDays
+          };
+        } else if (diffDays <= 5) {
+          return {
+            tipoPago: 'CRÉDITO',
+            diasCredito: diasCred,
+            fechaVencimiento: fVencFmt,
+            diasRestantesTexto: `🟡 Faltan ${diffDays} días (Por vencer)`,
+            estadoAlerta: 'Por Vencer',
+            diffDays
+          };
+        } else {
+          return {
+            tipoPago: 'CRÉDITO',
+            diasCredito: diasCred,
+            fechaVencimiento: fVencFmt,
+            diasRestantesTexto: `🟢 Faltan ${diffDays} días (En plazo)`,
+            estadoAlerta: 'En Plazo',
+            diffDays
+          };
+        }
+      };
+
+      const getMonedaTexto = (m) => {
+        const raw = String(m || '$/$').trim().toUpperCase();
+        if (raw.includes('BS') || raw.includes('VES')) {
+          return 'Bs (Bolívares)';
+        }
+        return '$ (Dólares)';
+      };
+
+      // Mapear cada ODC con toda su información
+      const itemsProcesados = todasPendientes.map(odc => {
+        const abonos = obtenerAbonosOdc(odc);
+        const totalAbonado = abonos.reduce((sum, a) => sum + (Number(a.monto) || 0), 0);
+        const totalOdc = Number(odc.total_general ?? odc.total ?? 0);
+        const saldoPendiente = Math.max(0, totalOdc - totalAbonado);
+        const vencInfo = getInfoVencimiento(odc);
+        const provObj = provMapById[String(odc.proveedor_id)] || provMapById[String(odc.proveedor_nombre || '').toUpperCase()];
+        const rifProv = odc.proveedor_rif || provObj?.rif || 'N/A';
+        const razonSocial = odc.proveedor_nombre || provObj?.razon_social || 'Proveedor no especificado';
+        const prioridadNivel = Number(odc.prioridad_pago) === 1 ? 'Nivel 1 (Emergencia)' : 'Nivel 2 (Normal)';
+        const monedaTexto = getMonedaTexto(odc.moneda);
+        const tieneAbonoTexto = totalAbonado > 0.01 ? `SÍ ($ ${totalAbonado.toFixed(2)})` : 'NO (Sin abonos)';
+
+        let fechaEmisionFmt = 'N/A';
+        if (odc.fecha_emision) {
+          try {
+            const d = new Date(odc.fecha_emision + (odc.fecha_emision.length <= 10 ? 'T12:00:00' : ''));
+            if (!isNaN(d.getTime())) {
+              fechaEmisionFmt = d.toLocaleDateString('es-VE', { day: '2-digit', month: '2-digit', year: 'numeric' });
+            }
+          } catch (_) {}
+        }
+
+        const estatusPago = saldoPendiente <= 0.01 ? 'PAGADO' : (totalAbonado > 0.01 ? 'PAGADO PARCIAL' : 'PENDIENTE');
+
+        const abonosDetalleStr = abonos.length > 0
+          ? abonos.map(a => `${formatearFechaHora(a.fecha).fecha}: $${Number(a.monto || 0).toFixed(2)} (Ref: ${a.referencia || 'S/R'})`).join(' | ')
+          : 'Sin abonos registrados';
+
+        return {
+          odc,
+          proveedor_nombre: razonSocial,
+          proveedor_rif: rifProv,
+          numero_odc: odc.numero_odc || 'S/N',
+          requisicion_correlativo: odc.requisicion_correlativo || 'N/A',
+          centro_costo: odc.centro_costo || 'General',
+          fecha_emision_fmt: fechaEmisionFmt,
+          tipo_pago: vencInfo.tipoPago,
+          dias_credito: vencInfo.diasCredito,
+          fecha_vencimiento_fmt: vencInfo.fechaVencimiento,
+          dias_restantes_texto: vencInfo.diasRestantesTexto,
+          estado_alerta: vencInfo.estadoAlerta,
+          diff_days: vencInfo.diffDays,
+          prioridad_nivel: prioridadNivel,
+          es_prioridad_1: Number(odc.prioridad_pago) === 1,
+          moneda_texto: monedaTexto,
+          total_odc: totalOdc,
+          total_abonado: totalAbonado,
+          saldo_pendiente: saldoPendiente,
+          tiene_abono_texto: tieneAbonoTexto,
+          estatus_pago: estatusPago,
+          abonos_detalle_str: abonosDetalleStr
+        };
+      });
+
+      // Ordenar detalle: Nivel 1 primero, luego créditos por vencimiento, luego contados
+      itemsProcesados.sort((a, b) => {
+        if (a.es_prioridad_1 !== b.es_prioridad_1) return a.es_prioridad_1 ? -1 : 1;
+        if (a.tipo_pago !== b.tipo_pago) return a.tipo_pago === 'CRÉDITO' ? -1 : 1;
+        return a.diff_days - b.diff_days;
+      });
+
+      // Agrupar por proveedor para la Hoja de Resumen
+      const agrupadoProveedores = {};
+      itemsProcesados.forEach(it => {
+        const key = it.proveedor_nombre.trim().toUpperCase();
+        if (!agrupadoProveedores[key]) {
+          agrupadoProveedores[key] = {
+            proveedor_nombre: it.proveedor_nombre,
+            proveedor_rif: it.proveedor_rif,
+            odcs_credito_count: 0,
+            odcs_contado_count: 0,
+            total_credito_monto: 0,
+            total_contado_monto: 0,
+            total_facturado: 0,
+            total_abonado: 0,
+            saldo_pendiente: 0,
+            tiene_vencidos: false,
+            tiene_por_vencer: false,
+            tiene_nivel_1: false
+          };
+        }
+        const grp = agrupadoProveedores[key];
+        if (it.tipo_pago === 'CRÉDITO') {
+          grp.odcs_credito_count += 1;
+          grp.total_credito_monto += it.total_odc;
+        } else {
+          grp.odcs_contado_count += 1;
+          grp.total_contado_monto += it.total_odc;
+        }
+        grp.total_facturado += it.total_odc;
+        grp.total_abonado += it.total_abonado;
+        grp.saldo_pendiente += it.saldo_pendiente;
+
+        if (it.estado_alerta === 'Vencido' || it.estado_alerta === 'Mora Crítica') grp.tiene_vencidos = true;
+        if (it.estado_alerta === 'Por Vencer' || it.estado_alerta === 'Vence Hoy') grp.tiene_por_vencer = true;
+        if (it.es_prioridad_1) grp.tiene_nivel_1 = true;
+      });
+
+      const listaResumenProveedores = Object.values(agrupadoProveedores).sort((a, b) => b.saldo_pendiente - a.saldo_pendiente);
+
+      // Crear Libro de Trabajo Excel
+      const workbook = new ExcelJS.Workbook();
+      workbook.creator = 'Total Clean C.A. - Cuentas por Pagar';
+      workbook.created = new Date();
+
+      const ahoraFmt = new Date().toLocaleString('es-VE', {
+        day: '2-digit', month: '2-digit', year: 'numeric',
+        hour: '2-digit', minute: '2-digit', hour12: true
+      });
+
+      // ==========================================
+      // HOJA 1: RESUMEN DEUDAS POR PROVEEDOR
+      // ==========================================
+      const wsResumen = workbook.addWorksheet('Resumen Deudas por Proveedor', {
+        views: [{ showGridLines: true }]
+      });
+
+      wsResumen.mergeCells('A1:J1');
+      const rTitle = wsResumen.getCell('A1');
+      rTitle.value = 'TOTAL CLEAN C.A. - REPORTE CONSOLIDADO DE DEUDAS POR PROVEEDOR';
+      rTitle.font = { name: 'Arial Black', size: 12, bold: true, color: { argb: 'FFFFFFFF' } };
+      rTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F172A' } };
+      rTitle.alignment = { vertical: 'middle', horizontal: 'center' };
+      wsResumen.getRow(1).height = 36;
+
+      wsResumen.mergeCells('A2:J2');
+      const rSubTitle = wsResumen.getCell('A2');
+      rSubTitle.value = `Cuentas por Pagar | Saldos Pendientes a Crédito y Contado | Generado el: ${ahoraFmt}`;
+      rSubTitle.font = { name: 'Arial', size: 9.5, italic: true, color: { argb: 'FFE2E8F0' } };
+      rSubTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+      rSubTitle.alignment = { vertical: 'middle', horizontal: 'center' };
+      wsResumen.getRow(2).height = 24;
+
+      const headersResumen = [
+        'PROVEEDOR (RAZÓN SOCIAL)',
+        'RIF',
+        'ODCs CRÉDITO',
+        'ODCs CONTADO',
+        'TOTAL CRÉDITO ($)',
+        'TOTAL CONTADO ($)',
+        'TOTAL COMPRAS ($)',
+        'TOTAL ABONADO ($)',
+        'SALDO DEUDA ($)',
+        'ESTADO DE CRÉDITO / ALERTA'
+      ];
+      wsResumen.addRow(headersResumen);
+      const hRowRes = wsResumen.getRow(3);
+      hRowRes.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 9.5 };
+      hRowRes.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF334155' } };
+      hRowRes.alignment = { horizontal: 'center', vertical: 'middle' };
+      wsResumen.getRow(3).height = 26;
+
+      listaResumenProveedores.forEach((p, idx) => {
+        let estadoTxt = '🟢 En Plazo / Al día';
+        let estadoColor = 'FF065F46';
+        let estadoBg = 'FFD1FAE5';
+
+        if (p.tiene_vencidos) {
+          estadoTxt = '🔴 TIENE ÓRDENES VENCIDAS (MORA)';
+          estadoColor = 'FF991B1B';
+          estadoBg = 'FFFEE2E2';
+        } else if (p.tiene_por_vencer) {
+          estadoTxt = '🟡 ÓRDENES POR VENCER (≤5d)';
+          estadoColor = 'FF854D0E';
+          estadoBg = 'FFFEF9C3';
+        } else if (p.odcs_credito_count === 0 && p.odcs_contado_count > 0) {
+          estadoTxt = '💵 CONTADO PENDIENTE DE PAGO';
+          estadoColor = 'FF0369A1';
+          estadoBg = 'FFE0F2FE';
+        }
+
+        const row = wsResumen.addRow([
+          p.proveedor_nombre,
+          p.proveedor_rif,
+          p.odcs_credito_count,
+          p.odcs_contado_count,
+          p.total_credito_monto,
+          p.total_contado_monto,
+          p.total_facturado,
+          p.total_abonado,
+          p.saldo_pendiente,
+          estadoTxt
+        ]);
+
+        const bgZebra = idx % 2 === 0 ? 'FFFFFFFF' : 'FFF8FAFC';
+        row.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bgZebra } };
+        row.height = 22;
+
+        row.getCell(2).alignment = { horizontal: 'center', vertical: 'middle' };
+        row.getCell(3).alignment = { horizontal: 'center', vertical: 'middle' };
+        row.getCell(4).alignment = { horizontal: 'center', vertical: 'middle' };
+        row.getCell(5).numFmt = '"$"#,##0.00';
+        row.getCell(6).numFmt = '"$"#,##0.00';
+        row.getCell(7).numFmt = '"$"#,##0.00';
+        row.getCell(8).numFmt = '"$"#,##0.00';
+        row.getCell(9).numFmt = '"$"#,##0.00';
+
+        row.getCell(9).font = { bold: true, color: { argb: 'FFDC2626' } };
+        row.getCell(10).alignment = { horizontal: 'center', vertical: 'middle' };
+        row.getCell(10).font = { bold: true, color: { argb: estadoColor }, size: 9 };
+        row.getCell(10).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: estadoBg } };
+
+        row.eachCell({ includeEmpty: true }, (cell) => {
+          cell.border = {
+            top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+            left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+            bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+            right: { style: 'thin', color: { argb: 'FFE2E8F0' } }
+          };
+        });
+      });
+
+      // Fila de Totales Hoja 1
+      const totalCreditoSuma = listaResumenProveedores.reduce((s, p) => s + p.total_credito_monto, 0);
+      const totalContadoSuma = listaResumenProveedores.reduce((s, p) => s + p.total_contado_monto, 0);
+      const totalFacturadoSuma = listaResumenProveedores.reduce((s, p) => s + p.total_facturado, 0);
+      const totalAbonadoSuma = listaResumenProveedores.reduce((s, p) => s + p.total_abonado, 0);
+      const totalSaldoDeudaSuma = listaResumenProveedores.reduce((s, p) => s + p.saldo_pendiente, 0);
+      const totalOdcCredCount = listaResumenProveedores.reduce((s, p) => s + p.odcs_credito_count, 0);
+      const totalOdcContCount = listaResumenProveedores.reduce((s, p) => s + p.odcs_contado_count, 0);
+
+      const totalRowRes = wsResumen.addRow([
+        'TOTAL GENERAL DEUDAS CXP:',
+        `${listaResumenProveedores.length} Proveedores`,
+        totalOdcCredCount,
+        totalOdcContCount,
+        totalCreditoSuma,
+        totalContadoSuma,
+        totalFacturadoSuma,
+        totalAbonadoSuma,
+        totalSaldoDeudaSuma,
+        'SALDO TOTAL COMPROMETIDO'
+      ]);
+      totalRowRes.height = 28;
+      totalRowRes.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
+      totalRowRes.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F172A' } };
+      totalRowRes.getCell(2).alignment = { horizontal: 'center', vertical: 'middle' };
+      totalRowRes.getCell(3).alignment = { horizontal: 'center', vertical: 'middle' };
+      totalRowRes.getCell(4).alignment = { horizontal: 'center', vertical: 'middle' };
+      totalRowRes.getCell(5).numFmt = '"$"#,##0.00';
+      totalRowRes.getCell(6).numFmt = '"$"#,##0.00';
+      totalRowRes.getCell(7).numFmt = '"$"#,##0.00';
+      totalRowRes.getCell(8).numFmt = '"$"#,##0.00';
+      totalRowRes.getCell(9).numFmt = '"$"#,##0.00';
+      totalRowRes.getCell(9).font = { bold: true, color: { argb: 'FFF87171' }, size: 11 };
+      totalRowRes.getCell(10).alignment = { horizontal: 'center', vertical: 'middle' };
+
+      wsResumen.columns = [
+        { width: 38 }, // Proveedor
+        { width: 16 }, // RIF
+        { width: 15 }, // ODCs Crédito
+        { width: 15 }, // ODCs Contado
+        { width: 18 }, // Total Crédito
+        { width: 18 }, // Total Contado
+        { width: 20 }, // Total Compras
+        { width: 18 }, // Total Abonado
+        { width: 22 }, // Saldo Deuda
+        { width: 34 }  // Estado Alerta
+      ];
+
+      // ==========================================
+      // HOJA 2: DETALLE ÓRDENES PENDIENTES
+      // ==========================================
+      const wsDetalle = workbook.addWorksheet('Detalle Órdenes Pendientes', {
+        views: [{ showGridLines: true }]
+      });
+
+      wsDetalle.mergeCells('A1:R1');
+      const dTitle = wsDetalle.getCell('A1');
+      dTitle.value = 'TOTAL CLEAN C.A. - DETALLE DE ÓRDENES DE COMPRA PENDIENTES DE PAGO';
+      dTitle.font = { name: 'Arial Black', size: 12, bold: true, color: { argb: 'FFFFFFFF' } };
+      dTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F172A' } };
+      dTitle.alignment = { vertical: 'middle', horizontal: 'center' };
+      wsDetalle.getRow(1).height = 36;
+
+      wsDetalle.mergeCells('A2:R2');
+      const dSubTitle = wsDetalle.getCell('A2');
+      dSubTitle.value = `Control Renglón por Renglón: Modalidad (Crédito/Contado), Días Restantes, Prioridad, Moneda ($/Bs) y Abonos Realizados | ${ahoraFmt}`;
+      dSubTitle.font = { name: 'Arial', size: 9.5, italic: true, color: { argb: 'FFE2E8F0' } };
+      dSubTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+      dSubTitle.alignment = { vertical: 'middle', horizontal: 'center' };
+      wsDetalle.getRow(2).height = 24;
+
+      const headersDetalle = [
+        'PROVEEDOR',
+        'RIF',
+        'N° ODC',
+        'REQUISICIÓN',
+        'CENTRO DE COSTO',
+        'FECHA EMISIÓN',
+        'MODALIDAD',
+        'DÍAS PACTADOS',
+        'FECHA VENCIMIENTO',
+        'DÍAS FALTANTES / PLAZO',
+        'PRIORIDAD',
+        'MONEDA PAGO',
+        'TOTAL ODC ($)',
+        'TOTAL ABONADO ($)',
+        'SALDO PENDIENTE ($)',
+        '¿TIENE ABONO?',
+        'ESTATUS PAGO',
+        'DETALLE DE ABONOS REGISTRADOS'
+      ];
+      wsDetalle.addRow(headersDetalle);
+      const hRowDet = wsDetalle.getRow(3);
+      hRowDet.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 9 };
+      hRowDet.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+      hRowDet.alignment = { horizontal: 'center', vertical: 'middle' };
+      wsDetalle.getRow(3).height = 26;
+
+      itemsProcesados.forEach((it, idx) => {
+        const row = wsDetalle.addRow([
+          it.proveedor_nombre,
+          it.proveedor_rif,
+          it.numero_odc,
+          it.requisicion_correlativo,
+          it.centro_costo,
+          it.fecha_emision_fmt,
+          it.tipo_pago,
+          it.dias_credito > 0 ? `${it.dias_credito} días` : (it.tipo_pago === 'CONTADO' ? 'Inmediato' : '0 días'),
+          it.fecha_vencimiento_fmt,
+          it.dias_restantes_texto,
+          it.prioridad_nivel,
+          it.moneda_texto,
+          it.total_odc,
+          it.total_abonado,
+          it.saldo_pendiente,
+          it.tiene_abono_texto,
+          it.estatus_pago,
+          it.abonos_detalle_str
+        ]);
+
+        row.height = 22;
+
+        let bgRow = idx % 2 === 0 ? 'FFFFFFFF' : 'FFF8FAFC';
+        if (it.estado_alerta === 'Vencido' || it.estado_alerta === 'Mora Crítica') {
+          bgRow = 'FFFFF1F2';
+        } else if (it.estado_alerta === 'Por Vencer' || it.estado_alerta === 'Vence Hoy') {
+          bgRow = 'FFFFFBEB';
+        }
+
+        row.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bgRow } };
+
+        row.getCell(2).alignment = { horizontal: 'center', vertical: 'middle' };
+        row.getCell(3).alignment = { horizontal: 'center', vertical: 'middle' };
+        row.getCell(4).alignment = { horizontal: 'center', vertical: 'middle' };
+        row.getCell(6).alignment = { horizontal: 'center', vertical: 'middle' };
+        row.getCell(7).alignment = { horizontal: 'center', vertical: 'middle' };
+        row.getCell(8).alignment = { horizontal: 'center', vertical: 'middle' };
+        row.getCell(9).alignment = { horizontal: 'center', vertical: 'middle' };
+        row.getCell(10).alignment = { horizontal: 'center', vertical: 'middle' };
+        row.getCell(11).alignment = { horizontal: 'center', vertical: 'middle' };
+        row.getCell(12).alignment = { horizontal: 'center', vertical: 'middle' };
+
+        row.getCell(13).numFmt = '"$"#,##0.00';
+        row.getCell(14).numFmt = '"$"#,##0.00';
+        row.getCell(15).numFmt = '"$"#,##0.00';
+        row.getCell(15).font = { bold: true, color: { argb: 'FFDC2626' } };
+
+        if (it.es_prioridad_1) {
+          row.getCell(11).font = { bold: true, color: { argb: 'FFDC2626' } };
+          row.getCell(11).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEE2E2' } };
+        } else {
+          row.getCell(11).font = { color: { argb: 'FF475569' } };
+        }
+
+        if (it.tipo_pago === 'CRÉDITO') {
+          row.getCell(7).font = { bold: true, color: { argb: 'FF0284C7' } };
+        } else {
+          row.getCell(7).font = { bold: true, color: { argb: 'FF16A34A' } };
+        }
+
+        row.getCell(16).alignment = { horizontal: 'center', vertical: 'middle' };
+        row.getCell(17).alignment = { horizontal: 'center', vertical: 'middle' };
+        if (it.total_abonado > 0.01) {
+          row.getCell(16).font = { bold: true, color: { argb: 'FF15803D' } };
+          row.getCell(17).font = { bold: true, color: { argb: 'FF92400E' } };
+        } else {
+          row.getCell(16).font = { color: { argb: 'FF64748B' } };
+          row.getCell(17).font = { bold: true, color: { argb: 'FFDC2626' } };
+        }
+
+        row.eachCell({ includeEmpty: true }, (cell) => {
+          cell.border = {
+            top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+            left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+            bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+            right: { style: 'thin', color: { argb: 'FFE2E8F0' } }
+          };
+        });
+      });
+
+      // Total general detalle
+      const totRowDet = wsDetalle.addRow([
+        'TOTAL PENDIENTES EN DETALLE:',
+        `${itemsProcesados.length} Órdenes`,
+        '', '', '', '', '', '', '', '', '', '',
+        itemsProcesados.reduce((s, it) => s + it.total_odc, 0),
+        itemsProcesados.reduce((s, it) => s + it.total_abonado, 0),
+        itemsProcesados.reduce((s, it) => s + it.saldo_pendiente, 0),
+        '', '', ''
+      ]);
+      totRowDet.height = 28;
+      totRowDet.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
+      totRowDet.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F172A' } };
+      totRowDet.getCell(2).alignment = { horizontal: 'center', vertical: 'middle' };
+      totRowDet.getCell(13).numFmt = '"$"#,##0.00';
+      totRowDet.getCell(14).numFmt = '"$"#,##0.00';
+      totRowDet.getCell(15).numFmt = '"$"#,##0.00';
+      totRowDet.getCell(15).font = { bold: true, color: { argb: 'FFF87171' }, size: 11 };
+
+      wsDetalle.columns = [
+        { width: 34 }, // Proveedor
+        { width: 15 }, // RIF
+        { width: 16 }, // N° ODC
+        { width: 16 }, // Requisición
+        { width: 24 }, // Centro de Costo
+        { width: 15 }, // Fecha Emisión
+        { width: 14 }, // Modalidad
+        { width: 15 }, // Días Pactados
+        { width: 18 }, // Fecha Vencimiento
+        { width: 28 }, // Días Faltantes / Plazo
+        { width: 22 }, // Prioridad
+        { width: 16 }, // Moneda Pago
+        { width: 18 }, // Total ODC
+        { width: 18 }, // Total Abonado
+        { width: 20 }, // Saldo Pendiente
+        { width: 18 }, // Tiene Abono
+        { width: 18 }, // Estatus Pago
+        { width: 45 }  // Detalle Abonos
+      ];
+
+      // Descargar archivo
+      const buffer = await workbook.xlsx.writeBuffer();
+      const fechaArchivo = new Date().toISOString().split('T')[0];
+      saveAs(new Blob([buffer]), `Reporte_Deudas_Pendientes_CxP_${fechaArchivo}.xlsx`);
+
+      toast.dismiss('rep-deuda');
+      toast.success('¡Reporte de deudas y órdenes de crédito descargado exitosamente!');
+    } catch (err) {
+      console.error('Error al exportar reporte de deudas CxP:', err);
+      toast.dismiss('rep-deuda');
+      toast.error('Error al generar el reporte Excel: ' + err.message);
+    } finally {
+      setExportandoReporte(false);
+    }
+  };
+
   return (
     <div className="liquidacion-container">
       {/* HEADER SECTION */}
@@ -1776,6 +2371,31 @@ const LiquidacionFacturas = ({ currentUser }) => {
         </div>
 
         <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+          <button
+            onClick={exportarReporteCreditoYDeudas}
+            disabled={exportandoReporte}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '9px 16px',
+              backgroundColor: '#059669',
+              color: '#ffffff',
+              border: '1.5px solid #047857',
+              borderRadius: '11px',
+              cursor: exportandoReporte ? 'wait' : 'pointer',
+              fontSize: '12.5px',
+              fontWeight: '800',
+              boxShadow: '0 4px 12px rgba(5, 150, 105, 0.2)',
+              transition: 'all 0.15s ease',
+              opacity: exportandoReporte ? 0.8 : 1
+            }}
+            title="Descargar reporte Excel de deudas pendientes por proveedor, plazos de crédito, nivel de prioridad y abonos"
+          >
+            <FileSpreadsheet size={15} color="#ffffff" />
+            <span>{exportandoReporte ? 'Generando...' : 'Reporte Deudas Proveedores'}</span>
+          </button>
+
           <button
             onClick={() => {
               setShowModalBancos(true);
@@ -1916,6 +2536,32 @@ const LiquidacionFacturas = ({ currentUser }) => {
             </button>
           );
         })}
+
+        <button
+          onClick={exportarReporteCreditoYDeudas}
+          disabled={exportandoReporte}
+          style={{
+            marginLeft: 'auto',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '8px',
+            fontWeight: '800',
+            fontSize: '0.84rem',
+            padding: '9px 16px',
+            borderRadius: '10px',
+            border: '1px solid #059669',
+            backgroundColor: '#059669',
+            color: '#ffffff',
+            cursor: exportandoReporte ? 'wait' : 'pointer',
+            boxShadow: '0 3px 10px rgba(5, 150, 105, 0.25)',
+            transition: 'all 0.15s ease',
+            opacity: exportandoReporte ? 0.8 : 1
+          }}
+          title="Descargar reporte Excel de deudas pendientes por proveedor, plazos y semáforos de crédito"
+        >
+          <FileSpreadsheet size={16} />
+          <span>{exportandoReporte ? 'Generando Excel...' : 'Bajar Reporte Deudas Excel'}</span>
+        </button>
       </div>
 
       {/* FILTER CONTROLS */}
@@ -2043,13 +2689,37 @@ const LiquidacionFacturas = ({ currentUser }) => {
       {/* MAIN DATA TABLES */}
       {(subtabCxp === 'todas' || subtabCxp === 'odc_credito') && (
         <div className="liquidacion-table-wrapper" style={{ marginBottom: '25px' }}>
-          <div style={{ padding: '16px 20px', backgroundColor: '#f0f9ff', borderBottom: '1px solid #bae6fd', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ padding: '16px 20px', backgroundColor: '#f0f9ff', borderBottom: '1px solid #bae6fd', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
             <span style={{ fontWeight: '900', color: '#0369a1', fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <CreditCard size={18} /> Órdenes de Compra a Crédito por Pagar ({odcsCreditoFiltradas.length})
             </span>
-            <span style={{ fontWeight: '900', color: '#0284c7', fontSize: '0.9rem' }}>
-              Total Crédito ODC: $ {totalOdcCreditoMonto.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
-            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+              <span style={{ fontWeight: '900', color: '#0284c7', fontSize: '0.9rem' }}>
+                Total Crédito ODC: $ {totalOdcCreditoMonto.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+              </span>
+              <button
+                onClick={exportarReporteCreditoYDeudas}
+                disabled={exportandoReporte}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '6px 14px',
+                  backgroundColor: '#0284c7',
+                  color: '#ffffff',
+                  border: '1px solid #0369a1',
+                  borderRadius: '9px',
+                  fontWeight: '800',
+                  fontSize: '0.78rem',
+                  cursor: exportandoReporte ? 'wait' : 'pointer',
+                  boxShadow: '0 2px 6px rgba(2, 132, 199, 0.25)'
+                }}
+                title="Descargar reporte de deudas y créditos en Excel"
+              >
+                <FileSpreadsheet size={14} />
+                <span>Exportar Reporte Excel</span>
+              </button>
+            </div>
           </div>
 
           {odcsCreditoFiltradas.length === 0 ? (
