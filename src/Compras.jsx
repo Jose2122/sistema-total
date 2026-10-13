@@ -8,8 +8,7 @@ import { format } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Loader2, Upload, FileText, MessageSquare, Paperclip, Clock, CheckCircle2, AlertCircle, ShoppingBag, ChevronDown, X, Landmark, Trash2 } from 'lucide-react';
 import { getSemanaInfo, getSemanaInfoForWeek, safeSupabaseInsert } from './utils/helpers';
-import { compressImage } from './utils/compressImage';
-import { obtenerTodosProveedores, asegurarProveedorEnBaseDeDatos } from './services/proveedoresService';
+import { obtenerTodosProveedores, invalidarCacheProveedores, asegurarProveedorEnBaseDeDatos } from './services/proveedoresService';
 import { consolidarSoportesRequisicion } from './services/requisicionesService';
 import './Requisiciones.css';
 import './ReportesMaestro.css';
@@ -628,10 +627,24 @@ const Compras = () => {
       };
     });
 
+    let defaultCtaStr = '';
+    if (provMatch?.cuentas_bancarias) {
+      let ctas = [];
+      if (Array.isArray(provMatch.cuentas_bancarias)) ctas = provMatch.cuentas_bancarias;
+      else if (typeof provMatch.cuentas_bancarias === 'string') {
+        try { ctas = JSON.parse(provMatch.cuentas_bancarias); } catch { ctas = []; }
+      }
+      if (ctas.length > 0) {
+        const c0 = ctas[0];
+        defaultCtaStr = `${c0.banco || 'Banco'} (${c0.moneda || 'USD'}) - N° Cuenta: ${c0.nro_cuenta || 'N/A'} - Titular: ${c0.titular || 'N/A'} (${c0.rif || 'N/A'}) ${c0.tipo_cuenta ? `[${c0.tipo_cuenta}]` : ''}`;
+      }
+    }
+
     setOdcForm({
       requisicion_id: requisicionActiva?.id || null,
       requisicion_correlativo: requisicionActiva?.correlativo_req || requisicionActiva?.correlativo || null,
       proveedor_id: provMatch ? provMatch.id : '',
+      cuenta_bancaria_proveedor: defaultCtaStr,
       tipo_pago: provMatch?.condicion_pago_defecto || 'CONTADO',
       dias_credito: provMatch?.dias_credito_habituales || provMatch?.dias_credito || 0,
       cotizacion_ref: '',
@@ -866,6 +879,10 @@ const Compras = () => {
 
       if (errItems) throw errItems;
 
+      if (!Array.isArray(renglones) || renglones.length === 0) {
+        throw new Error("No hay renglones cargados en la requisición activa.");
+      }
+
       const renglonesActualizados = renglones.map(r => {
         const itemOdc = odcForm.items.find(it => String(it.id) === String(r.id));
         if (itemOdc) {
@@ -897,6 +914,10 @@ const Compras = () => {
         return r;
       });
 
+      if (!renglonesActualizados || renglonesActualizados.length === 0) {
+        throw new Error("Error inesperado: los renglones procesados resultaron vacíos.");
+      }
+
       const nuevoStatus = renglonesActualizados.every(r => (parseFloat(r.cantidad_pendiente) || 0) <= 0 || r.anulado) 
         ? 'COMPLETADA' 
         : 'EN_PROCESO';
@@ -913,6 +934,12 @@ const Compras = () => {
 
       setRequisicionActiva(prev => prev ? { ...prev, items: renglonesActualizados, status_compra: nuevoStatus } : prev);
       setRenglones(renglonesActualizados);
+      setHistorial(prev => prev.map(h => h.id === requisicionActiva.id ? {
+        ...h,
+        items: renglonesActualizados,
+        detalles: renglonesActualizados,
+        status_compra: nuevoStatus
+      } : h));
       setShowOdcModal(false);
 
       toast.success(`🎉 Órden de Compra ${numero_odc} emitida con éxito.`);
@@ -927,10 +954,13 @@ const Compras = () => {
 
   const proveedoresFiltradosPorFila = (f) => {
     if (!f.categoria_proveedor) return proveedores;
+    const catFiltro = f.categoria_proveedor.toUpperCase().trim();
     return proveedores.filter(p => {
+      // Siempre incluir el proveedor actualmente seleccionado en la fila para que no se desmarque
+      if (f.proveedor_seleccionado_id && String(p.id) === String(f.proveedor_seleccionado_id)) return true;
       if (!p.categoria) return false;
       const pCats = String(p.categoria).split(',').map(c => c.trim().toUpperCase()).filter(Boolean);
-      return pCats.includes(f.categoria_proveedor.toUpperCase());
+      return pCats.some(c => c === catFiltro || c.includes(catFiltro) || catFiltro.includes(c));
     });
   };
 
@@ -1049,9 +1079,9 @@ const Compras = () => {
     }
   }, [zuleikaPerfil]);
 
-  const cargarProveedores = useCallback(async () => {
+  const cargarProveedores = useCallback(async (opts = {}) => {
     try {
-      const todos = await obtenerTodosProveedores();
+      const todos = await obtenerTodosProveedores(opts);
       setProveedores(todos || []);
     } catch (err) {
       console.error("Error cargando proveedores en Compras:", err);
@@ -1179,6 +1209,12 @@ const Compras = () => {
     const channel = supabase
       .channel('compras_realtime')
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'requisiciones' }, (payload) => {
+        if (payload?.new?.correlativo_req === 'SYS-PROVEEDORES-CENTRAL') {
+          invalidarCacheProveedores();
+          cargarProveedores({ forceRefresh: true });
+          return;
+        }
+
         setHistorial(prev => (prev || []).map(req => {
           if (req.id === payload.new.id) {
             const itemsArr = safeArray(payload.new.items);
@@ -1216,14 +1252,23 @@ const Compras = () => {
       .subscribe();
 
     const handleProvActualizados = () => {
-      cargarProveedores();
+      cargarProveedores({ forceRefresh: true });
     };
     window.addEventListener('proveedores_actualizados', handleProvActualizados);
+
+    const handleStorageChange = (e) => {
+      if (e.key === 'local_proveedores_registrados' || e.key === 'historial_modificaciones_proveedores') {
+        invalidarCacheProveedores();
+        cargarProveedores({ forceRefresh: true });
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
 
     return () => {
       supabase.removeChannel(channel);
       supabase.removeChannel(channelPresupuesto);
       window.removeEventListener('proveedores_actualizados', handleProvActualizados);
+      window.removeEventListener('storage', handleStorageChange);
     };
   }, [cargarRequisicionesAprobadas, cargarProveedores, cargarAnalistasCompras, cargarPresupuesto]);
 
@@ -1240,7 +1285,13 @@ const Compras = () => {
         filtroStatusCompra === 'Todos' ||
         (filtroStatusCompra === 'EnCursoHoy'
           ? (req.en_gestion_hoy && req.asignado_a === currentUser?.id)
-          : (req.status_compra || 'En espera') === filtroStatusCompra);
+          : filtroStatusCompra === 'EN_PROCESO'
+            ? ['EN_PROCESO', 'En Proceso', 'EN PROCESO'].includes(req.status_compra)
+            : filtroStatusCompra === 'Completado'
+              ? ['Completado', 'COMPLETADO', 'COMPLETADA'].includes(req.status_compra)
+              : filtroStatusCompra === 'Parcial'
+                ? req.status_compra === 'Parcial'
+                : (req.status_compra || 'En espera') === filtroStatusCompra);
 
       const matchCC = filtroCentroCosto === 'Todos' || req.centro_costo === filtroCentroCosto;
       const matchCat = filtroCategoria === 'Todos' || safeArray(req.items).some(it => it && it.categoria === filtroCategoria);
@@ -3927,12 +3978,13 @@ const Compras = () => {
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '15px', marginBottom: '25px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '15px', marginBottom: '25px' }}>
         {[
           { label: 'REQUISICIONES EN ESPERA', val: `${historial.filter(r => (r.status_compra || 'En espera') === 'En espera').length} No leídas`, col: '#030712', filter: 'En espera' },
-          { label: 'COMPRAS EN PROCESO', val: `${historial.filter(r => r.status_compra === 'Parcial').length} Parciales`, col: '#030712', filter: 'Parcial' },
+          { label: 'EN PROCESO', val: `${historial.filter(r => ['EN_PROCESO', 'En Proceso', 'EN PROCESO'].includes(r.status_compra)).length} En Proceso`, col: '#f59e0b', filter: 'EN_PROCESO' },
+          { label: 'COMPRAS PARCIALES', val: `${historial.filter(r => r.status_compra === 'Parcial').length} Parciales`, col: '#ea580c', filter: 'Parcial' },
           { label: 'EN CURSO (HOY) 📌', val: `${historial.filter(r => r.en_gestion_hoy && r.asignado_a === currentUser?.id).length} Marcadas`, col: '#3b82f6', filter: 'EnCursoHoy' },
-          { label: 'COMPRAS FINALIZADAS', val: `${historial.filter(r => r.status_compra === 'Completado').length} Completas`, col: '#030712', filter: 'Completado' },
+          { label: 'COMPRAS FINALIZADAS', val: `${historial.filter(r => ['Completado', 'COMPLETADO', 'COMPLETADA'].includes(r.status_compra)).length} Completas`, col: '#10b981', filter: 'Completado' },
         ].map((x, i) => (
           <div
             key={i}
@@ -3943,9 +3995,9 @@ const Compras = () => {
               backgroundColor: filtroStatusCompra === x.filter ? '#f8fafc' : 'white',
               padding: '18px',
               borderRadius: '12px',
-              boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
+              boxShadow: filtroStatusCompra === x.filter ? '0 4px 12px rgba(0,0,0,0.08)' : '0 2px 4px rgba(0,0,0,0.05)',
               transition: 'all 0.2s ease',
-              border: '1px solid #e2e8f0',
+              border: filtroStatusCompra === x.filter ? `2px solid ${x.col}` : '1px solid #e2e8f0',
               borderLeft: `6px solid ${x.col}`
             }}
           >
@@ -4479,9 +4531,25 @@ const Compras = () => {
                     const status = req.status_compra || 'En espera';
                     let bg = '#f1f5f9';
                     let color = '#475569';
-                    if (status === 'Completado') { bg = '#dcfce7'; color = '#15803d'; }
-                    else if (status === 'Parcial') { bg = '#ffedd5'; color = '#c2410c'; }
-                    else if (status === 'En espera') { bg = '#fef9c3'; color = '#a16207'; }
+                    let textoStatus = status;
+
+                    if (status === 'Completado' || status === 'COMPLETADA') { 
+                      bg = '#dcfce7'; 
+                      color = '#15803d'; 
+                      textoStatus = 'COMPLETADO';
+                    } else if (['EN_PROCESO', 'En Proceso', 'EN PROCESO'].includes(status)) { 
+                      bg = '#fef3c7'; 
+                      color = '#b45309'; 
+                      textoStatus = 'EN PROCESO';
+                    } else if (status === 'Parcial') { 
+                      bg = '#ffedd5'; 
+                      color = '#c2410c'; 
+                      textoStatus = 'PARCIAL';
+                    } else if (status === 'En espera') { 
+                      bg = '#fef9c3'; 
+                      color = '#a16207'; 
+                      textoStatus = 'EN ESPERA';
+                    }
 
                     return (
                       <span style={{
@@ -4493,9 +4561,10 @@ const Compras = () => {
                         fontWeight: '900',
                         textTransform: 'uppercase',
                         display: 'inline-block',
-                        minWidth: '85px'
+                        minWidth: '85px',
+                        boxShadow: '0 1px 2px rgba(0,0,0,0.04)'
                       }}>
-                        {status}
+                        {textoStatus}
                       </span>
                     );
                   })()}
@@ -4696,8 +4765,14 @@ const Compras = () => {
 
                   <div style={{ textAlign: 'right' }}>
                     <div style={{ fontSize: '0.65rem', fontWeight: 'bold', color: '#94a3b8', textTransform: 'uppercase' }}>Status de Compra</div>
-                    <div style={{ fontSize: '1.1rem', fontWeight: '900', color: requisicionActiva?.status_compra === 'Completado' ? '#15803d' : '#854d0e' }}>
-                      {requisicionActiva?.status_compra || 'EN ESPERA'}
+                    <div style={{ 
+                      fontSize: '1.1rem', 
+                      fontWeight: '900', 
+                      color: (requisicionActiva?.status_compra === 'Completado' || requisicionActiva?.status_compra === 'COMPLETADA')
+                        ? '#15803d' 
+                        : (['EN_PROCESO', 'En Proceso', 'EN PROCESO'].includes(requisicionActiva?.status_compra) ? '#b45309' : '#854d0e') 
+                    }}>
+                      {['EN_PROCESO', 'En Proceso', 'EN PROCESO'].includes(requisicionActiva?.status_compra) ? 'EN PROCESO' : (requisicionActiva?.status_compra || 'EN ESPERA')}
                     </div>
                     {requisicionActiva?.f_inicio_compras && (
                       <div style={{ fontSize: '0.7rem', color: '#64748b', marginTop: '6px', fontWeight: 'bold' }}>
@@ -4982,9 +5057,36 @@ const Compras = () => {
                                 disabled={f.cantidad_pendiente === 0 || f.anulado}
                               >
                                 <option value="">Proveedor</option>
-                                {proveedoresFiltradosPorFila(f).map(p => (
-                                  <option key={p.id} value={p.id}>{p.razon_social}</option>
-                                ))}
+                                {(() => {
+                                  const filtrados = proveedoresFiltradosPorFila(f);
+                                  const filtradosIds = new Set(filtrados.map(p => String(p.id)));
+                                  const otros = proveedores.filter(p => !filtradosIds.has(String(p.id)));
+
+                                  if (!f.categoria_proveedor || otros.length === 0) {
+                                    return proveedores.map(p => (
+                                      <option key={p.id} value={p.id}>{p.razon_social}</option>
+                                    ));
+                                  }
+
+                                  return (
+                                    <>
+                                      {filtrados.length > 0 && (
+                                        <optgroup label={`Sugeridos (${filtrados.length})`}>
+                                          {filtrados.map(p => (
+                                            <option key={p.id} value={p.id}>{p.razon_social}</option>
+                                          ))}
+                                        </optgroup>
+                                      )}
+                                      {otros.length > 0 && (
+                                        <optgroup label={`Todos los Proveedores (${otros.length})`}>
+                                          {otros.map(p => (
+                                            <option key={p.id} value={p.id}>{p.razon_social}</option>
+                                          ))}
+                                        </optgroup>
+                                      )}
+                                    </>
+                                  );
+                                })()}
                               </select>
                               <select
                                 className="input-tc focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
@@ -6025,14 +6127,45 @@ const Compras = () => {
                       }}
                     >
                       <option value="">Seleccione Proveedor...</option>
-                      {proveedoresOdcFiltrados.map(p => (
-                        <option key={p.id} value={p.id}>{p.razon_social} {p.rif ? `(${p.rif})` : ''}</option>
-                      ))}
+                      {(() => {
+                        const filtrados = proveedoresOdcFiltrados;
+                        const filtradosIds = new Set(filtrados.map(p => String(p.id)));
+                        const otros = proveedores.filter(p => !filtradosIds.has(String(p.id)));
+
+                        if (!filtroCatProvOdc || filtroCatProvOdc === 'TODAS' || otros.length === 0) {
+                          return proveedores.map(p => (
+                            <option key={p.id} value={p.id}>{p.razon_social} {p.rif ? `(${p.rif})` : ''}</option>
+                          ));
+                        }
+
+                        return (
+                          <>
+                            {filtrados.length > 0 && (
+                              <optgroup label={`Categoría: ${filtroCatProvOdc} (${filtrados.length})`}>
+                                {filtrados.map(p => (
+                                  <option key={p.id} value={p.id}>{p.razon_social} {p.rif ? `(${p.rif})` : ''}</option>
+                                ))}
+                              </optgroup>
+                            )}
+                            {otros.length > 0 && (
+                              <optgroup label={`Otros Proveedores (${otros.length})`}>
+                                {otros.map(p => (
+                                  <option key={p.id} value={p.id}>{p.razon_social} {p.rif ? `(${p.rif})` : ''}</option>
+                                ))}
+                              </optgroup>
+                            )}
+                          </>
+                        );
+                      })()}
                     </select>
 
                     {/* Chip Datos Contacto / Teléfono */}
                     {(() => {
-                      const provSel = proveedores.find(p => String(p.id) === String(odcForm.proveedor_id));
+                      const provSel = proveedores.find(p => 
+                        String(p.id) === String(odcForm.proveedor_id) ||
+                        (p.rif && odcForm.proveedor_rif && p.rif.trim().toUpperCase() === odcForm.proveedor_rif.trim().toUpperCase()) ||
+                        (p.razon_social && odcForm.proveedor_nombre && p.razon_social.trim().toUpperCase() === odcForm.proveedor_nombre.trim().toUpperCase())
+                      );
                       if (!provSel) return null;
                       const tel = provSel.telefono || provSel.contacto_telefono;
                       return (
@@ -6048,7 +6181,11 @@ const Compras = () => {
 
                 {/* Cuenta Bancaria de Destino */}
                 {(() => {
-                  const provSeleccionado = proveedores.find(p => String(p.id) === String(odcForm.proveedor_id));
+                  const provSeleccionado = proveedores.find(p => 
+                    String(p.id) === String(odcForm.proveedor_id) ||
+                    (p.rif && odcForm.proveedor_rif && p.rif.trim().toUpperCase() === odcForm.proveedor_rif.trim().toUpperCase()) ||
+                    (p.razon_social && odcForm.proveedor_nombre && p.razon_social.trim().toUpperCase() === odcForm.proveedor_nombre.trim().toUpperCase())
+                  );
                   let ctasProv = [];
                   if (provSeleccionado?.cuentas_bancarias) {
                     if (Array.isArray(provSeleccionado.cuentas_bancarias)) ctasProv = provSeleccionado.cuentas_bancarias;

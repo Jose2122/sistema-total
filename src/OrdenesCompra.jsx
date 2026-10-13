@@ -882,7 +882,11 @@ const OrdenesCompra = ({ currentUser }) => {
       const aplicaIva = (pctIva > 0) && (odc.iva_monto > 0 || odc.monto_iva > 0 || pctIva > 0);
 
       // Cuentas bancarias del proveedor
-      const provSeleccionado = (proveedoresList || []).find(p => String(p.id) === String(odc.proveedor_id));
+      const provSeleccionado = (proveedoresList || []).find(p => 
+        String(p.id) === String(odc.proveedor_id) ||
+        (p.rif && odc.proveedor_rif && p.rif.trim().toUpperCase() === odc.proveedor_rif.trim().toUpperCase()) ||
+        (p.razon_social && odc.proveedor_nombre && p.razon_social.trim().toUpperCase() === odc.proveedor_nombre.trim().toUpperCase())
+      );
       let ctasProv = [];
       if (provSeleccionado?.cuentas_bancarias) {
         if (Array.isArray(provSeleccionado.cuentas_bancarias)) ctasProv = provSeleccionado.cuentas_bancarias;
@@ -1329,70 +1333,100 @@ const OrdenesCompra = ({ currentUser }) => {
       if (errInsItems) throw errInsItems;
 
       // 3.1 Sincronizar trazabilidad en la Requisición de origen en Supabase
-      if (reqObjTarget) {
+      const targetReqId = reqObjTarget ? reqObjTarget.id : (editOdcTarget.requisicion_id && !isNaN(parseInt(editOdcTarget.requisicion_id)) ? parseInt(editOdcTarget.requisicion_id) : null);
+      if (targetReqId) {
         try {
-          const itemsReq = Array.isArray(reqObjTarget.items) ? reqObjTarget.items : (Array.isArray(reqObjTarget.detalles) ? reqObjTarget.detalles : []);
-          const itemsReqActualizados = itemsReq.map(r => {
-            const itemCoincidente = itemsValidos.find(it => String(it.requisicion_item_id) === String(r.id));
-            if (itemCoincidente) {
-              const historialPrevio = Array.isArray(r.historial_compras) ? r.historial_compras : [];
-              const yaExiste = historialPrevio.some(h => String(h.odc_id) === String(editOdcTarget.id) || h.odc_numero === editOdcTarget.numero_odc);
-              let historialActualizado = [];
-              if (yaExiste) {
-                historialActualizado = historialPrevio.map(h => {
-                  if (String(h.odc_id) === String(editOdcTarget.id) || h.odc_numero === editOdcTarget.numero_odc) {
-                    return {
-                      ...h,
-                      proveedor_nombre: editOdcTarget.proveedor_nombre || h.proveedor_nombre || 'Proveedor',
-                      cantidad: parseFloat(itemCoincidente.cantidad) || 0,
-                      cant: parseFloat(itemCoincidente.cantidad) || 0,
-                      pu: parseFloat(itemCoincidente.precio_unitario) || 0,
-                      pasa_por_almacen: itemPasaAlmacen,
-                      estatus_almacen: itemPasaAlmacen ? (h.estatus_almacen === 'no_aplica' ? 'Por_Clasificar_Almacen' : (h.estatus_almacen || 'Por_Clasificar_Almacen')) : 'no_aplica',
-                      ubicacion_almacen: itemPasaAlmacen ? (h.ubicacion_almacen === 'ENTREGA DIRECTA (Sin paso por almacén)' ? null : h.ubicacion_almacen) : 'ENTREGA DIRECTA (Sin paso por almacén)',
-                      usuario: `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim()
-                    };
-                  }
-                  return h;
-                });
-              } else {
-                historialActualizado = [
-                  ...historialPrevio,
-                  {
-                    fecha: new Date().toISOString(),
-                    tipo: 'ODC',
-                    odc_numero: editOdcTarget.numero_odc,
-                    odc_id: editOdcTarget.id,
-                    proveedor_nombre: editOdcTarget.proveedor_nombre || 'Proveedor',
-                    cantidad: parseFloat(itemCoincidente.cantidad) || 0,
-                    cant: parseFloat(itemCoincidente.cantidad) || 0,
-                    pu: parseFloat(itemCoincidente.precio_unitario) || 0,
-                    pasa_por_almacen: itemPasaAlmacen,
-                    estatus_almacen: itemPasaAlmacen ? 'Por_Clasificar_Almacen' : 'no_aplica',
-                    ubicacion_almacen: itemPasaAlmacen ? null : 'ENTREGA DIRECTA (Sin paso por almacén)',
-                    usuario: `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim()
-                  }
-                ];
-              }
-              return {
-                ...r,
-                pasa_por_almacen: itemPasaAlmacen,
-                estatus_almacen: itemPasaAlmacen ? (r.estatus_almacen === 'no_aplica' ? 'Por_Clasificar_Almacen' : (r.estatus_almacen || 'Por_Clasificar_Almacen')) : 'no_aplica',
-                ubicacion_almacen: itemPasaAlmacen ? (r.ubicacion_almacen === 'ENTREGA DIRECTA (Sin paso por almacén)' ? null : r.ubicacion_almacen) : 'ENTREGA DIRECTA (Sin paso por almacén)',
-                historial_compras: historialActualizado
-              };
-            }
-            return r;
-          });
-
-          await supabase
+          const { data: dbReqData, error: errFetchReq } = await supabase
             .from('requisiciones')
-            .update({
-              items: itemsReqActualizados,
-              f_inicio_compras: reqObjTarget.f_inicio_compras || new Date().toISOString(),
-              status_compra: 'EN_PROCESO'
-            })
-            .eq('id', reqObjTarget.id);
+            .select('id, items, f_inicio_compras, status_compra')
+            .eq('id', targetReqId)
+            .maybeSingle();
+
+          if (!errFetchReq && dbReqData) {
+            let rawItems = [];
+            if (Array.isArray(dbReqData.items)) {
+              rawItems = dbReqData.items;
+            } else if (typeof dbReqData.items === 'string') {
+              try { rawItems = JSON.parse(dbReqData.items); } catch { rawItems = []; }
+            }
+
+            // PROTECCIÓN CRÍTICA: Si rawItems tiene productos, mapeamos y sincronizamos sin riesgo de pérdida de datos
+            if (Array.isArray(rawItems) && rawItems.length > 0) {
+              const itemsReqActualizados = rawItems.map(r => {
+                const itemCoincidente = itemsValidos.find(it => 
+                  (it.requisicion_item_id && String(it.requisicion_item_id) === String(r.id)) ||
+                  (it.descripcion && r.descripcion && it.descripcion.trim().toUpperCase() === r.descripcion.trim().toUpperCase())
+                );
+                if (itemCoincidente) {
+                  const historialPrevio = Array.isArray(r.historial_compras) ? r.historial_compras : [];
+                  const yaExiste = historialPrevio.some(h => String(h.odc_id) === String(editOdcTarget.id) || h.odc_numero === editOdcTarget.numero_odc);
+                  let historialActualizado = [];
+                  if (yaExiste) {
+                    historialActualizado = historialPrevio.map(h => {
+                      if (String(h.odc_id) === String(editOdcTarget.id) || h.odc_numero === editOdcTarget.numero_odc) {
+                        return {
+                          ...h,
+                          proveedor_nombre: editOdcTarget.proveedor_nombre || h.proveedor_nombre || 'Proveedor',
+                          cantidad: parseFloat(itemCoincidente.cantidad) || 0,
+                          cant: parseFloat(itemCoincidente.cantidad) || 0,
+                          pu: parseFloat(itemCoincidente.precio_unitario) || 0,
+                          pasa_por_almacen: itemPasaAlmacen,
+                          estatus_almacen: itemPasaAlmacen ? (h.estatus_almacen === 'no_aplica' ? 'Por_Clasificar_Almacen' : (h.estatus_almacen || 'Por_Clasificar_Almacen')) : 'no_aplica',
+                          ubicacion_almacen: itemPasaAlmacen ? (h.ubicacion_almacen === 'ENTREGA DIRECTA (Sin paso por almacén)' ? null : h.ubicacion_almacen) : 'ENTREGA DIRECTA (Sin paso por almacén)',
+                          usuario: `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim()
+                        };
+                      }
+                      return h;
+                    });
+                  } else {
+                    historialActualizado = [
+                      ...historialPrevio,
+                      {
+                        fecha: new Date().toISOString(),
+                        tipo: 'ODC',
+                        odc_numero: editOdcTarget.numero_odc,
+                        odc_id: editOdcTarget.id,
+                        proveedor_nombre: editOdcTarget.proveedor_nombre || 'Proveedor',
+                        cantidad: parseFloat(itemCoincidente.cantidad) || 0,
+                        cant: parseFloat(itemCoincidente.cantidad) || 0,
+                        pu: parseFloat(itemCoincidente.precio_unitario) || 0,
+                        pasa_por_almacen: itemPasaAlmacen,
+                        estatus_almacen: itemPasaAlmacen ? 'Por_Clasificar_Almacen' : 'no_aplica',
+                        ubicacion_almacen: itemPasaAlmacen ? null : 'ENTREGA DIRECTA (Sin paso por almacén)',
+                        usuario: `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim()
+                      }
+                    ];
+                  }
+                  return {
+                    ...r,
+                    pasa_por_almacen: itemPasaAlmacen,
+                    estatus_almacen: itemPasaAlmacen ? (r.estatus_almacen === 'no_aplica' ? 'Por_Clasificar_Almacen' : (r.estatus_almacen || 'Por_Clasificar_Almacen')) : 'no_aplica',
+                    ubicacion_almacen: itemPasaAlmacen ? (r.ubicacion_almacen === 'ENTREGA DIRECTA (Sin paso por almacén)' ? null : r.ubicacion_almacen) : 'ENTREGA DIRECTA (Sin paso por almacén)',
+                    historial_compras: historialActualizado
+                  };
+                }
+                return r;
+              });
+
+              await supabase
+                .from('requisiciones')
+                .update({
+                  items: itemsReqActualizados,
+                  f_inicio_compras: dbReqData.f_inicio_compras || new Date().toISOString(),
+                  status_compra: 'EN_PROCESO'
+                })
+                .eq('id', targetReqId);
+            } else {
+              // Si no hay items en el objeto, únicamente actualizar el estatus de compra sin tocar items
+              await supabase
+                .from('requisiciones')
+                .update({
+                  f_inicio_compras: dbReqData.f_inicio_compras || new Date().toISOString(),
+                  status_compra: 'EN_PROCESO'
+                })
+                .eq('id', targetReqId);
+            }
+          }
         } catch (syncErr) {
           console.warn("Aviso al sincronizar requisición de origen:", syncErr);
         }
@@ -4183,7 +4217,11 @@ const OrdenesCompra = ({ currentUser }) => {
 
                     {/* Cuenta Bancaria de Destino del Proveedor */}
                     {(() => {
-                      const provSeleccionado = proveedoresList.find(p => String(p.id) === String(editOdcTarget.proveedor_id));
+                      const provSeleccionado = (proveedoresList || []).find(p => 
+                        String(p.id) === String(editOdcTarget.proveedor_id) ||
+                        (p.rif && editOdcTarget.proveedor_rif && p.rif.trim().toUpperCase() === editOdcTarget.proveedor_rif.trim().toUpperCase()) ||
+                        (p.razon_social && editOdcTarget.proveedor_nombre && p.razon_social.trim().toUpperCase() === editOdcTarget.proveedor_nombre.trim().toUpperCase())
+                      );
                       let ctasProv = [];
                       if (provSeleccionado?.cuentas_bancarias) {
                         if (Array.isArray(provSeleccionado.cuentas_bancarias)) ctasProv = provSeleccionado.cuentas_bancarias;
@@ -5299,11 +5337,12 @@ const OrdenesCompra = ({ currentUser }) => {
               display: 'flex',
               justifyContent: 'space-between',
               alignItems: 'center',
-              padding: '16px 24px',
+              padding: '16px 70px 16px 24px',
               borderBottom: '1px solid #e2e8f0',
               backgroundColor: '#f8fafc',
               flexWrap: 'wrap',
-              gap: '12px'
+              gap: '12px',
+              position: 'relative'
             }}>
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -5366,30 +5405,33 @@ const OrdenesCompra = ({ currentUser }) => {
                 >
                   <Download size={16} /> 📥 Descargar PDF
                 </motion.button>
-
-                <motion.button
-                  type="button"
-                  onClick={cerrarVistaPreviaPDF}
-                  whileHover={{ scale: 1.1, rotate: 90 }}
-                  whileTap={{ scale: 0.9 }}
-                  style={{
-                    background: '#e2e8f0',
-                    border: 'none',
-                    borderRadius: '50%',
-                    width: '36px',
-                    height: '36px',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    color: '#475569',
-                    marginLeft: '8px'
-                  }}
-                  title="Cerrar vista previa"
-                >
-                  <XCircle size={20} />
-                </motion.button>
               </div>
+
+              {/* Botón cerrar fijado en la esquina superior derecha */}
+              <motion.button
+                type="button"
+                onClick={cerrarVistaPreviaPDF}
+                whileHover={{ scale: 1.1, rotate: 90 }}
+                whileTap={{ scale: 0.9 }}
+                style={{
+                  position: 'absolute',
+                  top: '16px',
+                  right: '20px',
+                  background: '#e2e8f0',
+                  border: 'none',
+                  borderRadius: '50%',
+                  width: '36px',
+                  height: '36px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: '#475569'
+                }}
+                title="Cerrar vista previa"
+              >
+                <XCircle size={20} />
+              </motion.button>
             </div>
 
             {/* Contenido del PDF en iframe */}

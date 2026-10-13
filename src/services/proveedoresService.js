@@ -176,7 +176,17 @@ export const sonProveedoresCoincidentes = (provObjOrNameA, provObjOrNameB) => {
   if (cRifA.nums.length >= 7 && cRifB.nums.length >= 7) {
     const sonRifsIguales = (cRifA.nums === cRifB.nums) || 
       (Math.abs(cRifA.nums.length - cRifB.nums.length) === 1 && (cRifA.nums.startsWith(cRifB.nums) || cRifB.nums.startsWith(cRifA.nums)));
-    return sonRifsIguales;
+    if (sonRifsIguales) return true;
+
+    // Si los RIFs numéricos difieren pero el nombre normalizado de la empresa es exactamente idéntico
+    // y representativo (no genérico), corresponden a la misma empresa (ej. corrección o actualización de RIF)
+    const nameA = typeof provObjOrNameA === 'object' ? (provObjOrNameA?.razon_social || provObjOrNameA?.proveedor_nombre || provObjOrNameA?.nombre || '') : String(provObjOrNameA);
+    const nameB = typeof provObjOrNameB === 'object' ? (provObjOrNameB?.razon_social || provObjOrNameB?.proveedor_nombre || provObjOrNameB?.nombre || '') : String(provObjOrNameB);
+    const cleanA = normalizarNombreEmpresa(nameA);
+    const cleanB = normalizarNombreEmpresa(nameB);
+    if (cleanA && cleanB && cleanA === cleanB && cleanA.length >= 4 && !GENERIC_WORDS_SUPPLIERS.has(cleanA)) {
+      return true;
+    }
   }
 
   if (cRifA.raw && cRifB.raw && cRifA.raw.length >= 7 && cRifA.raw === cRifB.raw) {
@@ -389,44 +399,47 @@ export const fusionarProveedor = (base = {}, nuevo = {}) => {
     }
   });
 
-  // Manejo inteligente de Categoría: las categorías específicas válidas siempre tienen prioridad sobre 'OTROS' o vacío
-  const esCatValida = (c) => {
-    if (!c) return false;
-    const str = (Array.isArray(c) ? c.join(', ') : String(c)).trim().toUpperCase();
-    return str && str !== 'OTROS' && str !== 'SIN CATEGORIA' && str !== 'SIN CATEGORÍA' && str !== 'N/A' && str !== 'NULL' && str !== '—';
+  // Manejo inteligente de Categoría: combinar categorías válidas sin perder especialidades previas
+  const extraerCategorias = (catRaw) => {
+    if (!catRaw) return [];
+    const arr = Array.isArray(catRaw) ? catRaw : String(catRaw).split(',');
+    return arr
+      .map(c => String(c).trim().toUpperCase())
+      .filter(c => c && c !== 'OTROS' && c !== 'SIN CATEGORIA' && c !== 'SIN CATEGORÍA' && c !== 'N/A' && c !== 'NULL' && c !== '—');
   };
 
-  const catBase = (Array.isArray(base.categoria) ? base.categoria.join(', ') : (base.categoria || '')).trim();
-  const catNuevo = (Array.isArray(nuevo.categoria) ? nuevo.categoria.join(', ') : (nuevo.categoria || '')).trim();
+  const catsBase = extraerCategorias(base.categoria);
+  const catsNuevo = extraerCategorias(nuevo.categoria);
+  const unidasCats = Array.from(new Set([...catsNuevo, ...catsBase]));
+  merged.categoria = unidasCats.length > 0 ? unidasCats.join(', ') : 'OTROS';
 
-  if (esCatValida(catNuevo)) {
-    merged.categoria = catNuevo;
-  } else if (esCatValida(catBase)) {
-    merged.categoria = catBase;
-  } else if (catNuevo && catNuevo.toUpperCase() !== 'NULL') {
-    merged.categoria = catNuevo;
-  } else if (catBase && catBase.toUpperCase() !== 'NULL') {
-    merged.categoria = catBase;
+  // Priorizar cuentas bancarias: unificar sin duplicados por banco y número de cuenta
+  const ctasBase = parseCuentasBancarias(base.cuentas_bancarias);
+  const ctasNuevo = parseCuentasBancarias(nuevo.cuentas_bancarias);
+  if (ctasNuevo.length > 0 || ctasBase.length > 0) {
+    const mapC = new Map();
+    [...ctasNuevo, ...ctasBase].forEach(c => {
+      const numLimpio = String(c?.nro_cuenta || '').replace(/[^0-9]/g, '');
+      const bLimpio = String(c?.banco || '').trim().toUpperCase();
+      const k = numLimpio ? `${bLimpio}-${numLimpio}` : `${bLimpio}-${c?.titular || ''}`;
+      if (!mapC.has(k)) mapC.set(k, c);
+    });
+    merged.cuentas_bancarias = Array.from(mapC.values());
   } else {
-    merged.categoria = 'OTROS';
+    merged.cuentas_bancarias = [];
   }
 
-  // Priorizar RIF formateado y completo
+  // Priorizar RIF formateado, válido y con cuentas bancarias asociadas
   const rifBase = (base.rif || '').trim().toUpperCase();
   const rifNuevo = (nuevo.rif || '').trim().toUpperCase();
-  if (rifNuevo && rifNuevo !== 'SIN RIF') {
+  if (ctasNuevo.length > 0 && rifNuevo && rifNuevo !== 'SIN RIF') {
+    merged.rif = rifNuevo;
+  } else if (ctasBase.length > 0 && rifBase && rifBase !== 'SIN RIF') {
+    merged.rif = rifBase;
+  } else if (rifNuevo && rifNuevo !== 'SIN RIF') {
     merged.rif = rifNuevo;
   } else if (rifBase && rifBase !== 'SIN RIF') {
     merged.rif = rifBase;
-  }
-
-  // Priorizar cuentas bancarias
-  const ctasBase = parseCuentasBancarias(base.cuentas_bancarias);
-  const ctasNuevo = parseCuentasBancarias(nuevo.cuentas_bancarias);
-  if (ctasNuevo.length > 0) {
-    merged.cuentas_bancarias = ctasNuevo;
-  } else if (ctasBase.length > 0) {
-    merged.cuentas_bancarias = ctasBase;
   }
 
   // ID numérico de Supabase tiene prioridad sobre IDs temporales/históricos

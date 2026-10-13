@@ -691,10 +691,21 @@ const Proveedores = ({ currentUser }) => {
         );
       }
 
+      // Preservar y unificar categorías preexistentes en edición para no perder rubros del proveedor
+      let preCats = [];
+      if (esEdicion) {
+        const provExistente = proveedores.find(p => sonProveedoresCoincidentes(p, formData));
+        if (provExistente?.categoria) {
+          const arr = Array.isArray(provExistente.categoria) ? provExistente.categoria : String(provExistente.categoria).split(',');
+          preCats = arr.map(c => String(c).trim().toUpperCase()).filter(c => c && c !== 'OTROS' && c !== 'NULL');
+        }
+      }
+
       const catsLimpias = (Array.isArray(formData.categoria) ? formData.categoria : (formData.categoria ? [formData.categoria] : []))
         .map(c => String(c).trim().toUpperCase())
         .filter(Boolean);
-      const categoriaFinal = catsLimpias.length > 0 ? (catsLimpias.length > 1 ? catsLimpias.filter(c => c !== 'OTROS') : catsLimpias) : ['OTROS'];
+      const todasLasCats = Array.from(new Set([...catsLimpias, ...preCats]));
+      const categoriaFinal = todasLasCats.length > 0 ? (todasLasCats.length > 1 ? todasLasCats.filter(c => c !== 'OTROS') : todasLasCats) : ['OTROS'];
 
       const provAGuardar = {
         ...formData,

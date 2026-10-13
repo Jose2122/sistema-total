@@ -603,7 +603,9 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
               : req.estado_aprobacion === filtroAprobacion);
       const matchCategoria = filtroCategoria === 'Todos' || (req.detalles && req.detalles.some(d => d.categoria === filtroCategoria));
       const matchCC = filtroCC === 'Todos' || req.centroCosto.includes(filtroCC);
-      const matchStatusCompra = filtroStatusCompra === 'Todos' || req.status.toUpperCase() === filtroStatusCompra.toUpperCase();
+      const sReq = (req.status || '').replace(/_/g, ' ').toUpperCase();
+      const sFiltro = filtroStatusCompra.replace(/_/g, ' ').toUpperCase();
+      const matchStatusCompra = filtroStatusCompra === 'Todos' || sReq === sFiltro;
       const matchSolicitante = filtroSolicitante === 'Todos' || req.solicitante === filtroSolicitante;
 
       let matchFecha = true;
@@ -3224,6 +3226,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
           >
             <option value="Todos">Estatus de Compra</option>
             <option value="EN ESPERA">EN ESPERA</option>
+            <option value="EN PROCESO">EN PROCESO</option>
             <option value="PARCIAL">PARCIAL</option>
             <option value="COMPLETADO">COMPLETADO</option>
           </select>
@@ -3570,19 +3573,34 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                 </td>
 
                 <td data-label="STATUS COMPRA" style={{ textAlign: 'center', verticalAlign: 'middle' }}>
-                  {req.estado_aprobacion === 'ANULADA' ? '-' : (
-                    <span style={{
-                      backgroundColor: req.status?.toUpperCase() === 'COMPLETADO' ? '#ECFDF5' : '#FFF9E6',
-                      color: req.status?.toUpperCase() === 'COMPLETADO' ? '#065F46' : '#B25E00',
-                      fontSize: '11px',
-                      fontWeight: '500',
-                      padding: '4px 10px',
-                      borderRadius: '6px',
-                      display: 'inline-block'
-                    }}>
-                      {req.status}
-                    </span>
-                  )}
+                  {req.estado_aprobacion === 'ANULADA' ? '-' : (() => {
+                    const stNorm = (req.status || '').replace(/_/g, ' ').toUpperCase();
+                    let bg = '#FFF9E6';
+                    let col = '#B25E00';
+                    if (stNorm === 'COMPLETADO') {
+                      bg = '#ECFDF5';
+                      col = '#065F46';
+                    } else if (stNorm === 'EN PROCESO') {
+                      bg = '#FEF3C7';
+                      col = '#B45309';
+                    } else if (stNorm === 'PARCIAL') {
+                      bg = '#FFEDD5';
+                      col = '#C2410C';
+                    }
+                    return (
+                      <span style={{
+                        backgroundColor: bg,
+                        color: col,
+                        fontSize: '11px',
+                        fontWeight: '600',
+                        padding: '4px 10px',
+                        borderRadius: '6px',
+                        display: 'inline-block'
+                      }}>
+                        {stNorm || 'EN ESPERA'}
+                      </span>
+                    );
+                  })()}
                 </td>
 
                 <td data-label="ACCIONES" style={{ textAlign: 'center', verticalAlign: 'middle' }}>

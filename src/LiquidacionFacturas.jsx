@@ -27,12 +27,14 @@ import {
   RefreshCw,
   Copy,
   FileSpreadsheet,
-  Download
+  Download,
+  Calculator
 } from 'lucide-react';
 import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
 import './LiquidacionFacturas.css';
 import { compressImage } from './utils/compressImage';
+import CalculoRetencionesFiscales from './components/CalculoRetencionesFiscales';
 
 // Helper to parse safe JSON array for items
 const parsearItems = (itemsField) => {
@@ -150,7 +152,9 @@ const LiquidacionFacturas = ({ currentUser }) => {
   const [proveedores, setProveedores] = useState([]);
   const [filtroTipoProveedor, setFiltroTipoProveedor] = useState('Todos');
   const [filtroProveedor, setFiltroProveedor] = useState('Todos');
-  const [subtabCxp, setSubtabCxp] = useState('todas'); // 'todas', 'facturas', 'odc_credito', 'odc_contado', 'historico'
+  const [subtabCxp, setSubtabCxp] = useState('todas'); // 'todas', 'retenciones', 'facturas', 'odc_credito', 'odc_contado', 'historico'
+  const [odcParaRetencion, setOdcParaRetencion] = useState(null);
+  const [facturaParaRetencion, setFacturaParaRetencion] = useState(null);
   const [filtroSemaforo, setFiltroSemaforo] = useState('Todos'); // 'Todos', 'En Plazo', 'Por Vencer', 'Vencidos'
   const [filtroPrioridadOdc, setFiltroPrioridadOdc] = useState('todas'); // 'todas', '1', '2'
   const [exportandoReporte, setExportandoReporte] = useState(false);
@@ -2494,6 +2498,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
       <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
         {[
           { id: 'todas', icon: '🔍', label: 'Cuentas por Pagar Consolidadas', count: facturasFiltradas.length + odcsCreditoFiltradas.length + odcsContadoFiltradas.length },
+          { id: 'retenciones', icon: '⚖️', label: 'Cálculo de Retenciones (IVA e ISLR) y Tasas', count: null },
           { id: 'facturas', icon: '📜', label: 'Facturas de Procura', count: facturasFiltradas.length },
           { id: 'odc_credito', icon: '💳', label: 'Órdenes a Crédito', count: odcsCreditoFiltradas.length },
           { id: 'odc_contado', icon: '💵', label: 'Órdenes a Contado', count: odcsContadoFiltradas.length },
@@ -2521,18 +2526,20 @@ const LiquidacionFacturas = ({ currentUser }) => {
               }}
             >
               <span>{tab.icon} {tab.label}</span>
-              <span
-                style={{
-                  fontSize: '0.72rem',
-                  fontWeight: '900',
-                  padding: '2px 7px',
-                  borderRadius: '10px',
-                  backgroundColor: isActive ? 'rgba(255, 255, 255, 0.2)' : '#f1f5f9',
-                  color: isActive ? '#ffffff' : '#334155'
-                }}
-              >
-                {tab.count}
-              </span>
+              {tab.count !== null && tab.count !== undefined && (
+                <span
+                  style={{
+                    fontSize: '0.72rem',
+                    fontWeight: '900',
+                    padding: '2px 7px',
+                    borderRadius: '10px',
+                    backgroundColor: isActive ? 'rgba(255, 255, 255, 0.2)' : '#f1f5f9',
+                    color: isActive ? '#ffffff' : '#334155'
+                  }}
+                >
+                  {tab.count}
+                </span>
+              )}
             </button>
           );
         })}
@@ -2565,6 +2572,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
       </div>
 
       {/* FILTER CONTROLS */}
+      {subtabCxp !== 'retenciones' && (
       <div className="liquidacion-filters-card">
         <div className="liquidacion-search-wrapper">
           <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
@@ -2685,6 +2693,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
           )}
         </div>
       </div>
+      )}
 
       {/* MAIN DATA TABLES */}
       {(subtabCxp === 'todas' || subtabCxp === 'odc_credito') && (
@@ -2892,6 +2901,18 @@ const LiquidacionFacturas = ({ currentUser }) => {
                           >
                             <CreditCard size={15} />
                           </button>
+                          <button
+                            className="liquidacion-action-btn"
+                            style={{ backgroundColor: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe' }}
+                            title="Calcular Retenciones Fiscales (IVA e ISLR) y Tipos de Cambio"
+                            onClick={() => {
+                              setOdcParaRetencion(odc);
+                              setFacturaParaRetencion(null);
+                              setSubtabCxp('retenciones');
+                            }}
+                          >
+                            <Calculator size={15} />
+                          </button>
                           <select
                             style={{ padding: '5px 8px', fontSize: '0.72rem', fontWeight: '800', borderRadius: '8px', border: '1px solid #cbd5e1', cursor: 'pointer', backgroundColor: '#f8fafc' }}
                             value={statusActual}
@@ -2985,6 +3006,18 @@ const LiquidacionFacturas = ({ currentUser }) => {
                       onClick={() => setInvoiceSeleccionada(fac)}
                     >
                       <Eye size={15} />
+                    </button>
+                    <button
+                      className="liquidacion-action-btn"
+                      style={{ backgroundColor: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe' }}
+                      title="Calcular Retenciones Fiscales (IVA e ISLR)"
+                      onClick={() => {
+                        setFacturaParaRetencion(fac);
+                        setOdcParaRetencion(null);
+                        setSubtabCxp('retenciones');
+                      }}
+                    >
+                      <Calculator size={15} />
                     </button>
                     {fac.saldo_pendiente > 0.01 && (
                       <button
@@ -3176,6 +3209,18 @@ const LiquidacionFacturas = ({ currentUser }) => {
                           >
                             <CreditCard size={15} />
                           </button>
+                          <button
+                            className="liquidacion-action-btn"
+                            style={{ backgroundColor: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe' }}
+                            title="Calcular Retenciones Fiscales (IVA e ISLR) y Tipos de Cambio"
+                            onClick={() => {
+                              setOdcParaRetencion(odc);
+                              setFacturaParaRetencion(null);
+                              setSubtabCxp('retenciones');
+                            }}
+                          >
+                            <Calculator size={15} />
+                          </button>
                           <select
                             style={{ padding: '5px 8px', fontSize: '0.72rem', fontWeight: '800', borderRadius: '8px', border: '1px solid #cbd5e1', cursor: 'pointer', backgroundColor: '#f8fafc' }}
                             value={statusActual}
@@ -3364,6 +3409,23 @@ const LiquidacionFacturas = ({ currentUser }) => {
               </tbody>
             </table>
           )}
+        </div>
+      )}
+
+      {/* SUBMÓDULO ESPECIALIZADO: CÁLCULO DE RETENCIONES (IVA E ISLR) Y TIPOS DE CAMBIO */}
+      {subtabCxp === 'retenciones' && (
+        <div style={{ marginTop: '10px' }}>
+          <CalculoRetencionesFiscales
+            currentUser={currentUser}
+            odcsList={ordenesCompra}
+            proveedoresList={proveedores}
+            facturaInicial={facturaParaRetencion}
+            odcInicial={odcParaRetencion}
+            onLiquidacionGuardada={() => {
+              setFacturaParaRetencion(null);
+              setOdcParaRetencion(null);
+            }}
+          />
         </div>
       )}
 
@@ -3691,13 +3753,41 @@ const LiquidacionFacturas = ({ currentUser }) => {
                     </div>
                   </div>
                 </div>
-                <button
-                  className="liquidacion-modal-close"
-                  onClick={() => setShowOdcPreviewModal(false)}
-                  style={{ background: '#f1f5f9', border: 'none', borderRadius: '50%', width: '32px', height: '32px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748b' }}
-                >
-                  <X size={18} />
-                </button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOdcParaRetencion(odcPreviewSeleccionada);
+                      setFacturaParaRetencion(null);
+                      setShowOdcPreviewModal(false);
+                      setSubtabCxp('retenciones');
+                    }}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      padding: '7px 12px',
+                      borderRadius: '8px',
+                      fontSize: '0.78rem',
+                      fontWeight: '800',
+                      backgroundColor: '#eff6ff',
+                      color: '#1d4ed8',
+                      border: '1px solid #bfdbfe',
+                      cursor: 'pointer'
+                    }}
+                    title="Calcular Retenciones Fiscales (IVA e ISLR) y Tipos de Cambio para esta ODC"
+                  >
+                    <Calculator size={14} />
+                    <span>Liquidación Fiscal</span>
+                  </button>
+                  <button
+                    className="liquidacion-modal-close"
+                    onClick={() => setShowOdcPreviewModal(false)}
+                    style={{ background: '#f1f5f9', border: 'none', borderRadius: '50%', width: '32px', height: '32px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748b' }}
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
               </div>
 
               {/* CUERPO DEL MODAL (3 COLUMNAS HORIZONTALES SIMÉTRICAS) */}
