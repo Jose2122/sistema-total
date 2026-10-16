@@ -77,7 +77,11 @@ export const consolidarSoportesRequisicion = (facturas_url, items) => {
     }
 
     if (url && typeof url === 'string' && url.length > 5) {
-      soportesMap.set(url, { url, etiqueta: etiqueta || 'Archivo' });
+      let cleanEtiq = etiqueta || 'Soporte';
+      if (cleanEtiq.startsWith('data:') || cleanEtiq === 'Archivo sin etiqueta') {
+        cleanEtiq = url.startsWith('data:image/') ? 'Soporte (Imagen)' : 'Soporte';
+      }
+      soportesMap.set(url, { url, etiqueta: cleanEtiq });
     }
   });
 

@@ -67,6 +67,14 @@ const parsearFacturaUrls = (facturaUrlField) => {
     };
     extractRaw(facturaUrlField);
 
+    const extractCleanName = (u) => {
+        if (!u || typeof u !== 'string') return 'Soporte';
+        if (u.startsWith('data:image/')) return 'Soporte (Imagen)';
+        if (u.startsWith('data:application/pdf')) return 'Soporte (PDF)';
+        if (u.startsWith('data:')) return 'Soporte';
+        return u.split('/').pop().split('?')[0];
+    };
+
     return rawItems.map(item => {
         if (typeof item === 'string') {
             const trimmed = item.trim();
@@ -74,9 +82,13 @@ const parsearFacturaUrls = (facturaUrlField) => {
                 try {
                     const obj = JSON.parse(trimmed);
                     if (obj.url) {
+                        let name = obj.name || obj.etiqueta || '';
+                        if (!name || name.startsWith('data:') || name === 'Archivo sin etiqueta') {
+                            name = extractCleanName(obj.url);
+                        }
                         return {
                             url: obj.url,
-                            name: obj.name || (obj.url.split('/').pop().split('?')[0])
+                            name
                         };
                     }
                 } catch {
@@ -85,12 +97,16 @@ const parsearFacturaUrls = (facturaUrlField) => {
             }
             return {
                 url: trimmed,
-                name: trimmed.split('/').pop().split('?')[0]
+                name: extractCleanName(trimmed)
             };
         } else if (typeof item === 'object' && item !== null && item.url) {
+            let name = item.name || item.etiqueta || '';
+            if (!name || name.startsWith('data:') || name === 'Archivo sin etiqueta') {
+                name = extractCleanName(item.url);
+            }
             return {
                 url: item.url,
-                name: item.name || (item.url.split('/').pop().split('?')[0])
+                name
             };
         }
         return null;

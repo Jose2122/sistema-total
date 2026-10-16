@@ -124,17 +124,18 @@ const obtenerAbonosOdc = (odc) => {
     usuario_nombre: ab.usuario_nombre || odc.comprador_nombre || odc.elaborado_por_nombre || 'Finanzas'
   }));
 
-  if (list.length === 0 && (odc.orden_pago_ref || odc.banco_destino || odc.banco)) {
+  const statusOdc = (odc.estatus_pago || odc.status_pago || '').toUpperCase();
+  if (list.length === 0 && statusOdc === 'PAGADO' && (odc.orden_pago_ref || odc.banco_destino || odc.banco)) {
     list = [{
       abono_id: `legacy_${odc.id}`,
       monto: Number(odc.total_general ?? odc.total ?? 0),
       referencia: odc.orden_pago_ref || 'REGISTRO PREVIO',
       banco_nombre: odc.banco_destino || odc.banco || 'Banco Empresa',
       moneda: odc.moneda || '$ / $',
-      fecha: odc.fecha_emision || odc.updated_at || odc.created_at,
+      fecha: odc.fecha_pago || odc.fecha_emision || odc.updated_at || odc.created_at,
       proveedor_nombre: odc.proveedor_nombre || '',
       tipo_pago: odc.tipo_pago || 'CONTADO',
-      estatus: odc.estatus_pago || odc.status_pago || 'PAGADO',
+      estatus: 'PAGADO',
       usuario_nombre: odc.comprador_nombre || odc.elaborado_por_nombre || 'Finanzas'
     }];
   }
@@ -412,7 +413,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
   // --- SUBMÓDULO ASIGNACIÓN DE FONDOS A COMPRAS (CUENTAS POR PAGAR) ---
   const [showModalAsignarFondo, setShowModalAsignarFondo] = useState(false);
   const [montoFondoInput, setMontoFondoInput] = useState('');
-  const [semanaFondoInput, setSemanaFondoInput] = useState('');
+  const [semanaFondoInput] = useState('');
   const [fechaFondoInput, setFechaFondoInput] = useState(new Date().toISOString().split('T')[0]);
   const [observacionesFondoInput, setObservacionesFondoInput] = useState('');
   const [historialFondosCxp, setHistorialFondosCxp] = useState([]);
@@ -644,6 +645,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
     const hoy = new Date();
     hoy.setHours(0, 0, 0, 0);
     const fVenc = new Date(fechaVencStr);
+    if (isNaN(fVenc.getTime())) return { nivel: 'verde', texto: 'En Plazo', color: '#0369a1', bg: '#e0f2fe', dias: null };
     fVenc.setHours(0, 0, 0, 0);
 
     const diffTime = fVenc.getTime() - hoy.getTime();
@@ -763,8 +765,24 @@ const LiquidacionFacturas = ({ currentUser }) => {
 
         const comprador = o.elaborado_por_nombre || o.comprador_nombre || o.usuario_nombre || o.creado_por_nombre || 'Equipo de Compras';
 
+        const abonos = obtenerAbonosOdc(o);
+        const totalVal = Number(o.total_general ?? o.total ?? 0);
+        const totalAbonado = abonos.reduce((sum, a) => sum + (Number(a.monto) || 0), 0);
+        const saldoPendiente = Math.max(0, totalVal - totalAbonado);
+        let estatusCalculado = (o.estatus_pago || o.status_pago || 'PENDIENTE').toUpperCase();
+        if (saldoPendiente <= 0.01 && (totalAbonado > 0 || estatusCalculado === 'PAGADO')) {
+          estatusCalculado = 'PAGADO';
+        } else if (totalAbonado > 0) {
+          estatusCalculado = 'PAGADO PARCIAL';
+        }
+
         return {
           ...o,
+          abonos,
+          total_odc: totalVal,
+          total_abonado: totalAbonado,
+          saldo_pendiente: saldoPendiente,
+          estatus_calculado: estatusCalculado,
           prioridad_pago: prio,
           proveedor_es_preferencial: esPref,
           requisicion_es_emergencia: esEmerg,
@@ -779,15 +797,8 @@ const LiquidacionFacturas = ({ currentUser }) => {
   }, [ordenesCompra, odcEstaAprobadaParaCxp, reqMapById, provMapById]);
 
   const odcsCreditoPendientes = useMemo(() => {
-    return odcsCredito.filter(o => {
-      const st = (o.estatus_pago || o.status_pago || 'PENDIENTE').toUpperCase();
-      return st !== 'PAGADO';
-    });
+    return odcsCredito.filter(o => o.saldo_pendiente > 0.01 && o.estatus_calculado !== 'PAGADO');
   }, [odcsCredito]);
-
-  const totalOdcCreditoMonto = useMemo(() => {
-    return odcsCreditoPendientes.reduce((sum, o) => sum + (Number(o.total_general ?? o.total) || 0), 0);
-  }, [odcsCreditoPendientes]);
 
   // Órdenes de Compra a Contado para CxP (Solo Aprobadas por Compras)
   const odcsContado = useMemo(() => {
@@ -831,8 +842,24 @@ const LiquidacionFacturas = ({ currentUser }) => {
 
         const comprador = o.elaborado_por_nombre || o.comprador_nombre || o.usuario_nombre || o.creado_por_nombre || 'Equipo de Compras';
 
+        const abonos = obtenerAbonosOdc(o);
+        const totalVal = Number(o.total_general ?? o.total ?? 0);
+        const totalAbonado = abonos.reduce((sum, a) => sum + (Number(a.monto) || 0), 0);
+        const saldoPendiente = Math.max(0, totalVal - totalAbonado);
+        let estatusCalculado = (o.estatus_pago || o.status_pago || 'PENDIENTE').toUpperCase();
+        if (saldoPendiente <= 0.01 && (totalAbonado > 0 || estatusCalculado === 'PAGADO')) {
+          estatusCalculado = 'PAGADO';
+        } else if (totalAbonado > 0) {
+          estatusCalculado = 'PAGADO PARCIAL';
+        }
+
         return {
           ...o,
+          abonos,
+          total_odc: totalVal,
+          total_abonado: totalAbonado,
+          saldo_pendiente: saldoPendiente,
+          estatus_calculado: estatusCalculado,
           prioridad_pago: prio,
           proveedor_es_preferencial: esPref,
           requisicion_es_emergencia: esEmerg,
@@ -847,15 +874,8 @@ const LiquidacionFacturas = ({ currentUser }) => {
   }, [ordenesCompra, odcEstaAprobadaParaCxp, reqMapById, provMapById]);
 
   const odcsContadoPendientes = useMemo(() => {
-    return odcsContado.filter(o => {
-      const st = (o.estatus_pago || o.status_pago || 'PENDIENTE').toUpperCase();
-      return st !== 'PAGADO';
-    });
+    return odcsContado.filter(o => o.saldo_pendiente > 0.01 && o.estatus_calculado !== 'PAGADO');
   }, [odcsContado]);
-
-  const totalOdcContadoMonto = useMemo(() => {
-    return odcsContadoPendientes.reduce((sum, o) => sum + (Number(o.total_general ?? o.total) || 0), 0);
-  }, [odcsContadoPendientes]);
 
   // Group purchased items by Invoice and Provider
   const facturasAgrupadas = useMemo(() => {
@@ -1168,66 +1188,172 @@ const LiquidacionFacturas = ({ currentUser }) => {
       });
   }, [odcsContado, filtroBusqueda, filtroEstatus, filtroProveedor, filtroPrioridadOdc]);
 
-  // Histórico de Pagos Realizados (Totalmente Liquidados o Pagados)
-  const pagadosConsolidados = useMemo(() => {
-    const q = filtroBusqueda.toLowerCase().trim();
+  // Historial Unificado de Pagos Realizados y Liquidaciones en Orden Cronológico
+  const historialPagosRealizados = useMemo(() => {
+    const list = [];
+    const seenKeys = new Set();
 
-    const facturasPagadas = facturasAgrupadas.filter(f => {
-      const isPag = f.estatus === 'PAGADO' || f.estatus_general === 'PAGADO' || f.saldo_pendiente <= 0.01;
-      if (!isPag) return false;
-      const matchesSearch = !q ||
-        (f.doc_numero || '').toLowerCase().includes(q) ||
-        (f.proveedor_nombre || '').toLowerCase().includes(q);
-      const matchesProv = filtroProveedor === 'Todos' || (f.proveedor_nombre || '').trim().toUpperCase() === filtroProveedor.trim().toUpperCase();
-      return matchesSearch && matchesProv;
+    // 1. Pagos y Abonos de Facturas de Procura
+    facturasAgrupadas.forEach(fac => {
+      if (fac.abonos && fac.abonos.length > 0) {
+        fac.abonos.forEach(ab => {
+          const key = `ab_fac_${ab.abono_id || `${fac.doc_numero}_${ab.fecha}_${ab.monto}`}`;
+          if (!seenKeys.has(key)) {
+            seenKeys.add(key);
+            list.push({
+              id: key,
+              abono_id: ab.abono_id,
+              tipo_documento: 'FACTURA',
+              numero_documento: fac.doc_numero,
+              proveedor_nombre: fac.proveedor_nombre || ab.proveedor_nombre || 'Desconocido',
+              modalidad: fac.es_credito ? 'CREDITO' : 'CONTADO',
+              monto: Number(ab.monto) || 0,
+              banco_nombre: ab.banco_nombre || ab.banco || 'Banco Origen',
+              referencia: ab.referencia || 'N/A',
+              usuario_nombre: ab.usuario_nombre || fac.comprador || fac.usuario_compra || 'Compras / Finanzas',
+              fecha: ab.fecha || fac.fecha_compra || new Date().toISOString(),
+              timestamp: new Date(ab.fecha || fac.fecha_compra || 0).getTime(),
+              estatus_badge: fac.saldo_pendiente <= 0.01 ? 'LIQUIDADO' : 'ABONO',
+              url_soporte: ab.url || (ab.urls && ab.urls[0]?.url) || null,
+              urls_soporte: ab.urls || (ab.url ? [{ url: ab.url, name: ab.name || 'Soporte' }] : []),
+              documento_ref: fac,
+              es_odc: false
+            });
+          }
+        });
+      } else if (fac.estatus === 'PAGADO' || fac.saldo_pendiente <= 0.01) {
+        // Factura pagada directamente sin desglose de abonos previos
+        const key = `leg_fac_${fac.key}`;
+        if (!seenKeys.has(key)) {
+          seenKeys.add(key);
+          list.push({
+            id: key,
+            abono_id: null,
+            tipo_documento: 'FACTURA',
+            numero_documento: fac.doc_numero,
+            proveedor_nombre: fac.proveedor_nombre || 'Desconocido',
+            modalidad: fac.es_credito ? 'CREDITO' : 'CONTADO',
+            monto: Number(fac.total_factura) || 0,
+            banco_nombre: 'Banco Empresa',
+            referencia: fac.orden_pago_ref || 'PAGO DIRECTO',
+            usuario_nombre: fac.comprador || fac.usuario_compra || 'Compras / Finanzas',
+            fecha: fac.fecha_compra || new Date().toISOString(),
+            timestamp: new Date(fac.fecha_compra || 0).getTime(),
+            estatus_badge: 'LIQUIDADO',
+            url_soporte: null,
+            urls_soporte: [],
+            documento_ref: fac,
+            es_odc: false
+          });
+        }
+      }
     });
 
-    const odcsPagadas = ordenesCompra.filter(o => {
-      const st = (o.estatus_pago || o.status_pago || '').toUpperCase();
-      const isPag = st === 'PAGADO';
-      if (!isPag) return false;
+    // 2. Pagos y Abonos de Órdenes de Compra (ODC)
+    ordenesCompra.forEach(o => {
+      const abonos = obtenerAbonosOdc(o);
       const cleanReq = String(o.requisicion_id || o.numero_req || o.correlativo_req || o.requisicion_correlativo || '').replace(/^REQ-?/i, '').trim();
-      const reqObj = reqMapById[cleanReq] || 
-                     reqMapById[String(o.requisicion_id)] || 
-                     (o.requisicion_id ? reqMapById[Number(o.requisicion_id)] : null) ||
-                     (o.requisicion_correlativo ? reqMapById[String(o.requisicion_correlativo).trim().toUpperCase()] : null) ||
-                     (o.numero_req ? reqMapById[String(o.numero_req).trim().toUpperCase()] : null) ||
-                     (o.correlativo_req ? reqMapById[String(o.correlativo_req).trim().toUpperCase()] : null);
-
+      const reqObj = reqMapById[cleanReq] || reqMapById[String(o.requisicion_id)] || (o.requisicion_id ? reqMapById[Number(o.requisicion_id)] : null);
       const solicitante = (reqObj?.solicitante && reqObj.solicitante !== 'Total Clean C.A.') ? reqObj.solicitante : (o.solicitante || o.solicitado_por || reqObj?.solicitante || 'Total Clean C.A.');
       const centroCosto = (reqObj?.centro_costo && reqObj.centro_costo !== 'General / Operaciones') ? reqObj.centro_costo : (o.centro_costo || reqObj?.centro_costo || 'General / Operaciones');
       const comprador = o.elaborado_por_nombre || o.comprador_nombre || o.usuario_nombre || o.creado_por_nombre || 'Equipo de Compras';
-      const correlativoReq = reqObj?.correlativo_req || 
-                             (o.requisicion_correlativo && !String(o.requisicion_correlativo).startsWith('REQ-') ? o.requisicion_correlativo : null) ||
-                             (o.correlativo_req && !String(o.correlativo_req).startsWith('REQ-') ? o.correlativo_req : null) ||
-                             reqObj?.correlativo_req ||
-                             o.requisicion_correlativo ||
-                             o.correlativo_req ||
-                             o.numero_req ||
-                             (cleanReq && !cleanReq.match(/^\d+$/) && !cleanReq.startsWith('REQ-') ? cleanReq : null) ||
-                             (cleanReq ? `REQ-${cleanReq}` : 'N/A');
+      const odcConExtra = {
+        ...o,
+        solicitante,
+        centro_costo: centroCosto,
+        comprador_nombre: comprador,
+        requisicion_obj: reqObj
+      };
 
-      o.solicitante = solicitante;
-      o.centro_costo = centroCosto;
-      o.comprador_nombre = comprador;
-      o.requisicion_correlativo = correlativoReq;
-      o.requisicion_obj = reqObj;
+      if (abonos && abonos.length > 0) {
+        abonos.forEach(ab => {
+          const key = `ab_odc_${ab.abono_id || `${o.id}_${ab.fecha}_${ab.monto}`}`;
+          if (!seenKeys.has(key)) {
+            seenKeys.add(key);
+            const totalVal = Number(o.total_general ?? o.total ?? 0);
+            const sumaAbonos = abonos.reduce((s, a) => s + (Number(a.monto) || 0), 0);
+            const saldoOdc = Math.max(0, totalVal - sumaAbonos);
 
-      const matchesSearch = !q ||
-        (o.numero_odc || '').toLowerCase().includes(q) ||
-        (o.proveedor_nombre || '').toLowerCase().includes(q) ||
-        (solicitante || '').toLowerCase().includes(q) ||
-        (centroCosto || '').toLowerCase().includes(q);
-      const matchesProv = filtroProveedor === 'Todos' || (o.proveedor_nombre || '').trim().toUpperCase() === filtroProveedor.trim().toUpperCase();
-      return matchesSearch && matchesProv;
+            list.push({
+              id: key,
+              abono_id: ab.abono_id,
+              tipo_documento: 'ODC',
+              numero_documento: o.numero_odc || `ODC-${o.id}`,
+              proveedor_nombre: o.proveedor_nombre || ab.proveedor_nombre || 'N/A',
+              modalidad: (o.tipo_pago || ab.tipo_pago || 'CONTADO').toUpperCase(),
+              monto: Number(ab.monto) || 0,
+              banco_nombre: ab.banco_nombre || o.banco_destino || o.banco || 'Banco Origen',
+              referencia: ab.referencia || o.orden_pago_ref || 'N/A',
+              usuario_nombre: ab.usuario_nombre || comprador || 'Finanzas',
+              fecha: ab.fecha || o.updated_at || o.created_at || new Date().toISOString(),
+              timestamp: new Date(ab.fecha || o.updated_at || o.created_at || 0).getTime(),
+              estatus_badge: (saldoOdc <= 0.01 || (o.estatus_pago || o.status_pago || '').toUpperCase() === 'PAGADO') ? 'LIQUIDADO' : 'ABONO',
+              url_soporte: ab.url || (ab.urls && ab.urls[0]?.url) || null,
+              urls_soporte: ab.urls || (ab.url ? [{ url: ab.url, name: ab.name || 'Comprobante' }] : []),
+              documento_ref: odcConExtra,
+              es_odc: true
+            });
+          }
+        });
+      } else if ((o.estatus_pago || o.status_pago || '').toUpperCase() === 'PAGADO') {
+        const key = `leg_odc_${o.id}`;
+        if (!seenKeys.has(key)) {
+          seenKeys.add(key);
+          list.push({
+            id: key,
+            abono_id: null,
+            tipo_documento: 'ODC',
+            numero_documento: o.numero_odc || `ODC-${o.id}`,
+            proveedor_nombre: o.proveedor_nombre || 'N/A',
+            modalidad: (o.tipo_pago || 'CONTADO').toUpperCase(),
+            monto: Number(o.total_general ?? o.total ?? 0),
+            banco_nombre: o.banco_destino || o.banco || 'Banco Empresa',
+            referencia: o.orden_pago_ref || 'PAGO DIRECTO',
+            usuario_nombre: comprador || 'Finanzas',
+            fecha: o.fecha_pago || o.updated_at || o.fecha_emision || o.created_at || new Date().toISOString(),
+            timestamp: new Date(o.fecha_pago || o.updated_at || o.fecha_emision || o.created_at || 0).getTime(),
+            estatus_badge: 'LIQUIDADO',
+            url_soporte: null,
+            urls_soporte: [],
+            documento_ref: odcConExtra,
+            es_odc: true
+          });
+        }
+      }
     });
 
+    return list;
+  }, [facturasAgrupadas, ordenesCompra, reqMapById]);
+
+  // Histórico Filtrado y Ordenado Estrictamente por Fecha y Hora de Registro Descendente (Más reciente primero)
+  const historialPagosFiltrados = useMemo(() => {
+    const q = filtroBusqueda.toLowerCase().trim();
+
+    return historialPagosRealizados
+      .filter(pago => {
+        const matchesSearch = !q ||
+          (pago.numero_documento || '').toLowerCase().includes(q) ||
+          (pago.proveedor_nombre || '').toLowerCase().includes(q) ||
+          (pago.referencia || '').toLowerCase().includes(q) ||
+          (pago.banco_nombre || '').toLowerCase().includes(q) ||
+          (pago.usuario_nombre || '').toLowerCase().includes(q);
+
+        const matchesProv = filtroProveedor === 'Todos' ||
+          (pago.proveedor_nombre || '').trim().toUpperCase() === filtroProveedor.trim().toUpperCase();
+
+        return matchesSearch && matchesProv;
+      })
+      .sort((a, b) => b.timestamp - a.timestamp);
+  }, [historialPagosRealizados, filtroBusqueda, filtroProveedor]);
+
+  // Consolidado para contadores y vista de Histórico
+  const pagadosConsolidados = useMemo(() => {
     return {
-      facturas: facturasPagadas,
-      odcs: odcsPagadas,
-      total: facturasPagadas.length + odcsPagadas.length
+      items: historialPagosFiltrados,
+      total: historialPagosFiltrados.length,
+      montoTotalPagado: historialPagosFiltrados.reduce((sum, p) => sum + (Number(p.monto) || 0), 0)
     };
-  }, [facturasAgrupadas, ordenesCompra, filtroBusqueda, filtroProveedor, reqMapById]);
+  }, [historialPagosFiltrados]);
 
   // Actualizar estatus de pago de una ODC directamente desde CxP
   const cambiarEstatusPagoOdc = async (odcId, nuevoEstatus) => {
@@ -1249,40 +1375,88 @@ const LiquidacionFacturas = ({ currentUser }) => {
     }
   };
 
-  // KPI calculations
+  // KPI calculations - Separando Facturas Procura de Órdenes de Compra (Crédito y Contado)
   const kpis = useMemo(() => {
+    // 1. Facturas de Procura (Aparte)
     let totalFacturas = 0;
-    let totalAbonado = 0;
-    let totalPendiente = 0;
+    let totalFacturasAbonado = 0;
+    let totalFacturasPendiente = 0;
     let emitidos = 0;
     let parciales = 0;
     let pagados = 0;
 
     facturasAgrupadas.forEach(f => {
-      totalFacturas += f.total_factura;
-      totalAbonado += f.total_abonado;
-      totalPendiente += f.saldo_pendiente;
+      totalFacturas += Number(f.total_factura || 0);
+      totalFacturasAbonado += Number(f.total_abonado || 0);
+      totalFacturasPendiente += Number(f.saldo_pendiente || 0);
 
       if (f.estatus === 'EMITIDO') emitidos++;
       else if (f.estatus === 'PAGADO PARCIAL') parciales++;
       else if (f.estatus === 'PAGADO') pagados++;
     });
 
-    const totalPendienteGlobal = totalPendiente + totalOdcCreditoMonto + totalOdcContadoMonto;
+    // 2. Órdenes de Compra a Crédito
+    let totalOdcCreditoGeneral = 0;
+    let totalOdcCreditoAbonado = 0;
+    let totalOdcCreditoPorPagar = 0;
+
+    odcsCredito.forEach(o => {
+      totalOdcCreditoGeneral += Number(o.total_odc ?? o.total_general ?? o.total ?? 0);
+      totalOdcCreditoAbonado += Number(o.total_abonado || 0);
+      totalOdcCreditoPorPagar += Number(o.saldo_pendiente || 0);
+    });
+
+    // 3. Órdenes de Compra a Contado
+    let totalOdcContadoGeneral = 0;
+    let totalOdcContadoAbonado = 0;
+    let totalOdcContadoPorPagar = 0;
+
+    odcsContado.forEach(o => {
+      totalOdcContadoGeneral += Number(o.total_odc ?? o.total_general ?? o.total ?? 0);
+      totalOdcContadoAbonado += Number(o.total_abonado || 0);
+      totalOdcContadoPorPagar += Number(o.saldo_pendiente || 0);
+    });
+
+    // 4. Totales Combinados ODC
+    const totalOdcGeneral = totalOdcCreditoGeneral + totalOdcContadoGeneral;
+    const totalOdcAbonado = totalOdcCreditoAbonado + totalOdcContadoAbonado;
+    const totalOdcPendiente = totalOdcCreditoPorPagar + totalOdcContadoPorPagar;
+
+    // 5. Total Pendiente CxP Global
+    const totalPendienteGlobal = totalFacturasPendiente + totalOdcCreditoPorPagar + totalOdcContadoPorPagar;
+    const totalAbonadoGlobal = totalFacturasAbonado + totalOdcAbonado;
 
     return { 
+      // Facturas Procura
       totalFacturas, 
-      totalAbonado, 
-      totalPendiente, 
-      totalOdcCreditoMonto,
-      totalOdcContadoMonto,
+      totalFacturasAbonado, 
+      totalFacturasPendiente, 
+      totalPendiente: totalFacturasPendiente, // retrocompatibilidad
+      totalAbonado: totalFacturasAbonado, // retrocompatibilidad
+      // ODC Crédito
+      totalOdcCreditoGeneral,
+      totalOdcCreditoAbonado,
+      totalOdcCreditoPorPagar,
+      totalOdcCreditoMonto: totalOdcCreditoPorPagar,
+      // ODC Contado
+      totalOdcContadoGeneral,
+      totalOdcContadoAbonado,
+      totalOdcContadoPorPagar,
+      totalOdcContadoMonto: totalOdcContadoPorPagar,
+      // ODCs Consolidadas
+      totalOdcGeneral,
+      totalOdcAbonado,
+      totalOdcPendiente,
+      // Resumen Global
       totalPendienteGlobal,
+      totalAbonadoGlobal,
+      // Contadores
       emitidos, 
       parciales, 
       pagados,
       odcsPendientesCount: odcsCreditoPendientes.length + odcsContadoPendientes.length
     };
-  }, [facturasAgrupadas, totalOdcCreditoMonto, totalOdcContadoMonto, odcsCreditoPendientes, odcsContadoPendientes]);
+  }, [facturasAgrupadas, odcsCredito, odcsContado, odcsCreditoPendientes, odcsContadoPendientes]);
 
   // Prepare and open abono registration modal for Facturas
   const abrirRegistrarAbono = (invoice) => {
@@ -1352,7 +1526,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
       let publicUrl = null;
       try {
         publicUrl = await uploadWithTimeout('facturas', storageFileName);
-      } catch (errFacturas) {
+      } catch {
         publicUrl = await uploadWithTimeout('tickets-evidencia', `soportes/${storageFileName}`);
       }
 
@@ -1936,7 +2110,9 @@ const LiquidacionFacturas = ({ currentUser }) => {
             if (!isNaN(d.getTime())) {
               fechaEmisionFmt = d.toLocaleDateString('es-VE', { day: '2-digit', month: '2-digit', year: 'numeric' });
             }
-          } catch (_) {}
+          } catch {
+            // fallback
+          }
         }
 
         const estatusPago = saldoPendiente <= 0.01 ? 'PAGADO' : (totalAbonado > 0.01 ? 'PAGADO PARCIAL' : 'PENDIENTE');
@@ -2452,44 +2628,74 @@ const LiquidacionFacturas = ({ currentUser }) => {
       </div>
 
       {/* FINANCIAL KPIS - REFINED EXECUTIVE PALETTE */}
-      <div className="liquidacion-kpi-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '14px', marginBottom: '18px' }}>
-        <div className="liquidacion-kpi-card" style={{ border: '1px solid #e2e8f0', borderTop: '3px solid #0f172a', borderRadius: '16px', padding: '16px 20px', backgroundColor: '#ffffff', boxShadow: '0 1px 3px rgba(0,0,0,0.03)' }}>
+      <div className="liquidacion-kpi-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '14px', marginBottom: '18px' }}>
+        {/* KPI 1: TOTAL FACTURAS PROCURA (APARTE) */}
+        <div className="liquidacion-kpi-card" style={{ border: '1px solid #e2e8f0', borderTop: '3px solid #0f172a', borderRadius: '16px', padding: '16px 18px', backgroundColor: '#ffffff', boxShadow: '0 1px 3px rgba(0,0,0,0.03)' }}>
           <div>
-            <span className="liquidacion-kpi-label" style={{ fontSize: '10.5px', fontWeight: '800', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Total Facturas Procura</span>
-            <h3 className="liquidacion-kpi-value" style={{ fontSize: '1.45rem', fontWeight: '950', color: '#0f172a', margin: '4px 0 0 0' }}>$ {kpis.totalFacturas.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</h3>
+            <span className="liquidacion-kpi-label" style={{ fontSize: '10px', fontWeight: '800', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Total Facturas Procura</span>
+            <h3 className="liquidacion-kpi-value" style={{ fontSize: '1.4rem', fontWeight: '950', color: '#0f172a', margin: '4px 0 2px 0' }}>$ {(kpis.totalFacturas || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</h3>
+            <div style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: '600' }}>
+              Por Pagar: <strong style={{ color: '#dc2626' }}>${(kpis.totalFacturasPendiente || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</strong> | Abonado: <strong style={{ color: '#16a34a' }}>${(kpis.totalFacturasAbonado || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</strong>
+            </div>
           </div>
-          <div className="liquidacion-kpi-icon" style={{ backgroundColor: '#f8fafc', color: '#475569', border: '1px solid #e2e8f0', borderRadius: '10px', width: '42px', height: '42px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <FileText size={20} />
+          <div className="liquidacion-kpi-icon" style={{ backgroundColor: '#f8fafc', color: '#475569', border: '1px solid #e2e8f0', borderRadius: '10px', width: '40px', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <FileText size={19} />
           </div>
         </div>
 
-        <div className="liquidacion-kpi-card" style={{ border: '1px solid #e2e8f0', borderTop: '3px solid #0284c7', borderRadius: '16px', padding: '16px 20px', backgroundColor: '#ffffff', boxShadow: '0 1px 3px rgba(0,0,0,0.03)' }}>
+        {/* KPI 2: TOTAL CRÉDITO ODC POR PAGAR */}
+        <div className="liquidacion-kpi-card" style={{ border: '1px solid #e2e8f0', borderTop: '3px solid #0284c7', borderRadius: '16px', padding: '16px 18px', backgroundColor: '#ffffff', boxShadow: '0 1px 3px rgba(0,0,0,0.03)' }}>
           <div>
-            <span className="liquidacion-kpi-label" style={{ fontSize: '10.5px', fontWeight: '800', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Total Crédito ODC por Pagar</span>
-            <h3 className="liquidacion-kpi-value" style={{ fontSize: '1.45rem', fontWeight: '950', color: '#0f172a', margin: '4px 0 0 0' }}>$ {kpis.totalOdcCreditoMonto.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</h3>
+            <span className="liquidacion-kpi-label" style={{ fontSize: '10px', fontWeight: '800', color: '#0284c7', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Total Crédito ODC por Pagar</span>
+            <h3 className="liquidacion-kpi-value" style={{ fontSize: '1.4rem', fontWeight: '950', color: '#0284c7', margin: '4px 0 2px 0' }}>$ {(kpis.totalOdcCreditoPorPagar || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</h3>
+            <div style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: '600' }}>
+              Total: <strong>${(kpis.totalOdcCreditoGeneral || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</strong> | Abonado: <strong style={{ color: '#16a34a' }}>${(kpis.totalOdcCreditoAbonado || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</strong>
+            </div>
           </div>
-          <div className="liquidacion-kpi-icon" style={{ backgroundColor: '#f8fafc', color: '#475569', border: '1px solid #e2e8f0', borderRadius: '10px', width: '42px', height: '42px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <CreditCard size={20} />
+          <div className="liquidacion-kpi-icon" style={{ backgroundColor: '#f0f9ff', color: '#0284c7', border: '1px solid #bae6fd', borderRadius: '10px', width: '40px', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <CreditCard size={19} />
           </div>
         </div>
 
-        <div className="liquidacion-kpi-card" style={{ border: '1px solid #e2e8f0', borderTop: '3px solid #059669', borderRadius: '16px', padding: '16px 20px', backgroundColor: '#ffffff', boxShadow: '0 1px 3px rgba(0,0,0,0.03)' }}>
+        {/* KPI 3: TOTAL CONTADO A PAGAR (ODC) */}
+        <div className="liquidacion-kpi-card" style={{ border: '1px solid #e2e8f0', borderTop: '3px solid #059669', borderRadius: '16px', padding: '16px 18px', backgroundColor: '#ffffff', boxShadow: '0 1px 3px rgba(0,0,0,0.03)' }}>
           <div>
-            <span className="liquidacion-kpi-label" style={{ fontSize: '10.5px', fontWeight: '800', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Total Abonado</span>
-            <h3 className="liquidacion-kpi-value" style={{ fontSize: '1.45rem', fontWeight: '950', color: '#0f172a', margin: '4px 0 0 0' }}>$ {kpis.totalAbonado.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</h3>
+            <span className="liquidacion-kpi-label" style={{ fontSize: '10px', fontWeight: '800', color: '#059669', textTransform: 'uppercase', letterSpacing: '0.5px' }}>TOTAL CONTADO A PAGAR (ODC)</span>
+            <h3 className="liquidacion-kpi-value" style={{ fontSize: '1.4rem', fontWeight: '950', color: '#059669', margin: '4px 0 2px 0' }}>$ {(kpis.totalOdcContadoPorPagar || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</h3>
+            <div style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: '600' }}>
+              Total: <strong>${(kpis.totalOdcContadoGeneral || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</strong> | Abonado: <strong style={{ color: '#16a34a' }}>${(kpis.totalOdcContadoAbonado || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</strong>
+            </div>
           </div>
-          <div className="liquidacion-kpi-icon" style={{ backgroundColor: '#f8fafc', color: '#475569', border: '1px solid #e2e8f0', borderRadius: '10px', width: '42px', height: '42px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <TrendingUp size={20} />
+          <div className="liquidacion-kpi-icon" style={{ backgroundColor: '#ecfdf5', color: '#059669', border: '1px solid #a7f3d0', borderRadius: '10px', width: '40px', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <DollarSign size={19} />
           </div>
         </div>
 
-        <div className="liquidacion-kpi-card" style={{ border: '1px solid #e2e8f0', borderTop: '3px solid #dc2626', borderRadius: '16px', padding: '16px 20px', backgroundColor: '#ffffff', boxShadow: '0 1px 3px rgba(0,0,0,0.03)' }}>
+        {/* KPI 4: TOTAL ABONADO ODC */}
+        <div className="liquidacion-kpi-card" style={{ border: '1px solid #e2e8f0', borderTop: '3px solid #7c3aed', borderRadius: '16px', padding: '16px 18px', backgroundColor: '#ffffff', boxShadow: '0 1px 3px rgba(0,0,0,0.03)' }}>
           <div>
-            <span className="liquidacion-kpi-label" style={{ fontSize: '10.5px', fontWeight: '800', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Saldo Pendiente CxP Total</span>
-            <h3 className="liquidacion-kpi-value" style={{ fontSize: '1.45rem', fontWeight: '950', color: '#dc2626', margin: '4px 0 0 0' }}>$ {kpis.totalPendienteGlobal.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</h3>
+            <span className="liquidacion-kpi-label" style={{ fontSize: '10px', fontWeight: '800', color: '#7c3aed', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Total Abonado ODC</span>
+            <h3 className="liquidacion-kpi-value" style={{ fontSize: '1.4rem', fontWeight: '950', color: '#7c3aed', margin: '4px 0 2px 0' }}>$ {(kpis.totalOdcAbonado || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</h3>
+            <div style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: '600' }}>
+              Crédito: <strong style={{ color: '#0284c7' }}>${(kpis.totalOdcCreditoAbonado || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</strong> | Contado: <strong style={{ color: '#059669' }}>${(kpis.totalOdcContadoAbonado || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</strong>
+            </div>
           </div>
-          <div className="liquidacion-kpi-icon" style={{ backgroundColor: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: '10px', width: '42px', height: '42px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <Clock size={20} />
+          <div className="liquidacion-kpi-icon" style={{ backgroundColor: '#f5f3ff', color: '#7c3aed', border: '1px solid #ddd6fe', borderRadius: '10px', width: '40px', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <TrendingUp size={19} />
+          </div>
+        </div>
+
+        {/* KPI 5: SALDO PENDIENTE CxP TOTAL (GLOBAL) */}
+        <div className="liquidacion-kpi-card" style={{ border: '1px solid #e2e8f0', borderTop: '3px solid #dc2626', borderRadius: '16px', padding: '16px 18px', backgroundColor: '#ffffff', boxShadow: '0 1px 3px rgba(0,0,0,0.03)' }}>
+          <div>
+            <span className="liquidacion-kpi-label" style={{ fontSize: '10px', fontWeight: '800', color: '#dc2626', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Saldo Pendiente CxP Total</span>
+            <h3 className="liquidacion-kpi-value" style={{ fontSize: '1.4rem', fontWeight: '950', color: '#dc2626', margin: '4px 0 2px 0' }}>$ {(kpis.totalPendienteGlobal || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</h3>
+            <div style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: '600' }}>
+              Facturas: <strong>${(kpis.totalFacturasPendiente || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</strong> + ODCs: <strong>${(kpis.totalOdcPendiente || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</strong>
+            </div>
+          </div>
+          <div className="liquidacion-kpi-icon" style={{ backgroundColor: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: '10px', width: '40px', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Clock size={19} />
           </div>
         </div>
       </div>
@@ -2702,9 +2908,15 @@ const LiquidacionFacturas = ({ currentUser }) => {
             <span style={{ fontWeight: '900', color: '#0369a1', fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <CreditCard size={18} /> Órdenes de Compra a Crédito por Pagar ({odcsCreditoFiltradas.length})
             </span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-              <span style={{ fontWeight: '900', color: '#0284c7', fontSize: '0.9rem' }}>
-                Total Crédito ODC: $ {totalOdcCreditoMonto.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+              <span style={{ fontWeight: '800', color: '#475569', fontSize: '0.82rem' }}>
+                Total: <strong>${(kpis.totalOdcCreditoGeneral || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</strong>
+              </span>
+              <span style={{ fontWeight: '800', color: '#16a34a', fontSize: '0.82rem' }}>
+                Abonado: <strong>${(kpis.totalOdcCreditoAbonado || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</strong>
+              </span>
+              <span style={{ fontWeight: '950', color: '#0284c7', fontSize: '0.9rem', backgroundColor: '#e0f2fe', padding: '4px 10px', borderRadius: '8px', border: '1px solid #bae6fd' }}>
+                Por Pagar: ${(kpis.totalOdcCreditoPorPagar || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
               </span>
               <button
                 onClick={exportarReporteCreditoYDeudas}
@@ -2745,6 +2957,8 @@ const LiquidacionFacturas = ({ currentUser }) => {
                   <th>Requisición / Solicitante / C. Costo</th>
                   <th>Plazo / Semaforización Crédito</th>
                   <th>Total ODC</th>
+                  <th>Total Abonado</th>
+                  <th>Saldo por Pagar</th>
                   <th>Estatus Pago</th>
                   <th style={{ textAlign: 'center' }}>Gestión de Pago</th>
                 </tr>
@@ -2752,7 +2966,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
               <tbody>
                 {odcsCreditoFiltradas.map(odc => {
                   const statusActual = (odc.estatus_pago || odc.status_pago || 'PENDIENTE').toUpperCase();
-                  const isPagado = statusActual === 'PAGADO';
+                  const isPagado = statusActual === 'PAGADO' || odc.estatus_calculado === 'PAGADO' || (odc.saldo_pendiente <= 0.01 && odc.total_abonado > 0);
                   const sem = calcularSemaforoCredito(odc);
                   return (
                     <tr key={odc.id} style={{ backgroundColor: isPagado ? '#f0fdf4' : (odc.prioridad_pago === 1 ? '#fff7f7' : 'transparent') }}>
@@ -2870,8 +3084,14 @@ const LiquidacionFacturas = ({ currentUser }) => {
                           <strong>{odc.dias_credito || 0} Días</strong> ({odc.fecha_vencimiento_credito || odc.fecha_emision || 'N/A'})
                         </div>
                       </td>
-                      <td style={{ fontWeight: '900', color: '#0f172a' }}>
-                        $ {Number(odc.total_general ?? odc.total ?? 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                      <td style={{ fontWeight: '800', color: '#0f172a' }}>
+                        $ {Number(odc.total_odc ?? odc.total_general ?? odc.total ?? 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                      </td>
+                      <td style={{ fontWeight: '800', color: (Number(odc.total_abonado) || 0) > 0 ? '#16a34a' : '#94a3b8' }}>
+                        $ {Number(odc.total_abonado || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                      </td>
+                      <td style={{ fontWeight: '950', color: (Number(odc.saldo_pendiente) || 0) <= 0.01 ? '#16a34a' : '#dc2626' }}>
+                        $ {Number(odc.saldo_pendiente || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
                       </td>
                       <td>
                         <span style={{
@@ -2879,10 +3099,11 @@ const LiquidacionFacturas = ({ currentUser }) => {
                           borderRadius: '8px',
                           fontSize: '0.75rem',
                           fontWeight: '900',
-                          backgroundColor: isPagado ? '#dcfce7' : '#fef3c7',
-                          color: isPagado ? '#166534' : '#92400e'
+                          backgroundColor: isPagado ? '#dcfce7' : (odc.total_abonado > 0 ? '#eff6ff' : '#fef3c7'),
+                          color: isPagado ? '#166534' : (odc.total_abonado > 0 ? '#1d4ed8' : '#92400e'),
+                          border: `1px solid ${isPagado ? '#bbf7d0' : (odc.total_abonado > 0 ? '#bfdbfe' : '#fde68a')}`
                         }}>
-                          {isPagado ? '✅ PAGADO' : '⏳ PENDIENTE'}
+                          {isPagado ? '✅ PAGADO' : (odc.total_abonado > 0 ? `💳 PARCIAL ($${(Number(odc.total_abonado) || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })})` : '⏳ PENDIENTE')}
                         </span>
                       </td>
                       <td style={{ textAlign: 'center' }}>
@@ -2941,7 +3162,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
               <FileText size={18} /> Facturas de Procura ({facturasFiltradas.length})
             </span>
             <span style={{ fontWeight: '900', color: '#0284c7', fontSize: '0.9rem' }}>
-              Pendiente Facturas: $ {kpis.totalPendiente.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+              Pendiente Facturas: $ {(kpis.totalFacturasPendiente || kpis.totalPendiente || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
             </span>
           </div>
 
@@ -3039,13 +3260,21 @@ const LiquidacionFacturas = ({ currentUser }) => {
 
       {(subtabCxp === 'todas' || subtabCxp === 'odc_contado') && (
         <div className="liquidacion-table-wrapper" style={{ marginBottom: '25px', marginTop: '25px' }}>
-          <div style={{ padding: '16px 20px', backgroundColor: '#f0f9ff', borderBottom: '1px solid #bae6fd', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ padding: '16px 20px', backgroundColor: '#f0f9ff', borderBottom: '1px solid #bae6fd', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
             <span style={{ fontWeight: '900', color: '#0369a1', fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <DollarSign size={18} /> Órdenes de Compra a Contado por Rendir / Liquidar ({odcsContadoFiltradas.length})
             </span>
-            <span style={{ fontWeight: '900', color: '#0284c7', fontSize: '0.9rem' }}>
-              Total Contado ODC: $ {totalOdcContadoMonto.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
-            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+              <span style={{ fontWeight: '800', color: '#475569', fontSize: '0.82rem' }}>
+                Total: <strong>${(kpis.totalOdcContadoGeneral || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</strong>
+              </span>
+              <span style={{ fontWeight: '800', color: '#16a34a', fontSize: '0.82rem' }}>
+                Abonado: <strong>${(kpis.totalOdcContadoAbonado || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</strong>
+              </span>
+              <span style={{ fontWeight: '950', color: '#059669', fontSize: '0.9rem', backgroundColor: '#ecfdf5', padding: '4px 10px', borderRadius: '8px', border: '1px solid #a7f3d0' }}>
+                TOTAL CONTADO A PAGAR: ${(kpis.totalOdcContadoPorPagar || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+              </span>
+            </div>
           </div>
 
           {odcsContadoFiltradas.length === 0 ? (
@@ -3062,6 +3291,8 @@ const LiquidacionFacturas = ({ currentUser }) => {
                   <th>Requisición / Solicitante / C. Costo</th>
                   <th>Fecha Emisión</th>
                   <th>Total ODC</th>
+                  <th>Total Abonado</th>
+                  <th>Saldo por Pagar</th>
                   <th>Condición</th>
                   <th>Estatus Pago</th>
                   <th style={{ textAlign: 'center' }}>Gestión de Pago</th>
@@ -3070,7 +3301,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
               <tbody>
                 {odcsContadoFiltradas.map(odc => {
                   const statusActual = (odc.estatus_pago || odc.status_pago || 'PENDIENTE').toUpperCase();
-                  const isPagado = statusActual === 'PAGADO';
+                  const isPagado = statusActual === 'PAGADO' || odc.estatus_calculado === 'PAGADO' || (odc.saldo_pendiente <= 0.01 && odc.total_abonado > 0);
                   return (
                     <tr key={odc.id} style={{ backgroundColor: isPagado ? '#f0fdf4' : (odc.prioridad_pago === 1 ? '#fff7f7' : 'transparent') }}>
                       <td>
@@ -3173,8 +3404,14 @@ const LiquidacionFacturas = ({ currentUser }) => {
                       <td style={{ color: '#64748b', fontSize: '0.8rem' }}>
                         {odc.fecha_emision ? new Date(odc.fecha_emision).toLocaleDateString() : 'N/A'}
                       </td>
-                      <td style={{ fontWeight: '900', color: '#0f172a' }}>
-                        $ {Number(odc.total_general ?? odc.total ?? 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                      <td style={{ fontWeight: '800', color: '#0f172a' }}>
+                        $ {Number(odc.total_odc ?? odc.total_general ?? odc.total ?? 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                      </td>
+                      <td style={{ fontWeight: '800', color: (Number(odc.total_abonado) || 0) > 0 ? '#16a34a' : '#94a3b8' }}>
+                        $ {Number(odc.total_abonado || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                      </td>
+                      <td style={{ fontWeight: '950', color: (Number(odc.saldo_pendiente) || 0) <= 0.01 ? '#16a34a' : '#059669' }}>
+                        $ {Number(odc.saldo_pendiente || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
                       </td>
                       <td>
                         <span style={{ padding: '3px 8px', borderRadius: '6px', fontSize: '0.72rem', fontWeight: '800', backgroundColor: '#dcfce7', color: '#15803d' }}>
@@ -3187,10 +3424,11 @@ const LiquidacionFacturas = ({ currentUser }) => {
                           borderRadius: '8px',
                           fontSize: '0.75rem',
                           fontWeight: '900',
-                          backgroundColor: isPagado ? '#dcfce7' : '#fef3c7',
-                          color: isPagado ? '#166534' : '#92400e'
+                          backgroundColor: isPagado ? '#dcfce7' : (odc.total_abonado > 0 ? '#eff6ff' : '#fef3c7'),
+                          color: isPagado ? '#166534' : (odc.total_abonado > 0 ? '#1d4ed8' : '#92400e'),
+                          border: `1px solid ${isPagado ? '#bbf7d0' : (odc.total_abonado > 0 ? '#bfdbfe' : '#fde68a')}`
                         }}>
-                          {isPagado ? '✅ PAGADO' : '⏳ PENDIENTE'}
+                          {isPagado ? '✅ PAGADO' : (odc.total_abonado > 0 ? `💳 PARCIAL ($${(Number(odc.total_abonado) || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })})` : '⏳ PENDIENTE')}
                         </span>
                       </td>
                       <td style={{ textAlign: 'center' }}>
@@ -3243,18 +3481,18 @@ const LiquidacionFacturas = ({ currentUser }) => {
 
       {subtabCxp === 'historico' && (
         <div className="liquidacion-table-wrapper" style={{ marginTop: '10px' }}>
-          <div style={{ padding: '16px 20px', backgroundColor: '#f0f9ff', borderBottom: '1px solid #bae6fd', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ padding: '16px 20px', backgroundColor: '#f0f9ff', borderBottom: '1px solid #bae6fd', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
             <span style={{ fontWeight: '900', color: '#0369a1', fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <CheckCircle2 size={18} /> Histórico de Pagos y Liquidaciones Completadas ({pagadosConsolidados.total})
+              <CheckCircle2 size={18} /> Histórico de Pagos y Liquidaciones en Orden Cronológico ({pagadosConsolidados.total})
             </span>
-            <span style={{ fontWeight: '900', color: '#0284c7', fontSize: '0.9rem' }}>
-              Registros Consolidados: {pagadosConsolidados.total}
+            <span style={{ fontWeight: '900', color: '#059669', fontSize: '0.9rem', backgroundColor: '#ecfdf5', padding: '4px 12px', borderRadius: '8px', border: '1px solid #a7f3d0' }}>
+              Total Pagado / Abonado: $ {(pagadosConsolidados.montoTotalPagado || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
             </span>
           </div>
 
           {pagadosConsolidados.total === 0 ? (
             <div style={{ textAlign: 'center', padding: '40px', color: '#94a3b8', fontSize: '0.85rem', fontWeight: '700' }}>
-              No hay pagos o liquidaciones finalizadas registradas con los filtros seleccionados.
+              No hay pagos o liquidaciones registradas con los filtros seleccionados.
             </div>
           ) : (
             <table className="liquidacion-table">
@@ -3263,32 +3501,64 @@ const LiquidacionFacturas = ({ currentUser }) => {
                   <th>Tipo / Documento</th>
                   <th>Proveedor</th>
                   <th>Modalidad</th>
-                  <th>Monto Pagado</th>
+                  <th>Monto Pagado / Abonado</th>
+                  <th>Banco / Referencia</th>
                   <th>Quién lo Realizó</th>
                   <th>Fecha y Hora</th>
                   <th>Estatus</th>
-                  <th style={{ textAlign: 'center' }}>Acciones</th>
+                  <th style={{ textAlign: 'center' }}>Soporte / Detalle</th>
                 </tr>
               </thead>
               <tbody>
-                {pagadosConsolidados.facturas.map(fac => {
-                  const ultAbono = fac.abonos && fac.abonos.length > 0 ? fac.abonos[fac.abonos.length - 1] : null;
-                  const fechaRaw = ultAbono?.fecha || fac.fecha_compra;
-                  const { fecha: fStr, hora: hStr } = formatearFechaHora(fechaRaw);
-                  const usuarioPago = ultAbono?.usuario_nombre || fac.comprador || fac.usuario_compra || 'Compras / Finanzas';
-                  const modalidad = fac.es_credito ? 'CREDITO' : 'CONTADO';
+                {pagadosConsolidados.items.map(pago => {
+                  const { fecha: fStr, hora: hStr } = formatearFechaHora(pago.fecha);
+                  const isLiquidado = pago.estatus_badge === 'LIQUIDADO';
 
                   return (
-                    <tr key={`fac_${fac.key}`} style={{ backgroundColor: '#faf5ff' }}>
+                    <tr key={pago.id} style={{ backgroundColor: isLiquidado ? '#f0fdf4' : '#ffffff' }}>
                       <td>
-                        <span style={{ fontSize: '11px', backgroundColor: '#f3e8ff', color: '#7e22ce', padding: '3px 8px', borderRadius: '5px', fontWeight: '800', border: '1px solid #d8b4fe' }}>
-                          📜 FACTURA: {fac.doc_numero}
-                        </span>
+                        {pago.es_odc ? (
+                          <button
+                            type="button"
+                            onClick={() => abrirDetalleOdcPreview(pago.documento_ref)}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: '#7e22ce',
+                              fontWeight: '900',
+                              fontSize: '0.85rem',
+                              cursor: 'pointer',
+                              padding: 0,
+                              textDecoration: 'underline'
+                            }}
+                            title="Ver detalle y renglones de la ODC"
+                          >
+                            🛍️ ODC: {pago.numero_documento}
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setInvoiceSeleccionada(pago.documento_ref)}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: '#0284c7',
+                              fontWeight: '900',
+                              fontSize: '0.85rem',
+                              cursor: 'pointer',
+                              padding: 0,
+                              textDecoration: 'underline'
+                            }}
+                            title="Ver detalle de la Factura"
+                          >
+                            📜 FACTURA: {pago.numero_documento}
+                          </button>
+                        )}
                       </td>
                       <td style={{ fontWeight: '700' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                           <Building2 size={16} color="#64748b" />
-                          {fac.proveedor_nombre}
+                          {pago.proveedor_nombre}
                         </div>
                       </td>
                       <td>
@@ -3297,111 +3567,84 @@ const LiquidacionFacturas = ({ currentUser }) => {
                           fontWeight: '800', 
                           padding: '2px 8px', 
                           borderRadius: '6px', 
-                          backgroundColor: modalidad === 'CREDITO' ? '#ede9fe' : '#e0f2fe', 
-                          color: modalidad === 'CREDITO' ? '#6d28d9' : '#0284c7',
-                          border: `1px solid ${modalidad === 'CREDITO' ? '#ddd6fe' : '#bae6fd'}`
+                          backgroundColor: pago.modalidad === 'CREDITO' ? '#ede9fe' : '#e0f2fe', 
+                          color: pago.modalidad === 'CREDITO' ? '#6d28d9' : '#0284c7',
+                          border: `1px solid ${pago.modalidad === 'CREDITO' ? '#ddd6fe' : '#bae6fd'}`
                         }}>
-                          {modalidad === 'CREDITO' ? '💳 CRÉDITO' : '💵 CONTADO'}
+                          {pago.modalidad === 'CREDITO' ? '💳 CRÉDITO' : '💵 CONTADO'}
                         </span>
                       </td>
-                      <td style={{ fontWeight: '900', color: '#16a34a', fontSize: '0.9rem' }}>
-                        $ {fac.total_factura.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
-                      </td>
-                      <td style={{ fontSize: '0.8rem', color: '#1e293b', fontWeight: '700' }}>
-                        👤 {usuarioPago}
-                      </td>
-                      <td style={{ color: '#0369a1', fontSize: '0.8rem', fontWeight: '600' }}>
-                        <div>📅 {fStr}</div>
-                        <div style={{ fontSize: '0.74rem', color: '#64748b' }}>⏰ {hStr}</div>
+                      <td style={{ fontWeight: '900', color: '#16a34a', fontSize: '0.92rem' }}>
+                        $ {pago.monto.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
                       </td>
                       <td>
-                        <span style={{ padding: '4px 10px', borderRadius: '8px', fontSize: '0.75rem', fontWeight: '900', backgroundColor: '#dcfce7', color: '#15803d' }}>
-                          ✅ LIQUIDADO
-                        </span>
-                      </td>
-                      <td style={{ textAlign: 'center' }}>
-                        <button
-                          className="liquidacion-action-btn view"
-                          title="Ver Comprobantes y Abonos"
-                          onClick={() => setInvoiceSeleccionada(fac)}
-                        >
-                          <Eye size={15} />
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-
-                {pagadosConsolidados.odcs.map(odc => {
-                  const abonos = obtenerAbonosOdc(odc);
-                  const ultAbono = abonos && abonos.length > 0 ? abonos[abonos.length - 1] : null;
-                  const fechaRaw = ultAbono?.fecha || odc.updated_at || odc.fecha_emision;
-                  const { fecha: fStr, hora: hStr } = formatearFechaHora(fechaRaw);
-                  const usuarioPago = ultAbono?.usuario_nombre || odc.comprador_nombre || odc.elaborado_por_nombre || 'Finanzas';
-                  const modalidad = (odc.tipo_pago || 'CONTADO').toUpperCase();
-
-                  return (
-                    <tr key={`odc_${odc.id}`} style={{ backgroundColor: '#faf5ff' }}>
-                      <td>
-                        <button
-                          type="button"
-                          onClick={() => abrirDetalleOdcPreview(odc)}
-                          style={{
-                            background: 'none',
-                            border: 'none',
-                            color: '#7e22ce',
-                            fontWeight: '900',
-                            fontSize: '0.85rem',
-                            cursor: 'pointer',
-                            padding: 0,
-                            textDecoration: 'underline'
-                          }}
-                        >
-                          🛍️ ODC: {odc.numero_odc}
-                        </button>
-                      </td>
-                      <td style={{ fontWeight: '700' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <Building2 size={16} color="#64748b" />
-                          {odc.proveedor_nombre || 'N/A'}
+                        <div style={{ fontSize: '0.78rem', color: '#0f172a', fontWeight: '700' }}>
+                          🏦 {pago.banco_nombre}
+                        </div>
+                        <div style={{ fontSize: '0.72rem', color: '#64748b' }}>
+                          Ref: <strong style={{ color: '#334155' }}>{pago.referencia}</strong>
                         </div>
                       </td>
-                      <td>
-                        <span style={{ 
-                          fontSize: '0.72rem', 
-                          fontWeight: '800', 
-                          padding: '2px 8px', 
-                          borderRadius: '6px', 
-                          backgroundColor: modalidad === 'CREDITO' ? '#ede9fe' : '#e0f2fe', 
-                          color: modalidad === 'CREDITO' ? '#6d28d9' : '#0284c7',
-                          border: `1px solid ${modalidad === 'CREDITO' ? '#ddd6fe' : '#bae6fd'}`
-                        }}>
-                          {modalidad === 'CREDITO' ? '💳 CRÉDITO' : '💵 CONTADO'}
-                        </span>
-                      </td>
-                      <td style={{ fontWeight: '900', color: '#16a34a', fontSize: '0.9rem' }}>
-                        $ {Number(odc.total_general ?? odc.total ?? 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
-                      </td>
                       <td style={{ fontSize: '0.8rem', color: '#1e293b', fontWeight: '700' }}>
-                        👤 {usuarioPago}
+                        👤 {pago.usuario_nombre}
                       </td>
                       <td style={{ color: '#0369a1', fontSize: '0.8rem', fontWeight: '600' }}>
                         <div>📅 {fStr}</div>
                         <div style={{ fontSize: '0.74rem', color: '#64748b' }}>⏰ {hStr}</div>
                       </td>
                       <td>
-                        <span style={{ padding: '4px 10px', borderRadius: '8px', fontSize: '0.75rem', fontWeight: '900', backgroundColor: '#dcfce7', color: '#15803d' }}>
-                          ✅ PAGADO
+                        <span style={{
+                          padding: '4px 10px',
+                          borderRadius: '8px',
+                          fontSize: '0.75rem',
+                          fontWeight: '900',
+                          backgroundColor: isLiquidado ? '#dcfce7' : '#eff6ff',
+                          color: isLiquidado ? '#15803d' : '#1d4ed8',
+                          border: `1px solid ${isLiquidado ? '#bbf7d0' : '#bfdbfe'}`
+                        }}>
+                          {isLiquidado ? '✅ LIQUIDADO' : '💳 ABONO'}
                         </span>
                       </td>
                       <td style={{ textAlign: 'center' }}>
-                        <button
-                          className="liquidacion-action-btn view"
-                          title="Ver Vista Previa ODC"
-                          onClick={() => abrirDetalleOdcPreview(odc)}
-                        >
-                          <Eye size={15} />
-                        </button>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+                          {pago.urls_soporte && pago.urls_soporte.length > 0 ? (
+                            pago.urls_soporte.filter(Boolean).map((u, uIdx) => {
+                              const hrefVal = typeof u === 'string' ? u : u?.url;
+                              if (!hrefVal) return null;
+                              return (
+                                <a
+                                  key={uIdx}
+                                  href={hrefVal}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="liquidacion-action-btn"
+                                  style={{ backgroundColor: '#eff6ff', color: '#0284c7', border: '1px solid #bae6fd', textDecoration: 'none' }}
+                                  title={`Ver soporte: ${u.name || 'Comprobante'}`}
+                                >
+                                  <Download size={14} />
+                                </a>
+                              );
+                            })
+                          ) : pago.url_soporte ? (
+                            <a
+                              href={pago.url_soporte}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="liquidacion-action-btn"
+                              style={{ backgroundColor: '#eff6ff', color: '#0284c7', border: '1px solid #bae6fd', textDecoration: 'none' }}
+                              title="Ver soporte de pago"
+                            >
+                              <Download size={14} />
+                            </a>
+                          ) : null}
+                          <button
+                            className="liquidacion-action-btn view"
+                            title={pago.es_odc ? 'Ver detalles de ODC' : 'Ver detalles de Factura'}
+                            onClick={() => pago.es_odc ? abrirDetalleOdcPreview(pago.documento_ref) : setInvoiceSeleccionada(pago.documento_ref)}
+                          >
+                            <Eye size={15} />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );

@@ -46,7 +46,10 @@ import {
 import './ModuloTicketsPago.css';
 
 const obtenerNombreDeUrl = (url) => {
-  if (!url) return 'Soporte';
+  if (!url || typeof url !== 'string') return 'Soporte';
+  if (url.startsWith('data:image/')) return 'Soporte (Imagen)';
+  if (url.startsWith('data:application/pdf')) return 'Soporte (PDF)';
+  if (url.startsWith('data:')) return 'Soporte';
   try {
     const parts = url.split('/');
     const lastPart = parts[parts.length - 1].split('?')[0];
@@ -129,9 +132,13 @@ const parsearFacturaUrls = (facturaUrlField) => {
         try {
           const obj = JSON.parse(trimmed);
           if (obj.url) {
+            let name = obj.name || obj.etiqueta || '';
+            if (!name || name.startsWith('data:') || name === 'Archivo sin etiqueta') {
+              name = obtenerNombreDeUrl(obj.url);
+            }
             return {
               url: obj.url,
-              name: obj.name || obtenerNombreDeUrl(obj.url)
+              name
             };
           }
         } catch (e) { }
@@ -141,9 +148,13 @@ const parsearFacturaUrls = (facturaUrlField) => {
         name: obtenerNombreDeUrl(trimmed)
       };
     } else if (typeof item === 'object' && item !== null && item.url) {
+      let name = item.name || item.etiqueta || '';
+      if (!name || name.startsWith('data:') || name === 'Archivo sin etiqueta') {
+        name = obtenerNombreDeUrl(item.url);
+      }
       return {
         url: item.url,
-        name: item.name || obtenerNombreDeUrl(item.url)
+        name
       };
     }
     return null;
@@ -5011,9 +5022,11 @@ const ModuloTicketsPago = () => {
                     >
                       {(() => {
                         const renderCardSoporte = (item, idx) => {
-                          const lowerUrl = item.url.split('?')[0].toLowerCase();
-                          const isImg = /\.(jpg|jpeg|png|webp|avif|gif)$/i.test(lowerUrl);
-                          const isPdf = lowerUrl.endsWith('.pdf');
+                          const isBase64Img = typeof item.url === 'string' && item.url.trim().startsWith('data:image/');
+                          const isBase64Pdf = typeof item.url === 'string' && item.url.trim().startsWith('data:application/pdf');
+                          const lowerUrl = typeof item.url === 'string' ? item.url.split('?')[0].toLowerCase() : '';
+                          const isImg = isBase64Img || /\.(jpg|jpeg|png|webp|avif|gif|bmp|svg)($|\?)/i.test(lowerUrl);
+                          const isPdf = isBase64Pdf || /\.pdf($|\?)/i.test(lowerUrl);
                           const isExcel = /\.(xls|xlsx|csv)$/i.test(lowerUrl);
                           const isWord = /\.(doc|docx)$/i.test(lowerUrl);
                           const isPowerPoint = /\.(ppt|pptx)$/i.test(lowerUrl);
@@ -5842,9 +5855,11 @@ const ModuloTicketsPago = () => {
               </h3>
               <div style={{ flex: 1, overflow: 'auto', display: 'flex', justifyContent: 'center', alignItems: 'center', backgroundColor: '#f8fafc', borderRadius: '12px', padding: '10px', minHeight: '300px' }}>
                 {(() => {
-                  const lower = soportePreviewUrl.split('?')[0].toLowerCase();
-                  const isImg = /\.(jpg|jpeg|png|webp|avif|gif)$/i.test(lower);
-                  const isPdf = lower.endsWith('.pdf');
+                  const isBase64Img = typeof soportePreviewUrl === 'string' && soportePreviewUrl.trim().startsWith('data:image/');
+                  const isBase64Pdf = typeof soportePreviewUrl === 'string' && soportePreviewUrl.trim().startsWith('data:application/pdf');
+                  const lower = typeof soportePreviewUrl === 'string' ? soportePreviewUrl.split('?')[0].toLowerCase() : '';
+                  const isImg = isBase64Img || /\.(jpg|jpeg|png|webp|avif|gif|bmp|svg)($|\?)/i.test(lower);
+                  const isPdf = isBase64Pdf || /\.pdf($|\?)/i.test(lower);
                   if (isImg) {
                     return <img src={soportePreviewUrl} alt="Soporte" style={{ maxWidth: '100%', maxHeight: '70vh', objectFit: 'contain', borderRadius: '8px' }} />;
                   } else if (isPdf) {

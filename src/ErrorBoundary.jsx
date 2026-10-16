@@ -4,15 +4,26 @@ import { supabase } from './supabaseClient';
 export class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
-    this.state = { hasError: false };
+    this.state = { hasError: false, error: null, errorInfo: null };
   }
 
   static getDerivedStateFromError(error) {
-    return { hasError: true };
+    return { hasError: true, error };
   }
 
   componentDidCatch(error, errorInfo) {
+    this.setState({ error, errorInfo });
     console.error("[ERROR BOUNDARY] Capturado error de renderizado:", error, errorInfo);
+    try {
+      localStorage.setItem('sitc_last_render_error', JSON.stringify({
+        message: error?.message || String(error),
+        stack: error?.stack || '',
+        componentStack: errorInfo?.componentStack || '',
+        timestamp: new Date().toISOString()
+      }));
+    } catch {
+      // ignore
+    }
     this.logRenderError(error, errorInfo);
   }
 
@@ -67,6 +78,30 @@ export class ErrorBoundary extends React.Component {
             Se ha producido un error inesperado de renderizado en esta sección del sistema. 
             El fallo ha sido reportado automáticamente al equipo de soporte.
           </p>
+
+          {this.state.error && (
+            <div style={{
+              margin: '20px auto',
+              maxWidth: '800px',
+              textAlign: 'left',
+              backgroundColor: '#1e293b',
+              color: '#f87171',
+              padding: '16px',
+              borderRadius: '10px',
+              fontSize: '12px',
+              overflowX: 'auto',
+              fontFamily: 'monospace'
+            }}>
+              <strong>Error:</strong> {this.state.error.toString()}
+              {this.state.errorInfo?.componentStack && (
+                <div style={{ marginTop: '10px', color: '#94a3b8', whiteSpace: 'pre-wrap' }}>
+                  <strong>Component Stack:</strong>
+                  {this.state.errorInfo.componentStack}
+                </div>
+              )}
+            </div>
+          )}
+
           <button 
             onClick={() => window.location.reload()} 
             style={{

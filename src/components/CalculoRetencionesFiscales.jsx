@@ -18,7 +18,11 @@ import {
   ExternalLink,
   Percent,
   TrendingDown,
-  Info
+  Info,
+  BookOpen,
+  X,
+  Check,
+  HelpCircle
 } from 'lucide-react';
 import {
   calcularLiquidacionFiscal,
@@ -31,6 +35,14 @@ import {
   guardarTasaPreferencialLocal,
   obtenerTasaPreferencialLocal
 } from '../services/tasasService';
+import {
+  TIPOS_PERSONA_ISLR,
+  CONCEPTOS_RETENCION_ISLR,
+  detectarTipoPersonaPorRif,
+  VALOR_UT_DEFAULT,
+  FACTOR_SUSTRAENDO_UT,
+  calcularMontoMinimoSustraendoBs
+} from '../constants/tablaRetencionesIslr';
 import './CalculoRetencionesFiscales.css';
 
 /**
@@ -71,10 +83,15 @@ const CalculoRetencionesFiscales = ({
   // Opciones: 0, 75, 100
   const [porcentajeRetIva, setPorcentajeRetIva] = useState(75.00);
 
-  // --- RETENCIÓN ISLR ---
-  // Opciones: 2 (Servicios), 1 (Bienes/Obras), 0 (No aplica), 'CUSTOM' (Variable)
-  const [modoRetIslr, setModoRetIslr] = useState('2'); // '2' | '1' | '0' | 'CUSTOM'
+  // --- RETENCIÓN ISLR CON TABULADOR OFICIAL (DECRETO 1.808) ---
+  const [tipoPersona, setTipoPersona] = useState('PJD'); // 'PJD' | 'PNR' | 'PJND' | 'PNNR'
+  const [conceptoIslrId, setConceptoIslrId] = useState('servicios_general');
+  const [unidadTributaria, setUnidadTributaria] = useState(VALOR_UT_DEFAULT);
   const [porcentajeRetIslrCustom, setPorcentajeRetIslrCustom] = useState(2.00);
+  const [baseRetIslrCustom, setBaseRetIslrCustom] = useState(100);
+  const [mostrarModalTabulador, setMostrarModalTabulador] = useState(false);
+  const [busquedaTabulador, setBusquedaTabulador] = useState('');
+  const [categoriaTabuladorFiltro, setCategoriaTabuladorFiltro] = useState('Todas');
 
   // --- HISTORIAL Y ESTADO GENERAL ---
   const [historialRetenciones, setHistorialRetenciones] = useState([]);
@@ -127,14 +144,18 @@ const CalculoRetencionesFiscales = ({
     if (odcInicial) {
       setOdcAsociadaId(odcInicial.id || '');
       setProveedorNombre(odcInicial.proveedor_nombre || '');
-      setProveedorRif(odcInicial.proveedor_rif || '');
+      const rif = odcInicial.proveedor_rif || '';
+      setProveedorRif(rif);
+      if (rif) setTipoPersona(detectarTipoPersonaPorRif(rif));
       setNumeroFactura(odcInicial.numero_factura || odcInicial.factura_numero || odcInicial.numero_odc || '');
       setBaseImponible(Number(odcInicial.subtotal) || Number(odcInicial.total_general) || 0);
       setMontoExento(Number(odcInicial.monto_exento) || 0);
       setConcepto(`Liquidación ODC ${odcInicial.numero_odc || ''} - ${odcInicial.proveedor_nombre || ''}`);
     } else if (facturaInicial) {
       setProveedorNombre(facturaInicial.proveedor_nombre || '');
-      setProveedorRif(facturaInicial.proveedor_rif || '');
+      const rif = facturaInicial.proveedor_rif || '';
+      setProveedorRif(rif);
+      if (rif) setTipoPersona(detectarTipoPersonaPorRif(rif));
       setNumeroFactura(facturaInicial.doc_numero || facturaInicial.factura_num || '');
       setBaseImponible(Number(facturaInicial.monto_total) || Number(facturaInicial.total) || 0);
       setConcepto(`Factura #${facturaInicial.doc_numero || ''} de ${facturaInicial.proveedor_nombre || ''}`);
@@ -158,15 +179,7 @@ const CalculoRetencionesFiscales = ({
     cargarHistorial();
   }, [cargarHistorial]);
 
-  // 4. Porcentaje efectivo de ISLR
-  const porcentajeIslrEfectivo = useMemo(() => {
-    if (modoRetIslr === '2') return 2.00;
-    if (modoRetIslr === '1') return 1.00;
-    if (modoRetIslr === '0') return 0.00;
-    return Number(porcentajeRetIslrCustom) || 0.00;
-  }, [modoRetIslr, porcentajeRetIslrCustom]);
-
-  // 5. CÁLCULO REACTIVO CON useMemo (REGLA MANDATORIA DE NEGOCIO Y ESTABILIDAD)
+  // 4. CÁLCULO REACTIVO CON useMemo (TABULADOR OFICIAL DECRETO 1.808)
   const liquidacion = useMemo(() => {
     return calcularLiquidacionFiscal({
       tipo_tasa: tipoTasa,
@@ -175,7 +188,11 @@ const CalculoRetencionesFiscales = ({
       base_imponible: baseImponible,
       alicuota_iva: alicuotaIva,
       porcentaje_retencion_iva: porcentajeRetIva,
-      porcentaje_retencion_islr: porcentajeIslrEfectivo
+      porcentaje_retencion_islr: porcentajeRetIslrCustom,
+      tipo_persona: tipoPersona,
+      concepto_islr_id: conceptoIslrId,
+      unidad_tributaria: unidadTributaria,
+      porcentaje_base_islr: baseRetIslrCustom
     });
   }, [
     tipoTasa,
@@ -184,11 +201,53 @@ const CalculoRetencionesFiscales = ({
     baseImponible,
     alicuotaIva,
     porcentajeRetIva,
-    porcentajeIslrEfectivo
+    porcentajeRetIslrCustom,
+    baseRetIslrCustom,
+    tipoPersona,
+    conceptoIslrId,
+    unidadTributaria
   ]);
 
   // Simbología de moneda
   const simboloDivisa = tipoTasa === 'BCV_EUR' ? '€' : '$';
+
+  // Helpers y listas para Tabulador ISLR (Decreto 1.808)
+  const conceptoActivo = useMemo(() => {
+    return CONCEPTOS_RETENCION_ISLR.find(c => c.id === conceptoIslrId) || CONCEPTOS_RETENCION_ISLR[0];
+  }, [conceptoIslrId]);
+
+  const tarifaActiva = useMemo(() => {
+    if (!conceptoActivo || !conceptoActivo.tarifas) return null;
+    return conceptoActivo.tarifas[tipoPersona] || conceptoActivo.tarifas.PJD;
+  }, [conceptoActivo, tipoPersona]);
+
+  const conceptosFrecuentes = useMemo(() => {
+    return CONCEPTOS_RETENCION_ISLR.filter(c => c.frecuente);
+  }, []);
+
+  const categoriasDisponibles = useMemo(() => {
+    const cats = new Set(['Todas']);
+    CONCEPTOS_RETENCION_ISLR.forEach(c => {
+      if (c.categoria) cats.add(c.categoria);
+    });
+    return Array.from(cats);
+  }, []);
+
+  const conceptosFiltrados = useMemo(() => {
+    return CONCEPTOS_RETENCION_ISLR.filter(item => {
+      const matchCat = categoriaTabuladorFiltro === 'Todas' || item.categoria === categoriaTabuladorFiltro;
+      if (!matchCat) return false;
+      if (!busquedaTabulador.trim()) return true;
+      const q = busquedaTabulador.toLowerCase().trim();
+      const t = item.tarifas?.[tipoPersona] || {};
+      return (
+        (item.nombre && item.nombre.toLowerCase().includes(q)) ||
+        (item.numeral && item.numeral.toLowerCase().includes(q)) ||
+        (item.id && item.id.toLowerCase().includes(q)) ||
+        (t.codigo && t.codigo.toLowerCase().includes(q))
+      );
+    });
+  }, [categoriaTabuladorFiltro, busquedaTabulador, tipoPersona]);
 
   // Manejador para guardar liquidación
   const handleGuardarLiquidacion = async () => {
@@ -264,8 +323,10 @@ const CalculoRetencionesFiscales = ({
     setBaseImponible(0);
     setAlicuotaIva(16.00);
     setPorcentajeRetIva(75.00);
-    setModoRetIslr('2');
+    setTipoPersona('PJD');
+    setConceptoIslrId('servicios_general');
     setPorcentajeRetIslrCustom(2.00);
+    setBaseRetIslrCustom(100);
     toast('Formulario reiniciado', { icon: '🧹' });
   };
 
@@ -273,7 +334,9 @@ const CalculoRetencionesFiscales = ({
   const handleSeleccionarOdc = (odc) => {
     setOdcAsociadaId(odc.id);
     setProveedorNombre(odc.proveedor_nombre || '');
-    setProveedorRif(odc.proveedor_rif || '');
+    const rif = odc.proveedor_rif || '';
+    setProveedorRif(rif);
+    if (rif) setTipoPersona(detectarTipoPersonaPorRif(rif));
     setNumeroFactura(odc.numero_factura || odc.numero_odc || '');
     setBaseImponible(Number(odc.subtotal) || Number(odc.total_general) || 0);
     setConcepto(`ODC ${odc.numero_odc} - ${odc.proveedor_nombre || ''}`);
@@ -711,80 +774,183 @@ const CalculoRetencionesFiscales = ({
             </div>
           </div>
 
-          {/* SECCIÓN E: RETENCIÓN DE ISLR */}
+          {/* SECCIÓN E: RETENCIÓN DE ISLR (TABULADOR OFICIAL DECRETO 1.808) */}
           <div className="retenciones-card">
             <div className="retenciones-section-title">
               <TrendingDown size={16} color="#7e22ce" />
-              <span>D. Sección de Retención de ISLR (Sobre Base Imponible)</span>
+              <span>D. Retención de I.S.L.R. (Tabulador Oficial Decreto 1.808 - G.O. 43.140)</span>
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              <label className="retenciones-label">
-                <span>Tipo y Tarifa de Retención ISLR:</span>
-                <span className="badge-pastel badge-pastel-purple">
-                  Retenido: {simboloDivisa} {liquidacion.monto_retencion_islr.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
-                </span>
-              </label>
-
-              <div className="retenciones-pill-group">
-                <button
-                  type="button"
-                  onClick={() => setModoRetIslr('2')}
-                  className={`retenciones-pill-btn ${modoRetIslr === '2' ? 'active-amber' : ''}`}
-                >
-                  [ 2% (Servicios) ]
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setModoRetIslr('1')}
-                  className={`retenciones-pill-btn ${modoRetIslr === '1' ? 'active-blue' : ''}`}
-                >
-                  [ 1% (Bienes / Obras) ]
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setModoRetIslr('0')}
-                  className={`retenciones-pill-btn ${modoRetIslr === '0' ? 'active' : ''}`}
-                >
-                  [ 0% (No aplica) ]
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setModoRetIslr('CUSTOM')}
-                  className={`retenciones-pill-btn ${modoRetIslr === 'CUSTOM' ? 'active' : ''}`}
-                >
-                  [ Personalizado / Variable ]
-                </button>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              {/* 1. Condición Jurídica del Sujeto Retenido */}
+              <div>
+                <label className="retenciones-label" style={{ marginBottom: '6px' }}>
+                  <span>Condición Jurídica del Sujeto Retenido (Proveedor):</span>
+                  {proveedorRif && (
+                    <span style={{ fontSize: '11px', color: '#6b21a8', fontWeight: '800' }}>
+                      Auto-detectado por RIF: {proveedorRif}
+                    </span>
+                  )}
+                </label>
+                <div className="retenciones-pill-group">
+                  {TIPOS_PERSONA_ISLR.map((tp) => (
+                    <button
+                      key={tp.id}
+                      type="button"
+                      onClick={() => setTipoPersona(tp.id)}
+                      className={`retenciones-pill-btn ${tipoPersona === tp.id ? 'active-purple' : ''}`}
+                      title={tp.label}
+                    >
+                      {tp.short}
+                    </button>
+                  ))}
+                </div>
               </div>
 
-              {modoRetIslr === 'CUSTOM' && (
-                <div className="retenciones-form-group" style={{ marginTop: '6px' }}>
-                  <label className="retenciones-label">Porcentaje ISLR exacto:</label>
-                  <div className="retenciones-input-wrapper" style={{ width: '160px' }}>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      max="100"
-                      value={porcentajeRetIslrCustom}
-                      onChange={(e) => setPorcentajeRetIslrCustom(parseFloat(e.target.value) || 0)}
-                      className="retenciones-input with-suffix bold-num"
-                    />
-                    <span className="retenciones-input-suffix">%</span>
+              {/* 2. Conceptos Rápidos y Frecuentes */}
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                  <label className="retenciones-label" style={{ margin: 0 }}>
+                    <span>Concepto de Retención Aplicable:</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setMostrarModalTabulador(true)}
+                    className="retenciones-pill-btn active-slate"
+                    style={{ padding: '4px 10px', fontSize: '11px' }}
+                  >
+                    <BookOpen size={12} />
+                    Ver Tabulador Completo (34 Conceptos)
+                  </button>
+                </div>
+
+                <div className="retenciones-pill-group">
+                  {conceptosFrecuentes.map((cf) => {
+                    const tar = cf.tarifas?.[tipoPersona] || cf.tarifas?.PJD || {};
+                    const isSelected = conceptoIslrId === cf.id;
+                    return (
+                      <button
+                        key={cf.id}
+                        type="button"
+                        onClick={() => {
+                          setConceptoIslrId(cf.id);
+                          if (cf.id !== 'personalizado') {
+                            setPorcentajeRetIslrCustom(tar.porcentaje || 0);
+                            setBaseRetIslrCustom(tar.base || 100);
+                          }
+                        }}
+                        className={`retenciones-pill-btn ${isSelected ? 'active-purple' : ''}`}
+                      >
+                        <span>{cf.nombreCorto || cf.numeral}</span>
+                        <span style={{ opacity: 0.85, fontSize: '10.5px' }}>
+                          [{tar.porcentaje !== undefined ? `${tar.porcentaje}%` : 'Var'}]
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* 3. Tarjeta Informativa del Concepto Activo */}
+              <div className="tabulador-active-card">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' }}>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      <span className="badge-pastel badge-pastel-purple" style={{ fontWeight: '900' }}>
+                        Numeral {liquidacion.numeral_decreto || '9.11'}
+                      </span>
+                      <span className="tabulador-code-pill" title="Código de Concepto SENIAT">
+                        CÓD. SENIAT: {liquidacion.codigo_concepto_seniat || '-'}
+                      </span>
+                      <span style={{ fontSize: '11px', color: '#475569', fontWeight: '700' }}>
+                        Base Gravable: {liquidacion.porcentaje_base_islr}%
+                      </span>
+                      <span style={{ fontSize: '11px', color: '#7e22ce', fontWeight: '900' }}>
+                        Tarifa: {liquidacion.porcentaje_retencion_islr}%
+                      </span>
+                    </div>
+                    <div style={{ fontWeight: '800', color: '#0f172a', fontSize: '12px', marginTop: '4px' }}>
+                      {liquidacion.concepto_islr_nombre}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                    <div style={{ fontSize: '10px', textTransform: 'uppercase', color: '#6b21a8', fontWeight: '800' }}>
+                      Monto Retenido ISLR
+                    </div>
+                    <div style={{ fontSize: '15px', fontWeight: '950', color: '#7e22ce' }}>
+                      - {simboloDivisa} {Number(liquidacion?.monto_retencion_islr || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                    </div>
+                    <div style={{ fontSize: '10.5px', color: '#0284c7', fontWeight: '800' }}>
+                      Bs. {Number(liquidacion?.monto_retencion_islr_ves || liquidacion?.equivalente_ves_ret_islr || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                    </div>
                   </div>
                 </div>
-              )}
 
-              <div style={{ background: '#f8fafc', padding: '10px 14px', borderRadius: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ color: '#64748b', fontSize: '11.5px' }}>
-                  Fórmula: Base Imponible (${liquidacion.base_imponible.toFixed(2)}) × ({porcentajeIslrEfectivo}%)
-                </span>
-                <span style={{ fontWeight: '900', color: '#7e22ce', fontSize: '13px' }}>
-                  - {simboloDivisa} {liquidacion.monto_retencion_islr.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
-                </span>
+                {/* Explicación de Sustraendo o Exención para PNR */}
+                {tipoPersona === 'PNR' && (
+                  <div style={{ background: '#ffffff', borderRadius: '8px', padding: '8px 10px', border: '1px solid #e9d5ff', fontSize: '11px', color: '#4c1d95', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Info size={14} color="#7e22ce" style={{ flexShrink: 0 }} />
+                    {liquidacion?.aplica_sustraendo ? (
+                      <span>
+                        <strong>Aplica Sustraendo Legal Art. 9:</strong> Pago en Bs ({Number(liquidacion?.monto_base_ves || ((liquidacion?.base_imponible || 0) * (liquidacion?.valor_tasa || 1))).toLocaleString('de-DE', { minimumFractionDigits: 2 })}) &gt; Bs. 3.583,34 (83,3334 UT). Sustraendo descontado: <strong>Bs. {Number(liquidacion?.sustraendo_islr_bs || 0).toFixed(2)}</strong> ({simboloDivisa} {Number(liquidacion?.sustraendo_islr_usd || 0).toFixed(2)}).
+                      </span>
+                    ) : (
+                      <span>
+                        <strong>Exento por Umbral Mínimo:</strong> La base en Bolívares (Bs. {Number(liquidacion?.monto_base_ves || ((liquidacion?.base_imponible || 0) * (liquidacion?.valor_tasa || 1))).toLocaleString('de-DE', { minimumFractionDigits: 2 })}) no supera el mínimo de Bs. 3.583,34 (83,3334 UT × Bs. 43,00). Retención: Bs. 0,00.
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                {/* Si es Personalizado, mostrar inputs para tarifa y base */}
+                {conceptoIslrId === 'personalizado' && (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '6px', background: '#ffffff', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1' }}>
+                    <div className="retenciones-form-group">
+                      <label className="retenciones-label">Porcentaje Tarifa ISLR:</label>
+                      <div className="retenciones-input-wrapper">
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          max="100"
+                          value={porcentajeRetIslrCustom}
+                          onChange={(e) => setPorcentajeRetIslrCustom(parseFloat(e.target.value) || 0)}
+                          className="retenciones-input with-suffix bold-num"
+                        />
+                        <span className="retenciones-input-suffix">%</span>
+                      </div>
+                    </div>
+                    <div className="retenciones-form-group">
+                      <label className="retenciones-label">Base Imponible Gravable:</label>
+                      <div className="retenciones-input-wrapper">
+                        <input
+                          type="number"
+                          step="1"
+                          min="0"
+                          max="100"
+                          value={baseRetIslrCustom}
+                          onChange={(e) => setBaseRetIslrCustom(parseFloat(e.target.value) || 0)}
+                          className="retenciones-input with-suffix bold-num"
+                        />
+                        <span className="retenciones-input-suffix">%</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', color: '#6b21a8', borderTop: '1px dashed #d8b4fe', paddingTop: '6px' }}>
+                  <span>
+                    Fórmula Oficial: Base (${Number(liquidacion?.base_imponible || 0).toFixed(2)}) × {liquidacion?.porcentaje_base_islr || 100}% × {liquidacion?.porcentaje_retencion_islr || 0}% {liquidacion?.aplica_sustraendo ? `- Sustraendo ($${Number(liquidacion?.sustraendo_islr_usd || 0).toFixed(2)})` : ''}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setMostrarModalTabulador(true)}
+                    style={{ background: 'transparent', border: 'none', color: '#7e22ce', fontWeight: '800', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                  >
+                    <span>Cambiar concepto</span>
+                    <ExternalLink size={11} />
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -873,11 +1039,18 @@ const CalculoRetencionesFiscales = ({
               </div>
 
               <div className="retenciones-breakdown-row retencion-row">
-                <span>(-) Retención ISLR ({liquidacion.porcentaje_retencion_islr}%):</span>
+                <span>(-) Retención ISLR ({liquidacion.porcentaje_retencion_islr}% - Cód. {liquidacion.codigo_concepto_seniat || '-'}):</span>
                 <span>
                   - {simboloDivisa} {liquidacion.monto_retencion_islr.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
                 </span>
               </div>
+
+              {liquidacion?.aplica_sustraendo && (
+                <div className="retenciones-breakdown-row" style={{ fontSize: '10.5px', color: '#7e22ce', padding: '2px 0' }}>
+                  <span>↳ Sustraendo Art. 9 descontado:</span>
+                  <span>- Bs. {Number(liquidacion?.sustraendo_islr_bs || 0).toFixed(2)} (-{simboloDivisa} {Number(liquidacion?.sustraendo_islr_usd || 0).toFixed(2)})</span>
+                </div>
+              )}
 
               <div className="retenciones-breakdown-row" style={{ color: '#dc2626', fontWeight: '800', background: '#fef2f2', padding: '6px 8px', borderRadius: '8px' }}>
                 <span>Total Retenciones Fiscales:</span>
@@ -1040,7 +1213,10 @@ const CalculoRetencionesFiscales = ({
                       $ {Number(item.monto_retencion_iva || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
                     </td>
                     <td style={{ color: '#7e22ce', fontWeight: '700' }}>
-                      $ {Number(item.monto_retencion_islr || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                      <div>$ {Number(item.monto_retencion_islr || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</div>
+                      <div style={{ fontSize: '10px', color: '#9333ea', fontWeight: '600' }}>
+                        {item.numeral_decreto ? `Num. ${item.numeral_decreto}` : ''} {item.codigo_concepto_seniat ? `[${item.codigo_concepto_seniat}]` : ''}
+                      </div>
                     </td>
                     <td style={{ color: '#166534', fontWeight: '900', fontSize: '12.5px' }}>
                       $ {Number(item.monto_neto_pagar || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
@@ -1091,7 +1267,234 @@ const CalculoRetencionesFiscales = ({
         </div>
       </div>
 
-      {/* 4. MODAL DE COMPROBANTE OFICIAL IMPRIMIBLE */}
+      {/* 4. MODAL DEL TABULADOR OFICIAL DE RETENCIONES ISLR (DECRETO 1.808) */}
+      {mostrarModalTabulador && (
+        <div className="tabulador-modal-backdrop" onClick={() => setMostrarModalTabulador(false)}>
+          <div className="tabulador-modal-content" onClick={(e) => e.stopPropagation()}>
+            {/* Header del Modal */}
+            <div className="tabulador-modal-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <BookOpen size={20} />
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: '900' }}>
+                    Tabulador Oficial de Retenciones del I.S.L.R.
+                  </h3>
+                  <p style={{ margin: '2px 0 0 0', fontSize: '11px', opacity: 0.85 }}>
+                    Decreto 1.808 Art. 9 - Gaceta Oficial N° 43.140 | Unidad Tributaria: Bs. {unidadTributaria.toFixed(2)} | Min. Sustraendo: Bs. {calcularMontoMinimoSustraendoBs(unidadTributaria).toFixed(2)}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMostrarModalTabulador(false)}
+                className="retenciones-pill-btn"
+                style={{ background: 'rgba(255,255,255,0.15)', color: '#ffffff', border: 'none' }}
+              >
+                <X size={16} /> Cerrar
+              </button>
+            </div>
+
+            {/* Body del Modal */}
+            <div className="tabulador-modal-body">
+              {/* Barra de Filtros y Búsqueda */}
+              <div className="tabulador-search-bar">
+                <div className="retenciones-input-wrapper" style={{ flex: 1, minWidth: '260px' }}>
+                  <Search size={14} className="retenciones-input-prefix" color="#64748b" />
+                  <input
+                    type="text"
+                    placeholder="Buscar por concepto, numeral (ej: 9.11, 9.15, 9.1.b) o código SENIAT (ej: 055)..."
+                    value={busquedaTabulador}
+                    onChange={(e) => setBusquedaTabulador(e.target.value)}
+                    className="retenciones-input with-prefix"
+                    autoFocus
+                  />
+                  {busquedaTabulador && (
+                    <button
+                      type="button"
+                      onClick={() => setBusquedaTabulador('')}
+                      style={{ position: 'absolute', right: '10px', background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8' }}
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span style={{ fontSize: '11px', fontWeight: '700', color: '#475569' }}>Contribuyente:</span>
+                  <div className="retenciones-pill-group">
+                    {TIPOS_PERSONA_ISLR.map((tp) => (
+                      <button
+                        key={tp.id}
+                        type="button"
+                        onClick={() => setTipoPersona(tp.id)}
+                        className={`retenciones-pill-btn ${tipoPersona === tp.id ? 'active-purple' : ''}`}
+                        style={{ padding: '4px 8px', fontSize: '11px' }}
+                      >
+                        {tp.id}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Categorías Chip */}
+              <div className="tabulador-filter-chips">
+                {categoriasDisponibles.map((cat) => (
+                  <button
+                    key={cat}
+                    type="button"
+                    onClick={() => setCategoriaTabuladorFiltro(cat)}
+                    className={`tabulador-chip ${categoriaTabuladorFiltro === cat ? 'active' : ''}`}
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </div>
+
+              {/* Tabla del Tabulador */}
+              <div className="tabulador-table-wrapper">
+                <table className="tabulador-table">
+                  <thead>
+                    <tr>
+                      <th style={{ width: '80px' }}>Numeral</th>
+                      <th>Concepto del Pago (Decreto 1.808)</th>
+                      <th style={{ textAlign: 'center', width: '140px', background: tipoPersona === 'PNR' ? '#581c87' : undefined }}>
+                        Pers. Natural Residente (PNR)
+                      </th>
+                      <th style={{ textAlign: 'center', width: '140px', background: tipoPersona === 'PJD' ? '#581c87' : undefined }}>
+                        Pers. Jurídica Domiciliada (PJD)
+                      </th>
+                      <th style={{ textAlign: 'center', width: '120px', background: (tipoPersona === 'PJND' || tipoPersona === 'PNNR') ? '#581c87' : undefined }}>
+                        No Domic. / No Res.
+                      </th>
+                      <th style={{ width: '100px', textAlign: 'center' }}>Acción</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {conceptosFiltrados.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} style={{ textAlign: 'center', padding: '30px', color: '#64748b' }}>
+                          No se encontraron conceptos para &quot;{busquedaTabulador}&quot; en la categoría seleccionada.
+                        </td>
+                      </tr>
+                    ) : (
+                      conceptosFiltrados.map((item) => {
+                        const isSelected = conceptoIslrId === item.id;
+                        const tPnr = item.tarifas?.PNR || {};
+                        const tPjd = item.tarifas?.PJD || {};
+                        const tTarifaActiva = item.tarifas?.[tipoPersona] || tPjd;
+
+                        return (
+                          <tr
+                            key={item.id}
+                            className={isSelected ? 'selected-row' : ''}
+                            style={{ cursor: 'pointer' }}
+                            onClick={() => {
+                              setConceptoIslrId(item.id);
+                              if (item.id !== 'personalizado') {
+                                setPorcentajeRetIslrCustom(tTarifaActiva.porcentaje || 0);
+                                setBaseRetIslrCustom(tTarifaActiva.base || 100);
+                              }
+                              setMostrarModalTabulador(false);
+                              toast.success(`Concepto seleccionado: Numeral ${item.numeral || ''} - ${item.nombreCorto || item.nombre}`);
+                            }}
+                          >
+                            <td style={{ fontWeight: '900', color: '#0f172a' }}>
+                              <span className="badge-pastel badge-pastel-purple">
+                                {item.numeral || 'ESP'}
+                              </span>
+                            </td>
+                            <td>
+                              <div style={{ fontWeight: '800', color: '#0f172a' }}>{item.nombre}</div>
+                              <div style={{ fontSize: '10.5px', color: '#64748b' }}>
+                                Categoría: {item.categoria} {item.frecuente ? '• ★ Frecuente' : ''}
+                              </div>
+                            </td>
+                            {/* Columna PNR */}
+                            <td style={{ textAlign: 'center', background: tipoPersona === 'PNR' ? '#faf5ff' : undefined }}>
+                              {tPnr.codigo ? (
+                                <div>
+                                  <span className="tabulador-code-pill">{tPnr.codigo}</span>
+                                  <div style={{ fontWeight: '800', color: '#0f172a', marginTop: '2px' }}>
+                                    {tPnr.porcentaje}% <span style={{ fontSize: '10px', color: '#64748b' }}>({tPnr.base}% base)</span>
+                                  </div>
+                                  {tPnr.sustraendoFactor ? (
+                                    <div style={{ fontSize: '9.5px', color: '#7e22ce' }}>
+                                      Sust: Bs. {(tPnr.sustraendoFactor * unidadTributaria * (tPnr.porcentaje / 100)).toFixed(2)}
+                                    </div>
+                                  ) : null}
+                                </div>
+                              ) : (
+                                <span style={{ color: '#94a3b8' }}>-</span>
+                              )}
+                            </td>
+                            {/* Columna PJD */}
+                            <td style={{ textAlign: 'center', background: tipoPersona === 'PJD' ? '#faf5ff' : undefined }}>
+                              {tPjd.codigo ? (
+                                <div>
+                                  <span className="tabulador-code-pill">{tPjd.codigo}</span>
+                                  <div style={{ fontWeight: '800', color: '#0f172a', marginTop: '2px' }}>
+                                    {tPjd.porcentaje}% <span style={{ fontSize: '10px', color: '#64748b' }}>({tPjd.base}% base)</span>
+                                  </div>
+                                </div>
+                              ) : (
+                                <span style={{ color: '#94a3b8' }}>-</span>
+                              )}
+                            </td>
+                            {/* Columna No Domiciliada / No Residente */}
+                            <td style={{ textAlign: 'center' }}>
+                              <div style={{ fontSize: '10.5px' }}>
+                                {item.tarifas?.PJND?.porcentaje !== undefined ? `PJND: ${item.tarifas.PJND.porcentaje}%` : ''}
+                                {item.tarifas?.PNNR?.porcentaje !== undefined ? ` / PNNR: ${item.tarifas.PNNR.porcentaje}%` : ''}
+                              </div>
+                            </td>
+                            {/* Botón Seleccionar */}
+                            <td style={{ textAlign: 'center' }}>
+                              <button
+                                type="button"
+                                className={`retenciones-pill-btn ${isSelected ? 'active-purple' : ''}`}
+                                style={{ padding: '5px 10px', fontSize: '11px', width: '100%', justifyContent: 'center' }}
+                              >
+                                {isSelected ? <><Check size={12} /> Activo</> : 'Aplicar'}
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Footer con Resumen / Información Legal */}
+              <div style={{ background: '#ffffff', padding: '12px 16px', borderRadius: '10px', border: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', color: '#475569' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Info size={14} color="#7e22ce" />
+                  <span>
+                    <strong>Fundamento Legal:</strong> Decreto 1.808 del 23/04/1997 (Reglamento de Retenciones ISLR) y Providencias SENIAT.
+                  </span>
+                </div>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <span>Unidad Tributaria (U.T.):</span>
+                  <div className="retenciones-input-wrapper" style={{ width: '80px' }}>
+                    <input
+                      type="number"
+                      step="0.5"
+                      value={unidadTributaria}
+                      onChange={(e) => setUnidadTributaria(parseFloat(e.target.value) || VALOR_UT_DEFAULT)}
+                      className="retenciones-input"
+                      style={{ padding: '3px 8px', fontSize: '11.5px', fontWeight: '800' }}
+                    />
+                  </div>
+                  <span>Bs.</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 5. MODAL DE COMPROBANTE OFICIAL IMPRIMIBLE */}
       {comprobanteModal && (
         <div className="comprobante-modal-backdrop" onClick={() => setComprobanteModal(null)}>
           <div className="comprobante-modal-content" onClick={(e) => e.stopPropagation()}>
@@ -1201,14 +1604,29 @@ const CalculoRetencionesFiscales = ({
                     </td>
                   </tr>
                   <tr style={{ borderBottom: '1px solid #e2e8f0', background: '#faf5ff' }}>
-                    <td style={{ padding: '8px', fontWeight: '700' }}>Retención de I.S.L.R.</td>
+                    <td style={{ padding: '8px' }}>
+                      <div style={{ fontWeight: '700' }}>Retención de I.S.L.R.</div>
+                      <div style={{ fontSize: '10px', color: '#6b21a8' }}>
+                        {comprobanteModal.concepto_islr_nombre || 'Retención General ISLR'}
+                        {comprobanteModal.numeral_decreto ? ` (Numeral ${comprobanteModal.numeral_decreto})` : ''}
+                        {comprobanteModal.codigo_concepto_seniat ? ` - Cód. SENIAT: ${comprobanteModal.codigo_concepto_seniat}` : ''}
+                      </div>
+                      {comprobanteModal.sustraendo_islr_bs > 0 && (
+                        <div style={{ fontSize: '9.5px', color: '#15803d' }}>
+                          Sustraendo Legal Aplicado: Bs. {Number(comprobanteModal.sustraendo_islr_bs).toFixed(2)} (-${Number(comprobanteModal.sustraendo_islr_usd).toFixed(2)})
+                        </div>
+                      )}
+                    </td>
                     <td style={{ padding: '8px', textAlign: 'right' }}>$ {Number(comprobanteModal.base_imponible || 0).toFixed(2)}</td>
-                    <td style={{ padding: '8px', textAlign: 'center', fontWeight: '700', color: '#7e22ce' }}>{comprobanteModal.porcentaje_retencion_islr}%</td>
+                    <td style={{ padding: '8px', textAlign: 'center', fontWeight: '700', color: '#7e22ce' }}>
+                      {comprobanteModal.porcentaje_retencion_islr}%
+                      {comprobanteModal.porcentaje_base_islr && comprobanteModal.porcentaje_base_islr < 100 ? ` (${comprobanteModal.porcentaje_base_islr}% Base)` : ''}
+                    </td>
                     <td style={{ padding: '8px', textAlign: 'right', fontWeight: '800', color: '#dc2626' }}>
                       $ {Number(comprobanteModal.monto_retencion_islr || 0).toFixed(2)}
                     </td>
                     <td style={{ padding: '8px', textAlign: 'right', fontWeight: '800', color: '#0284c7' }}>
-                      Bs. {(Number(comprobanteModal.monto_retencion_islr || 0) * Number(comprobanteModal.valor_tasa || 1)).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                      Bs. {Number(comprobanteModal.monto_retencion_islr_ves || (Number(comprobanteModal.monto_retencion_islr || 0) * Number(comprobanteModal.valor_tasa || 1))).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
                     </td>
                   </tr>
                 </tbody>

@@ -470,8 +470,17 @@ const OrdenesCompra = ({ currentUser }) => {
           }
         }
 
+        const emisorOdc = o.elaborado_por_nombre || 
+                          o.comprador_nombre || 
+                          o.usuario_nombre || 
+                          o.creado_por_nombre || 
+                          o.emisor_nombre || 
+                          'Departamento de Compras';
+
         return {
           ...o,
+          elaborado_por_nombre: emisorOdc,
+          comprador_nombre: emisorOdc,
           items: itemsThisOdc,
           items_count: itemsThisOdc.length,
           descripcion_resumen: descResumen,
@@ -512,6 +521,14 @@ const OrdenesCompra = ({ currentUser }) => {
 
   const abrirDetalleOdc = async (odc) => {
     let odcCompleta = { ...odc };
+    const emisorRealOdc = odcCompleta.elaborado_por_nombre || 
+                          odcCompleta.comprador_nombre || 
+                          odcCompleta.usuario_nombre || 
+                          odcCompleta.creado_por_nombre || 
+                          odcCompleta.emisor_nombre || 
+                          'Departamento de Compras';
+    odcCompleta.elaborado_por_nombre = emisorRealOdc;
+    odcCompleta.comprador_nombre = emisorRealOdc;
     if (odcCompleta.proveedor_id) {
       try {
         const { data: provData } = await supabase
@@ -2550,7 +2567,12 @@ const OrdenesCompra = ({ currentUser }) => {
         const sigH = 18.5;
         const sigW = usableWidth / 3;
 
-        const compradorNombre = odcSeleccionada.comprador_nombre || currentUser?.nombre || 'José';
+        const compradorNombre = odcSeleccionada.elaborado_por_nombre || 
+                                odcSeleccionada.comprador_nombre || 
+                                odcSeleccionada.usuario_nombre || 
+                                odcSeleccionada.creado_por_nombre || 
+                                odcSeleccionada.emisor_nombre || 
+                                'Departamento de Compras';
 
         // 1. Elaborado por
         doc.setDrawColor(30, 58, 138);
@@ -2774,7 +2796,7 @@ const OrdenesCompra = ({ currentUser }) => {
                               (o.cotizacion_ref || '').toLowerCase().includes(bLower) ||
                               (o.orden_pago_ref || '').toLowerCase().includes(bLower) ||
                               (o.destino_despacho || '').toLowerCase().includes(bLower) ||
-                              (o.comprador_nombre || '').toLowerCase().includes(bLower) ||
+                              (o.elaborado_por_nombre || o.comprador_nombre || o.usuario_nombre || '').toLowerCase().includes(bLower) ||
                               (o.requisicion_correlativo || '').toLowerCase().includes(bLower) ||
                               (o.descripcion_resumen || '').toLowerCase().includes(bLower) ||
                               itemsMatch;
@@ -4047,7 +4069,12 @@ const OrdenesCompra = ({ currentUser }) => {
                     <div className="f-adm-sig-sub-compact">Departamento de Compras</div>
                   </div>
                   <div className="f-adm-sig-name-compact">
-                    {odcSeleccionada.comprador_nombre || currentUser?.nombre || 'José'}
+                    {odcSeleccionada.elaborado_por_nombre || 
+                     odcSeleccionada.comprador_nombre || 
+                     odcSeleccionada.usuario_nombre || 
+                     odcSeleccionada.creado_por_nombre || 
+                     odcSeleccionada.emisor_nombre || 
+                     'Departamento de Compras'}
                   </div>
                 </div>
 

@@ -56,7 +56,10 @@ import { compressImage } from './utils/compressImage';
 import './TicketExpress.css';
 
 const obtenerNombreDeUrl = (url) => {
-  if (!url) return '';
+  if (!url || typeof url !== 'string') return '';
+  if (url.startsWith('data:image/')) return 'Soporte (Imagen)';
+  if (url.startsWith('data:application/pdf')) return 'Soporte (PDF)';
+  if (url.startsWith('data:')) return 'Soporte';
   try {
     const parts = url.split('/');
     const last = parts[parts.length - 1];
@@ -101,9 +104,13 @@ const parsearFacturaUrls = (facturaUrlField) => {
         try {
           const obj = JSON.parse(trimmed);
           if (obj.url) {
+            let name = obj.name || obj.etiqueta || '';
+            if (!name || name.startsWith('data:') || name === 'Archivo sin etiqueta') {
+              name = obtenerNombreDeUrl(obj.url);
+            }
             return {
               url: obj.url,
-              name: obj.name || obj.etiqueta || obtenerNombreDeUrl(obj.url)
+              name
             };
           }
         } catch (e) {}
@@ -113,9 +120,13 @@ const parsearFacturaUrls = (facturaUrlField) => {
         name: obtenerNombreDeUrl(trimmed)
       };
     } else if (typeof item === 'object' && item !== null && item.url) {
+      let name = item.name || item.etiqueta || '';
+      if (!name || name.startsWith('data:') || name === 'Archivo sin etiqueta') {
+        name = obtenerNombreDeUrl(item.url);
+      }
       return {
         url: item.url,
-        name: item.name || item.etiqueta || obtenerNombreDeUrl(item.url)
+        name
       };
     }
     return null;
@@ -2231,9 +2242,11 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
                             <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
                               {parsearFacturaUrls(form.facturas_url).map((item, idx) => {
                                 if (!item || !item.url) return null;
-                                const lowerUrl = item.url.split('?')[0].toLowerCase();
-                                const isImg = /\.(jpg|jpeg|png|webp|avif|gif)$/i.test(lowerUrl);
-                                const isPdf = lowerUrl.endsWith('.pdf');
+                                const isBase64Img = typeof item.url === 'string' && item.url.trim().startsWith('data:image/');
+                                const isBase64Pdf = typeof item.url === 'string' && item.url.trim().startsWith('data:application/pdf');
+                                const lowerUrl = typeof item.url === 'string' ? item.url.split('?')[0].toLowerCase() : '';
+                                const isImg = isBase64Img || /\.(jpg|jpeg|png|webp|avif|gif|bmp|svg)($|\?)/i.test(lowerUrl);
+                                const isPdf = isBase64Pdf || /\.pdf($|\?)/i.test(lowerUrl);
                                 const isExcel = /\.(xls|xlsx|csv)$/i.test(lowerUrl);
                                 const isWord = /\.(doc|docx)$/i.test(lowerUrl);
                                 const isPowerPoint = /\.(ppt|pptx)$/i.test(lowerUrl);

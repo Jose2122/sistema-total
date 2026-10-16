@@ -10,7 +10,8 @@ import {
   Loader2, MessageSquare, FileText, Upload, Paperclip,
   ChevronDown, ChevronUp, Settings, Building2, Diamond,
   ShoppingCart, CheckCircle2, Eye, EyeOff, ChevronRight,
-  Clock, User, Ban, Trash2, Camera, Plus, X, ArrowLeft, Edit2
+  Clock, User, Ban, Trash2, Camera, Plus, X, ArrowLeft, Edit2,
+  Download, ExternalLink
 } from 'lucide-react';
 import './Requisiciones.css';
 import { compressImage } from './utils/compressImage';
@@ -308,6 +309,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
   const [obsTemporal, setObsTemporal] = useState('');
   const [uploading, setUploading] = useState(false);
   const [facturasUrls, setFacturasUrls] = useState([]);
+  const [soportePreview, setSoportePreview] = useState(null);
   const editandoIdRef = React.useRef(editandoId);
   useEffect(() => {
     editandoIdRef.current = editandoId;
@@ -1389,21 +1391,26 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
           }
         }
 
-        return publicUrl || '';
+        const cleanLabel = file.name ? file.name.replace(/\.[^/.]+$/, "") : `Soporte ${index + 1}`;
+        return {
+          url: publicUrl || '',
+          etiqueta: cleanLabel,
+          name: file.name
+        };
       });
 
       const nuevasDescargas = await Promise.all(uploadPromises);
 
       if (!editandoId) {
         // Modo creación: añadir a las urls locales
-        const nuevasUrls = [...facturasUrls, ...nuevasDescargas.map(url => ({ url, etiqueta: 'Archivo sin etiqueta' }))];
+        const nuevasUrls = [...facturasUrls, ...nuevasDescargas.filter(d => d.url && d.url.length > 5)];
         setFacturasUrls(nuevasUrls);
         toast.success("Documentos adjuntados correctamente.");
       } else {
         // Modo edición: obtener de base de datos y actualizar
         const { data: currentReq } = await supabase.from('requisiciones').select('facturas_url').eq('id', editandoId).single();
         const urlsActuales = currentReq?.facturas_url || [];
-        const nuevasUrls = [...urlsActuales, ...nuevasDescargas.map(url => ({ url, etiqueta: 'Archivo sin etiqueta' }))];
+        const nuevasUrls = [...urlsActuales, ...nuevasDescargas.filter(d => d.url && d.url.length > 5)];
 
         setFacturasUrls(nuevasUrls);
         const { error: updateError } = await supabase.from('requisiciones').update({ facturas_url: nuevasUrls }).eq('id', editandoId);
@@ -4666,9 +4673,11 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                                         return item?.url;
                                       })();
                                       if (!url) return null;
-                                      const lowerUrl = url.split('?')[0].toLowerCase();
-                                      const isImg = /\.(jpg|jpeg|png|webp|avif|gif)$/i.test(lowerUrl);
-                                      const isPdf = lowerUrl.endsWith('.pdf');
+                                      const isBase64Img = typeof url === 'string' && url.trim().startsWith('data:image/');
+                                      const isBase64Pdf = typeof url === 'string' && url.trim().startsWith('data:application/pdf');
+                                      const lowerUrl = typeof url === 'string' ? url.split('?')[0].toLowerCase() : '';
+                                      const isImg = isBase64Img || /\.(jpg|jpeg|png|webp|avif|gif|bmp|svg)($|\?)/i.test(lowerUrl);
+                                      const isPdf = isBase64Pdf || /\.pdf($|\?)/i.test(lowerUrl);
                                       const isExcel = /\.(xls|xlsx|csv)$/i.test(lowerUrl);
                                       const isWord = /\.(doc|docx)$/i.test(lowerUrl);
                                       const isPowerPoint = /\.(ppt|pptx)$/i.test(lowerUrl);
@@ -4684,13 +4693,25 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                                         fileInfo = { iconColor: '#f97316', bgColor: '#fff7ed', label: 'PPT' };
                                       }
 
+                                      const etiqueta = (() => {
+                                        let raw = item?.etiqueta || item?.name || '';
+                                        if (raw && !raw.startsWith('data:') && raw !== 'Archivo sin etiqueta') {
+                                          return raw;
+                                        }
+                                        return `Soporte ${idx + 1}`;
+                                      })();
+
                                       return (
                                         <div key={idx} style={{ position: 'relative', width: '70px', height: '70px' }}>
-                                          <a href={url} target="_blank" rel="noreferrer" style={{
-                                            display: 'block', width: '100%', height: '100%',
-                                            borderRadius: '8px', overflow: 'hidden', border: '1px solid #cbd5e1',
-                                            backgroundColor: 'white'
-                                          }}>
+                                          <div
+                                            onClick={() => setSoportePreview({ url, etiqueta, isImg, isPdf })}
+                                            style={{
+                                              display: 'block', width: '100%', height: '100%',
+                                              borderRadius: '8px', overflow: 'hidden', border: '1px solid #cbd5e1',
+                                              backgroundColor: 'white', cursor: 'pointer'
+                                            }}
+                                            title={`Click para ver: ${etiqueta}`}
+                                          >
                                             {isImg ? (
                                               <img src={url} alt={`Soporte ${idx}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                                             ) : (
@@ -4704,7 +4725,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
                                                 <span style={{ fontSize: '7px', fontWeight: 'bold', textTransform: 'uppercase' }}>{fileInfo.label}</span>
                                               </div>
                                             )}
-                                          </a>
+                                          </div>
                                           <button
                                             onClick={() => eliminarSoporteDefinitivo(idx)}
                                             style={{ position: 'absolute', top: '-5px', right: '-5px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '50%', width: '18px', height: '18px', fontSize: '9px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}
@@ -5067,6 +5088,186 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
           </div>
         )}
       </AnimatePresence>
+
+      {/* --- MODAL PREVIEW DE SOPORTE / FACTURA --- */}
+      {soportePreview && (
+        <div 
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            width: '100vw',
+            height: '100vh',
+            backgroundColor: 'rgba(15, 23, 42, 0.8)',
+            backdropFilter: 'blur(5px)',
+            zIndex: 99999,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '20px',
+            boxSizing: 'border-box'
+          }}
+          onClick={() => setSoportePreview(null)}
+        >
+          <div 
+            style={{
+              backgroundColor: 'white',
+              borderRadius: '16px',
+              maxWidth: '900px',
+              width: '100%',
+              maxHeight: '90vh',
+              display: 'flex',
+              flexDirection: 'column',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.3)',
+              overflow: 'hidden',
+              border: '1px solid #e2e8f0'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '16px 20px',
+              borderBottom: '1px solid #e2e8f0',
+              backgroundColor: '#f8fafc'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{
+                  width: '34px', height: '34px',
+                  borderRadius: '8px',
+                  backgroundColor: soportePreview.isImg ? '#ecfdf5' : soportePreview.isPdf ? '#fef2f2' : '#eff6ff',
+                  color: soportePreview.isImg ? '#10b981' : soportePreview.isPdf ? '#ef4444' : '#2563eb',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center'
+                }}>
+                  {soportePreview.isImg ? <Eye size={18} /> : <FileText size={18} />}
+                </div>
+                <div>
+                  <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: '800', color: '#1e293b' }}>
+                    {soportePreview.etiqueta || 'Vista Previa del Soporte'}
+                  </h4>
+                  <span style={{ fontSize: '0.72rem', color: '#64748b' }}>
+                    {soportePreview.isImg ? 'Imagen / Comprobante' : soportePreview.isPdf ? 'Documento PDF' : 'Archivo adjunto'}
+                  </span>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                {soportePreview.url.startsWith('data:') ? (
+                  <button
+                    onClick={() => {
+                      const a = document.createElement('a');
+                      a.href = soportePreview.url;
+                      const ext = soportePreview.url.includes('image/png') ? 'png' : soportePreview.url.includes('image/jpeg') ? 'jpg' : 'bin';
+                      a.download = `${(soportePreview.etiqueta || 'soporte').replace(/[^a-zA-Z0-9_-]/g, '_')}.${ext}`;
+                      document.body.appendChild(a);
+                      a.click();
+                      document.body.removeChild(a);
+                    }}
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: '6px',
+                      padding: '7px 14px', borderRadius: '8px',
+                      backgroundColor: '#0284c7', color: 'white',
+                      border: 'none', cursor: 'pointer', fontSize: '0.8rem', fontWeight: '700'
+                    }}
+                  >
+                    <Download size={14} /> Descargar
+                  </button>
+                ) : (
+                  <a
+                    href={soportePreview.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: '6px',
+                      padding: '7px 14px', borderRadius: '8px',
+                      backgroundColor: '#0284c7', color: 'white',
+                      textDecoration: 'none', fontSize: '0.8rem', fontWeight: '700'
+                    }}
+                  >
+                    <ExternalLink size={14} /> Abrir archivo
+                  </a>
+                )}
+
+                <button
+                  onClick={() => setSoportePreview(null)}
+                  style={{
+                    width: '32px', height: '32px',
+                    borderRadius: '8px',
+                    border: 'none',
+                    backgroundColor: '#f1f5f9',
+                    color: '#64748b',
+                    cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center'
+                  }}
+                  title="Cerrar vista previa"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
+
+            {/* Contenido / Visor */}
+            <div style={{
+              padding: '16px',
+              overflow: 'auto',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              backgroundColor: '#0f172a',
+              minHeight: '350px',
+              maxHeight: 'calc(90vh - 120px)'
+            }}>
+              {soportePreview.isImg ? (
+                <img 
+                  src={soportePreview.url} 
+                  alt={soportePreview.etiqueta || 'Soporte'} 
+                  style={{ maxWidth: '100%', maxHeight: '75vh', objectFit: 'contain', borderRadius: '6px', boxShadow: '0 4px 20px rgba(0,0,0,0.5)' }} 
+                />
+              ) : soportePreview.isPdf ? (
+                <iframe 
+                  src={soportePreview.url} 
+                  title="Soporte PDF" 
+                  style={{ width: '100%', height: '75vh', border: 'none', borderRadius: '6px', backgroundColor: 'white' }} 
+                />
+              ) : (
+                <div style={{ textAlign: 'center', padding: '40px', color: 'white' }}>
+                  <FileText size={56} style={{ color: '#94a3b8', marginBottom: '12px' }} />
+                  <p style={{ margin: '0 0 10px 0', fontSize: '1rem', fontWeight: '700' }}>{soportePreview.etiqueta || 'Documento Adjunto'}</p>
+                  <p style={{ margin: '0 0 20px 0', fontSize: '0.8rem', color: '#94a3b8' }}>Este formato de archivo no se puede previsualizar directamente en el navegador.</p>
+                  {soportePreview.url.startsWith('data:') ? (
+                    <button
+                      onClick={() => {
+                        const a = document.createElement('a');
+                        a.href = soportePreview.url;
+                        a.download = `${(soportePreview.etiqueta || 'documento').replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                      }}
+                      className="btn-tc btn-tc-primary"
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                    >
+                      <Download size={16} /> Descargar archivo
+                    </button>
+                  ) : (
+                    <a
+                      href={soportePreview.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="btn-tc btn-tc-primary"
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', textDecoration: 'none' }}
+                    >
+                      <Download size={16} /> Descargar archivo
+                    </a>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </motion.div>
   );
 };

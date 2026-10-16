@@ -4,7 +4,7 @@ import toast from 'react-hot-toast';
 import { 
   Search, FileText, Loader2, FileSpreadsheet, Trash2, ShieldAlert, History, X, 
   DollarSign, ShoppingBag, Eye, CheckCircle2, Clock, AlertTriangle, Truck, 
-  MapPin, Building, Calendar, User, ArrowRight, CornerDownRight, Check, Package
+  MapPin, Building, Calendar, User, ArrowRight, CornerDownRight, Check, Package, Info
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -48,9 +48,13 @@ const parsearFacturaUrls = (facturaUrlField) => {
         try {
           const obj = JSON.parse(trimmed);
           if (obj.url) {
+            let name = obj.name || obj.etiqueta || '';
+            if (!name || name.startsWith('data:') || name === 'Archivo sin etiqueta') {
+              name = obtenerNombreDeUrl(obj.url);
+            }
             return {
               url: obj.url,
-              name: obj.name || obtenerNombreDeUrl(obj.url)
+              name
             };
           }
         } catch (e) { }
@@ -60,9 +64,13 @@ const parsearFacturaUrls = (facturaUrlField) => {
         name: obtenerNombreDeUrl(trimmed)
       };
     } else if (typeof item === 'object' && item !== null && item.url) {
+      let name = item.name || item.etiqueta || '';
+      if (!name || name.startsWith('data:') || name === 'Archivo sin etiqueta') {
+        name = obtenerNombreDeUrl(item.url);
+      }
       return {
         url: item.url,
-        name: item.name || obtenerNombreDeUrl(item.url)
+        name
       };
     }
     return null;
@@ -70,7 +78,10 @@ const parsearFacturaUrls = (facturaUrlField) => {
 };
 
 const obtenerNombreDeUrl = (url) => {
-  if (!url) return 'Soporte';
+  if (!url || typeof url !== 'string') return 'Soporte';
+  if (url.startsWith('data:image/')) return 'Soporte (Imagen)';
+  if (url.startsWith('data:application/pdf')) return 'Soporte (PDF)';
+  if (url.startsWith('data:')) return 'Soporte';
   try {
     const parts = url.split('/');
     const lastPart = parts[parts.length - 1].split('?')[0];
@@ -335,15 +346,26 @@ const Almacen = ({ currentUserProp = null }) => {
                 odcObj = odcMapByNum[odcNumero.toUpperCase()] || (odcId ? odcMapById[String(odcId)] : null);
               }
 
-              const noPasaAlmacen = h.pasa_por_almacen === false || 
-                                    h.estatus_almacen === 'no_aplica' || 
-                                    it.pasa_por_almacen === false || 
-                                    it.estatus_almacen === 'no_aplica' || 
-                                    odcObj?.pasa_por_almacen === false;
+              const odcKeyNum = odcNumero ? localStorage.getItem(`odc_pasa_almacen_${odcNumero}`) : null;
+              const odcKeyId = odcId ? localStorage.getItem(`odc_pasa_almacen_${odcId}`) : null;
+              const odcLocalOverride = odcKeyNum !== null ? odcKeyNum === 'true' : (odcKeyId !== null ? odcKeyId === 'true' : null);
+              const odcPasaAlmacenVal = odcLocalOverride !== null ? odcLocalOverride : odcObj?.pasa_por_almacen;
+
+              const explicitDirect = h.pasa_por_almacen !== undefined 
+                ? h.pasa_por_almacen === false 
+                : (it.pasa_por_almacen === false);
+              const explicitAlmacen = h.pasa_por_almacen !== undefined 
+                ? h.pasa_por_almacen === true 
+                : (it.pasa_por_almacen === true);
+              const noPasaAlmacen = explicitDirect 
+                ? true 
+                : explicitAlmacen 
+                  ? false 
+                  : (odcPasaAlmacenVal === false || h.estatus_almacen === 'no_aplica' || it.estatus_almacen === 'no_aplica');
 
               const statusAlmacen = noPasaAlmacen 
                 ? 'no_aplica' 
-                : (h.estatus_almacen || (h.enviado_almacen ? 'Ubicado' : 'Pendiente_Compras'));
+                : (h.estatus_almacen && h.estatus_almacen !== 'no_aplica' ? h.estatus_almacen : (h.enviado_almacen ? 'Ubicado' : 'Por_Clasificar_Almacen'));
               
               if (
                 noPasaAlmacen ||
@@ -421,13 +443,22 @@ const Almacen = ({ currentUserProp = null }) => {
               odcObj = odcMapByNum[odcNumero.toUpperCase()] || null;
             }
 
-            const noPasaAlmacen = it.pasa_por_almacen === false || 
-                                  it.estatus_almacen === 'no_aplica' || 
-                                  odcObj?.pasa_por_almacen === false;
+            const odcKeyNum = odcNumero ? localStorage.getItem(`odc_pasa_almacen_${odcNumero}`) : null;
+            const odcKeyId = odcId ? localStorage.getItem(`odc_pasa_almacen_${odcId}`) : null;
+            const odcLocalOverride = odcKeyNum !== null ? odcKeyNum === 'true' : (odcKeyId !== null ? odcKeyId === 'true' : null);
+            const odcPasaAlmacenVal = odcLocalOverride !== null ? odcLocalOverride : odcObj?.pasa_por_almacen;
+
+            const explicitDirect = it.pasa_por_almacen === false;
+            const explicitAlmacen = it.pasa_por_almacen === true;
+            const noPasaAlmacen = explicitDirect 
+              ? true 
+              : explicitAlmacen 
+                ? false 
+                : (odcPasaAlmacenVal === false || it.estatus_almacen === 'no_aplica');
 
             const statusAlmacen = noPasaAlmacen 
               ? 'no_aplica' 
-              : (it.estatus_almacen || (it.enviado_almacen ? 'Ubicado' : 'Pendiente_Compras'));
+              : (it.estatus_almacen && it.estatus_almacen !== 'no_aplica' ? it.estatus_almacen : (it.enviado_almacen ? 'Ubicado' : 'Por_Clasificar_Almacen'));
 
             if (
               noPasaAlmacen ||
@@ -1172,6 +1203,136 @@ const Almacen = ({ currentUserProp = null }) => {
     }
   };
 
+  // Modificar si una compra / ítem pasa directo o por almacén (para corregir errores de asignación de compras)
+  const handleTogglePasaDirecto = async (compra, pasarDirecto) => {
+    const accionTexto = pasarDirecto 
+      ? 'marcar como ENTREGA DIRECTA (no pasa por almacén)' 
+      : 'cambiar a PASA POR ALMACÉN (recepción física en almacén)';
+
+    const confirmMsg = pasarDirecto
+      ? `¿Desea cambiar el ítem "${compra.descripcion}" a ENTREGA DIRECTA?\n\nAl marcarlo como directo, se considerará que la entrega no pasa físicamente por almacén (corrigiendo equivocación de Compras).`
+      : `¿Desea cambiar el ítem "${compra.descripcion}" para que SÍ PASE POR ALMACÉN?\n\nEl ítem volverá a estar pendiente por recibir físicamente en almacén (corrigiendo equivocación de Compras).`;
+
+    if (!window.confirm(confirmMsg)) return;
+
+    const accionPromesa = new Promise(async (resolve, reject) => {
+      try {
+        const { data: req, error: fetchErr } = await supabase
+          .from('requisiciones')
+          .select('id, items, correlativo_req')
+          .eq('id', compra.req_id)
+          .single();
+
+        if (fetchErr) throw fetchErr;
+
+        const items = [...(req.items || [])];
+        const item = items[compra.item_idx];
+        if (!item) throw new Error("Ítem no encontrado en la requisición.");
+
+        const nowIso = new Date().toISOString();
+        const userNombre = currentUser ? `${currentUser.nombre || ''} ${currentUser.apellido || ''}`.trim() || 'Personal de Almacén' : 'Personal de Almacén';
+
+        const nuevoPasaAlmacen = !pasarDirecto;
+        const nuevoEstatus = pasarDirecto ? 'no_aplica' : 'Por_Clasificar_Almacen';
+        const nuevaUbicacion = pasarDirecto ? 'ENTREGA DIRECTA (Sin paso por almacén)' : null;
+
+        if (compra.is_legacy) {
+          item.pasa_por_almacen = nuevoPasaAlmacen;
+          item.estatus_almacen = nuevoEstatus;
+          item.ubicacion_almacen = nuevaUbicacion;
+          item.enviado_almacen = false;
+          if (nuevoPasaAlmacen) {
+            item.almacen_destino = null;
+            item.fecha_entrada_almacen = null;
+            item.usuario_almacen_nombre = null;
+            item.usuario_almacen_id = null;
+          }
+          item.modificado_por_almacen = userNombre;
+          item.fecha_modificado_almacen = nowIso;
+        } else {
+          const hist = [...(item.historial_compras || [])];
+          if (hist[compra.history_idx]) {
+            hist[compra.history_idx] = {
+              ...hist[compra.history_idx],
+              pasa_por_almacen: nuevoPasaAlmacen,
+              estatus_almacen: nuevoEstatus,
+              ubicacion_almacen: nuevaUbicacion,
+              enviado_almacen: false,
+              ...(nuevoPasaAlmacen ? {
+                almacen_destino: null,
+                fecha_entrada_almacen: null,
+                usuario_almacen_nombre: null,
+                usuario_almacen_id: null
+              } : {}),
+              modificado_por_almacen: userNombre,
+              fecha_modificado_almacen: nowIso
+            };
+            item.historial_compras = hist;
+          }
+          item.pasa_por_almacen = nuevoPasaAlmacen;
+          item.estatus_almacen = nuevoEstatus;
+          item.ubicacion_almacen = nuevaUbicacion;
+          item.enviado_almacen = false;
+          if (nuevoPasaAlmacen) {
+            item.almacen_destino = null;
+            item.fecha_entrada_almacen = null;
+            item.usuario_almacen_nombre = null;
+            item.usuario_almacen_id = null;
+          }
+        }
+
+        items[compra.item_idx] = item;
+
+        const { error: updateReqErr } = await supabase
+          .from('requisiciones')
+          .update({ items })
+          .eq('id', compra.req_id);
+
+        if (updateReqErr) throw updateReqErr;
+
+        // Si tiene Orden de Compra asociada, actualizar ordenes_compra de manera segura
+        try {
+          const odcIdToUpdate = compra.odc_id || compra.odc_obj?.id;
+          if (odcIdToUpdate) {
+            await supabase
+              .from('ordenes_compra')
+              .update({ pasa_por_almacen: nuevoPasaAlmacen })
+              .eq('id', odcIdToUpdate);
+            localStorage.setItem(`odc_pasa_almacen_${odcIdToUpdate}`, String(nuevoPasaAlmacen));
+          }
+          if (compra.odc_numero && compra.odc_numero !== 'S/N') {
+            await supabase
+              .from('ordenes_compra')
+              .update({ pasa_por_almacen: nuevoPasaAlmacen })
+              .eq('numero_orden', compra.odc_numero);
+            localStorage.setItem(`odc_pasa_almacen_${compra.odc_numero}`, String(nuevoPasaAlmacen));
+          }
+        } catch (odcErr) {
+          console.warn("Aviso al sincronizar pasa_por_almacen en ODC (ignorado para completar el flujo):", odcErr);
+        }
+
+        resolve();
+      } catch (err) {
+        reject(err);
+      }
+    });
+
+    toast.promise(accionPromesa, {
+      loading: 'Actualizando asignación de almacén...',
+      success: pasarDirecto
+        ? '¡Listo! Ítem marcado como ENTREGA DIRECTA (no pasa por almacén).'
+        : '¡Listo! Ítem reasignado: ahora PASA POR ALMACÉN para ser recibido físicamente.',
+      error: (err) => `Error al actualizar: ${err.message}`
+    });
+
+    try {
+      await accionPromesa;
+      await cargarDatos(true);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   // Filtrado de las compras activas (no entregadas)
   const filteredCompras = useMemo(() => {
     return comprasRaw.filter(c => {
@@ -1240,6 +1401,34 @@ const Almacen = ({ currentUserProp = null }) => {
     return filteredCompras.reduce((sum, c) => sum + (c.total || 0), 0);
   }, [filteredCompras]);
 
+  // Filtrado de las compras con Entrega Directa
+  const directosCompras = useMemo(() => {
+    return comprasRaw.filter(c => {
+      if (!c.is_entrega_directa) return false;
+
+      const q = busqueda.toLowerCase().trim();
+      const matchBusqueda = !q ||
+        c.descripcion.toLowerCase().includes(q) ||
+        c.proveedor.toLowerCase().includes(q) ||
+        c.numero_factura.toLowerCase().includes(q) ||
+        c.solicitante.toLowerCase().includes(q) ||
+        c.centro_costo.toLowerCase().includes(q) ||
+        c.correlativo.toLowerCase().includes(q) ||
+        (c.odc_numero && c.odc_numero.toLowerCase().includes(q));
+
+      let matchFecha = true;
+      const fCompra = c.fecha_compra ? c.fecha_compra.split('T')[0] : '';
+      if (fechaDesde && fCompra < fechaDesde) matchFecha = false;
+      if (fechaHasta && fCompra > fechaHasta) matchFecha = false;
+
+      return matchBusqueda && matchFecha;
+    });
+  }, [comprasRaw, busqueda, fechaDesde, fechaHasta]);
+
+  const totalDirectosFiltrado = useMemo(() => {
+    return directosCompras.reduce((sum, c) => sum + (c.total || 0), 0);
+  }, [directosCompras]);
+
   const stats = useMemo(() => {
     const total = comprasRaw.length;
     const recibidos = comprasRaw.filter(c => c.is_asignado).length;
@@ -1275,14 +1464,18 @@ const Almacen = ({ currentUserProp = null }) => {
 
     worksheet.mergeCells('A1:P1');
     const titleCell = worksheet.getCell('A1');
-    const titleValStr = vistaTab === 'todos' 
-      ? 'TOTAL CLEAN C.A. - REPORTE DE COMPRAS Y RECEPCIÓN EN ALMACÉN'
-      : vistaTab === 'recibidos'
-        ? 'TOTAL CLEAN C.A. - REPORTE DE MATERIALES UBICADOS EN ALMACÉN'
-        : 'TOTAL CLEAN C.A. - REPORTE DE MATERIALES PENDIENTES EN ALMACÉN';
+    const titleValStr = activeTab === 'directos'
+      ? 'TOTAL CLEAN C.A. - REPORTE DE COMPRAS CON ENTREGA DIRECTA (SIN PASO POR ALMACÉN)'
+      : activeTab === 'entregados'
+        ? 'TOTAL CLEAN C.A. - REPORTE DE MATERIALES ENTREGADOS AL USUARIO FINAL'
+        : vistaTab === 'todos' 
+          ? 'TOTAL CLEAN C.A. - REPORTE DE COMPRAS Y RECEPCIÓN EN ALMACÉN'
+          : vistaTab === 'recibidos'
+            ? 'TOTAL CLEAN C.A. - REPORTE DE MATERIALES UBICADOS EN ALMACÉN'
+            : 'TOTAL CLEAN C.A. - REPORTE DE MATERIALES PENDIENTES EN ALMACÉN';
     titleCell.value = titleValStr;
     titleCell.font = { name: 'Arial Black', size: 14, color: { argb: 'FFFFFFFF' } };
-    titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF16A34A' } };
+    titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: activeTab === 'directos' ? 'FFD97706' : 'FF16A34A' } };
     titleCell.alignment = { vertical: 'middle', horizontal: 'center' };
     worksheet.getRow(1).height = 40;
 
@@ -1311,7 +1504,18 @@ const Almacen = ({ currentUserProp = null }) => {
     headerRow.alignment = { horizontal: 'center', vertical: 'middle' };
     worksheet.getRow(2).height = 25;
 
-    filteredCompras.forEach(c => {
+    const dataSource = activeTab === 'directos' 
+      ? directosCompras 
+      : activeTab === 'entregados' 
+        ? entregadosCompras 
+        : filteredCompras;
+    const totalMontoExport = activeTab === 'directos'
+      ? totalDirectosFiltrado
+      : activeTab === 'entregados'
+        ? entregadosCompras.reduce((sum, c) => sum + (c.total || 0), 0)
+        : totalGeneralFiltrado;
+
+    dataSource.forEach(c => {
       const row = worksheet.addRow([
         c.is_entrega_directa ? 'ENTREGA DIRECTA' : (c.recibido ? 'ASIGNADO' : 'PENDIENTE'),
         c.odc_numero || 'S/N',
@@ -1374,7 +1578,7 @@ const Almacen = ({ currentUserProp = null }) => {
       { width: 18 }  // TOTAL ($)
     ];
 
-    const lastRowNum = filteredCompras.length + 3;
+    const lastRowNum = dataSource.length + 3;
     worksheet.mergeCells(`A${lastRowNum}:O${lastRowNum}`);
     const totalLabel = worksheet.getCell(`A${lastRowNum}`);
     totalLabel.value = 'TOTAL GENERAL ACTIVIDAD ($):';
@@ -1382,7 +1586,7 @@ const Almacen = ({ currentUserProp = null }) => {
     totalLabel.alignment = { horizontal: 'right', vertical: 'middle' };
 
     const totalVal = worksheet.getCell(`P${lastRowNum}`);
-    totalVal.value = totalGeneralFiltrado;
+    totalVal.value = totalMontoExport;
     totalVal.font = { bold: true, color: { argb: 'FF15803D' } };
     totalVal.numFmt = '"$"#,##0.00';
     totalVal.alignment = { horizontal: 'right', vertical: 'middle' };
@@ -1404,32 +1608,47 @@ const Almacen = ({ currentUserProp = null }) => {
   // Exportar PDF
   const exportToPDF = () => {
     const doc = new jsPDF('l', 'mm', 'a4');
-    doc.setFillColor(22, 163, 74);
+    doc.setFillColor(activeTab === 'directos' ? 217 : 22, activeTab === 'directos' ? 119 : 163, activeTab === 'directos' ? 6 : 74);
     doc.rect(0, 0, 297, 25, 'F');
     doc.setTextColor(255, 255, 255);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(11);
     
-    const titleValStr = vistaTab === 'todos' 
-      ? 'TOTAL CLEAN C.A. - REPORTE DE COMPRAS Y RECEPCIÓN EN ALMACÉN'
-      : vistaTab === 'recibidos'
-        ? 'TOTAL CLEAN C.A. - REPORTE DE MATERIALES UBICADOS EN ALMACÉN'
-        : 'TOTAL CLEAN C.A. - REPORTE DE MATERIALES PENDIENTES EN ALMACÉN';
+    const titleValStr = activeTab === 'directos'
+      ? 'TOTAL CLEAN C.A. - REPORTE DE COMPRAS CON ENTREGA DIRECTA (SIN PASO POR ALMACÉN)'
+      : activeTab === 'entregados'
+        ? 'TOTAL CLEAN C.A. - REPORTE DE MATERIALES ENTREGADOS AL USUARIO FINAL'
+        : vistaTab === 'todos' 
+          ? 'TOTAL CLEAN C.A. - REPORTE DE COMPRAS Y RECEPCIÓN EN ALMACÉN'
+          : vistaTab === 'recibidos'
+            ? 'TOTAL CLEAN C.A. - REPORTE DE MATERIALES UBICADOS EN ALMACÉN'
+            : 'TOTAL CLEAN C.A. - REPORTE DE MATERIALES PENDIENTES EN ALMACÉN';
         
     doc.text(titleValStr, 15, 17);
     doc.setFontSize(9);
     doc.text(`Generado: ${new Date().toLocaleString()}`, 240, 17);
 
-    const tableData = filteredCompras.map(c => [
-      c.recibido ? 'ASIGNADO' : 'PENDIENTE',
+    const dataSource = activeTab === 'directos' 
+      ? directosCompras 
+      : activeTab === 'entregados' 
+        ? entregadosCompras 
+        : filteredCompras;
+    const totalMontoExport = activeTab === 'directos'
+      ? totalDirectosFiltrado
+      : activeTab === 'entregados'
+        ? entregadosCompras.reduce((sum, c) => sum + (c.total || 0), 0)
+        : totalGeneralFiltrado;
+
+    const tableData = dataSource.map(c => [
+      c.is_entrega_directa ? 'DIRECTO' : (c.recibido ? 'ASIGNADO' : 'PENDIENTE'),
       c.odc_numero || 'S/N',
       c.correlativo,
       c.descripcion.substring(0, 26),
       c.proveedor.substring(0, 15),
       c.numero_factura,
       formatFechaHora(c.fecha_compra),
-      c.recibido ? formatFechaHora(c.fecha_entrada_almacen) : '—',
-      c.ubicacion_almacen || 'PENDIENTE',
+      c.recibido ? formatFechaHora(c.fecha_entrada_almacen) : (c.is_entrega_directa ? 'Entrega Directa' : '—'),
+      c.ubicacion_almacen || (c.is_entrega_directa ? 'Entrega Directa' : 'PENDIENTE'),
       c.solicitante.substring(0, 12),
       c.gerencia.substring(0, 12),
       c.cantidad_comprada,
@@ -1454,7 +1673,7 @@ const Almacen = ({ currentUserProp = null }) => {
         11: { halign: 'right' },
         12: { halign: 'right', fontStyle: 'bold' }
       },
-      foot: [['', '', '', '', '', '', '', '', '', '', 'TOTAL GRAL.', '', `$ ${(totalGeneralFiltrado || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}`]],
+      foot: [['', '', '', '', '', '', '', '', '', '', 'TOTAL GRAL.', '', `$ ${(totalMontoExport || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}`]],
       footStyles: { fillColor: [240, 253, 244], textColor: [22, 163, 74], fontStyle: 'bold' }
     });
 
@@ -1491,18 +1710,20 @@ const Almacen = ({ currentUserProp = null }) => {
       </div>
 
       {/* TARJETAS ESTADÍSTICAS KPI */}
-      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(7, 1fr)', gap: '12px', marginBottom: '22px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(auto-fit, minmax(130px, 1fr))', gap: '12px', marginBottom: '22px' }}>
         {[
-          { label: 'Compras Totales',      value: stats.total,      sub: 'en sistema',           color: '#3b82f6' },
-          { label: 'Ubicados/Asignados',  value: stats.recibidos,  sub: 'en estantería',        color: '#f59e0b' },
-          { label: 'Pendiente Ubicar',    value: stats.pendientes, sub: 'por clasificar',        color: '#ef4444' },
-          { label: 'Entregados Final',    value: stats.entregados, sub: 'entregados a usuario', color: '#16a34a' },
-          { label: 'Campo Boscán',        value: stats.boscan,     sub: 'almacén ubicados',     color: '#06b6d4' },
-          { label: 'Maracaibo',            value: stats.maracaibo,  sub: 'almacén ubicados',     color: '#8b5cf6' },
-          { label: 'Bajo Grande',          value: stats.bajoGrande, sub: 'almacén ubicados',     color: '#ec4899' },
-        ].map(({ label, value, sub, color }) => (
+          { label: 'Compras Totales',      value: stats.total,      sub: 'en sistema',           color: '#3b82f6', onClick: () => { setActiveTab('recepcion'); setVistaTab('todos'); } },
+          { label: 'Ubicados/Asignados',  value: stats.recibidos,  sub: 'en estantería',        color: '#f59e0b', onClick: () => { setActiveTab('recepcion'); setVistaTab('recibidos'); } },
+          { label: 'Pendiente Ubicar',    value: stats.pendientes, sub: 'por clasificar',        color: '#ef4444', onClick: () => { setActiveTab('recepcion'); setVistaTab('pendientes'); } },
+          { label: 'Entregas Directas',   value: stats.directos,   sub: 'no pasan almacén',     color: '#d97706', onClick: () => setActiveTab('directos') },
+          { label: 'Entregados Final',    value: stats.entregados, sub: 'entregados a usuario', color: '#16a34a', onClick: () => setActiveTab('entregados') },
+          { label: 'Campo Boscán',        value: stats.boscan,     sub: 'almacén ubicados',     color: '#06b6d4', onClick: () => { setActiveTab('recepcion'); setFiltroDestino('Almacén Campo Boscán'); } },
+          { label: 'Maracaibo',            value: stats.maracaibo,  sub: 'almacén ubicados',     color: '#8b5cf6', onClick: () => { setActiveTab('recepcion'); setFiltroDestino('Almacén Maracaibo'); } },
+          { label: 'Bajo Grande',          value: stats.bajoGrande, sub: 'almacén ubicados',     color: '#ec4899', onClick: () => { setActiveTab('recepcion'); setFiltroDestino('Almacén Bajo Grande'); } },
+        ].map(({ label, value, sub, color, onClick }) => (
           <div
             key={label}
+            onClick={onClick}
             style={{
               backgroundColor: 'white',
               padding: '16px 18px',
@@ -1514,7 +1735,7 @@ const Almacen = ({ currentUserProp = null }) => {
               flexDirection: 'column',
               gap: '3px',
               transition: 'transform 0.2s, box-shadow 0.2s',
-              cursor: 'default',
+              cursor: onClick ? 'pointer' : 'default',
             }}
             onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 10px 15px -3px rgba(0,0,0,0.05)'; }}
             onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0,0,0,0.02)'; }}
@@ -1598,6 +1819,22 @@ const Almacen = ({ currentUserProp = null }) => {
         </button>
 
         <button
+          onClick={() => setActiveTab('directos')}
+          style={{
+            padding: '9px 18px', borderRadius: '12px', border: 'none', cursor: 'pointer',
+            fontWeight: '800', fontSize: '0.82rem', transition: 'all 0.2s', display: 'flex', alignItems: 'center', gap: '8px',
+            backgroundColor: activeTab === 'directos' ? '#d97706' : '#f1f5f9',
+            color: activeTab === 'directos' ? 'white' : '#475569',
+            boxShadow: activeTab === 'directos' ? '0 4px 10px rgba(217, 119, 6, 0.25)' : 'none'
+          }}
+        >
+          <Truck size={16} /> 🚚 Entregas Directas
+          <span style={{ backgroundColor: activeTab === 'directos' ? 'rgba(255,255,255,0.25)' : '#e2e8f0', padding: '2px 7px', borderRadius: '10px', fontSize: '0.72rem' }}>
+            {stats.directos}
+          </span>
+        </button>
+
+        <button
           onClick={() => setActiveTab('entregados')}
           style={{
             padding: '9px 18px', borderRadius: '12px', border: 'none', cursor: 'pointer',
@@ -1607,7 +1844,7 @@ const Almacen = ({ currentUserProp = null }) => {
             boxShadow: activeTab === 'entregados' ? '0 4px 10px rgba(59, 130, 246, 0.25)' : 'none'
           }}
         >
-          <Truck size={16} /> 🚚 Materiales Entregados
+          <Truck size={16} /> 📦 Materiales Entregados
           <span style={{ backgroundColor: activeTab === 'entregados' ? 'rgba(255,255,255,0.25)' : '#e2e8f0', padding: '2px 7px', borderRadius: '10px', fontSize: '0.72rem' }}>
             {entregadosCompras.length}
           </span>
@@ -1661,15 +1898,17 @@ const Almacen = ({ currentUserProp = null }) => {
               📦 Ubicados en Almacén ({stats.recibidos})
             </button>
             <button
-              onClick={() => setVistaTab('directos')}
+              onClick={() => setActiveTab('directos')}
               style={{
-                padding: '6px 14px', borderRadius: '8px', border: 'none', cursor: 'pointer',
+                padding: '6px 14px', borderRadius: '8px', cursor: 'pointer',
                 fontWeight: '700', fontSize: '0.75rem', transition: 'all 0.2s', whiteSpace: 'nowrap',
-                backgroundColor: vistaTab === 'directos' ? '#d97706' : 'transparent',
-                color: vistaTab === 'directos' ? 'white' : '#64748b',
+                backgroundColor: '#fffbeb',
+                color: '#d97706',
+                border: '1px solid #fde68a'
               }}
+              title="Ver subsección dedicada de compras con entrega directa"
             >
-              🚚 Entrega Directa ({stats.directos})
+              🚚 Entregas Directas ({stats.directos})
             </button>
           </div>
         )}
@@ -1857,13 +2096,33 @@ const Almacen = ({ currentUserProp = null }) => {
                       {/* ALMACÉN DESTINO & ACCIONES DE RECEPCIÓN (MARCAR COMO RECIBIDO / ENTREGAR) */}
                       <td style={{ padding: '10px', textAlign: 'center' }}>
                         {compra.is_entrega_directa ? (
-                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
                             <span style={{ fontWeight: '800', color: '#92400e', fontSize: '0.72rem', backgroundColor: '#fef3c7', padding: '3px 10px', borderRadius: '10px', border: '1px solid #fde68a' }}>
                               🚚 Entrega Directa
                             </span>
-                            <span style={{ fontSize: '0.68rem', color: '#b45309', fontWeight: '600' }}>
-                              No requiere Almacén
-                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleTogglePasaDirecto(compra, false)}
+                              title="Compras lo asignó como directo por error. Cambiar a 'Pasa por Almacén' para recibirlo e ingresarlo"
+                              style={{
+                                padding: '4px 10px',
+                                backgroundColor: '#f0fdf4',
+                                border: '1.5px solid #86efac',
+                                borderRadius: '8px',
+                                color: '#15803d',
+                                fontWeight: '800',
+                                fontSize: '0.70rem',
+                                cursor: 'pointer',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                transition: 'all 0.15s ease'
+                              }}
+                              onMouseEnter={e => e.currentTarget.style.backgroundColor = '#dcfce7'}
+                              onMouseLeave={e => e.currentTarget.style.backgroundColor = '#f0fdf4'}
+                            >
+                              <Package size={12} /> Pasa por Almacén
+                            </button>
                           </div>
                         ) : isRecibida ? (
                           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px', justifyContent: 'center' }}>
@@ -1901,6 +2160,14 @@ const Almacen = ({ currentUserProp = null }) => {
                               >
                                 <Trash2 size={13} />
                               </button>
+                              <button
+                                type="button"
+                                onClick={() => handleTogglePasaDirecto(compra, true)}
+                                title="Compras se equivocó: este ítem pasa directo y no por almacén"
+                                style={{ padding: '5px 8px', backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: '8px', color: '#92400e', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                              >
+                                <Truck size={12} />
+                              </button>
                             </div>
                           </div>
                         ) : (
@@ -1937,6 +2204,29 @@ const Almacen = ({ currentUserProp = null }) => {
                             >
                               <CheckCircle2 size={13} /> Recibir
                             </button>
+                            <button
+                              type="button"
+                              onClick={() => handleTogglePasaDirecto(compra, true)}
+                              title="Compras se equivocó: este ítem pasa directo y no por almacén"
+                              style={{
+                                padding: '6px 9px',
+                                backgroundColor: '#fffbeb',
+                                border: '1px solid #fde68a',
+                                borderRadius: '8px',
+                                color: '#b45309',
+                                fontWeight: '800',
+                                fontSize: '0.72rem',
+                                cursor: 'pointer',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '3px',
+                                transition: 'all 0.15s ease'
+                              }}
+                              onMouseEnter={e => e.currentTarget.style.backgroundColor = '#fef3c7'}
+                              onMouseLeave={e => e.currentTarget.style.backgroundColor = '#fffbeb'}
+                            >
+                              <Truck size={12} /> Directo
+                            </button>
                           </div>
                         )}
                       </td>
@@ -1971,6 +2261,218 @@ const Almacen = ({ currentUserProp = null }) => {
                     </td>
                     <td style={{ padding: '14px 10px', textAlign: 'right', fontSize: '0.95rem', color: '#16a34a' }}>
                       $ {totalGeneralFiltrado.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                    </td>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* SECCIÓN ESPECIALIZADA: BANDEJA DE ENTREGAS DIRECTAS */}
+      {activeTab === 'directos' && (
+        <div style={{ backgroundColor: 'white', borderRadius: '20px', overflow: 'hidden', border: '1px solid #fed7aa', boxShadow: '0 10px 30px rgba(217, 119, 6, 0.05)' }}>
+          
+          {/* ENCABECERA ESPECIALIZADA EN ÁMBAR */}
+          <div style={{ backgroundColor: '#d97706', color: 'white', padding: '16px 22px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <div style={{ backgroundColor: 'rgba(255,255,255,0.2)', padding: '10px', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Truck size={24} color="#ffffff" />
+              </div>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: '900', letterSpacing: '0.5px' }}>
+                  BANDEJA DE COMPRAS CON ENTREGA DIRECTA (NO PASAN POR ALMACÉN)
+                </h3>
+                <div style={{ fontSize: '0.78rem', opacity: 0.95, marginTop: '3px' }}>
+                  Materiales o servicios asignados para entrega directa en campo/obra. Si una compra fue marcada aquí por error, puede revertirla a Almacén con un solo clic.
+                </div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <span style={{ fontSize: '0.78rem', fontWeight: '800', backgroundColor: 'rgba(255,255,255,0.25)', padding: '5px 12px', borderRadius: '10px' }}>
+                Ítems directos: {directosCompras.length}
+              </span>
+            </div>
+          </div>
+
+          {/* BANNER INFORMATIVO DE ACCIÓN Y REVERSIBILIDAD */}
+          <div style={{ backgroundColor: '#fffbeb', borderBottom: '1px solid #fde68a', padding: '12px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#92400e', fontSize: '0.82rem', fontWeight: '600' }}>
+              <Info size={18} color="#d97706" />
+              <span>
+                <strong>¿Se equivocaron en Compras?</strong> Todos los ítems de esta subsección pueden ser revertidos haciendo clic en <strong>"📦 Revertir a Almacén"</strong>. Al revertirlo, el material aparecerá de inmediato en la bandeja de recepción física para asignarle su sede (Boscán, Maracaibo o Bajo Grande).
+              </span>
+            </div>
+            <button
+              onClick={() => { setActiveTab('recepcion'); setVistaTab('pendientes'); }}
+              style={{
+                padding: '6px 12px', backgroundColor: '#fef3c7', border: '1px solid #fcd34d', borderRadius: '8px',
+                color: '#92400e', fontWeight: '700', fontSize: '0.75rem', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '5px'
+              }}
+            >
+              <Package size={14} /> Ir a Pendientes de Almacén
+            </button>
+          </div>
+
+          {/* TABLA DE ENTREGAS DIRECTAS */}
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.84rem' }}>
+              <thead>
+                <tr style={{ backgroundColor: '#1e293b', color: '#f8fafc', borderBottom: '2px solid #cbd5e1' }}>
+                  <th style={{ padding: '12px 10px', textAlign: 'center', width: '100px' }}>ESTADO</th>
+                  <th style={{ padding: '12px 10px', textAlign: 'center', minWidth: '130px' }}>ORDEN DE COMPRA</th>
+                  <th style={{ padding: '12px 10px', textAlign: 'center', minWidth: '150px' }}>REQUISICIÓN</th>
+                  <th style={{ padding: '12px 10px', textAlign: 'left', minWidth: '220px' }}>DESCRIPCIÓN / MATERIAL</th>
+                  <th style={{ padding: '12px 10px', textAlign: 'left', minWidth: '160px' }}>PROVEEDOR & FACTURA</th>
+                  <th style={{ padding: '12px 10px', textAlign: 'center', minWidth: '130px' }}>FECHA COMPRA</th>
+                  <th style={{ padding: '12px 10px', textAlign: 'left', minWidth: '170px' }}>SOLICITANTE & CC</th>
+                  <th style={{ padding: '12px 10px', textAlign: 'right', minWidth: '80px' }}>CANT</th>
+                  <th style={{ padding: '12px 10px', textAlign: 'right', minWidth: '100px' }}>TOTAL ($)</th>
+                  <th style={{ padding: '12px 12px', textAlign: 'center', minWidth: '180px', backgroundColor: '#0f172a' }}>
+                    ACCIÓN (REVERSIÓN)
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {loading && directosCompras.length === 0 ? (
+                  <tr>
+                    <td colSpan="10" style={{ padding: '50px', textAlign: 'center', color: '#64748b' }}>
+                      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px' }}>
+                        <Loader2 className="animate-spin" /> Cargando entregas directas...
+                      </div>
+                    </td>
+                  </tr>
+                ) : directosCompras.length === 0 ? (
+                  <tr>
+                    <td colSpan="10" style={{ padding: '50px', textAlign: 'center', color: '#94a3b8', fontWeight: '600' }}>
+                      <CheckCircle2 size={32} style={{ display: 'block', margin: '0 auto 10px auto', color: '#16a34a' }} />
+                      No hay compras registradas con Entrega Directa bajo los filtros actuales.
+                    </td>
+                  </tr>
+                ) : directosCompras.map((compra) => {
+                  const tieneOdc = compra.odc_numero && compra.odc_numero !== 'S/N';
+
+                  return (
+                    <tr key={compra.transaction_id || compra.id} style={{ borderBottom: '1px solid #fed7aa', backgroundColor: '#fffdfa', transition: 'background-color 0.15s ease' }} className="row-hover">
+                      {/* ESTADO */}
+                      <td style={{ padding: '12px 10px', textAlign: 'center' }}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px 8px', borderRadius: '8px', backgroundColor: '#fef3c7', color: '#92400e', fontWeight: '900', fontSize: '0.70rem', border: '1px solid #fde68a' }}>
+                          <Truck size={12} /> DIRECTO
+                        </span>
+                      </td>
+
+                      {/* ORDEN DE COMPRA */}
+                      <td style={{ padding: '12px 10px', textAlign: 'center' }}>
+                        {tieneOdc ? (
+                          <button
+                            type="button"
+                            onClick={() => handleVerDetalleOdc(compra)}
+                            title="Ver vista previa de la Orden de Compra"
+                            style={{
+                              display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: '8px',
+                              backgroundColor: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', fontWeight: '900', fontSize: '0.78rem', cursor: 'pointer'
+                            }}
+                          >
+                            <ShoppingBag size={13} color="#2563eb" /> {compra.odc_numero}
+                          </button>
+                        ) : (
+                          <span style={{ color: '#94a3b8', fontSize: '0.75rem', fontStyle: 'italic' }}>Sin ODC</span>
+                        )}
+                      </td>
+
+                      {/* REQUISICIÓN */}
+                      <td style={{ padding: '12px 10px', textAlign: 'center' }}>
+                        <div 
+                          onClick={() => handleVerDetalleTicket(compra)}
+                          title="Haga clic para ver los detalles de la Requisición y soportes"
+                          style={{ fontWeight: '900', color: '#0ea5e9', cursor: 'pointer', textDecoration: 'underline', fontSize: '0.82rem' }}
+                        >
+                          {compra.correlativo}
+                        </div>
+                      </td>
+
+                      {/* DESCRIPCIÓN */}
+                      <td style={{ padding: '12px 10px', fontWeight: '600', color: '#0f172a' }}>
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '6px' }}>
+                          <span style={{ fontSize: '0.7rem', backgroundColor: '#fef3c7', padding: '2px 6px', borderRadius: '4px', fontWeight: 'bold', color: '#92400e' }}>
+                            {compra.unidad}
+                          </span>
+                          <span>{compra.descripcion}</span>
+                        </div>
+                      </td>
+
+                      {/* PROVEEDOR Y FACTURA */}
+                      <td style={{ padding: '12px 10px', color: '#475569' }}>
+                        <div style={{ fontWeight: '700', color: '#0f172a', fontSize: '0.8rem' }}>{compra.proveedor}</div>
+                        <div style={{ fontSize: '0.72rem', color: '#2563eb', fontWeight: '600', marginTop: '2px' }}>
+                          Doc: {compra.numero_factura}
+                        </div>
+                      </td>
+
+                      {/* FECHA COMPRA */}
+                      <td style={{ padding: '12px 10px', textAlign: 'center', color: '#334155', fontWeight: '600', fontSize: '0.78rem' }}>
+                        {formatFechaHora(compra.fecha_compra)}
+                      </td>
+
+                      {/* SOLICITANTE / GERENCIA */}
+                      <td style={{ padding: '12px 10px', color: '#475569' }}>
+                        <div style={{ fontWeight: '700', color: '#0f172a', fontSize: '0.8rem' }}>{compra.solicitante}</div>
+                        <div style={{ fontSize: '0.7rem', color: '#64748b', marginTop: '2px' }}>🏢 {compra.gerencia}</div>
+                        <div style={{ fontSize: '0.68rem', color: '#94a3b8' }}>📍 {compra.centro_costo}</div>
+                      </td>
+
+                      {/* CANTIDAD */}
+                      <td style={{ padding: '12px 10px', textAlign: 'right', fontWeight: '900', color: '#0f172a' }}>
+                        {compra.cantidad_comprada}
+                      </td>
+
+                      {/* TOTAL ($) */}
+                      <td style={{ padding: '12px 10px', textAlign: 'right', fontWeight: '900', color: '#16a34a' }}>
+                        $ {(compra.total || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                      </td>
+
+                      {/* ACCIONES: BOTÓN REVERTIR */}
+                      <td style={{ padding: '12px 10px', textAlign: 'center' }}>
+                        <button
+                          type="button"
+                          onClick={() => handleTogglePasaDirecto(compra, false)}
+                          title="Compras lo asignó como entrega directa por error. Haga clic para revertir y que pase por almacén"
+                          style={{
+                            padding: '7px 14px',
+                            backgroundColor: '#16a34a',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '10px',
+                            fontWeight: '800',
+                            fontSize: '0.75rem',
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            boxShadow: '0 2px 6px rgba(22, 163, 74, 0.3)',
+                            transition: 'all 0.15s ease'
+                          }}
+                          onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#15803d'; e.currentTarget.style.transform = 'translateY(-1px)'; }}
+                          onMouseLeave={e => { e.currentTarget.style.backgroundColor = '#16a34a'; e.currentTarget.style.transform = 'none'; }}
+                        >
+                          <Package size={14} /> Revertir a Almacén
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+
+              {/* PIE DE PÁGINA TOTALES */}
+              {!loading && directosCompras.length > 0 && (
+                <tfoot>
+                  <tr style={{ backgroundColor: '#fff7ed', borderTop: '2px solid #fed7aa', fontWeight: '900', color: '#0f172a' }}>
+                    <td colSpan="8" style={{ padding: '14px 20px', textAlign: 'right', fontSize: '0.88rem' }}>
+                      TOTAL EN ENTREGAS DIRECTAS ($):
+                    </td>
+                    <td colSpan="2" style={{ padding: '14px 15px', textAlign: 'left', fontSize: '0.98rem', color: '#d97706' }}>
+                      $ {totalDirectosFiltrado.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
                     </td>
                   </tr>
                 </tfoot>
@@ -2234,14 +2736,38 @@ const Almacen = ({ currentUserProp = null }) => {
                           Vinculada a Requisición: <strong style={{ color: '#38bdf8' }}>{reqCorrelativoDisplay}</strong>
                         </span>
                       </div>
-                      {odc.pasa_por_almacen === false || compra.pasa_por_almacen === false ? (
-                        <span style={{ padding: '3px 8px', borderRadius: '6px', fontSize: '0.7rem', fontWeight: '900', backgroundColor: '#fef3c7', color: '#92400e', border: '1px solid #fde68a' }}>
-                          🚚 ENTREGA DIRECTA (SIN ALMACÉN)
-                        </span>
+                      {odc?.pasa_por_almacen === false || compra?.pasa_por_almacen === false ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ padding: '3px 8px', borderRadius: '6px', fontSize: '0.7rem', fontWeight: '900', backgroundColor: '#fef3c7', color: '#92400e', border: '1px solid #fde68a' }}>
+                            🚚 ENTREGA DIRECTA (SIN ALMACÉN)
+                          </span>
+                          {compra && (
+                            <button
+                              type="button"
+                              onClick={() => { handleTogglePasaDirecto(compra, false); setShowOdcModal(false); }}
+                              title="Corregir error de Compras: Cambiar a 'Pasa por Almacén' para recibir físicamente"
+                              style={{ padding: '3px 8px', borderRadius: '6px', fontSize: '0.68rem', fontWeight: '800', backgroundColor: '#16a34a', color: 'white', border: 'none', cursor: 'pointer' }}
+                            >
+                              📦 Cambiar a Almacén
+                            </button>
+                          )}
+                        </div>
                       ) : (
-                        <span style={{ padding: '3px 8px', borderRadius: '6px', fontSize: '0.7rem', fontWeight: '900', backgroundColor: '#dcfce7', color: '#166534', border: '1px solid #bbf7d0' }}>
-                          📦 RECEPCIÓN EN ALMACÉN
-                        </span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ padding: '3px 8px', borderRadius: '6px', fontSize: '0.7rem', fontWeight: '900', backgroundColor: '#dcfce7', color: '#166534', border: '1px solid #bbf7d0' }}>
+                            📦 RECEPCIÓN EN ALMACÉN
+                          </span>
+                          {compra && (
+                            <button
+                              type="button"
+                              onClick={() => { handleTogglePasaDirecto(compra, true); setShowOdcModal(false); }}
+                              title="Corregir error de Compras: Marcar como Entrega Directa (no pasa por almacén)"
+                              style={{ padding: '3px 8px', borderRadius: '6px', fontSize: '0.68rem', fontWeight: '800', backgroundColor: '#d97706', color: 'white', border: 'none', cursor: 'pointer' }}
+                            >
+                              🚚 Cambiar a Directo
+                            </button>
+                          )}
+                        </div>
                       )}
                       {esEmergencia ? (
                         <span style={{ padding: '3px 8px', borderRadius: '6px', fontSize: '0.7rem', fontWeight: '900', backgroundColor: '#fee2e2', color: '#b91c1c' }}>
@@ -2619,9 +3145,11 @@ const Almacen = ({ currentUserProp = null }) => {
                             <div style={{ flex: 1, minHeight: '400px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
                               {(() => {
                                 const url = invoiceFiles[selectedFileIndex]?.url || '';
-                                const lowerUrl = url.split('?')[0].toLowerCase();
-                                const isPdf = lowerUrl.endsWith('.pdf');
-                                const isImg = /\.(jpg|jpeg|png|webp|avif|gif)$/i.test(lowerUrl);
+                                const isBase64Img = typeof url === 'string' && url.trim().startsWith('data:image/');
+                                const isBase64Pdf = typeof url === 'string' && url.trim().startsWith('data:application/pdf');
+                                const lowerUrl = typeof url === 'string' ? url.split('?')[0].toLowerCase() : '';
+                                const isPdf = isBase64Pdf || /\.pdf($|\?)/i.test(lowerUrl);
+                                const isImg = isBase64Img || /\.(jpg|jpeg|png|webp|avif|gif|bmp|svg)($|\?)/i.test(lowerUrl);
 
                                 if (isPdf) {
                                   return (

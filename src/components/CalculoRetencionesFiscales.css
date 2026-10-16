@@ -562,3 +562,178 @@
     display: none !important;
   }
 }
+
+/* =============================================================================
+   ESTILOS DEL TABULADOR OFICIAL DE RETENCIONES ISLR (DECRETO 1.808)
+   ============================================================================= */
+
+.retenciones-pill-btn.active-purple {
+  background: #7e22ce;
+  color: #ffffff;
+  border-color: #7e22ce;
+  box-shadow: 0 3px 8px rgba(126, 34, 206, 0.28);
+}
+
+.retenciones-pill-btn.active-slate {
+  background: #334155;
+  color: #ffffff;
+  border-color: #334155;
+  box-shadow: 0 3px 8px rgba(51, 65, 85, 0.25);
+}
+
+.badge-pastel-purple {
+  background: #f3e8ff;
+  color: #7e22ce;
+  border: 1px solid #d8b4fe;
+}
+
+/* Modal del Tabulador SENIAT / Decreto 1.808 */
+.tabulador-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.75);
+  backdrop-filter: blur(5px);
+  z-index: 99999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  animation: fadeInRetenciones 0.2s ease-out;
+}
+
+.tabulador-modal-content {
+  background: #ffffff;
+  border-radius: 18px;
+  max-width: 1080px;
+  width: 100%;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 25px 50px -12px rgba(15, 23, 42, 0.35);
+  border: 1px solid #e2e8f0;
+  overflow: hidden;
+}
+
+.tabulador-modal-header {
+  padding: 18px 24px;
+  background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+  color: #ffffff;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.tabulador-modal-body {
+  padding: 20px 24px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  background: #f8fafc;
+}
+
+.tabulador-search-bar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.tabulador-filter-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.tabulador-chip {
+  padding: 5px 12px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 700;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #475569;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.tabulador-chip:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.tabulador-chip.active {
+  background: #0f172a;
+  color: #ffffff;
+  border-color: #0f172a;
+}
+
+/* Tabla del Tabulador Oficial */
+.tabulador-table-wrapper {
+  overflow-x: auto;
+  background: #ffffff;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  max-height: 480px;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.02);
+}
+
+.tabulador-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11.5px;
+  text-align: left;
+}
+
+.tabulador-table th {
+  position: sticky;
+  top: 0;
+  background: #0f172a;
+  color: #ffffff;
+  font-weight: 800;
+  padding: 10px 12px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  z-index: 2;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.tabulador-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #f1f5f9;
+  border-right: 1px solid #f8fafc;
+  vertical-align: middle;
+}
+
+.tabulador-table tr:hover {
+  background: #f1f5f9;
+}
+
+.tabulador-table tr.selected-row {
+  background: #f5f3ff !important;
+  border-left: 4px solid #7e22ce;
+}
+
+.tabulador-code-pill {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: #ede9fe;
+  color: #6b21a8;
+  display: inline-block;
+}
+
+.tabulador-active-card {
+  background: linear-gradient(135deg, #faf5ff 0%, #f3e8ff 100%);
+  border: 1.5px solid #d8b4fe;
+  border-radius: 14px;
+  padding: 14px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+

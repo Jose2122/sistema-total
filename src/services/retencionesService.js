@@ -5,6 +5,7 @@
 
 import { supabase } from '../supabaseClient.js';
 import { redondearDecimales } from './tasasService.js';
+import { calcularRetencionIslrConTabulador, VALOR_UT_DEFAULT } from '../constants/tablaRetencionesIslr.js';
 
 const LOCAL_STORAGE_RETENCIONES = 'sitc_retenciones_fiscales_offline';
 
@@ -18,6 +19,7 @@ export const redondear2 = (num) => {
 
 /**
  * Función pura que calcula todas las variables de la liquidación fiscal
+ * incluyendo IVA y la tabla oficial de retención de ISLR (Decreto 1.808)
  */
 export const calcularLiquidacionFiscal = ({
   tipo_tasa = 'BCV_USD',
@@ -26,13 +28,23 @@ export const calcularLiquidacionFiscal = ({
   base_imponible = 0,
   alicuota_iva = 16.00,
   porcentaje_retencion_iva = 75.00,
-  porcentaje_retencion_islr = 2.00
+  porcentaje_retencion_islr = 2.00,
+  // Parámetros avanzados del Tabulador ISLR Oficial (Decreto 1.808):
+  tipo_persona = 'PJD',
+  concepto_islr_id = 'servicios_general',
+  unidad_tributaria = VALOR_UT_DEFAULT,
+  monto_retencion_islr_fijado = null,
+  sustraendo_islr_bs = 0,
+  sustraendo_islr_usd = 0,
+  codigo_concepto_seniat = '055',
+  numeral_decreto = '9.11',
+  concepto_islr_nombre = 'Servicios (9.11)',
+  porcentaje_base_islr = 100
 }) => {
   const exento = Math.max(0, redondear2(monto_exento));
   const base = Math.max(0, redondear2(base_imponible));
   const aliIva = Math.max(0, redondear2(alicuota_iva));
   const pctRetIva = Math.max(0, redondear2(porcentaje_retencion_iva));
-  const pctRetIslr = Math.max(0, redondear2(porcentaje_retencion_islr));
   const tasa = Math.max(0.0001, redondearDecimales(valor_tasa, 4));
 
   // 1. Cálculo de IVA: base_imponible * (alicuota_iva / 100)
@@ -41,8 +53,41 @@ export const calcularLiquidacionFiscal = ({
   // 2. Retención de IVA: monto_iva * (porcentaje_retencion_iva / 100)
   const monto_retencion_iva = redondear2(monto_iva * (pctRetIva / 100));
 
-  // 3. Retención de ISLR sobre base imponible: base_imponible * (porcentaje_retencion_islr / 100)
-  const monto_retencion_islr = redondear2(base * (pctRetIslr / 100));
+  // 3. Retención de ISLR: con Tabulador Oficial Decreto 1.808
+  let monto_retencion_islr = 0.00;
+  let pctRetIslr = Math.max(0, redondear2(porcentaje_retencion_islr));
+  let sustraendoBsCalculado = sustraendo_islr_bs;
+  let sustraendoUsdCalculado = sustraendo_islr_usd;
+  let codigoSeniatCalculado = codigo_concepto_seniat;
+  let numeralCalculado = numeral_decreto;
+  let conceptoNombreCalculado = concepto_islr_nombre;
+  let pctBaseCalculado = porcentaje_base_islr;
+  let aplicaMinimoSinRetencion = false;
+
+  if (monto_retencion_islr_fijado !== null && !isNaN(monto_retencion_islr_fijado)) {
+    monto_retencion_islr = Math.max(0, redondear2(monto_retencion_islr_fijado));
+  } else if (concepto_islr_id) {
+    const resIslr = calcularRetencionIslrConTabulador({
+      baseImponible: base,
+      valorTasa: tasa,
+      tipoPersona: tipo_persona,
+      conceptoId: concepto_islr_id,
+      unidadTributaria: unidad_tributaria,
+      porcentajePersonalizado: porcentaje_retencion_islr
+    });
+    monto_retencion_islr = resIslr.montoRetencionDivisa;
+    pctRetIslr = resIslr.porcentajeTarifa;
+    sustraendoBsCalculado = resIslr.sustraendoBs;
+    sustraendoUsdCalculado = resIslr.sustraendoDivisa;
+    codigoSeniatCalculado = resIslr.codigoSeniat;
+    numeralCalculado = resIslr.numeral;
+    conceptoNombreCalculado = resIslr.conceptoNombreCorto || resIslr.conceptoNombre;
+    pctBaseCalculado = resIslr.porcentajeBase;
+    aplicaMinimoSinRetencion = resIslr.aplicaMinimoSinRetencion;
+  } else {
+    // Modo tradicional fallback
+    monto_retencion_islr = redondear2(base * (pctRetIslr / 100));
+  }
 
   // 4. Totales brutos y netos
   const total_factura = redondear2(base + exento + monto_iva);
@@ -55,6 +100,11 @@ export const calcularLiquidacionFiscal = ({
   // Subtotales complementarios informativos
   const equivalente_ves_bruto = redondear2(total_factura * tasa);
   const equivalente_ves_retenciones = redondear2(total_retenciones * tasa);
+  const equivalente_ves_ret_islr = redondear2(monto_retencion_islr * tasa);
+  const equivalente_ves_ret_iva = redondear2(monto_retencion_iva * tasa);
+  const monto_base_ves = redondear2(base * tasa);
+  const monto_retencion_islr_ves = equivalente_ves_ret_islr;
+  const aplica_sustraendo = Number(sustraendoBsCalculado) > 0;
 
   return {
     tipo_tasa,
@@ -65,8 +115,25 @@ export const calcularLiquidacionFiscal = ({
     monto_iva,
     porcentaje_retencion_iva: pctRetIva,
     monto_retencion_iva,
+    equivalente_ves_ret_iva,
+    
+    // Tabulador ISLR
+    tipo_persona,
+    concepto_islr_id,
+    concepto_islr_nombre: conceptoNombreCalculado,
+    codigo_concepto_seniat: codigoSeniatCalculado,
+    numeral_decreto: numeralCalculado,
+    porcentaje_base_islr: pctBaseCalculado,
     porcentaje_retencion_islr: pctRetIslr,
-    monto_retencion_islr,
+    sustraendo_islr_bs: sustraendoBsCalculado || 0,
+    sustraendo_islr_usd: sustraendoUsdCalculado || 0,
+    aplica_sustraendo,
+    aplica_minimo_sin_retencion: aplicaMinimoSinRetencion,
+    monto_retencion_islr: monto_retencion_islr || 0,
+    monto_retencion_islr_ves,
+    equivalente_ves_ret_islr,
+    monto_base_ves,
+    
     total_factura,
     total_retenciones,
     monto_neto_pagar,
