@@ -1,33 +1,15 @@
-import { createClient } from '@supabase/supabase-js';
 import fs from 'fs';
-import path from 'path';
 
-const envPath = path.resolve('.env');
-const envContent = fs.readFileSync(envPath, 'utf-8');
-const env = {};
-envContent.split('\n').forEach(line => {
-  const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*)?\s*$/);
-  if (match) {
-    const key = match[1];
-    let value = match[2] || '';
-    if (value.startsWith('"') && value.endsWith('"')) {
-      value = value.substring(1, value.length - 1);
-    }
-    env[key] = value.trim();
-  }
-});
+const env = fs.readFileSync('.env', 'utf8');
+const url = env.match(/VITE_SUPABASE_URL=(.*)/)?.[1]?.trim().replace(/['"]/g, '');
+const key = env.match(/VITE_SUPABASE_ANON_KEY=(.*)/)?.[1]?.trim().replace(/['"]/g, '');
 
-const supabase = createClient(env.VITE_SUPABASE_URL, env.VITE_SUPABASE_ANON_KEY);
-
-async function inspect() {
-  const { data, error } = await supabase.from('ordenes_compra').select('*').limit(1);
-  if (error) {
-    console.error('Error fetching ODC:', error);
-  } else if (data && data.length > 0) {
-    console.log('ODC Keys in DB:', Object.keys(data[0]));
-  } else {
-    console.log('No rows in ordenes_compra table.');
-  }
+async function run() {
+  const res = await fetch(`${url}/rest/v1/ordenes_compra?select=*&limit=3`, {
+    headers: { 'apikey': key, 'Authorization': `Bearer ${key}` }
+  });
+  const data = await res.json();
+  console.log('Sample ordenes_compra:', data);
 }
 
-inspect();
+run().catch(console.error);

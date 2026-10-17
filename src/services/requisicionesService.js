@@ -51,37 +51,65 @@ export const requisicionesService = {
 export const consolidarSoportesRequisicion = (facturas_url, items) => {
   const soportesMap = new Map();
 
+  const getCleanKey = (u) => {
+    if (!u || typeof u !== 'string') return '';
+    const trimmed = u.trim();
+    if (trimmed.startsWith('data:')) {
+      return `b64_${trimmed.length}_${trimmed.slice(0, 80)}`;
+    }
+    return trimmed.split('?')[0].toLowerCase();
+  };
+
+  const extraerUrlLimpiaSegura = (val) => {
+    if (!val) return '';
+    if (typeof val === 'string') {
+      const tr = val.trim();
+      if (tr.startsWith('{') && tr.endsWith('}')) {
+        try {
+          const parsed = JSON.parse(tr);
+          return parsed.url || parsed.link || parsed.factura_url || parsed.soporte_url || tr;
+        } catch {
+          return tr;
+        }
+      }
+      return tr;
+    }
+    if (typeof val === 'object' && val) {
+      return val.url || val.link || val.factura_url || val.soporte_url || '';
+    }
+    return '';
+  };
+
   // 1. Soportes a nivel de cabecera / generales de la requisición
   const arrayFacturas = Array.isArray(facturas_url) 
     ? facturas_url 
     : (facturas_url ? [facturas_url] : []);
 
   arrayFacturas.forEach((item) => {
-    let url = '';
+    const url = extraerUrlLimpiaSegura(item);
     let etiqueta = 'Archivo';
     if (typeof item === 'string') {
       if (item.trim().startsWith('{')) {
         try {
           const parsed = JSON.parse(item);
-          url = parsed.url;
-          etiqueta = parsed.etiqueta || 'Archivo';
+          etiqueta = parsed.etiqueta || parsed.name || 'Archivo';
         } catch {
-          url = item;
+          etiqueta = 'Archivo';
         }
-      } else {
-        url = item;
       }
     } else if (item && typeof item === 'object') {
-      url = item.url;
-      etiqueta = item.etiqueta || 'Archivo';
+      etiqueta = item.etiqueta || item.name || 'Archivo';
     }
 
     if (url && typeof url === 'string' && url.length > 5) {
-      let cleanEtiq = etiqueta || 'Soporte';
-      if (cleanEtiq.startsWith('data:') || cleanEtiq === 'Archivo sin etiqueta') {
-        cleanEtiq = url.startsWith('data:image/') ? 'Soporte (Imagen)' : 'Soporte';
+      const key = getCleanKey(url);
+      if (key && !soportesMap.has(key)) {
+        let cleanEtiq = etiqueta || 'Soporte';
+        if (cleanEtiq.startsWith('data:') || cleanEtiq === 'Archivo sin etiqueta') {
+          cleanEtiq = url.startsWith('data:image/') ? 'Soporte (Imagen)' : 'Soporte';
+        }
+        soportesMap.set(key, { url, etiqueta: cleanEtiq });
       }
-      soportesMap.set(url, { url, etiqueta: cleanEtiq });
     }
   });
 
@@ -91,10 +119,11 @@ export const consolidarSoportesRequisicion = (facturas_url, items) => {
     try { safeItems = JSON.parse(safeItems); } catch { safeItems = []; }
   }
   (Array.isArray(safeItems) ? safeItems : []).forEach(it => {
-    const itemDirectUrl = it?.factura_adjunto || it?.adjunto || it?.comprobante;
+    const itemDirectUrl = extraerUrlLimpiaSegura(it?.factura_adjunto || it?.adjunto || it?.comprobante);
     if (itemDirectUrl && typeof itemDirectUrl === 'string' && itemDirectUrl.length > 5) {
-      if (!soportesMap.has(itemDirectUrl)) {
-        soportesMap.set(itemDirectUrl, {
+      const key = getCleanKey(itemDirectUrl);
+      if (key && !soportesMap.has(key)) {
+        soportesMap.set(key, {
           url: itemDirectUrl,
           etiqueta: `${it.codigo || it.nombre || it.descripcion || 'Ítem'}`.slice(0, 40)
         });
@@ -102,11 +131,12 @@ export const consolidarSoportesRequisicion = (facturas_url, items) => {
     }
 
     (it?.historial_compras || []).forEach(h => {
-      if (h.factura_url && typeof h.factura_url === 'string' && h.factura_url.length > 5) {
-        const url = h.factura_url;
-        if (!soportesMap.has(url)) {
+      const url = extraerUrlLimpiaSegura(h.factura_url || h.url || h.soporte_url);
+      if (url && typeof url === 'string' && url.length > 5) {
+        const key = getCleanKey(url);
+        if (key && !soportesMap.has(key)) {
           const docLabel = `${h.doc_tipo || 'FAC'}: ${h.doc_numero || ''}${h.proveedor_nombre ? ` (${h.proveedor_nombre})` : ''}`.trim();
-          soportesMap.set(url, {
+          soportesMap.set(key, {
             url,
             etiqueta: docLabel || 'Factura / Comprobante'
           });

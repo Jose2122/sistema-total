@@ -92,8 +92,8 @@ const formatearFechaHora = (fechaIso) => {
   }
 };
 
-// Helper to retrieve and merge all abonos for an ODC from DB and localStorage
-const obtenerAbonosOdc = (odc) => {
+// Helper to retrieve and merge all abonos for an ODC from DB, localStorage and Requisiciones facturas_url
+const obtenerAbonosOdc = (odc, requisicionesList = [], abonosGlobalesList = []) => {
   if (!odc) return [];
   const fromDb = parsearItems(odc.detalles_pago || odc.datos_pago || []);
   let fromLocal = [];
@@ -108,9 +108,53 @@ const obtenerAbonosOdc = (odc) => {
     console.warn('Error leyendo abonos locales de ODC:', e);
   }
 
+  // Buscar abonos asociados en el pool global o requisiciones
+  const fromPool = [];
+  const odcNum = (odc.numero_odc || odc.numero_orden || '').trim().toUpperCase();
+  const odcIdStr = String(odc.id || '');
+  const reqIdStr = String(odc.requisicion_id || '');
+
+  // 1. Revisar abonosGlobalesList si se pasó
+  if (Array.isArray(abonosGlobalesList) && abonosGlobalesList.length > 0) {
+    abonosGlobalesList.forEach(ab => {
+      if (!ab) return;
+      const abOdcId = String(ab.odc_id || '');
+      const abOdcNum = String(ab.numero_odc || ab.factura_num || '').trim().toUpperCase();
+      if ((abOdcId && abOdcId === odcIdStr) || (odcNum && abOdcNum === odcNum) || (reqIdStr && String(ab.req_id || '') === reqIdStr && ab.tipo === 'abono')) {
+        fromPool.push(ab);
+      }
+    });
+  }
+
+  // 2. Revisar requisiciones vinculadas directamente
+  if (Array.isArray(requisicionesList) && requisicionesList.length > 0) {
+    const linkedReq = requisicionesList.find(r => 
+      String(r.id) === reqIdStr || 
+      (r.correlativo_req && odc.requisicion_correlativo && String(r.correlativo_req).trim().toUpperCase() === String(odc.requisicion_correlativo).trim().toUpperCase())
+    );
+    if (linkedReq && linkedReq.facturas_url) {
+      const docs = parsearFacturaUrls(linkedReq.facturas_url);
+      docs.forEach(doc => {
+        if (!doc) return;
+        const urlStr = doc.url || (doc.urls && doc.urls[0]?.url) || '';
+        const esAbono = doc.tipo === 'abono' || urlStr.toLowerCase().includes('abono_') || (doc.etiqueta && doc.etiqueta.toLowerCase().includes('abono'));
+        if (esAbono) {
+          const abOdcId = String(doc.odc_id || '');
+          const abNum = String(doc.factura_num || doc.numero_odc || '').trim().toUpperCase();
+          if (!abOdcId || abOdcId === odcIdStr || !odcNum || abNum === odcNum || urlStr.includes(odcNum)) {
+            fromPool.push({
+              ...doc,
+              abono_id: doc.abono_id || `req_${linkedReq.id}_${doc.referencia || ''}_${doc.monto || ''}`
+            });
+          }
+        }
+      });
+    }
+  }
+
   // Combinar y deduplicar por abono_id o firma única (referencia + monto + fecha)
   const map = new Map();
-  [...fromLocal, ...fromDb].forEach(ab => {
+  [...fromLocal, ...fromDb, ...fromPool].forEach(ab => {
     if (!ab) return;
     const key = ab.abono_id || `${ab.referencia || ''}_${ab.monto || 0}_${ab.fecha || ''}`;
     map.set(key, ab);
@@ -497,7 +541,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
         }
       }
       const enrichedOdc = (odcData || []).map(o => {
-        const abonos = obtenerAbonosOdc(o);
+        const abonos = obtenerAbonosOdc(o, reqData);
         return {
           ...o,
           detalles_pago: abonos,
@@ -624,9 +668,25 @@ const LiquidacionFacturas = ({ currentUser }) => {
     const listMap = new Map();
     requisiciones.forEach(req => {
       const docs = parsearFacturaUrls(req.facturas_url);
-      docs.forEach(doc => {
-        if (doc && doc.tipo === 'abono' && doc.abono_id) {
-          listMap.set(doc.abono_id, doc);
+      docs.forEach(rawDoc => {
+        if (!rawDoc) return;
+        let doc = rawDoc;
+        if (typeof doc === 'string') {
+          try { doc = JSON.parse(doc); } catch { doc = { url: doc }; }
+        }
+        const urlStr = doc.url || (doc.urls && doc.urls[0]?.url) || '';
+        const etiquetaStr = doc.etiqueta || doc.name || '';
+        const esAbono = doc.tipo === 'abono' || urlStr.toLowerCase().includes('abono_') || etiquetaStr.toLowerCase().includes('abono');
+        
+        if (esAbono) {
+          const idKey = doc.abono_id || `${doc.referencia || ''}_${doc.monto || ''}_${urlStr || Math.random()}`;
+          listMap.set(idKey, {
+            ...doc,
+            abono_id: doc.abono_id || idKey,
+            tipo: 'abono',
+            req_id: req.id,
+            req_correlativo: req.correlativo_req
+          });
         }
       });
     });
@@ -765,7 +825,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
 
         const comprador = o.elaborado_por_nombre || o.comprador_nombre || o.usuario_nombre || o.creado_por_nombre || 'Equipo de Compras';
 
-        const abonos = obtenerAbonosOdc(o);
+        const abonos = obtenerAbonosOdc(o, requisiciones, abonosGlobales);
         const totalVal = Number(o.total_general ?? o.total ?? 0);
         const totalAbonado = abonos.reduce((sum, a) => sum + (Number(a.monto) || 0), 0);
         const saldoPendiente = Math.max(0, totalVal - totalAbonado);
@@ -794,7 +854,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
           requisicion_obj: reqObj
         };
       });
-  }, [ordenesCompra, odcEstaAprobadaParaCxp, reqMapById, provMapById]);
+  }, [ordenesCompra, odcEstaAprobadaParaCxp, reqMapById, provMapById, requisiciones, abonosGlobales]);
 
   const odcsCreditoPendientes = useMemo(() => {
     return odcsCredito.filter(o => o.saldo_pendiente > 0.01 && o.estatus_calculado !== 'PAGADO');
@@ -842,7 +902,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
 
         const comprador = o.elaborado_por_nombre || o.comprador_nombre || o.usuario_nombre || o.creado_por_nombre || 'Equipo de Compras';
 
-        const abonos = obtenerAbonosOdc(o);
+        const abonos = obtenerAbonosOdc(o, requisiciones, abonosGlobales);
         const totalVal = Number(o.total_general ?? o.total ?? 0);
         const totalAbonado = abonos.reduce((sum, a) => sum + (Number(a.monto) || 0), 0);
         const saldoPendiente = Math.max(0, totalVal - totalAbonado);
@@ -871,7 +931,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
           requisicion_obj: reqObj
         };
       });
-  }, [ordenesCompra, odcEstaAprobadaParaCxp, reqMapById, provMapById]);
+  }, [ordenesCompra, odcEstaAprobadaParaCxp, reqMapById, provMapById, requisiciones, abonosGlobales]);
 
   const odcsContadoPendientes = useMemo(() => {
     return odcsContado.filter(o => o.saldo_pendiente > 0.01 && o.estatus_calculado !== 'PAGADO');
@@ -885,14 +945,14 @@ const LiquidacionFacturas = ({ currentUser }) => {
       const items = parsearItems(req.items);
       
       items.forEach(item => {
-        // Un ítem está "comprado" si estado_item === 'comprado' o si tiene historial de compras y no está 'pagado'
+        // Un ítem está "comprado" si estado_item === 'comprado', 'pagado' o si tiene historial de compras válido
         const comprasValidas = (item.historial_compras || []).filter(
           h => h && h.tipo !== 'JUSTIFICACION' && h.tipo !== 'ANULACION' && h.tipo !== 'DIRECTRIZ'
         );
         const tieneComprasHistorial = comprasValidas.length > 0;
-        const esComprado = item.estado_item === 'comprado' || (item.estado_item !== 'pagado' && tieneComprasHistorial);
+        const esComprado = item.estado_item === 'comprado' || item.estado_item === 'pagado' || tieneComprasHistorial;
 
-        if (!esComprado) return;
+        if (!esComprado || item.anulado) return;
 
         // Intentar obtener datos de la raíz, o del historial si es histórico
         let docNum = (item.factura_num || '').trim();
@@ -959,11 +1019,25 @@ const LiquidacionFacturas = ({ currentUser }) => {
 
     // Populate abonos and calculate balances
     return Object.values(grupos).map(factura => {
-      // Filter abonos that match this invoice number and provider
-      const abonosFactura = abonosGlobales.filter(
-        ab => (ab.factura_num || '').trim().toUpperCase() === factura.doc_numero.trim().toUpperCase() &&
-              (ab.proveedor_nombre || '').trim().toUpperCase() === factura.proveedor_nombre.trim().toUpperCase()
-      ).sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
+      // Helper para normalizar cadenas de comparación (quita acentos, puntuación, ceros iniciales en números y espacios)
+      const normalizarTexto = (str) => String(str || '').trim().toUpperCase().replace(/[.,/#!$%^&*;:{}=\-_`~()]/g, '').replace(/\s+/g, ' ');
+      const normalizarDoc = (str) => String(str || '').trim().toUpperCase().replace(/^0+/, '').replace(/[^\w]/g, '');
+
+      // Filter abonos that match this invoice number and provider with resilient normalization
+      const abonosFactura = abonosGlobales.filter(ab => {
+        const abDoc = normalizarDoc(ab.factura_num || ab.doc_numero || '');
+        const facDoc = normalizarDoc(factura.doc_numero || '');
+        const docMatches = Boolean(abDoc && facDoc && (abDoc === facDoc || (ab.factura_num || '').trim().toUpperCase() === (factura.doc_numero || '').trim().toUpperCase()));
+
+        const abProv = normalizarTexto(ab.proveedor_nombre || '');
+        const facProv = normalizarTexto(factura.proveedor_nombre || '');
+        const provMatches = !abProv || !facProv || abProv === facProv || abProv.includes(facProv) || facProv.includes(abProv) ||
+          sonProveedoresCoincidentes({ razon_social: ab.proveedor_nombre }, { id: factura.proveedor_id, razon_social: factura.proveedor_nombre });
+
+        const coincidePorReq = ab.req_id && factura.requisiciones_asociadas && factura.requisiciones_asociadas.has(ab.req_id);
+
+        return (docMatches && provMatches) || (coincidePorReq && docMatches);
+      }).sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
 
       const totalAbonado = abonosFactura.reduce((sum, ab) => sum + (Number(ab.monto) || 0), 0);
       const saldoPendiente = Math.max(0, factura.total_factura - totalAbonado);
@@ -1113,7 +1187,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
           (odc.centro_costo || '').toLowerCase().includes(q) ||
           (odc.comprador_nombre || '').toLowerCase().includes(q);
 
-        const st = (odc.estatus_pago || odc.status_pago || 'PENDIENTE').toUpperCase();
+        const st = (odc.estatus_calculado || odc.estatus_pago || odc.status_pago || 'PENDIENTE').toUpperCase();
         const matchesStatus =
           filtroEstatus === 'Todos' ||
           (filtroEstatus === 'EMITIDO' && st === 'PENDIENTE') ||
@@ -1162,7 +1236,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
           (odc.centro_costo || '').toLowerCase().includes(q) ||
           (odc.comprador_nombre || '').toLowerCase().includes(q);
 
-        const st = (odc.estatus_pago || odc.status_pago || 'PENDIENTE').toUpperCase();
+        const st = (odc.estatus_calculado || odc.estatus_pago || odc.status_pago || 'PENDIENTE').toUpperCase();
         const matchesStatus =
           filtroEstatus === 'Todos' ||
           (filtroEstatus === 'EMITIDO' && st === 'PENDIENTE') ||
@@ -1608,7 +1682,11 @@ const LiquidacionFacturas = ({ currentUser }) => {
         const targetOdc = targetOdcFound || ordenesCompra.find(o => String(o.id) === String(abonoForm.odc_id));
         if (!targetOdc) throw new Error('No se encontró la Órden de Compra a abonar.');
 
-        const abonosExistentes = obtenerAbonosOdc(targetOdc);
+        nuevoAbono.odc_id = targetOdc.id;
+        nuevoAbono.numero_odc = targetOdc.numero_odc;
+        nuevoAbono.factura_num = targetOdc.numero_odc || abonoForm.factura_num;
+
+        const abonosExistentes = obtenerAbonosOdc(targetOdc, requisiciones, abonosGlobales);
         const nuevosAbonos = [...abonosExistentes, nuevoAbono];
         const sumaTotalAbonos = nuevosAbonos.reduce((sum, a) => sum + (Number(a.monto) || 0), 0);
         const totalOdcVal = Number(targetOdc.total_general ?? targetOdc.total ?? 0);
@@ -1625,7 +1703,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
           localStorage.setItem(`odc_abonos_${targetOdc.numero_odc}`, JSON.stringify(nuevosAbonos));
         }
 
-        // Actualización optimista inmediata en memoria
+        // Actualización optimista inmediata en memoria de ODC
         setOrdenesCompra(prev => prev.map(o => {
           if (String(o.id) === String(targetOdc.id)) {
             return {
@@ -1640,6 +1718,16 @@ const LiquidacionFacturas = ({ currentUser }) => {
           }
           return o;
         }));
+
+        if (targetOdc.requisicion_id) {
+          setRequisiciones(prev => prev.map(r => {
+            if (String(r.id) === String(targetOdc.requisicion_id)) {
+              const currentUrls = parsearFacturaUrls(r.facturas_url || []);
+              return { ...r, facturas_url: [...currentUrls, nuevoAbono] };
+            }
+            return r;
+          }));
+        }
 
         if (showOdcPreviewModal && odcPreviewSeleccionada && String(odcPreviewSeleccionada.id) === String(targetOdc.id)) {
           setOdcPreviewSeleccionada(prev => ({
@@ -1697,10 +1785,16 @@ const LiquidacionFacturas = ({ currentUser }) => {
       }
 
       // 3. Find parent requisitions sharing this invoice
-      const targetInvoice = facturasAgrupadas.find(
-        f => f.doc_numero.trim().toUpperCase() === abonoForm.factura_num.trim().toUpperCase() &&
-             f.proveedor_nombre.trim().toUpperCase() === abonoForm.proveedor_nombre.trim().toUpperCase()
-      );
+      const normalizarDoc = (str) => String(str || '').trim().toUpperCase().replace(/^0+/, '').replace(/[^\w]/g, '');
+      const normalizarTexto = (str) => String(str || '').trim().toUpperCase().replace(/[.,/#!$%^&*;:{}=\-_`~()]/g, '').replace(/\s+/g, ' ');
+
+      const targetInvoice = facturasAgrupadas.find(f => {
+        const docMatches = normalizarDoc(f.doc_numero) === normalizarDoc(abonoForm.factura_num) ||
+                           f.doc_numero.trim().toUpperCase() === abonoForm.factura_num.trim().toUpperCase();
+        const provMatches = normalizarTexto(f.proveedor_nombre) === normalizarTexto(abonoForm.proveedor_nombre) ||
+                            sonProveedoresCoincidentes({ razon_social: f.proveedor_nombre, id: f.proveedor_id }, { razon_social: abonoForm.proveedor_nombre });
+        return docMatches && provMatches;
+      }) || facturasAgrupadas.find(f => normalizarDoc(f.doc_numero) === normalizarDoc(abonoForm.factura_num));
 
       if (!targetInvoice) throw new Error('No se encontró la factura a abonar.');
 
@@ -3136,7 +3230,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
                           </button>
                           <select
                             style={{ padding: '5px 8px', fontSize: '0.72rem', fontWeight: '800', borderRadius: '8px', border: '1px solid #cbd5e1', cursor: 'pointer', backgroundColor: '#f8fafc' }}
-                            value={statusActual}
+                            value={odc.estatus_calculado || statusActual}
                             onChange={(e) => cambiarEstatusPagoOdc(odc.id, e.target.value)}
                           >
                             <option value="PENDIENTE">⏳ PENDIENTE</option>
@@ -3461,7 +3555,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
                           </button>
                           <select
                             style={{ padding: '5px 8px', fontSize: '0.72rem', fontWeight: '800', borderRadius: '8px', border: '1px solid #cbd5e1', cursor: 'pointer', backgroundColor: '#f8fafc' }}
-                            value={statusActual}
+                            value={odc.estatus_calculado || statusActual}
                             onChange={(e) => cambiarEstatusPagoOdc(odc.id, e.target.value)}
                           >
                             <option value="PENDIENTE">⏳ PENDIENTE</option>

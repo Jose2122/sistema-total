@@ -70,6 +70,10 @@ const OrdenesCompra = ({ currentUser }) => {
   const [loadingItemsPrioridad, setLoadingItemsPrioridad] = useState(false);
   const [guardandoPrioridadOdc, setGuardandoPrioridadOdc] = useState(false);
 
+  // Subsección y estado para Firma Digital Carlos Vega (Super Admin y Gerente General)
+  const [subtabFirmaCarlos, setSubtabFirmaCarlos] = useState('pendientes'); // 'pendientes' | 'firmadas' | 'todas'
+  const [odcFirmandoId, setOdcFirmandoId] = useState(null);
+
   // Modal y estado para Vista Previa PDF F-ADM-01-2
   const [showPdfPreviewModal, setShowPdfPreviewModal] = useState(false);
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState(null);
@@ -377,6 +381,49 @@ const OrdenesCompra = ({ currentUser }) => {
                        (o.requisicion_correlativo ? reqMap[String(o.requisicion_correlativo).trim().toUpperCase()] : null);
 
         let itemsThisOdc = odcItemsMap[String(o.id)] || [];
+        if (itemsThisOdc.length === 0 && Array.isArray(o.items) && o.items.length > 0) {
+          itemsThisOdc = o.items;
+        } else if (itemsThisOdc.length === 0 && reqObj?.items) {
+          const reqItems = Array.isArray(reqObj.items) ? reqObj.items : [];
+          const matched = reqItems.filter(it => {
+            const hist = it.historial_compras || [];
+            if (hist.length === 0) return true;
+            return hist.some(h => 
+              String(h.odc_id) === String(o.id) || 
+              h.odc_numero === o.numero_odc || 
+              h.doc_numero === o.numero_odc ||
+              (o.numero_odc && h.odc_numero && String(h.odc_numero).includes(String(o.numero_odc).replace(/^ODC-2026-|^ODC-/i, '')))
+            );
+          });
+          const sourceItems = matched.length > 0 ? matched : reqItems;
+          itemsThisOdc = sourceItems.map((it, idx) => {
+            const hMatch = (it.historial_compras || []).find(h => 
+              String(h.odc_id) === String(o.id) || 
+              h.odc_numero === o.numero_odc || 
+              h.doc_numero === o.numero_odc ||
+              (o.numero_odc && h.odc_numero && String(h.odc_numero).includes(String(o.numero_odc).replace(/^ODC-2026-|^ODC-/i, '')))
+            );
+            const cant = parseFloat(hMatch?.cant || hMatch?.cantidad || it.cant || it.cantidad || 1);
+            const pu = parseFloat(hMatch?.pu || it.pu || it.precio_unitario || 0);
+            return {
+              id: it.id || `reconstructed-${idx}`,
+              orden_compra_id: o.id,
+              item_numero: idx + 1,
+              descripcion: it.descripcion || 'Renglón general',
+              unidad: it.uni || it.unidad || 'UND',
+              cantidad: cant,
+              precio_unitario: pu,
+              subtotal: cant * pu,
+              total_fila: cant * pu
+            };
+          });
+        }
+
+        const calcSubtotal = itemsThisOdc.reduce((acc, it) => acc + (Number(it.total_fila) || 0), 0);
+        const subtotalVal = Number(o.subtotal || 0) > 0 ? Number(o.subtotal) : calcSubtotal;
+        const ivaPorc = o.porcentaje_iva !== undefined ? Number(o.porcentaje_iva) : 16;
+        const ivaMontoVal = o.iva_monto !== undefined && o.iva_monto !== null ? Number(o.iva_monto) : (subtotalVal * (ivaPorc / 100));
+        const totalGenVal = Number(o.total_general || 0) > 0 ? Number(o.total_general) : (subtotalVal + ivaMontoVal);
 
         let descResumen = '';
         if (itemsThisOdc.length === 1) {
@@ -479,6 +526,9 @@ const OrdenesCompra = ({ currentUser }) => {
 
         return {
           ...o,
+          subtotal: subtotalVal,
+          iva_monto: ivaMontoVal,
+          total_general: totalGenVal,
           elaborado_por_nombre: emisorOdc,
           comprador_nombre: emisorOdc,
           items: itemsThisOdc,
@@ -635,7 +685,85 @@ const OrdenesCompra = ({ currentUser }) => {
         .order('item_numero', { ascending: true });
 
       if (error) throw error;
-      setOdcItems(data || []);
+
+      if (!data || data.length === 0) {
+        let fallbackItems = [];
+        if (Array.isArray(odcCompleta.items) && odcCompleta.items.length > 0) {
+          fallbackItems = odcCompleta.items;
+        } else if (odcCompleta.requisicion_obj?.items) {
+          const reqItems = Array.isArray(odcCompleta.requisicion_obj.items) ? odcCompleta.requisicion_obj.items : [];
+          const matched = reqItems.filter(it => {
+            const hist = it.historial_compras || [];
+            if (hist.length === 0) return true;
+            return hist.some(h => 
+              String(h.odc_id) === String(odcCompleta.id) || 
+              h.odc_numero === odcCompleta.numero_odc || 
+              h.doc_numero === odcCompleta.numero_odc ||
+              (odcCompleta.numero_odc && h.odc_numero && String(h.odc_numero).includes(String(odcCompleta.numero_odc).replace(/^ODC-2026-|^ODC-/i, '')))
+            );
+          });
+          const sourceItems = matched.length > 0 ? matched : reqItems;
+          fallbackItems = sourceItems.map((it, idx) => {
+            const hMatch = (it.historial_compras || []).find(h => 
+              String(h.odc_id) === String(odcCompleta.id) || 
+              h.odc_numero === odcCompleta.numero_odc || 
+              h.doc_numero === odcCompleta.numero_odc ||
+              (odcCompleta.numero_odc && h.odc_numero && String(h.odc_numero).includes(String(odcCompleta.numero_odc).replace(/^ODC-2026-|^ODC-/i, '')))
+            );
+            const cant = parseFloat(hMatch?.cant || hMatch?.cantidad || it.cant || it.cantidad || 1);
+            const pu = parseFloat(hMatch?.pu || it.pu || it.precio_unitario || 0);
+            const tot = cant * pu;
+            return {
+              id: it.id || `reconstructed-${idx}`,
+              orden_compra_id: odcCompleta.id,
+              item_numero: idx + 1,
+              descripcion: it.descripcion || 'Renglón general',
+              unidad: it.uni || it.unidad || 'UND',
+              cantidad: cant,
+              precio_unitario: pu,
+              subtotal: tot,
+              total_fila: tot
+            };
+          });
+        }
+
+        if (fallbackItems.length > 0) {
+          setOdcItems(fallbackItems);
+          const sub = fallbackItems.reduce((acc, it) => acc + (Number(it.total_fila) || 0), 0);
+          if (!odcCompleta.subtotal || Number(odcCompleta.subtotal) <= 0) {
+            const ivaPorc = odcCompleta.porcentaje_iva !== undefined ? Number(odcCompleta.porcentaje_iva) : 16;
+            const ivaM = sub * (ivaPorc / 100);
+            const totGen = sub + ivaM;
+            odcCompleta.subtotal = sub;
+            odcCompleta.iva_monto = ivaM;
+            odcCompleta.total_general = totGen;
+            setOdcSeleccionada({ ...odcCompleta });
+            safeSupabaseUpdate(supabase, 'ordenes_compra', { subtotal: sub, iva_monto: ivaM, total_general: totGen, total: totGen }, 'id', odcCompleta.id).catch(() => {});
+          }
+          // Auto-healing en background para que quede guardado en ordenes_compra_items
+          (async () => {
+            try {
+              const insertRows = fallbackItems.map((fi, i) => ({
+                orden_compra_id: odcCompleta.id,
+                item_numero: i + 1,
+                descripcion: fi.descripcion,
+                unidad: fi.unidad || 'UND',
+                cantidad: fi.cantidad,
+                precio_unitario: fi.precio_unitario,
+                subtotal: fi.subtotal,
+                total_fila: fi.total_fila
+              }));
+              await supabase.from('ordenes_compra_items').insert(insertRows);
+            } catch (insErr) {
+              console.warn("Auto-healing ordenes_compra_items notice:", insErr);
+            }
+          })();
+        } else {
+          setOdcItems([]);
+        }
+      } else {
+        setOdcItems(data);
+      }
     } catch (err) {
       console.error("Error al cargar renglones de ODC:", err);
       toast.error("Error al cargar ítems de la ODC");
@@ -1676,14 +1804,14 @@ const OrdenesCompra = ({ currentUser }) => {
     }
   };
 
-  // Alternar Firma Digital Remota de Carlos Vega
-  const toggleFirmaDigitalCarlos = async (activa) => {
+  // Alternar Firma Digital Remota de Carlos Vega para cualquier ODC directamente (desde tabla o subsección)
+  const toggleFirmaDirectaCarlos = async (odcTarget, activa) => {
     if (!puedeActivarFirmaCarlos) {
       toast.error("Acceso no autorizado: solo el Super Admin o la Gerencia General pueden activar la Firma Digital.");
       return;
     }
-    if (!odcSeleccionada) return;
-    setGuardandoFirmaCarlos(true);
+    if (!odcTarget || !odcTarget.id) return;
+    setOdcFirmandoId(odcTarget.id);
     try {
       const hoyIso = new Date().toISOString();
       const payload = {
@@ -1694,24 +1822,35 @@ const OrdenesCompra = ({ currentUser }) => {
       const { error } = await supabase
         .from('ordenes_compra')
         .update(payload)
-        .eq('id', odcSeleccionada.id);
+        .eq('id', odcTarget.id);
 
       if (error) throw error;
 
-      const odcActualizada = { ...odcSeleccionada, ...payload };
-      setOdcSeleccionada(odcActualizada);
-      setOrdenes(prev => prev.map(o => o.id === odcSeleccionada.id ? odcActualizada : o));
+      const numStr = odcTarget.numero_odc || odcTarget.correlativo || `ODC #${odcTarget.id}`;
+
+      setOrdenes(prev => prev.map(o => o.id === odcTarget.id ? { ...o, ...payload } : o));
+      if (odcSeleccionada && odcSeleccionada.id === odcTarget.id) {
+        setOdcSeleccionada(prev => ({ ...prev, ...payload }));
+      }
 
       toast.success(activa
-        ? "Firma Digital de Carlos Vega activada correctamente."
-        : "Firma Digital de Carlos Vega desactivada."
+        ? `Firma Digital de Carlos Vega activada para ${numStr}.`
+        : `Firma Digital de Carlos Vega desactivada para ${numStr}.`
       );
     } catch (err) {
       console.error("Error al actualizar firma digital de Carlos Vega:", err);
       toast.error("Error al actualizar la firma digital: " + err.message);
     } finally {
-      setGuardandoFirmaCarlos(false);
+      setOdcFirmandoId(null);
     }
+  };
+
+  // Alternar Firma Digital Remota de Carlos Vega desde el modal de detalle
+  const toggleFirmaDigitalCarlos = async (activa) => {
+    if (!odcSeleccionada) return;
+    setGuardandoFirmaCarlos(true);
+    await toggleFirmaDirectaCarlos(odcSeleccionada, activa);
+    setGuardandoFirmaCarlos(false);
   };
 
   // Alternar Firma Digital Remota de Ricardo Herrera (Gerente de Compras)
@@ -2245,11 +2384,22 @@ const OrdenesCompra = ({ currentUser }) => {
       const firmaCarlosImg = await cargarImagenFirmaCarlos();
       const firmaRicardoImg = await cargarImagenFirmaRicardo();
 
-      const copias = [
-        "ORIGINAL CLIENTE",
-        "ORIGINAL PARA PAGOS",
-        "COPIA VÁLIDA PARA COMPRAS"
-      ];
+      const tipoPagoNorm = String(odcSeleccionada.tipo_pago || odcSeleccionada.forma_pago || '').trim().toUpperCase();
+      const esCredito = tipoPagoNorm === 'CREDITO';
+
+      // REGLA OFICIAL TOTAL CLEAN:
+      // Si la orden es de CONTADO: Son únicamente 2 hojas (se excluye la copia original al proveedor).
+      // Si la orden es de CRÉDITO: Son 3 hojas (incluye copia original al proveedor para respaldo crediticio).
+      const copias = esCredito
+        ? [
+            "ORIGINAL PROVEEDOR",
+            "ORIGINAL PARA PAGOS",
+            "COPIA VÁLIDA PARA COMPRAS"
+          ]
+        : [
+            "ORIGINAL PARA PAGOS",
+            "COPIA VÁLIDA PARA COMPRAS"
+          ];
 
       let rawReqOrigen = odcSeleccionada.requisicion_correlativo || 
                          odcSeleccionada.requisicion_obj?.correlativo_req || 
@@ -2394,10 +2544,14 @@ const OrdenesCompra = ({ currentUser }) => {
         doc.text(odcSeleccionada.cotizacion_ref || '', marginX + colW + 18, barY + 4.6);
         doc.line(marginX + colW * 2, barY, marginX + colW * 2, barY + 6.8);
 
-        // Col 3: Aprobada por (Vacío para llenado manual)
+        // Col 3: Aprobada por
         doc.setFont("helvetica", "bold");
         doc.setTextColor(30, 58, 138);
         doc.text("Aprobada por:", marginX + colW * 2 + 2, barY + 4.6);
+        const aprobadorNombre = odcSeleccionada.aprobado_por_nombre || odcSeleccionada.requisicion_obj?.n_aprobacion_general || 'Carlos Vega';
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(0);
+        doc.text(aprobadorNombre, marginX + colW * 2 + 21, barY + 4.6);
         doc.line(marginX + colW * 3, barY, marginX + colW * 3, barY + 6.8);
 
         // Col 4: Fecha de Cotización
@@ -2459,8 +2613,14 @@ const OrdenesCompra = ({ currentUser }) => {
 
         // --- TABLA DE RENGLONES / ITEMS (CON COLUMNA UNID) ---
         const itemsHead = [["CANT.", "UNID.", "DESCRIPCIÓN", "PRECIO UNITARIO", "TOTAL"]];
-        const itemsBody = (odcItems && odcItems.length > 0)
-          ? odcItems.map(it => [
+        const effectivePdfItems = (odcItems && odcItems.length > 0)
+          ? odcItems
+          : (Array.isArray(odcSeleccionada.items) && odcSeleccionada.items.length > 0
+            ? odcSeleccionada.items
+            : []);
+
+        const itemsBody = (effectivePdfItems && effectivePdfItems.length > 0)
+          ? effectivePdfItems.map(it => [
               Number(it.cantidad || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 }),
               it.unidad || 'UNID',
               it.descripcion || 'Sin descripción',
@@ -2783,6 +2943,27 @@ const OrdenesCompra = ({ currentUser }) => {
     });
   }, [ordenes]);
 
+  // Subconjuntos para discriminación de Firma Digital Carlos Vega (excluyendo anuladas)
+  const odcsValidasFirmaCarlos = useMemo(() => {
+    return ordenes.filter(o => !esAnuladaOdc(o));
+  }, [ordenes]);
+
+  const odcsPendientesFirmaCarlos = useMemo(() => {
+    return ordenes.filter(o => !esAnuladaOdc(o) && !o.carlos_firma_digital_activa);
+  }, [ordenes]);
+
+  const odcsFirmadasCarlos = useMemo(() => {
+    return ordenes.filter(o => !esAnuladaOdc(o) && Boolean(o.carlos_firma_digital_activa));
+  }, [ordenes]);
+
+  const montoPendienteFirmaCarlos = useMemo(() => {
+    return odcsPendientesFirmaCarlos.reduce((sum, o) => sum + (Number(o.total_general) || 0), 0);
+  }, [odcsPendientesFirmaCarlos]);
+
+  const montoFirmadasCarlos = useMemo(() => {
+    return odcsFirmadasCarlos.reduce((sum, o) => sum + (Number(o.total_general) || 0), 0);
+  }, [odcsFirmadasCarlos]);
+
   // Filtrado de la Lista de Órdenes
   const ordenesFiltradas = useMemo(() => {
     const bLower = (busqueda || '').toLowerCase().trim();
@@ -2832,9 +3013,19 @@ const OrdenesCompra = ({ currentUser }) => {
         }
         return true;
       }
+      if (tabFiltro === 'firma_carlos') {
+        if (esAnuladaOdc(o)) return false;
+        if (subtabFirmaCarlos === 'pendientes') {
+          return !o.carlos_firma_digital_activa;
+        }
+        if (subtabFirmaCarlos === 'firmadas') {
+          return Boolean(o.carlos_firma_digital_activa);
+        }
+        return true;
+      }
       return true;
     });
-  }, [ordenes, busqueda, tabFiltro, subtabPrioridad]);
+  }, [ordenes, busqueda, tabFiltro, subtabPrioridad, subtabFirmaCarlos]);
 
   return (
     <div className="odc-container">
@@ -2946,6 +3137,34 @@ const OrdenesCompra = ({ currentUser }) => {
             </span>
           </button>
         )}
+        {puedeActivarFirmaCarlos && (
+          <button 
+            className={`odc-tab-btn ${tabFiltro === 'firma_carlos' ? 'active' : ''}`}
+            onClick={() => setTabFiltro('firma_carlos')}
+            style={{
+              borderColor: tabFiltro === 'firma_carlos' ? '#059669' : '#a7f3d0',
+              backgroundColor: tabFiltro === 'firma_carlos' ? '#059669' : '#ecfdf5',
+              color: tabFiltro === 'firma_carlos' ? '#ffffff' : '#047857',
+              fontWeight: '800',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}
+          >
+            <ShieldCheck size={16} /> ✍️ Firmas Carlos Vega
+            <span style={{
+              marginLeft: '4px',
+              backgroundColor: tabFiltro === 'firma_carlos' ? '#ffffff' : (odcsPendientesFirmaCarlos.length > 0 ? '#ef4444' : '#059669'),
+              color: tabFiltro === 'firma_carlos' ? '#059669' : '#ffffff',
+              padding: '2px 8px',
+              borderRadius: '12px',
+              fontSize: '0.72rem',
+              fontWeight: '900'
+            }}>
+              {odcsPendientesFirmaCarlos.length} {odcsPendientesFirmaCarlos.length === 1 ? 'pendiente' : 'pendientes'}
+            </span>
+          </button>
+        )}
       </div>
 
       {/* Subpanel Informativo cuando está activa la pestaña de Prioridad */}
@@ -3038,6 +3257,138 @@ const OrdenesCompra = ({ currentUser }) => {
                 📋 Todas ({ordenes.length})
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Subsección Informativa y Filtro cuando está activa la pestaña de Firma Carlos Vega */}
+      {tabFiltro === 'firma_carlos' && (
+        <div style={{
+          backgroundColor: '#ffffff',
+          borderRadius: '16px',
+          border: '1.5px solid #a7f3d0',
+          padding: '20px 24px',
+          marginBottom: '20px',
+          boxShadow: '0 4px 15px rgba(5, 150, 105, 0.07)'
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '14px', marginBottom: '16px' }}>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '1.3rem' }}>✍️</span>
+                <h3 style={{ margin: 0, color: '#065f46', fontSize: '1.15rem', fontWeight: '900' }}>
+                  Panel de Discriminación de Firma Digital — Carlos Vega (Gerencia General)
+                </h3>
+              </div>
+              <p style={{ margin: '4px 0 0 0', color: '#047857', fontSize: '0.83rem', fontWeight: '500' }}>
+                Exclusivo para Super Admin y Gerente General. Discrimina rápidamente las órdenes ya firmadas vs las que aún no tienen firma digital para agilizar el proceso de autorización.
+              </p>
+            </div>
+
+            {/* Sub-filtros de Firma: Pendientes vs Ya Firmadas */}
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={() => setSubtabFirmaCarlos('pendientes')}
+                style={{
+                  padding: '7px 14px',
+                  borderRadius: '10px',
+                  fontSize: '0.8rem',
+                  fontWeight: '800',
+                  cursor: 'pointer',
+                  border: subtabFirmaCarlos === 'pendientes' ? '1.5px solid #d97706' : '1px solid #fde68a',
+                  backgroundColor: subtabFirmaCarlos === 'pendientes' ? '#fef3c7' : '#fffbeb',
+                  color: '#92400e',
+                  boxShadow: subtabFirmaCarlos === 'pendientes' ? '0 2px 6px rgba(217, 119, 6, 0.15)' : 'none'
+                }}
+              >
+                ⏳ Aún NO Firmadas ({odcsPendientesFirmaCarlos.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setSubtabFirmaCarlos('firmadas')}
+                style={{
+                  padding: '7px 14px',
+                  borderRadius: '10px',
+                  fontSize: '0.8rem',
+                  fontWeight: '800',
+                  cursor: 'pointer',
+                  border: subtabFirmaCarlos === 'firmadas' ? '1.5px solid #059669' : '1px solid #a7f3d0',
+                  backgroundColor: subtabFirmaCarlos === 'firmadas' ? '#d1fae5' : '#ecfdf5',
+                  color: '#065f46',
+                  boxShadow: subtabFirmaCarlos === 'firmadas' ? '0 2px 6px rgba(5, 150, 105, 0.15)' : 'none'
+                }}
+              >
+                ✅ Ya Aprobadas / Firmadas ({odcsFirmadasCarlos.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setSubtabFirmaCarlos('todas')}
+                style={{
+                  padding: '7px 14px',
+                  borderRadius: '10px',
+                  fontSize: '0.8rem',
+                  fontWeight: '800',
+                  cursor: 'pointer',
+                  border: subtabFirmaCarlos === 'todas' ? '1.5px solid #64748b' : '1px solid #cbd5e1',
+                  backgroundColor: subtabFirmaCarlos === 'todas' ? '#0f172a' : '#f8fafc',
+                  color: subtabFirmaCarlos === 'todas' ? '#ffffff' : '#475569'
+                }}
+              >
+                📋 Todas ({odcsValidasFirmaCarlos.length})
+              </button>
+            </div>
+          </div>
+
+          {/* Tarjetas resumen de métricas */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', marginBottom: '12px' }}>
+            <div style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: '12px', padding: '12px 16px' }}>
+              <span style={{ fontSize: '0.72rem', fontWeight: '800', color: '#b45309', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block' }}>
+                ⏳ Pendientes por Firmar
+              </span>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: '4px' }}>
+                <span style={{ fontSize: '1.25rem', fontWeight: '900', color: '#78350f' }}>
+                  {odcsPendientesFirmaCarlos.length} <span style={{ fontSize: '0.78rem', fontWeight: '600' }}>órdenes</span>
+                </span>
+                <span style={{ fontSize: '0.82rem', fontWeight: '800', color: '#b45309' }}>
+                  $ {montoPendienteFirmaCarlos.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                </span>
+              </div>
+            </div>
+
+            <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '12px', padding: '12px 16px' }}>
+              <span style={{ fontSize: '0.72rem', fontWeight: '800', color: '#15803d', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block' }}>
+                ✅ Firmadas por Carlos
+              </span>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: '4px' }}>
+                <span style={{ fontSize: '1.25rem', fontWeight: '900', color: '#14532d' }}>
+                  {odcsFirmadasCarlos.length} <span style={{ fontSize: '0.78rem', fontWeight: '600' }}>órdenes</span>
+                </span>
+                <span style={{ fontSize: '0.82rem', fontWeight: '800', color: '#15803d' }}>
+                  $ {montoFirmadasCarlos.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
+                </span>
+              </div>
+            </div>
+
+            <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '12px 16px' }}>
+              <span style={{ fontSize: '0.72rem', fontWeight: '800', color: '#475569', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block' }}>
+                📊 Avance de Firma Digital
+              </span>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: '4px' }}>
+                <span style={{ fontSize: '1.25rem', fontWeight: '900', color: '#0f172a' }}>
+                  {odcsValidasFirmaCarlos.length > 0 ? Math.round((odcsFirmadasCarlos.length / odcsValidasFirmaCarlos.length) * 100) : 0}%
+                </span>
+                <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#64748b' }}>
+                  {odcsFirmadasCarlos.length} de {odcsValidasFirmaCarlos.length} completadas
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div style={{ padding: '8px 14px', backgroundColor: '#f0fdfa', borderRadius: '10px', border: '1px dashed #5eead4', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.78rem', color: '#0f766e', fontWeight: '600' }}>
+            <ShieldCheck size={16} color="#0d9488" style={{ flexShrink: 0 }} />
+            <span>
+              <strong>Firma Rápida Directa:</strong> Puede estampar o retirar la firma digital de Carlos Vega directamente desde la columna <em>"Firmas Digitales"</em> de cada fila con un solo clic.
+            </span>
           </div>
         </div>
       )}
@@ -3393,18 +3744,83 @@ const OrdenesCompra = ({ currentUser }) => {
                       $ {Number(odc.total_general || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
                     </td>
                     <td style={{ padding: '14px 16px', textAlign: 'center' }}>
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
                         {odc.ricardo_firma_digital_activa ? (
                           <span style={{ color: '#16a34a', fontSize: '0.68rem', fontWeight: '800', display: 'inline-flex', alignItems: 'center', gap: '3px', backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', padding: '2px 6px', borderRadius: '6px' }} title="Aval Digital Gerente de Compras (Ricardo Herrera) Activo">
                             <ShieldCheck size={12} /> Compras
                           </span>
                         ) : null}
-                        {odc.carlos_firma_digital_activa ? (
-                          <span style={{ color: '#16a34a', fontSize: '0.68rem', fontWeight: '800', display: 'inline-flex', alignItems: 'center', gap: '3px', backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', padding: '2px 6px', borderRadius: '6px' }} title="Firma Digital Gerente General (Carlos Vega) Activa">
-                            <ShieldCheck size={12} /> Gerencia
-                          </span>
-                        ) : null}
-                        {!odc.ricardo_firma_digital_activa && !odc.carlos_firma_digital_activa && (
+
+                        {puedeActivarFirmaCarlos && !esAnuladaRow ? (
+                          odc.carlos_firma_digital_activa ? (
+                            <motion.button
+                              type="button"
+                              whileHover={{ scale: 1.05 }}
+                              whileTap={{ scale: 0.95 }}
+                              disabled={odcFirmandoId === odc.id}
+                              onClick={() => toggleFirmaDirectaCarlos(odc, false)}
+                              style={{
+                                color: '#15803d',
+                                fontSize: '0.7rem',
+                                fontWeight: '800',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                backgroundColor: '#dcfce7',
+                                border: '1px solid #86efac',
+                                padding: '3px 8px',
+                                borderRadius: '8px',
+                                cursor: 'pointer',
+                                boxShadow: '0 1px 3px rgba(22, 163, 74, 0.12)'
+                              }}
+                              title="Firma Digital estampada por Carlos Vega. Haga clic si desea desactivarla."
+                            >
+                              {odcFirmandoId === odc.id ? (
+                                <RefreshCw size={11} className="animate-spin" />
+                              ) : (
+                                <CheckCircle2 size={12} />
+                              )}
+                              Carlos Firmó
+                            </motion.button>
+                          ) : (
+                            <motion.button
+                              type="button"
+                              whileHover={{ scale: 1.05, boxShadow: '0 2px 8px rgba(13, 148, 136, 0.25)' }}
+                              whileTap={{ scale: 0.95 }}
+                              disabled={odcFirmandoId === odc.id}
+                              onClick={() => toggleFirmaDirectaCarlos(odc, true)}
+                              style={{
+                                color: '#065f46',
+                                fontSize: '0.7rem',
+                                fontWeight: '800',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                backgroundColor: '#ccfbf1',
+                                border: '1px solid #5eead4',
+                                padding: '3px 8px',
+                                borderRadius: '8px',
+                                cursor: 'pointer'
+                              }}
+                              title="Haga clic para estampar la Firma Digital de Carlos Vega directamente"
+                            >
+                              {odcFirmandoId === odc.id ? (
+                                <RefreshCw size={11} className="animate-spin" />
+                              ) : (
+                                <ShieldCheck size={12} />
+                              )}
+                              ✍️ Firmar Carlos
+                            </motion.button>
+                          )
+                        ) : (
+                          odc.carlos_firma_digital_activa ? (
+                            <span style={{ color: '#16a34a', fontSize: '0.68rem', fontWeight: '800', display: 'inline-flex', alignItems: 'center', gap: '3px', backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', padding: '2px 6px', borderRadius: '6px' }} title="Firma Digital Gerente General (Carlos Vega) Activa">
+                              <ShieldCheck size={12} /> Gerencia
+                            </span>
+                          ) : null
+                        )}
+
+                        {!odc.ricardo_firma_digital_activa && !odc.carlos_firma_digital_activa && !puedeActivarFirmaCarlos && (
                           <span style={{ color: '#94a3b8', fontSize: '0.75rem' }}>Física</span>
                         )}
                       </div>
@@ -3947,7 +4363,9 @@ const OrdenesCompra = ({ currentUser }) => {
                 </div>
                 <div className="f-adm-meta-item">
                   <span className="f-adm-meta-label">Aprobada por:</span>
-                  <span className="f-adm-meta-val"></span>
+                  <span className="f-adm-meta-val">
+                    {odcSeleccionada.aprobado_por_nombre || odcSeleccionada.requisicion_obj?.n_aprobacion_general || 'Carlos Vega'}
+                  </span>
                 </div>
                 <div className="f-adm-meta-item">
                   <span className="f-adm-meta-label">Fecha Cotiz.:</span>
@@ -4002,6 +4420,14 @@ const OrdenesCompra = ({ currentUser }) => {
                       <td colSpan="5" style={{ textAlign: 'center', padding: '20px', color: '#64748b' }}>Cargando renglones...</td>
                     </tr>
                   ) : (odcItems && odcItems.length > 0) ? odcItems.map((it, idx) => (
+                    <tr key={it.id || idx}>
+                      <td style={{ textAlign: 'center', fontWeight: 'bold' }}>{Number(it.cantidad || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
+                      <td style={{ textAlign: 'center' }}>{it.unidad || 'UNID'}</td>
+                      <td>{it.descripcion || 'Sin descripción'}</td>
+                      <td style={{ textAlign: 'right' }}>{Number(it.precio_unitario || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
+                      <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{Number(it.total_fila || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
+                    </tr>
+                  )) : (Array.isArray(odcSeleccionada.items) && odcSeleccionada.items.length > 0) ? odcSeleccionada.items.map((it, idx) => (
                     <tr key={it.id || idx}>
                       <td style={{ textAlign: 'center', fontWeight: 'bold' }}>{Number(it.cantidad || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}</td>
                       <td style={{ textAlign: 'center' }}>{it.unidad || 'UNID'}</td>
@@ -4123,7 +4549,9 @@ const OrdenesCompra = ({ currentUser }) => {
 
               {/* Identificador de Copias al Pie */}
               <div className="f-adm-copy-footer-label">
-                &mdash; 1. ORIGINAL CLIENTE &bull; 2. ORIGINAL PARA PAGOS &bull; 3. COPIA VÁLIDA PARA COMPRAS &mdash;
+                {odcSeleccionada.tipo_pago === 'CREDITO'
+                  ? '— 1. ORIGINAL PROVEEDOR • 2. ORIGINAL PARA PAGOS • 3. COPIA VÁLIDA PARA COMPRAS —'
+                  : '— 1. ORIGINAL PARA PAGOS • 2. COPIA VÁLIDA PARA COMPRAS — (Contado: Excluye Copia Proveedor)'}
               </div>
 
             </div>
@@ -5379,7 +5807,11 @@ const OrdenesCompra = ({ currentUser }) => {
                   </h3>
                 </div>
                 <p style={{ margin: '2px 0 0 0', fontSize: '0.78rem', color: '#64748b', fontWeight: '600' }}>
-                  Formato oficial <strong>F-ADM-01-2</strong> con 3 copias oficiales (1. Original Cliente, 2. Original para Pagos, 3. Copia Válida para Compras)
+                  {odcSeleccionada?.tipo_pago === 'CREDITO' ? (
+                    <span>Formato oficial <strong>F-ADM-01-2</strong> con 3 copias oficiales (1. Original Proveedor, 2. Original para Pagos, 3. Copia Válida para Compras)</span>
+                  ) : (
+                    <span>Formato oficial <strong>F-ADM-01-2</strong> con 2 copias oficiales [Contado] (1. Original para Pagos, 2. Copia Válida para Compras)</span>
+                  )}
                 </p>
               </div>
 
@@ -5466,7 +5898,7 @@ const OrdenesCompra = ({ currentUser }) => {
               {generandoPdfPreview ? (
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'white', gap: '12px' }}>
                   <RefreshCw size={32} style={{ animation: 'spin 1s linear infinite' }} />
-                  <span style={{ fontSize: '0.95rem', fontWeight: '700' }}>Generando las 3 copias oficiales del documento...</span>
+                  <span style={{ fontSize: '0.95rem', fontWeight: '700' }}>Generando copias oficiales del documento F-ADM-01-2...</span>
                 </div>
               ) : pdfPreviewUrl ? (
                 <iframe
