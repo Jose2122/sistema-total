@@ -287,11 +287,12 @@ export default function AdminAnalytics() {
         .limit(50);
       setSystemErrors(errorsData || []);
 
-      // 3. Fetch storage bucket files recursively & calculate accurate size
+      // 3. Fetch storage bucket files (con límite de profundidad para proteger API/IO)
       let allStorageFiles = [];
-      const listAllFiles = async (bucket, path = '') => {
+      const listAllFiles = async (bucket, path = '', depth = 0) => {
+        if (depth > 1) return [];
         try {
-          const { data, error } = await supabase.storage.from(bucket).list(path, { limit: 1000 });
+          const { data, error } = await supabase.storage.from(bucket).list(path, { limit: 100 });
           if (error || !data) return [];
           let files = [];
           for (const item of data) {
@@ -304,8 +305,8 @@ export default function AdminAnalytics() {
                 created_at: item.created_at,
                 owner_id: item.owner_id
               });
-            } else {
-              const sub = await listAllFiles(bucket, fullPath);
+            } else if (depth < 1) {
+              const sub = await listAllFiles(bucket, fullPath, depth + 1);
               files = files.concat(sub);
             }
           }
@@ -351,40 +352,27 @@ export default function AdminAnalytics() {
         setHourlyTraffic(dummyTraffic);
       }
 
-      // 5. Helper para paginar y traer el 100% de los registros de Supabase (sin límite de 1000)
+      // 5. Helper con paginación estricta (contingencia Disk IO: máx 500 registros recientes por tabla)
       const fetchAllTableRecords = async (tableName, orderCol = 'id') => {
-        let allData = [];
-        let page = 0;
-        const pageSize = 1000;
-        let hasMore = true;
+        let query = supabase
+          .from(tableName)
+          .select('*')
+          .limit(500);
 
-        while (hasMore) {
-          let query = supabase
-            .from(tableName)
-            .select('*')
-            .range(page * pageSize, (page + 1) * pageSize - 1);
-
-          if (orderCol) {
-            query = query.order(orderCol, { ascending: false });
-          }
-
-          const { data: chunk, error: errChunk } = await query;
-          if (errChunk) {
-            if (errChunk.code !== '42P01') console.warn(`Aviso al cargar ${tableName}:`, errChunk.message);
-            break;
-          }
-          if (chunk && chunk.length > 0) {
-            allData = allData.concat(chunk);
-            if (chunk.length < pageSize) {
-              hasMore = false;
-            } else {
-              page++;
-            }
-          } else {
-            hasMore = false;
-          }
+        if (tableName === 'requisiciones') {
+          query = query.neq('correlativo_req', 'SYS-PROVEEDORES-CENTRAL');
         }
-        return allData;
+
+        if (orderCol) {
+          query = query.order(orderCol, { ascending: false });
+        }
+
+        const { data: chunk, error: errChunk } = await query;
+        if (errChunk) {
+          if (errChunk.code !== '42P01') console.warn(`Aviso al cargar ${tableName}:`, errChunk.message);
+          return [];
+        }
+        return chunk || [];
       };
 
       // 6. Fetch requisiciones completas (100% histórico paginado)
@@ -441,28 +429,18 @@ export default function AdminAnalytics() {
     }
   };
 
-  // Refresco silencioso: solo actualiza datos operativos sin mostrar pantalla de carga
+  // Refresco silencioso con paginación estricta (máx 500 registros)
   const refrescarDatosSilencioso = async () => {
     try {
       const fetchAllTableRecords = async (tableName, orderCol = 'id') => {
-        let allData = [];
-        let page = 0;
-        const pageSize = 1000;
-        let hasMore = true;
-        while (hasMore) {
-          let query = supabase.from(tableName).select('*').range(page * pageSize, (page + 1) * pageSize - 1);
-          if (orderCol) query = query.order(orderCol, { ascending: false });
-          const { data: chunk, error: errChunk } = await query;
-          if (errChunk) break;
-          if (chunk && chunk.length > 0) {
-            allData = allData.concat(chunk);
-            if (chunk.length < pageSize) hasMore = false;
-            else page++;
-          } else {
-            hasMore = false;
-          }
+        let query = supabase.from(tableName).select('*').limit(500);
+        if (tableName === 'requisiciones') {
+          query = query.neq('correlativo_req', 'SYS-PROVEEDORES-CENTRAL');
         }
-        return allData;
+        if (orderCol) query = query.order(orderCol, { ascending: false });
+        const { data: chunk, error: errChunk } = await query;
+        if (errChunk) return [];
+        return chunk || [];
       };
 
       const reqs = await fetchAllTableRecords('requisiciones', 'id');
@@ -485,44 +463,9 @@ export default function AdminAnalytics() {
     if (authorized === true) {
       cargarDatos();
 
-      // Realtime subscription for requisiciones
-      const reqChannel = supabase
-        .channel('realtime_reqs_analytics')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'requisiciones' }, () => {
-          refrescarDatosSilencioso();
-        })
-        .subscribe();
-
-      // Realtime subscription for requisicion_logs
-      const logsChannel = supabase
-        .channel('realtime_logs_analytics')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'requisicion_logs' }, () => {
-          refrescarDatosSilencioso();
-        })
-        .subscribe();
-
-      // Realtime subscription for tickets_directos
-      const tktsChannel = supabase
-        .channel('realtime_tkts_analytics')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'tickets_directos' }, () => {
-          refrescarDatosSilencioso();
-        })
-        .subscribe();
-
-      // Realtime subscription for ordenes_compra
-      const odcsChannel = supabase
-        .channel('realtime_odcs_analytics')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'ordenes_compra' }, () => {
-          refrescarDatosSilencioso();
-        })
-        .subscribe();
-
-      return () => {
-        supabase.removeChannel(reqChannel);
-        supabase.removeChannel(logsChannel);
-        supabase.removeChannel(tktsChannel);
-        supabase.removeChannel(odcsChannel);
-      };
+      // En Analytics se omite Realtime en segundo plano para ahorrar cuota de Egress y conexiones
+      // El dashboard se actualiza al entrar o manualmente con el botón de refrescar
+      return () => {};
     }
   }, [authorized]);
 

@@ -2,6 +2,8 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from './supabaseClient';
 import toast from 'react-hot-toast';
 import { getSemanaInfo, safeSupabaseUpdate } from './utils/helpers';
+import { compressImage } from './utils/compressImage';
+import { subirArchivoAVps } from './services/uploadService';
 import { obtenerTodosProveedores, sonProveedoresCoincidentes } from './services/proveedoresService';
 import {
   Search,
@@ -33,7 +35,6 @@ import {
 import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
 import './LiquidacionFacturas.css';
-import { compressImage } from './utils/compressImage';
 import CalculoRetencionesFiscales from './components/CalculoRetencionesFiscales';
 
 // Helper to parse safe JSON array for items
@@ -485,25 +486,14 @@ const LiquidacionFacturas = ({ currentUser }) => {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      // 1. Fetch ALL requisiciones for purchases, traceability, and CxP linkage (paginado)
-      let reqData = [];
-      let pageReq = 0;
-      let keepReq = true;
-      while (keepReq) {
-        const { data: chunk, error: reqError } = await supabase
-          .from('requisiciones')
-          .select('*')
-          .order('created_at', { ascending: false })
-          .range(pageReq * 1000, (pageReq + 1) * 1000 - 1);
-        if (reqError) throw reqError;
-        if (chunk && chunk.length > 0) {
-          reqData = reqData.concat(chunk);
-          if (chunk.length < 1000) keepReq = false;
-          else pageReq++;
-        } else {
-          keepReq = false;
-        }
-      }
+      // 1. Fetch requisiciones recientes (contingencia Disk IO: paginación estricta y exclusión de registro de sistema)
+      const { data: reqData, error: reqError } = await supabase
+        .from('requisiciones')
+        .select('*')
+        .neq('correlativo_req', 'SYS-PROVEEDORES-CENTRAL')
+        .order('created_at', { ascending: false })
+        .limit(500);
+      if (reqError) throw reqError;
       setRequisiciones(reqData || []);
 
       // 2. Fetch bancos to populate selector & management
@@ -521,27 +511,16 @@ const LiquidacionFacturas = ({ currentUser }) => {
         setProveedores(provData);
       }
 
-      // 4. Fetch ALL Órdenes de Compra (ODC) para sincronización con Cuentas por Pagar (paginado)
-      let odcData = [];
-      let pageOdc = 0;
-      let keepOdc = true;
-      while (keepOdc) {
-        const { data: chunk, error: odcError } = await supabase
-          .from('ordenes_compra')
-          .select('*')
-          .order('fecha_emision', { ascending: false })
-          .range(pageOdc * 1000, (pageOdc + 1) * 1000 - 1);
-        if (odcError) throw odcError;
-        if (chunk && chunk.length > 0) {
-          odcData = odcData.concat(chunk);
-          if (chunk.length < 1000) keepOdc = false;
-          else pageOdc++;
-        } else {
-          keepOdc = false;
-        }
-      }
+      // 4. Fetch Órdenes de Compra (ODC) con paginación estricta
+      const { data: odcData, error: odcError } = await supabase
+        .from('ordenes_compra')
+        .select('*')
+        .order('fecha_emision', { ascending: false })
+        .limit(500);
+      if (odcError) throw odcError;
+
       const enrichedOdc = (odcData || []).map(o => {
-        const abonos = obtenerAbonosOdc(o, reqData);
+        const abonos = obtenerAbonosOdc(o, reqData || []);
         return {
           ...o,
           detalles_pago: abonos,
@@ -629,9 +608,17 @@ const LiquidacionFacturas = ({ currentUser }) => {
     }
   };
 
-  // Set up realtime updates
+  // Set up realtime updates with debounce
   useEffect(() => {
     fetchData();
+
+    let debounceTimer = null;
+    const fetchDebounced = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        fetchData();
+      }, 2000);
+    };
 
     const channelReq = supabase
       .channel('liquidacion_realtime')
@@ -639,9 +626,10 @@ const LiquidacionFacturas = ({ currentUser }) => {
         event: '*',
         schema: 'public',
         table: 'requisiciones'
-      }, () => {
+      }, (payload) => {
+        if (payload?.new?.correlativo_req === 'SYS-PROVEEDORES-CENTRAL') return;
         console.log('[REALTIME] Cambio detectado en requisiciones, recargando...');
-        fetchData();
+        fetchDebounced();
       })
       .subscribe();
 
@@ -653,11 +641,12 @@ const LiquidacionFacturas = ({ currentUser }) => {
         table: 'ordenes_compra'
       }, () => {
         console.log('[REALTIME] Cambio detectado en ordenes_compra, recargando...');
-        fetchData();
+        fetchDebounced();
       })
       .subscribe();
 
     return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
       supabase.removeChannel(channelReq);
       supabase.removeChannel(channelOdc);
     };
@@ -1572,57 +1561,33 @@ const LiquidacionFacturas = ({ currentUser }) => {
   const uploadSoporteUnificado = useCallback(async (fileObj, prefix = 'abono') => {
     const file = fileObj.file;
     if (!file) return { name: fileObj.label || 'Soporte', url: fileObj.url || '' };
-    const fileExt = file.name ? file.name.split('.').pop() : 'png';
-    const storageFileName = `${prefix}_${Date.now()}_${Math.random().toString(36).substr(2, 5)}.${fileExt}`;
-
-    let compressedFile = file;
-    try {
-      if (file.type && file.type.startsWith('image/')) {
-        compressedFile = await compressImage(file, { maxWidth: 1200, maxHeight: 1200, quality: 0.75 });
-      }
-    } catch (cErr) {
-      console.warn('Compresión en cliente omitida:', cErr);
-      compressedFile = file;
-    }
+    const customLabel = fileObj.label || file.name.split('.')[0] || 'Abono';
 
     try {
-      const uploadWithTimeout = async (bucket, path) => {
-        const uploadTask = supabase.storage.from(bucket).upload(path, compressedFile);
-        const timeoutTask = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Storage timeout')), 4000)
-        );
-        const { error } = await Promise.race([uploadTask, timeoutTask]);
-        if (error) throw error;
-        const { data: { publicUrl } } = supabase.storage.from(bucket).getPublicUrl(path);
-        return publicUrl;
+      // Subida a VPS Linux con nomenclatura sanitaria
+      const uploadRes = await subirArchivoAVps(file, {
+        requisicionId: prefix || 'ODC',
+        nroFactura: 'ABONO',
+        nombreArticulo: customLabel
+      });
+
+      return {
+        name: customLabel,
+        url: uploadRes.url
       };
-
-      let publicUrl = null;
-      try {
-        publicUrl = await uploadWithTimeout('facturas', storageFileName);
-      } catch {
-        publicUrl = await uploadWithTimeout('tickets-evidencia', `soportes/${storageFileName}`);
-      }
-
-      if (publicUrl) {
-        return {
-          name: fileObj.label || file.name.split('.')[0],
-          url: publicUrl
-        };
-      }
     } catch (storageErr) {
-      console.warn('Storage no disponible o lento, usando fallback base64 ultra-rápido:', storageErr.message);
+      console.warn('VPS upload no disponible, usando fallback base64:', storageErr.message);
     }
 
     return new Promise((resolve) => {
       const reader = new FileReader();
       reader.onloadend = () => {
         resolve({
-          name: fileObj.label || file.name.split('.')[0],
+          name: customLabel,
           url: reader.result
         });
       };
-      reader.readAsDataURL(compressedFile);
+      reader.readAsDataURL(file);
     });
   }, []);
 

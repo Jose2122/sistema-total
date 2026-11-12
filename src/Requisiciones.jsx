@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import './Requisiciones.css';
 import { compressImage } from './utils/compressImage';
+import { subirArchivoAVps } from './services/uploadService';
 import { consolidarSoportesRequisicion } from './services/requisicionesService';
 
 const compararNombres = (nombre1, nombre2) => {
@@ -349,7 +350,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     if (!currentUser) return;
     setLoading(true);
     try {
-      let query = supabase.from('requisiciones').select('*');
+      let query = supabase.from('requisiciones').select('*').neq('correlativo_req', 'SYS-PROVEEDORES-CENTRAL');
 
       const rolUpper = (currentUser.rol || '').toUpperCase();
       const deptoUpper = (currentUser.departamento || '').toUpperCase();
@@ -420,7 +421,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
         }
       }
 
-      const { data, error } = await query.order('fecha_emision', { ascending: false });
+      const { data, error } = await query.order('fecha_emision', { ascending: false }).limit(500);
 
       if (error) throw error;
       if (data) {
@@ -1355,30 +1356,20 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
       }
 
       const uploadPromises = compressedFiles.map(async (file, index) => {
-        const fileExt = file.name.split('.').pop();
-        const prefix = editandoId ? editandoId : `nueva_${Date.now()}`;
-        const fileName = `factura_${prefix}_${Date.now()}_${index}.${fileExt}`;
-        const filePath = `${fileName}`;
-
+        const cleanLabel = file.name ? file.name.replace(/\.[^/.]+$/, "") : `Soporte_${index + 1}`;
+        const prefix = editandoId ? editandoId : `REQ_${Date.now()}`;
         let publicUrl = null;
-        try {
-          const { error: uploadError } = await supabase.storage.from('facturas').upload(filePath, file, { upsert: true });
-          if (!uploadError) {
-            const { data } = supabase.storage.from('facturas').getPublicUrl(filePath);
-            publicUrl = data?.publicUrl;
-          } else {
-            console.warn("Aviso upload facturas:", uploadError.message);
-            const { error: uploadError2 } = await supabase.storage.from('tickets-evidencia').upload(`soportes/${filePath}`, file, { upsert: true });
-            if (!uploadError2) {
-              const { data: data2 } = supabase.storage.from('tickets-evidencia').getPublicUrl(`soportes/${filePath}`);
-              publicUrl = data2?.publicUrl;
-            }
-          }
-        } catch (err) {
-          console.warn("Aviso upload storage:", err);
-        }
 
-        if (!publicUrl) {
+        try {
+          // Subida segura al servidor VPS Linux con nomenclatura sanitaria: id_requisicion_NroFactura_nombreArticulo.ext
+          const uploadRes = await subirArchivoAVps(file, {
+            requisicionId: prefix,
+            nroFactura: `FAC_${index + 1}`,
+            nombreArticulo: cleanLabel
+          });
+          publicUrl = uploadRes.url;
+        } catch (err) {
+          console.warn("Aviso upload VPS Requisiciones:", err);
           try {
             publicUrl = await new Promise((resolve) => {
               const reader = new FileReader();
@@ -1391,7 +1382,6 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
           }
         }
 
-        const cleanLabel = file.name ? file.name.replace(/\.[^/.]+$/, "") : `Soporte ${index + 1}`;
         return {
           url: publicUrl || '',
           etiqueta: cleanLabel,
@@ -2126,12 +2116,18 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     // --- LÓGICA DE CORRELATIVO INDEPENDIENTE CON RESETEO ANUAL ---
     const { likePattern, prefix } = obtenerEstructuraCorrelativo(departamento, currentUser);
 
-    const { data: registrosMismaSigla } = await supabase
+    const { data: registrosMismaSigla, error: errorSigla } = await supabase
       .from('requisiciones')
       .select('correlativo_req')
       .like('correlativo_req', likePattern)
       .order('correlativo_req', { ascending: false })
       .limit(1);
+
+    if (errorSigla) {
+      toast.error("Error al consultar el último correlativo. Intente nuevamente.");
+      setLoading(false);
+      return;
+    }
 
     let maxNumero = 0;
     if (registrosMismaSigla && registrosMismaSigla.length > 0) {

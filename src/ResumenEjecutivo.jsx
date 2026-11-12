@@ -167,10 +167,10 @@ const ResumenEjecutivo = ({ currentUser }) => {
     const fetchData = useCallback(async () => {
         try {
             const [resReq, resFund, resPart, resTicket] = await Promise.all([
-                supabase.from('requisiciones').select('*'),
-                supabase.from('solicitudes_fondos').select('*'),
-                supabase.from('partidas_fondos').select('*'),
-                supabase.from('tickets_directos').select('*')
+                supabase.from('requisiciones').select('*').neq('correlativo_req', 'SYS-PROVEEDORES-CENTRAL').order('fecha_emision', { ascending: false }).limit(500),
+                supabase.from('solicitudes_fondos').select('*').order('created_at', { ascending: false }).limit(500),
+                supabase.from('partidas_fondos').select('*').limit(1000),
+                supabase.from('tickets_directos').select('*').order('fecha_emision', { ascending: false }).limit(500)
             ]);
             
             setRawReqs(resReq.data || []);
@@ -188,26 +188,8 @@ const ResumenEjecutivo = ({ currentUser }) => {
         setLoading(true);
         fetchData();
 
-        // Suscribirse a cambios en tiempo real en las cuatro tablas
-        const channel = supabase
-            .channel('resumen_ejecutivo_realtime')
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'requisiciones' }, () => {
-                fetchData();
-            })
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'solicitudes_fondos' }, () => {
-                fetchData();
-            })
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'partidas_fondos' }, () => {
-                fetchData();
-            })
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'tickets_directos' }, () => {
-                fetchData();
-            })
-            .subscribe();
-
-        return () => {
-            supabase.removeChannel(channel);
-        };
+        // Resumen Ejecutivo carga bajo demanda para optimizar consumo de Egress en Supabase
+        return () => {};
     }, [fetchData]);
 
     const getWeekNumber = (date) => {

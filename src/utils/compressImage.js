@@ -1,44 +1,46 @@
 /**
- * Utility to compress images on the client side using HTML5 Canvas.
- * Resizes images to a maximum of 1200px (width/height) and compresses quality to 80% JPEG.
- * Non-image files (e.g., PDFs) are returned untouched.
+ * Utilidad de compresión de imágenes en el cliente (Frontend)
+ * SITC - Sistema Integrado Total Clean
  * 
- * @param {File|Blob} fileOrBlob The file or blob to compress.
- * @param {Object} [options] Optional configuration.
- * @param {number} [options.maxWidth=1200] Maximum width of the compressed image.
- * @param {number} [options.maxHeight=1200] Maximum height of the compressed image.
- * @param {number} [options.quality=0.8] Compression quality (0.0 to 1.0).
- * @returns {Promise<File|Blob>} A promise that resolves to the compressed File or Blob.
+ * Requisitos de optimización:
+ * - Formato WebP (o JPEG como fallback)
+ * - Calidad: 0.75
+ * - Ancho / Alto máximo: 1280px
+ * - Peso objetivo: <= 250 - 300 KB conservando legibilidad nítida de textos en facturas
+ * - Pass-through intacto para PDFs y archivos no-imagen
  */
-export function compressImage(fileOrBlob, options = {}) {
+
+export async function compressImage(fileOrBlob, options = {}) {
   const {
-    maxWidth = 1200,
-    maxHeight = 1200,
-    quality = 0.8
+    maxWidth = 1280,
+    maxHeight = 1280,
+    quality = 0.75,
+    targetMaxKB = 300
   } = options;
 
-  // Verify it is a file/blob and has an image mime type
+  // Si no es un archivo o no es imagen, o es un PDF, no se toca
   if (!fileOrBlob || !fileOrBlob.type || !fileOrBlob.type.startsWith('image/')) {
-    return Promise.resolve(fileOrBlob); // Pass-through for PDFs, text files, etc.
+    return fileOrBlob;
   }
 
-  // Handle GIF files (canvas export converts GIFs to static JPEGs, which destroys animation).
-  // Let's pass GIFs through unmodified to preserve their animations.
+  // Si es GIF animado, preservar sin alterar
   if (fileOrBlob.type === 'image/gif') {
-    return Promise.resolve(fileOrBlob);
+    return fileOrBlob;
   }
 
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const reader = new FileReader();
     reader.readAsDataURL(fileOrBlob);
+
     reader.onload = (event) => {
       const img = new Image();
       img.src = event.target.result;
+
       img.onload = () => {
         let width = img.width;
         let height = img.height;
 
-        // Calculate aspect ratio and new dimensions
+        // Calcular escalado preservando relación de aspecto
         if (width > height) {
           if (width > maxWidth) {
             height = Math.round((height * maxWidth) / width);
@@ -51,61 +53,89 @@ export function compressImage(fileOrBlob, options = {}) {
           }
         }
 
-        // Draw image onto canvas
         const canvas = document.createElement('canvas');
         canvas.width = width;
         canvas.height = height;
-        const ctx = canvas.getContext('2d');
+        const ctx = canvas.getContext('2d', { alpha: false });
+
+        // Fondo blanco para evitar transparencias oscuras al convertir PNG a WebP/JPEG
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(0, 0, width, height);
         ctx.drawImage(img, 0, 0, width, height);
 
-        // Export as JPEG blob
-        canvas.toBlob(
-          (blob) => {
-            if (!blob) {
-              resolve(fileOrBlob); // Fallback to original if export fails
-              return;
-            }
+        // Detectar si el navegador soporta WebP en canvas
+        const formatMime = 'image/webp';
 
-            // If input was a File, reconstruct it as a File preserving metadata
-            if (fileOrBlob instanceof File) {
-              // Convert PNG or other image types to .jpg filename extension
-              let newName = fileOrBlob.name;
-              const extIndex = newName.lastIndexOf('.');
-              if (extIndex !== -1) {
-                const baseName = newName.substring(0, extIndex);
-                newName = `${baseName}.jpg`;
-              } else {
-                newName = `${newName}.jpg`;
-              }
+        const exportBlob = (calidad) => {
+          return new Promise((resBlob) => {
+            canvas.toBlob(
+              (blob) => {
+                if (blob && blob.type === formatMime) {
+                  resBlob(blob);
+                } else {
+                  // Fallback a JPEG si WebP no produjo el tipo esperado
+                  canvas.toBlob(
+                    (jpegBlob) => resBlob(jpegBlob || blob),
+                    'image/jpeg',
+                    calidad
+                  );
+                }
+              },
+              formatMime,
+              calidad
+            );
+          });
+        };
 
-              const compressedFile = new File([blob], newName, {
-                type: 'image/jpeg',
-                lastModified: Date.now()
-              });
-              
-              // Only return compressed file if it is actually smaller than the original
-              if (compressedFile.size < fileOrBlob.size) {
-                resolve(compressedFile);
-              } else {
-                resolve(fileOrBlob);
-              }
-            } else {
-              // If input was a raw Blob, return the compressed Blob
-              resolve(blob);
+        exportBlob(quality).then(async (blob) => {
+          if (!blob) {
+            resolve(fileOrBlob);
+            return;
+          }
+
+          let finalBlob = blob;
+          // Paso adaptativo: si supera el peso objetivo de 300 KB, comprimir con calidad 0.65
+          if (finalBlob.size > targetMaxKB * 1024 && quality > 0.65) {
+            const secondPassBlob = await exportBlob(0.65);
+            if (secondPassBlob && secondPassBlob.size < finalBlob.size) {
+              finalBlob = secondPassBlob;
             }
-          },
-          'image/jpeg',
-          quality
-        );
+          }
+
+          // Si el archivo original era menor que el comprimido, usar el original
+          if (fileOrBlob.size && finalBlob.size >= fileOrBlob.size) {
+            resolve(fileOrBlob);
+            return;
+          }
+
+          if (fileOrBlob instanceof File) {
+            const ext = finalBlob.type === 'image/webp' ? 'webp' : 'jpg';
+            const originalName = fileOrBlob.name || 'soporte';
+            const baseName = originalName.substring(0, originalName.lastIndexOf('.')) || originalName;
+            const newName = `${baseName}.${ext}`;
+
+            const compressedFile = new File([finalBlob], newName, {
+              type: finalBlob.type,
+              lastModified: Date.now()
+            });
+
+            console.log(
+              `[Compresor SITC] "${fileOrBlob.name}" (${(fileOrBlob.size / 1024).toFixed(1)} KB) -> "${compressedFile.name}" (${(compressedFile.size / 1024).toFixed(1)} KB) [-${Math.round((1 - compressedFile.size / fileOrBlob.size) * 100)}%]`
+            );
+
+            resolve(compressedFile);
+          } else {
+            resolve(finalBlob);
+          }
+        }).catch((err) => {
+          console.warn('[Compresor SITC] Error en compresión, usando archivo original:', err);
+          resolve(fileOrBlob);
+        });
       };
-      img.onerror = (err) => {
-        console.error('[Image Compressor] Failed to load image element:', err);
-        resolve(fileOrBlob); // Fail-safe fallback
-      };
+
+      img.onerror = () => resolve(fileOrBlob);
     };
-    reader.onerror = (err) => {
-      console.error('[Image Compressor] Failed to read file reader:', err);
-      resolve(fileOrBlob); // Fail-safe fallback
-    };
+
+    reader.onerror = () => resolve(fileOrBlob);
   });
 }

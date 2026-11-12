@@ -9,6 +9,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Loader2, Upload, FileText, MessageSquare, Paperclip, Clock, CheckCircle2, AlertCircle, ShoppingBag, ChevronDown, X, Landmark, Trash2, Download, Eye, ExternalLink } from 'lucide-react';
 import { getSemanaInfo, getSemanaInfoForWeek, safeSupabaseInsert } from './utils/helpers';
 import { compressImage } from './utils/compressImage';
+import { subirArchivoAVps } from './services/uploadService';
 import { obtenerTodosProveedores, invalidarCacheProveedores, asegurarProveedorEnBaseDeDatos } from './services/proveedoresService';
 import { consolidarSoportesRequisicion } from './services/requisicionesService';
 import './Requisiciones.css';
@@ -1123,31 +1124,15 @@ const Compras = () => {
         }
       }
 
-      let data = [];
-      let page = 0;
-      const pageSize = 1000;
-      let hasMore = true;
+      const { data, error } = await supabase
+        .from('requisiciones')
+        .select('*')
+        .neq('correlativo_req', 'SYS-PROVEEDORES-CENTRAL')
+        .eq('estado_aprobacion', 'aprobado_final')
+        .order('fecha_emision', { ascending: false })
+        .limit(500);
 
-      while (hasMore) {
-        const { data: chunk, error } = await supabase
-          .from('requisiciones')
-          .select('*')
-          .eq('estado_aprobacion', 'aprobado_final')
-          .order('fecha_emision', { ascending: false })
-          .range(page * pageSize, (page + 1) * pageSize - 1);
-
-        if (error) throw error;
-        if (chunk && chunk.length > 0) {
-          data = data.concat(chunk);
-          if (chunk.length < pageSize) {
-            hasMore = false;
-          } else {
-            page++;
-          }
-        } else {
-          hasMore = false;
-        }
-      }
+      if (error) throw error;
       setHistorial((data || []).map(db => {
         const itemsArr = safeArray(db.items);
         const facturasConsolidadas = consolidarSoportesRequisicion(db.facturas_url, itemsArr);
@@ -2953,46 +2938,27 @@ const Compras = () => {
         const customName = overrideValues.fileName || file.name.split('.')[0] || 'Soporte';
         const fileExt = file.name.split('.').pop();
         
-        // Sanitizar variables del renglón para la nomenclatura mandatoria
-        const cleanCorrelativo = (requisicionActiva?.correlativo || '').replace(/[^a-zA-Z0-9_-]/g, '');
-        const cleanDoc = (overrideValues.docNumero || 'SINDOC').replace(/[^a-zA-Z0-9]/g, '');
-        const cleanDesc = (item.descripcion || 'Articulo').replace(/[^a-zA-Z0-9]/g, '').slice(0, 30);
-        const fileName = `${cleanCorrelativo}_${cleanDoc}_${cleanDesc}.${fileExt}`;
-        const filePath = `${fileName}`;
+        // Subida a VPS Linux con nomenclatura sanitaria: id_requisicion_NroFactura_nombreArticulo.ext
+        const cleanCorrelativo = requisicionActiva?.correlativo || 'REQ';
+        const cleanDoc = overrideValues.docNumero || 'SINDOC';
+        const cleanDesc = item.descripcion || 'Articulo';
 
         let publicUrl = null;
-        let compressedFile = null;
         try {
-          compressedFile = await compressImage(file);
-          const { error: uploadError } = await supabase.storage
-            .from('facturas')
-            .upload(filePath, compressedFile, { upsert: true });
-
-          if (!uploadError) {
-            const { data } = supabase.storage.from('facturas').getPublicUrl(filePath);
-            publicUrl = data?.publicUrl;
-          } else {
-            console.warn("Aviso upload bucket facturas:", uploadError.message);
-            const { error: uploadError2 } = await supabase.storage
-              .from('tickets-evidencia')
-              .upload(`soportes/${filePath}`, compressedFile, { upsert: true });
-            if (!uploadError2) {
-              const { data: data2 } = supabase.storage.from('tickets-evidencia').getPublicUrl(`soportes/${filePath}`);
-              publicUrl = data2?.publicUrl;
-            }
-          }
+          const uploadRes = await subirArchivoAVps(file, {
+            requisicionId: cleanCorrelativo,
+            nroFactura: cleanDoc,
+            nombreArticulo: cleanDesc
+          });
+          publicUrl = uploadRes.url;
         } catch (errStorage) {
-          console.warn("Aviso upload storage:", errStorage);
-        }
-
-        if (!publicUrl) {
+          console.warn("Aviso upload VPS Compras:", errStorage);
           try {
-            const fileToEncode = compressedFile || file;
             publicUrl = await new Promise((resolve) => {
               const reader = new FileReader();
               reader.onloadend = () => resolve(reader.result);
               reader.onerror = () => resolve(null);
-              reader.readAsDataURL(fileToEncode);
+              reader.readAsDataURL(file);
             });
           } catch {
             // ignore
@@ -3317,47 +3283,28 @@ const Compras = () => {
       }
 
       const uploadPromises = files.map(async (file, index) => {
-        const fileExt = file.name.split('.').pop();
-        const cleanCorrelativo = (requisicionActiva?.correlativo || '').replace(/[^a-zA-Z0-9_-]/g, '');
+        const cleanCorrelativo = requisicionActiva?.correlativo || 'REQ';
         const firstItem = renglones.find(r => r.compra_actual_cant > 0) || renglones[0] || {};
-        const cleanDoc = (firstItem.doc_numero_actual || 'SOPORTE').replace(/[^a-zA-Z0-9]/g, '');
-        const cleanDesc = (firstItem.descripcion || 'General').replace(/[^a-zA-Z0-9]/g, '').slice(0, 30);
-        const fileName = `${cleanCorrelativo}_${cleanDoc}_${cleanDesc}_${index}_${Date.now()}.${fileExt}`;
-        const filePath = `${fileName}`;
+        const cleanDoc = firstItem.doc_numero_actual || 'SOPORTE';
+        const cleanDesc = firstItem.descripcion || `Articulo_${index + 1}`;
 
         let publicUrl = null;
-        let compressedFile = null;
         try {
-          compressedFile = await compressImage(file);
-          const { error: uploadError } = await supabase.storage
-            .from('facturas')
-            .upload(filePath, compressedFile, { upsert: true });
-
-          if (!uploadError) {
-            const { data } = supabase.storage.from('facturas').getPublicUrl(filePath);
-            publicUrl = data?.publicUrl;
-          } else {
-            console.warn("Aviso upload bucket facturas:", uploadError.message);
-            const { error: uploadError2 } = await supabase.storage
-              .from('tickets-evidencia')
-              .upload(`soportes/${filePath}`, compressedFile, { upsert: true });
-            if (!uploadError2) {
-              const { data: data2 } = supabase.storage.from('tickets-evidencia').getPublicUrl(`soportes/${filePath}`);
-              publicUrl = data2?.publicUrl;
-            }
-          }
+          // Subida a VPS Linux con nomenclatura sanitaria: id_requisicion_NroFactura_nombreArticulo.ext
+          const uploadRes = await subirArchivoAVps(file, {
+            requisicionId: cleanCorrelativo,
+            nroFactura: cleanDoc,
+            nombreArticulo: cleanDesc
+          });
+          publicUrl = uploadRes.url;
         } catch (err) {
-          console.warn("Aviso upload storage:", err);
-        }
-
-        if (!publicUrl) {
+          console.warn("Aviso upload VPS Compras:", err);
           try {
-            const fileToEncode = compressedFile || file;
             publicUrl = await new Promise((resolve) => {
               const reader = new FileReader();
               reader.onloadend = () => resolve(reader.result);
               reader.onerror = () => resolve(null);
-              reader.readAsDataURL(fileToEncode);
+              reader.readAsDataURL(file);
             });
           } catch {
             // ignore

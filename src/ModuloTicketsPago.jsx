@@ -10,6 +10,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { getSemanaInfo } from './utils/helpers';
 import { compressImage } from './utils/compressImage';
+import { subirArchivoAVps } from './services/uploadService';
 import { obtenerTodosProveedores } from './services/proveedoresService';
 import {
   Plus,
@@ -702,6 +703,14 @@ const ModuloTicketsPago = () => {
   useEffect(() => {
     if (!currentUser) return;
 
+    let debounceTimer = null;
+    const fetchDebounced = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        fetchHistorial();
+      }, 1500);
+    };
+
     console.log('[REALTIME TICKETS] Subscribing to tickets_directos + bancos...');
     const channel = supabase
       .channel('tickets_realtime')
@@ -709,12 +718,12 @@ const ModuloTicketsPago = () => {
         event: 'INSERT',
         schema: 'public',
         table: 'tickets_directos'
-      }, () => fetchHistorial())
+      }, () => fetchDebounced())
       .on('postgres_changes', {
         event: 'UPDATE',
         schema: 'public',
         table: 'tickets_directos'
-      }, () => fetchHistorial())
+      }, () => fetchDebounced())
       // Suscripción en tiempo real a la tabla bancos
       .on('postgres_changes', {
         event: '*',
@@ -727,6 +736,7 @@ const ModuloTicketsPago = () => {
       .subscribe();
 
     return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
       console.log('[REALTIME TICKETS] Unsubscribing...');
       supabase.removeChannel(channel);
     };
@@ -779,7 +789,7 @@ const ModuloTicketsPago = () => {
       }
 
       // 2. Fetch de todas las solicitudes de fondo existentes
-      const { data: sData } = await supabase.from('solicitudes_fondos').select('id, codigo_control, fecha_operativa, responsable_nombre').order('created_at', { ascending: false });
+      const { data: sData } = await supabase.from('solicitudes_fondos').select('id, codigo_control, fecha_operativa, responsable_nombre').order('created_at', { ascending: false }).limit(300);
       if (sData) setSolicitudes(sData);
 
       // 3. Fetch de Bancos de Origen
@@ -807,7 +817,14 @@ const ModuloTicketsPago = () => {
     const pagados = list.filter(t => t.status === 'Pagado').length;
     const pendientes = list.filter(t => t.status !== 'Pagado' && t.status !== 'Rechazado' && t.status !== 'ANULADO' && t.status !== 'Pendiente Aprobación').length;
     const rolUpper = (currentUser?.rol || '').toUpperCase();
-    const esGerentePara = rolUpper.includes('GERENTE') || rolUpper.includes('COORDINADOR') || rolUpper.includes('DIRECTOR') || rolUpper.includes('ADMIN') || currentUser?.esSuperAdmin || currentUser?.esAdminReal;
+    const esGerentePara = (
+      (rolUpper.includes('GERENTE') && !rolUpper.includes('GENERAL')) ||
+      rolUpper.includes('PROYECTO') ||
+      rolUpper.includes('ÁREA') ||
+      rolUpper.includes('AREA') ||
+      currentUser?.esSuperAdmin ||
+      currentUser?.esAdminReal
+    );
     const porAprobar = list.filter(t => {
       if (t.status !== 'Pendiente Aprobación') return false;
       if (t.aprobador_id === currentUser?.id) return true;
@@ -827,7 +844,14 @@ const ModuloTicketsPago = () => {
   const esGerente = useMemo(() => {
     if (!currentUser) return false;
     const rolUpper = (currentUser.rol || '').toUpperCase();
-    return rolUpper.includes('GERENTE') || rolUpper.includes('COORDINADOR') || rolUpper.includes('DIRECTOR') || rolUpper.includes('ADMIN') || currentUser?.esSuperAdmin || currentUser?.esAdminReal;
+    return (
+      (rolUpper.includes('GERENTE') && !rolUpper.includes('GENERAL')) ||
+      rolUpper.includes('PROYECTO') ||
+      rolUpper.includes('ÁREA') ||
+      rolUpper.includes('AREA') ||
+      currentUser?.esSuperAdmin ||
+      currentUser?.esAdminReal
+    );
   }, [currentUser]);
 
   const esPrivilegiado = useMemo(() => {
@@ -949,7 +973,7 @@ const ModuloTicketsPago = () => {
         }
       }
 
-      const { data, error } = await query.order('fecha_emision', { ascending: false });
+      const { data, error } = await query.order('fecha_emision', { ascending: false }).limit(500);
       if (error) throw error;
       setHistorialTickets(data || []);
     } catch (err) {
@@ -1148,46 +1172,30 @@ const ModuloTicketsPago = () => {
         return;
       }
 
-      // SUBIR FACTURAS A STORAGE BUCKET tickets-evidencia CONCURRENTEMENTE
+      // SUBIR FACTURAS DIRECTAMENTE A VPS (sitc.totalclean.com.ve/uploads) CONCURRENTEMENTE
       let uploadedFiles = [];
       if (overrideValues?.files && overrideValues.files.length > 0) {
         const uploadPromises = overrideValues.files.map(async (fileObj) => {
           const file = fileObj.file;
           const customName = fileObj.label || file.name.split('.')[0] || 'Factura';
-          const fileName = `recibos/${Date.now()}_${sanitizeFileName(file.name)}`;
-
           let publicUrl = null;
-          let compressedFile = null;
+
           try {
-            compressedFile = await compressImage(file);
-            const { error: uploadError } = await supabase.storage
-              .from('tickets-evidencia')
-              .upload(fileName, compressedFile, { upsert: true });
-
-            if (!uploadError) {
-              const { data: publicUrlData } = supabase.storage.from('tickets-evidencia').getPublicUrl(fileName);
-              publicUrl = publicUrlData.publicUrl;
-            } else {
-              const { error: uploadError2 } = await supabase.storage
-                .from('facturas')
-                .upload(fileName, compressedFile, { upsert: true });
-              if (!uploadError2) {
-                const { data: publicUrlData2 } = supabase.storage.from('facturas').getPublicUrl(fileName);
-                publicUrl = publicUrlData2.publicUrl;
-              }
-            }
+            const uploadRes = await subirArchivoAVps(file, {
+              requisicionId: ticketSeleccionado?.codigo_control || (ticketSeleccionado?.id ? `TP-${ticketSeleccionado.id}` : 'TP'),
+              nroFactura: overrideValues.docNumero || 'SOPORTE',
+              nombreArticulo: customName
+            });
+            publicUrl = uploadRes.url;
           } catch (err) {
-            console.warn("Aviso upload storage:", err);
-          }
-
-          if (!publicUrl) {
+            console.warn("Aviso upload VPS:", err);
+            // Fallback en caso de desconexión extrema
             try {
-              const fileToEncode = compressedFile || file;
               publicUrl = await new Promise((resolve) => {
                 const reader = new FileReader();
                 reader.onloadend = () => resolve(reader.result);
                 reader.onerror = () => resolve(null);
-                reader.readAsDataURL(fileToEncode);
+                reader.readAsDataURL(file);
               });
             } catch {
               // ignore
@@ -1995,40 +2003,23 @@ const ModuloTicketsPago = () => {
         for (let i = 0; i < imagenesArchivos.length; i++) {
           const file = imagenesArchivos[i];
           const customName = imagenesNombres[i] || file.name.split('.')[0] || 'Soporte';
-          const fileName = `recibos/${Date.now()}_${sanitizeFileName(file.name)}`;
           let publicUrl = null;
-          let compressedFile = null;
 
           try {
-            compressedFile = await compressImage(file);
-            const { error: uploadError } = await supabase.storage
-              .from('tickets-evidencia')
-              .upload(fileName, compressedFile, { upsert: true });
-
-            if (!uploadError) {
-              const { data: publicUrlData } = supabase.storage.from('tickets-evidencia').getPublicUrl(fileName);
-              publicUrl = publicUrlData.publicUrl;
-            } else {
-              const { error: uploadError2 } = await supabase.storage
-                .from('facturas')
-                .upload(fileName, compressedFile, { upsert: true });
-              if (!uploadError2) {
-                const { data: publicUrlData2 } = supabase.storage.from('facturas').getPublicUrl(fileName);
-                publicUrl = publicUrlData2.publicUrl;
-              }
-            }
+            const uploadRes = await subirArchivoAVps(file, {
+              requisicionId: ticketSeleccionado?.codigo_control || (ticketSeleccionado?.id ? `TP-${ticketSeleccionado.id}` : 'TP'),
+              nroFactura: 'SOPORTE',
+              nombreArticulo: customName
+            });
+            publicUrl = uploadRes.url;
           } catch (err) {
-            console.warn("Aviso upload storage:", err);
-          }
-
-          if (!publicUrl) {
+            console.warn("Aviso upload VPS:", err);
             try {
-              const fileToEncode = compressedFile || file;
               publicUrl = await new Promise((resolve) => {
                 const reader = new FileReader();
                 reader.onloadend = () => resolve(reader.result);
                 reader.onerror = () => resolve(null);
-                reader.readAsDataURL(fileToEncode);
+                reader.readAsDataURL(file);
               });
             } catch {
               // ignore
@@ -2334,70 +2325,20 @@ const ModuloTicketsPago = () => {
   const aprobarTicket = async () => {
     setLoading(true);
     try {
-      const emailLower = (currentUser?.correo || '').toLowerCase().trim();
-      const esGG = emailLower === 'cvega@totalclean.com.ve' || (currentUser?.rol || '').toUpperCase().includes('GERENTE GENERAL');
-
-      // Buscar ID del Gerente General
-      let ggId = null;
-      try {
-        const { data: ggData } = await supabase
-          .from('perfiles')
-          .select('id')
-          .eq('correo', 'cvega@totalclean.com.ve')
-          .limit(1);
-        if (ggData && ggData.length > 0) {
-          ggId = ggData[0].id;
-        } else {
-          const { data: ggRolData } = await supabase
-            .from('perfiles')
-            .select('id')
-            .ilike('rol', '%gerente general%')
-            .limit(1);
-          if (ggRolData && ggRolData.length > 0) {
-            ggId = ggRolData[0].id;
-          }
-        }
-      } catch (err) {
-        console.error("Error al obtener Gerente General:", err);
-      }
-
-      const t = ticketSeleccionado;
-      const yaAprobadoArea = t.aprobado_gerente_area === true;
-
-      const updatePayload = {};
-
-      if (esGG) {
-        // Aprobación General
-        updatePayload.aprobado_gerente_area = true;
-        if (!t.n_aprobacion_area) {
-          updatePayload.n_aprobacion_area = t.gerente_nombre || 'Gerente Área';
-          updatePayload.f_aprobacion_area = t.fecha_emision || new Date().toISOString();
-        }
-        updatePayload.aprobado_gerente_general = true;
-        updatePayload.n_aprobacion_general = currentUser.nombre;
-        updatePayload.f_aprobacion_general = new Date().toISOString();
-        updatePayload.status = 'EMITIDO';
-        updatePayload.aprobado_por = currentUser.id;
-        updatePayload.fecha_aprobacion = new Date().toISOString();
-        updatePayload.aprobador_id = null;
-      } else if (!yaAprobadoArea) {
-        // Aprobación de Área
-        updatePayload.aprobado_gerente_area = true;
-        updatePayload.n_aprobacion_area = currentUser.nombre;
-        updatePayload.f_aprobacion_area = new Date().toISOString();
-        updatePayload.aprobado_gerente_general = false;
-        updatePayload.status = 'Pendiente Aprobación';
-        updatePayload.aprobador_id = ggId;
-      } else {
-        // Fallback: Aprobación General por otro usuario con privilegios
-        updatePayload.aprobado_gerente_general = true;
-        updatePayload.n_aprobacion_general = currentUser.nombre;
-        updatePayload.f_aprobacion_general = new Date().toISOString();
-        updatePayload.status = 'EMITIDO';
-        updatePayload.aprobado_por = currentUser.id;
-        updatePayload.fecha_aprobacion = new Date().toISOString();
-        updatePayload.aprobador_id = null;
-      }
+      // Aprobación a Nivel 1 Único (Gerente de Área o Proyecto):
+      // No escala a Gerencia General (Carlos Vega), pasa directo a EMITIDO para Administración
+      const updatePayload = {
+        aprobado_gerente_area: true,
+        n_aprobacion_area: currentUser.nombre,
+        f_aprobacion_area: new Date().toISOString(),
+        aprobado_gerente_general: true,
+        n_aprobacion_general: 'Aprobación Nivel 1 (Directa)',
+        f_aprobacion_general: new Date().toISOString(),
+        status: 'EMITIDO',
+        aprobado_por: currentUser.id,
+        fecha_aprobacion: new Date().toISOString(),
+        aprobador_id: null
+      };
 
       const { data: updatedData, error } = await supabase
         .from('tickets_directos')
@@ -2455,21 +2396,6 @@ const ModuloTicketsPago = () => {
           }
         } catch (err) {
           console.error("Error al notificar aprobación final:", err);
-        }
-      } else {
-        // NOTIFICAR AL GERENTE GENERAL QUE EL TICKET REQUIERE SU APROBACIÓN
-        if (ggId) {
-          try {
-            await supabase.from('notificaciones').insert([{
-              usuario_id: ggId,
-              mensaje: `El Ticket de Pago ${ticketSeleccionado.codigo_control} aprobado por Gerencia de Área (${currentUser.nombre}) requiere su aprobación de Gerencia General.`,
-              tipo: 'Aprobación Pendiente',
-              leido: false,
-              requisicion_id: null
-            }]);
-          } catch (err) {
-            console.error("Error al notificar a Gerente General:", err);
-          }
         }
       }
 
@@ -3615,6 +3541,7 @@ const ModuloTicketsPago = () => {
                   <th style={{ width: '140px' }}>CENTRO DE COSTO</th>
                   <th style={{ width: '120px' }}>BANCO</th>
                   <th style={{ textAlign: 'right' }}>TOTAL ($)</th>
+                  <th style={{ textAlign: 'center', width: '130px' }}>TIEMPO SLA</th>
                   <th style={{ textAlign: 'center', width: '120px' }}>ESTATUS</th>
                   <th style={{ textAlign: 'center' }}>ACCIONES</th>
                 </tr>
@@ -3787,6 +3714,71 @@ const ModuloTicketsPago = () => {
                       <td style={{ fontWeight: '1000', color: '#0f172a', textAlign: 'right', fontSize: '0.9rem', padding: '12px 15px' }}>
                         $ {(Number(ticket.total_usd) || 0).toLocaleString('de-DE', { minimumFractionDigits: 2 })}
                       </td>
+                      {/* TIEMPO SLA / RELOJ */}
+                      <td style={{ textAlign: 'center', padding: '12px 15px', verticalAlign: 'middle' }}>
+                        {(() => {
+                          const isPagado = (ticket.status || '').toLowerCase() === 'pagado';
+                          const isAnulado = (ticket.status || '').toLowerCase() === 'anulado' || (ticket.status || '').toLowerCase() === 'rechazado';
+                          if (isAnulado) return <span style={{ color: '#94a3b8', fontSize: '11px' }}>—</span>;
+                          if (isPagado) {
+                            return (
+                              <span style={{
+                                fontSize: '0.72rem',
+                                fontWeight: '800',
+                                backgroundColor: '#ecfdf5',
+                                color: '#059669',
+                                padding: '4px 8px',
+                                borderRadius: '6px',
+                                border: '1px solid #a7f3d0',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px'
+                              }}>
+                                ✓ Pagado
+                              </span>
+                            );
+                          }
+
+                          let fechaBase = ticket.fecha_emision || ticket.created_at;
+                          if (!fechaBase) return <span style={{ color: '#94a3b8', fontSize: '11px' }}>—</span>;
+
+                          const base = new Date(fechaBase);
+                          const diasLimite = (ticket.prioridad === 'Emergencia' || ticket.prioridad === 'Alta') ? 2 : 5;
+                          const deadline = new Date(base.getTime() + (diasLimite * 24 * 60 * 60 * 1000));
+                          const hoy = new Date();
+                          const diffMs = deadline.getTime() - hoy.getTime();
+                          const horasTotales = Math.floor(diffMs / (1000 * 60 * 60));
+
+                          const vencido = horasTotales < 0;
+                          const porVencer = horasTotales >= 0 && horasTotales < 24;
+                          const color = vencido ? '#ef4444' : (porVencer ? '#d97706' : '#10b981');
+                          const bg = vencido ? '#fef2f2' : (porVencer ? '#fffbeb' : '#f0fdf4');
+                          const border = vencido ? '#fecaca' : (porVencer ? '#fde68a' : '#bbf7d0');
+
+                          const d = Math.abs(Math.floor(horasTotales / 24));
+                          const h = Math.abs(horasTotales % 24);
+                          const label = vencido ? (d > 0 ? `-${d}d ${h}h` : `-${h}h`) : (d > 0 ? `${d}d ${h}h` : `${h}h`);
+
+                          return (
+                            <div style={{
+                              fontSize: '0.72rem',
+                              fontWeight: '800',
+                              backgroundColor: bg,
+                              color: color,
+                              border: `1px solid ${border}`,
+                              padding: '4px 8px',
+                              borderRadius: '6px',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              whiteSpace: 'nowrap'
+                            }} title={`Fecha límite SLA: ${deadline.toLocaleDateString()}`}>
+                              <Clock size={12} />
+                              {vencido ? `Vencido (${label})` : label}
+                            </div>
+                          );
+                        })()}
+                      </td>
                       <td style={{ textAlign: 'center', padding: '12px 15px' }}>
                         <div className={`badge-status ${(ticket.status || 'emitido').toLowerCase().replace(/\s+/g, '-').replace(/ó/g, 'o')}`}>
                           {ticket.status === 'Pagado' && <span style={{ marginRight: '4px' }}>✓</span>}
@@ -3802,6 +3794,17 @@ const ModuloTicketsPago = () => {
                             title="Ver Detalle"
                           >
                             <Eye size={18} />
+                          </button>
+                          <button
+                            onClick={() => {
+                              abrirDetalleTicket(ticket);
+                              setMostrarTimeline(true);
+                            }}
+                            className="btn-tc btn-tc-secondary"
+                            style={{ padding: '8px', borderRadius: '10px', color: '#0ea5e9' }}
+                            title="Ver Reloj y Trazabilidad"
+                          >
+                            <Clock size={18} />
                           </button>
                           {ticket.status?.toUpperCase() !== 'ANULADO' && ticket.status?.toUpperCase() !== 'PAGADO' && ticket.status?.toUpperCase() !== 'COMPLETADO' && (
                             <button
@@ -3941,8 +3944,105 @@ const ModuloTicketsPago = () => {
                 </div>
               </div>
 
-              {/* DERECHA: BOTONES + ID TICKET */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginRight: '50px' }}>
+              {/* DERECHA: BOTONES + RELOJ SLA + ID TICKET */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginRight: '50px' }}>
+                {/* WIDGET RELOJ SLA */}
+                {(() => {
+                  const isPagado = (t.status || '').toLowerCase() === 'pagado';
+                  const isAnulado = (t.status || '').toLowerCase() === 'anulado' || (t.status || '').toLowerCase() === 'rechazado';
+                  if (isAnulado) {
+                    return (
+                      <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        backgroundColor: '#fef2f2',
+                        padding: '6px 14px',
+                        borderRadius: '10px',
+                        border: '1px solid #fecaca'
+                      }}>
+                        <Ban size={16} color="#ef4444" />
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                          <span style={{ fontSize: '0.62rem', fontWeight: '900', color: '#ef4444', textTransform: 'uppercase' }}>
+                            ESTADO SLA
+                          </span>
+                          <span style={{ fontSize: '0.82rem', fontWeight: '900', color: '#991b1b' }}>
+                            TICKET ANULADO
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  if (isPagado) {
+                    return (
+                      <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        backgroundColor: '#ecfdf5',
+                        padding: '6px 14px',
+                        borderRadius: '10px',
+                        border: '1px solid #a7f3d0'
+                      }}>
+                        <CheckCircle2 size={16} color="#059669" />
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                          <span style={{ fontSize: '0.62rem', fontWeight: '900', color: '#059669', textTransform: 'uppercase' }}>
+                            ESTADO SLA
+                          </span>
+                          <span style={{ fontSize: '0.82rem', fontWeight: '900', color: '#065f46' }}>
+                            TICKET PAGADO
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  let fechaBase = t.fecha_emision || t.created_at;
+                  if (!fechaBase) return null;
+
+                  const base = new Date(fechaBase);
+                  const diasLimite = (t.prioridad === 'Emergencia' || t.prioridad === 'Alta') ? 2 : 5;
+                  const deadline = new Date(base.getTime() + (diasLimite * 24 * 60 * 60 * 1000));
+                  const hoy = new Date();
+                  const diffMs = deadline.getTime() - hoy.getTime();
+                  const horasTotales = Math.floor(diffMs / (1000 * 60 * 60));
+                  const vencido = horasTotales < 0;
+                  const porVencer = horasTotales >= 0 && horasTotales < 24;
+
+                  const color = vencido ? '#ef4444' : (porVencer ? '#d97706' : '#10b981');
+                  const bg = vencido ? '#fef2f2' : (porVencer ? '#fffbeb' : '#f0fdf4');
+                  const border = vencido ? '#fecaca' : (porVencer ? '#fde68a' : '#bbf7d0');
+
+                  const d = Math.abs(Math.floor(horasTotales / 24));
+                  const h = Math.abs(horasTotales % 24);
+                  const tiempoTexto = vencido
+                    ? (d > 0 ? `Vencido (-${d}d ${h}h)` : `Vencido (-${h}h)`)
+                    : (d > 0 ? `${d}d ${h}h restantes` : `${h}h restantes`);
+
+                  return (
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      backgroundColor: bg,
+                      padding: '6px 14px',
+                      borderRadius: '10px',
+                      border: `1px solid ${border}`
+                    }} title={`Límite de atención SLA: ${deadline.toLocaleDateString()}`}>
+                      <Clock size={16} color={color} />
+                      <div style={{ display: 'flex', flexDirection: 'column' }}>
+                        <span style={{ fontSize: '0.62rem', fontWeight: '900', color: color, textTransform: 'uppercase' }}>
+                          {vencido ? 'SLA VENCIDO' : 'TIEMPO LÍMITE'}
+                        </span>
+                        <span style={{ fontSize: '0.82rem', fontWeight: '900', color: color }}>
+                          {tiempoTexto}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 {/* Botón Timeline */}
                 <button
                   onClick={() => setMostrarTimeline(!mostrarTimeline)}
@@ -4022,38 +4122,41 @@ const ModuloTicketsPago = () => {
 
               const steps = [
                 {
-                  label: 'EMITIDO',
+                  label: 'SOLICITADO / EMISIÓN',
                   icon: '📝',
-                  name: t.gerente_nombre ? t.gerente_nombre.split(' ').slice(0, 2).join(' ') : 'Sistema',
-                  date: safeFormatDate(t.fecha_emision) || '—',
+                  name: t.gerente_nombre || t.solicitante || 'Sistema',
+                  date: safeFormatDate(t.fecha_emision || t.created_at) || '—',
                   done: true,
                   color: '#6366f1'
                 },
                 {
-                  label: 'GERENTE ÁREA',
+                  label: 'APROBACIÓN GERENCIA',
                   icon: '✅',
-                  name: t.n_aprobacion_area || (t.aprobado_gerente_area ? 'Gerencia Área' : null),
-                  date: safeFormatDate(t.f_aprobacion_area),
-                  done: t.aprobado_gerente_area === true,
+                  name: t.n_aprobacion_area || (t.aprobado_gerente_area ? (t.n_aprobacion_area || 'Gerencia Autorizada') : 'Pendiente Aprobación'),
+                  date: safeFormatDate(t.f_aprobacion_area || t.fecha_aprobacion),
+                  done: t.aprobado_gerente_area === true || (t.status !== 'Pendiente Aprobación' && t.status !== 'Rechazado' && t.status !== 'ANULADO'),
                   color: '#10b981'
-                },
-                {
-                  label: 'GERENTE GENERAL',
-                  icon: '👑',
-                  name: t.n_aprobacion_general || (t.aprobado_gerente_general ? 'Carlos Vega' : null),
-                  date: safeFormatDate(t.f_aprobacion_general),
-                  done: t.aprobado_gerente_general === true,
-                  color: '#8b5cf6'
                 },
                 {
                   label: 'PROCESADO / PAGADO',
                   icon: '💳',
-                  name: t.pagado_por_nombre,
+                  name: t.pagado_por_nombre || ((t.status || '').toLowerCase() === 'pagado' ? 'Administración Maracaibo' : 'Pendiente Pago'),
                   date: safeFormatDate(t.fecha_pago),
                   done: (t.status || '').toUpperCase() === 'PAGADO' || (t.status || '').toUpperCase() === 'COMPLETADO',
                   color: '#0ea5e9'
                 }
               ];
+
+              if ((t.status || '').toLowerCase() === 'rechazado') {
+                steps.push({
+                  label: 'RECHAZADO',
+                  icon: '❌',
+                  name: t.motivo_rechazo || 'Rechazado por Gerencia',
+                  date: safeFormatDate(t.fecha_rechazo || t.updated_at),
+                  done: true,
+                  color: '#ef4444'
+                });
+              }
               return (
                 <div style={{ marginBottom: '14px', backgroundColor: '#f8fafc', borderRadius: '12px', padding: '14px 18px', border: '1px solid #e2e8f0' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
