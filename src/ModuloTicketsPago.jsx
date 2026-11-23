@@ -818,21 +818,40 @@ const ModuloTicketsPago = () => {
     const pendientes = list.filter(t => t.status !== 'Pagado' && t.status !== 'Rechazado' && t.status !== 'ANULADO' && t.status !== 'Pendiente Aprobación').length;
     const rolUpper = (currentUser?.rol || '').toUpperCase();
     const esGerentePara = (
-      (rolUpper.includes('GERENTE') && !rolUpper.includes('GENERAL')) ||
+      rolUpper.includes('GERENTE') ||
+      rolUpper.includes('COORDINADOR') ||
+      rolUpper.includes('DIRECTOR') ||
       rolUpper.includes('PROYECTO') ||
       rolUpper.includes('ÁREA') ||
       rolUpper.includes('AREA') ||
+      rolUpper.includes('ADMIN') ||
       currentUser?.esSuperAdmin ||
-      currentUser?.esAdminReal
+      currentUser?.esAdminReal ||
+      currentUser?.esAdminGlobal
     );
+    const obrasUsuario = [
+      ...(currentUser?.obras_asignadas || []),
+      ...(currentUser?.contrato ? [currentUser.contrato] : [])
+    ].map(o => String(o).toUpperCase().trim());
+
+    const userDeptoNorm = (currentUser?.departamento || '').toLowerCase().trim();
+
     const porAprobar = list.filter(t => {
       if (t.status !== 'Pendiente Aprobación') return false;
-      if (t.aprobador_id === currentUser?.id) return true;
+      if (currentUser?.esAdminReal || currentUser?.esSuperAdmin || currentUser?.esAdminGlobal) return true;
+      if (t.aprobador_id && t.aprobador_id === currentUser?.id) return true;
       if (!esGerentePara) return false;
-      if (!t.aprobador_id) return true;
-      if (currentUser?.esAdminReal || currentUser?.esSuperAdmin) return true;
-      if (currentUser?.departamento && t.departamento &&
-        t.departamento.toUpperCase() === currentUser.departamento.toUpperCase()) return true;
+
+      // Si no tiene aprobador_id o está en su departamento/obra:
+      const ticketDeptoNorm = (t.departamento || '').toLowerCase().trim();
+      const coincideDepto = userDeptoNorm && ticketDeptoNorm && (
+        userDeptoNorm.includes(ticketDeptoNorm) || ticketDeptoNorm.includes(userDeptoNorm)
+      );
+
+      const ticketCcNorm = String(t.centro_costo || '').toUpperCase().trim();
+      const coincideObra = ticketCcNorm && obrasUsuario.includes(ticketCcNorm);
+
+      if (coincideDepto || coincideObra || !t.aprobador_id) return true;
       return false;
     }).length;
     const anuladosRechazados = list.filter(t => (t.status || '').toLowerCase() === 'anulado' || (t.status || '').toLowerCase() === 'rechazado').length;
@@ -845,12 +864,16 @@ const ModuloTicketsPago = () => {
     if (!currentUser) return false;
     const rolUpper = (currentUser.rol || '').toUpperCase();
     return (
-      (rolUpper.includes('GERENTE') && !rolUpper.includes('GENERAL')) ||
+      rolUpper.includes('GERENTE') ||
+      rolUpper.includes('COORDINADOR') ||
+      rolUpper.includes('DIRECTOR') ||
       rolUpper.includes('PROYECTO') ||
       rolUpper.includes('ÁREA') ||
       rolUpper.includes('AREA') ||
+      rolUpper.includes('ADMIN') ||
       currentUser?.esSuperAdmin ||
-      currentUser?.esAdminReal
+      currentUser?.esAdminReal ||
+      currentUser?.esAdminGlobal
     );
   }, [currentUser]);
 
@@ -5424,92 +5447,91 @@ const ModuloTicketsPago = () => {
               {/* Botones de Aprobación/Rechazo de Gerencia */}
               {(() => {
                 const statusOk = (ticketSeleccionado?.status || '').toLowerCase().includes('pendiente aprobaci');
-                const rolOk = esGerente;
-                const aprobOk = ticketSeleccionado?.aprobador_id === currentUser?.id ||
-                  !ticketSeleccionado?.aprobador_id ||
-                  (currentUser?.departamento && ticketSeleccionado?.departamento &&
-                    ticketSeleccionado.departamento.toUpperCase() === currentUser.departamento.toUpperCase()) ||
-                  currentUser?.esAdminReal || currentUser?.esSuperAdmin;
-                console.log('[APROBAR BTN]', {
-                  status: ticketSeleccionado?.status,
-                  statusOk,
-                  esGerente: rolOk,
-                  aprobador_id: ticketSeleccionado?.aprobador_id,
-                  currentUserId: currentUser?.id,
-                  ticketDepto: ticketSeleccionado?.departamento,
-                  userDepto: currentUser?.departamento,
-                  userRol: currentUser?.rol,
-                  aprobOk
-                });
-                return null;
-              })()}
-              {(ticketSeleccionado?.status || '').toLowerCase().includes('pendiente aprobaci') && esGerente && (
-                ticketSeleccionado?.aprobador_id === currentUser?.id ||
-                !ticketSeleccionado?.aprobador_id ||
-                (currentUser?.departamento && ticketSeleccionado?.departamento &&
-                  ticketSeleccionado.departamento.toUpperCase() === currentUser.departamento.toUpperCase()) ||
-                currentUser?.esAdminReal || currentUser?.esSuperAdmin
-              ) && (
-                <>
-                  <motion.button
-                    onClick={aprobarTicket}
-                    whileHover={{ scale: 1.04 }}
-                    whileTap={{ scale: 0.97 }}
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '8px',
-                      padding: '12px 24px',
-                      background: 'linear-gradient(135deg, #10b981, #059669)',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '10px',
-                      cursor: 'pointer',
-                      fontSize: '13px',
-                      fontWeight: '700',
-                      boxShadow: '0 4px 12px rgba(16,185,129,0.25)',
-                      transition: 'all 0.2s',
-                      minWidth: '140px',
-                      height: '46px',
-                      boxSizing: 'border-box'
-                    }}
-                    disabled={loading}
-                  >
-                    <CheckCircle2 size={15} />
-                    Aprobar Ticket
-                  </motion.button>
+                if (!statusOk) return null;
 
-                  <motion.button
-                    onClick={rechazarTicket}
-                    whileHover={{ scale: 1.04 }}
-                    whileTap={{ scale: 0.97 }}
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '8px',
-                      padding: '12px 24px',
-                      background: 'linear-gradient(135deg, #ef4444, #dc2626)',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '10px',
-                      cursor: 'pointer',
-                      fontSize: '13px',
-                      fontWeight: '700',
-                      boxShadow: '0 4px 12px rgba(239,68,68,0.25)',
-                      transition: 'all 0.2s',
-                      minWidth: '140px',
-                      height: '46px',
-                      boxSizing: 'border-box'
-                    }}
-                    disabled={loading}
-                  >
-                    <X size={15} />
-                    Rechazar Ticket
-                  </motion.button>
-                </>
-              )}
+                const userDeptoNorm = (currentUser?.departamento || '').toLowerCase().trim();
+                const ticketDeptoNorm = (ticketSeleccionado?.departamento || '').toLowerCase().trim();
+                const coincideDepto = userDeptoNorm && ticketDeptoNorm && (
+                  userDeptoNorm.includes(ticketDeptoNorm) || ticketDeptoNorm.includes(userDeptoNorm)
+                );
+
+                const obrasUsuario = [
+                  ...(currentUser?.obras_asignadas || []),
+                  ...(currentUser?.contrato ? [currentUser.contrato] : [])
+                ].map(o => String(o).toUpperCase().trim());
+                const ticketCcNorm = String(ticketSeleccionado?.centro_costo || '').toUpperCase().trim();
+                const coincideObra = ticketCcNorm && obrasUsuario.includes(ticketCcNorm);
+
+                const esAprobadorAsignado = ticketSeleccionado?.aprobador_id === currentUser?.id;
+                const sinAprobadorAsignado = !ticketSeleccionado?.aprobador_id;
+                const esAdmin = currentUser?.esAdminReal || currentUser?.esSuperAdmin || currentUser?.esAdminGlobal;
+
+                const puedeAprobar = esAdmin || (esGerente && (esAprobadorAsignado || coincideDepto || coincideObra || sinAprobadorAsignado));
+
+                if (!puedeAprobar) return null;
+
+                return (
+                  <>
+                    <motion.button
+                      onClick={aprobarTicket}
+                      whileHover={{ scale: 1.04 }}
+                      whileTap={{ scale: 0.97 }}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '8px',
+                        padding: '12px 24px',
+                        background: 'linear-gradient(135deg, #10b981, #059669)',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '10px',
+                        cursor: 'pointer',
+                        fontSize: '13px',
+                        fontWeight: '700',
+                        boxShadow: '0 4px 12px rgba(16,185,129,0.25)',
+                        transition: 'all 0.2s',
+                        minWidth: '140px',
+                        height: '46px',
+                        boxSizing: 'border-box'
+                      }}
+                      disabled={loading}
+                    >
+                      <CheckCircle2 size={15} />
+                      Aprobar Ticket
+                    </motion.button>
+
+                    <motion.button
+                      onClick={rechazarTicket}
+                      whileHover={{ scale: 1.04 }}
+                      whileTap={{ scale: 0.97 }}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '8px',
+                        padding: '12px 24px',
+                        background: 'linear-gradient(135deg, #ef4444, #dc2626)',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '10px',
+                        cursor: 'pointer',
+                        fontSize: '13px',
+                        fontWeight: '700',
+                        boxShadow: '0 4px 12px rgba(239,68,68,0.25)',
+                        transition: 'all 0.2s',
+                        minWidth: '140px',
+                        height: '46px',
+                        boxSizing: 'border-box'
+                      }}
+                      disabled={loading}
+                    >
+                      <X size={15} />
+                      Rechazar Ticket
+                    </motion.button>
+                  </>
+                );
+              })()}
 
               <div style={{ color: '#94a3b8', fontSize: '0.7rem', textAlign: 'right', width: '180px' }}>
                 * El estatus cambiará según el saldo restante.

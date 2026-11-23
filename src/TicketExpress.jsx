@@ -218,13 +218,15 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
   const esGerenteAprobador = useMemo(() => {
     if (!currentUser) return false;
     const rolUpper = (currentUser.rol || '').toUpperCase();
-    const esAdminReal = currentUser.esSuperAdmin || currentUser.esAdminReal;
-    // Solo Gerente de Proyecto, Gerente de Área o Administrador Real pueden aprobar
+    const esAdminReal = currentUser.esSuperAdmin || currentUser.esAdminReal || currentUser.esAdminGlobal;
     return (
-      (rolUpper.includes('GERENTE') && !rolUpper.includes('GENERAL')) ||
+      rolUpper.includes('GERENTE') ||
+      rolUpper.includes('COORDINADOR') ||
+      rolUpper.includes('DIRECTOR') ||
       rolUpper.includes('PROYECTO') ||
       rolUpper.includes('ÁREA') ||
       rolUpper.includes('AREA') ||
+      rolUpper.includes('ADMIN') ||
       esAdminReal
     );
   }, [currentUser]);
@@ -2526,56 +2528,75 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
                     {(form.con_iva !== false) ? 'CON IVA (16%)' : 'SIN IVA'}
                   </span>
                 )}
-                {isEditing && (form.status || '').toLowerCase().includes('pendiente aprobaci') && esGerente && (
-                  form.aprobador_id === currentUser?.id ||
-                  !form.aprobador_id ||
-                  (currentUser?.departamento && form.departamento &&
-                    form.departamento.toUpperCase() === currentUser.departamento.toUpperCase()) ||
-                  currentUser?.esAdminReal || currentUser?.esSuperAdmin
-                ) && (
-                  <>
-                    <button
-                      onClick={aprobarTicket}
-                      disabled={loading}
-                      style={{
-                        padding: '10px 25px',
-                        borderRadius: '12px',
-                        border: 'none',
-                        background: 'linear-gradient(135deg, #10b981, #059669)',
-                        color: 'white',
-                        fontWeight: 'bold',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        cursor: 'pointer',
-                        fontSize: '0.85rem',
-                        boxShadow: '0 4px 12px rgba(16, 185, 129, 0.25)'
-                      }}
-                    >
-                      <CheckCircle2 size={16} /> APROBAR TICKET
-                    </button>
-                    <button
-                      onClick={rechazarTicket}
-                      disabled={loading}
-                      style={{
-                        padding: '10px 25px',
-                        borderRadius: '12px',
-                        border: 'none',
-                        background: 'linear-gradient(135deg, #ef4444, #dc2626)',
-                        color: 'white',
-                        fontWeight: 'bold',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        cursor: 'pointer',
-                        fontSize: '0.85rem',
-                        boxShadow: '0 4px 12px rgba(239, 68, 68, 0.25)'
-                      }}
-                    >
-                      <X size={16} /> RECHAZAR
-                    </button>
-                  </>
-                )}
+                {(() => {
+                  if (!isEditing || !(form.status || '').toLowerCase().includes('pendiente aprobaci')) return null;
+
+                  const userDeptoNorm = (currentUser?.departamento || '').toLowerCase().trim();
+                  const ticketDeptoNorm = (form.departamento || '').toLowerCase().trim();
+                  const coincideDepto = userDeptoNorm && ticketDeptoNorm && (
+                    userDeptoNorm.includes(ticketDeptoNorm) || ticketDeptoNorm.includes(userDeptoNorm)
+                  );
+
+                  const obrasUsuario = [
+                    ...(currentUser?.obras_asignadas || []),
+                    ...(currentUser?.contrato ? [currentUser.contrato] : [])
+                  ].map(o => String(o).toUpperCase().trim());
+                  const ticketCcNorm = String(form.centro_costo || form.partidas?.[0]?.cc || '').toUpperCase().trim();
+                  const coincideObra = ticketCcNorm && obrasUsuario.includes(ticketCcNorm);
+
+                  const esAprobadorAsignado = form.aprobador_id === currentUser?.id;
+                  const sinAprobadorAsignado = !form.aprobador_id;
+                  const esAdmin = currentUser?.esAdminReal || currentUser?.esSuperAdmin || currentUser?.esAdminGlobal;
+
+                  const puedeAprobar = esAdmin || (esGerente && (esAprobadorAsignado || coincideDepto || coincideObra || sinAprobadorAsignado));
+
+                  if (!puedeAprobar) return null;
+
+                  return (
+                    <>
+                      <button
+                        onClick={aprobarTicket}
+                        disabled={loading}
+                        style={{
+                          padding: '10px 25px',
+                          borderRadius: '12px',
+                          border: 'none',
+                          background: 'linear-gradient(135deg, #10b981, #059669)',
+                          color: 'white',
+                          fontWeight: 'bold',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                          cursor: 'pointer',
+                          fontSize: '0.85rem',
+                          boxShadow: '0 4px 12px rgba(16, 185, 129, 0.25)'
+                        }}
+                      >
+                        <CheckCircle2 size={16} /> APROBAR TICKET
+                      </button>
+                      <button
+                        onClick={rechazarTicket}
+                        disabled={loading}
+                        style={{
+                          padding: '10px 25px',
+                          borderRadius: '12px',
+                          border: 'none',
+                          background: 'linear-gradient(135deg, #ef4444, #dc2626)',
+                          color: 'white',
+                          fontWeight: 'bold',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                          cursor: 'pointer',
+                          fontSize: '0.85rem',
+                          boxShadow: '0 4px 12px rgba(239, 68, 68, 0.25)'
+                        }}
+                      >
+                        <X size={16} /> RECHAZAR
+                      </button>
+                    </>
+                  );
+                })()}
                 {isEditing && (
                   <button
                     onClick={generarTicketPDF}
