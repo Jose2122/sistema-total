@@ -23,10 +23,10 @@ export default function MobileRequisiciones({ currentUser, onPendingCountChange 
   const cargarRequisiciones = useCallback(async () => {
     setLoading(true);
     try {
-      // Cargamos las más recientes (últimas 250 requisiciones ordenadas por id desc)
+      // Cargamos las más recientes (últimas 300 requisiciones ordenadas por id desc)
       let query = supabase
         .from('requisiciones')
-        .select('id, correlativo, correlativo_req, fecha_emision, created_at, solicitante, gerencia, centro_costo, prioridad, estado_aprobacion, motivo_rechazo, items, facturas_url, soporte_url, gerente_directo_id, firma_gerente, firma_gerente_general, firma_gerente_proyecto, aprobado_gerente_area, aprobado_gerente_general, aprobado_gerente_proyecto, n_aprobacion_area, n_aprobacion_general, n_aprobacion_proyecto, f_aprobacion_area, f_aprobacion_general, f_aprobacion_proyecto')
+        .select('id, correlativo_req, fecha_emision, created_at, solicitante, gerencia, centro_costo, prioridad, estado_aprobacion, motivo_rechazo, items, facturas_url, firma_gerente, firma_gerente_general, firma_gerente_proyecto, aprobado_gerente_area, aprobado_gerente_general, aprobado_gerente_proyecto, n_aprobacion_area, n_aprobacion_general, n_aprobacion_proyecto, f_aprobacion_area, f_aprobacion_general, f_aprobacion_proyecto, user_id')
         .order('id', { ascending: false })
         .limit(300);
 
@@ -42,11 +42,11 @@ export default function MobileRequisiciones({ currentUser, onPendingCountChange 
           itemsParseados = [];
         }
 
-        const soportes = consolidarSoportesRequisicion(r.facturas_url || r.soporte_url, itemsParseados);
+        const soportes = consolidarSoportesRequisicion(r.facturas_url, itemsParseados);
 
         return {
           ...r,
-          correlativo: r.correlativo || r.correlativo_req || `REQ-#${r.id}`,
+          correlativo: r.correlativo_req || `REQ-#${r.id}`,
           items: itemsParseados,
           soportes
         };
@@ -77,12 +77,16 @@ export default function MobileRequisiciones({ currentUser, onPendingCountChange 
     if (esSolicitante && !esGG) return false;
 
     if (r.estado_aprobacion === 'pendiente_proyecto') {
+      const obrasAsignadas = currentUser?.obras_asignadas || [];
+      const coincideObra = r.centro_costo && obrasAsignadas.some(o => o.toLowerCase().trim() === (r.centro_costo || '').toLowerCase().trim());
       const esSuGerente = r.gerente_directo_id && currentUser?.id === r.gerente_directo_id;
-      return esGG || rolUpper.includes('PROYECTO') || esSuGerente;
+      return esGG || rolUpper.includes('PROYECTO') || coincideObra || esSuGerente;
     }
     if (r.estado_aprobacion === 'pendiente_area') {
+      const coincideGerencia = currentUser?.departamento && r.gerencia &&
+        currentUser.departamento.toLowerCase().trim() === r.gerencia.toLowerCase().trim();
       const esSuGerente = r.gerente_directo_id && currentUser?.id === r.gerente_directo_id;
-      return esGerenteArea || esSuGerente || esFavio || esGG;
+      return (esGerenteArea && (coincideGerencia || !r.gerencia)) || esSuGerente || esFavio || esGG;
     }
     if (r.estado_aprobacion === 'enviada_general') {
       return esGG;
@@ -203,9 +207,10 @@ export default function MobileRequisiciones({ currentUser, onPendingCountChange 
           ? `Su requisición ${req.correlativo} ha sido APROBADA FINALMENTE y pasa a Compras.`
           : `Su requisición ${req.correlativo} avanzó a ${updatePayload.estado_aprobacion}.`;
 
-        if (req.solicitante_id) {
+        const targetUserId = req.user_id || req.solicitante_id;
+        if (targetUserId) {
           await supabase.from('notificaciones').insert([{
-            usuario_id: req.solicitante_id,
+            usuario_id: targetUserId,
             mensaje: msgNotif,
             tipo: 'Aprobación',
             leido: false,
@@ -246,9 +251,10 @@ export default function MobileRequisiciones({ currentUser, onPendingCountChange 
 
       // Notificar al solicitante
       try {
-        if (req.solicitante_id) {
+        const targetUserId = req.user_id || req.solicitante_id;
+        if (targetUserId) {
           await supabase.from('notificaciones').insert([{
-            usuario_id: req.solicitante_id,
+            usuario_id: targetUserId,
             mensaje: `Su requisición ${req.correlativo} fue RECHAZADA. Motivo: ${motivo}`,
             tipo: 'Rechazo',
             leido: false,

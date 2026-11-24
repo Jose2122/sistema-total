@@ -34,10 +34,14 @@ export default function MobileReqCard({ req, currentUser, onAprobar, onRechazar,
 
   if (!esSolicitante || esGG) {
     if (req.estado_aprobacion === 'pendiente_proyecto') {
-      puedeAprobarProyecto = esGG || rolUpper.includes('PROYECTO') || esSuGerenteDirecto;
+      const obrasAsignadas = currentUser?.obras_asignadas || [];
+      const coincideObra = req.centro_costo && obrasAsignadas.some(o => o.toLowerCase().trim() === (req.centro_costo || '').toLowerCase().trim());
+      puedeAprobarProyecto = esGG || rolUpper.includes('PROYECTO') || coincideObra || esSuGerenteDirecto;
     }
     if (req.estado_aprobacion === 'pendiente_area') {
-      puedeAprobarArea = esGerenteArea || esSuGerenteDirecto || esFavio || esGG;
+      const coincideGerencia = currentUser?.departamento && req.gerencia &&
+        currentUser.departamento.toLowerCase().trim() === req.gerencia.toLowerCase().trim();
+      puedeAprobarArea = (esGerenteArea && (coincideGerencia || !req.gerencia)) || esSuGerenteDirecto || esFavio || esGG;
     }
     if (req.estado_aprobacion === 'enviada_general') {
       puedeAprobarGeneral = esGG;
