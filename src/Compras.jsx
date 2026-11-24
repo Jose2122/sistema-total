@@ -1428,6 +1428,57 @@ const Compras = () => {
     });
   }, [historial, busqueda, filtroGerencia, filtroStatusCompra, filtroCentroCosto, filtroCategoria, filtroAnalista, filtroSemana, fechaInicioHistorico, fechaFinHistorico, semanaActualObj, verSoloMisAsignadas, esGerenteDeCompras, currentUser]);
 
+  // Requisiciones que cumplen los filtros generales (búsqueda, semana/rango, gerencia, centro de costo, analista)
+  // pero sin filtrar por status de compra, para que las Stat Cards reflejen exactamente las cantidades del filtro activo
+  const historialBaseFiltros = useMemo(() => {
+    return (historial || []).filter(req => {
+      if (!req) return false;
+      const matchTexto =
+        (req.solicitante || '').toLowerCase().includes((busqueda || '').toLowerCase()) ||
+        (req.correlativo || '').toLowerCase().includes((busqueda || '').toLowerCase()) ||
+        safeArray(req.items).some(it => (it && it.descripcion ? String(it.descripcion).toLowerCase() : '').includes((busqueda || '').toLowerCase()));
+      const matchGerencia = filtroGerencia === 'Todos' || req.gerencia === filtroGerencia;
+      const matchCC = filtroCentroCosto === 'Todos' || req.centro_costo === filtroCentroCosto;
+      const matchCat = filtroCategoria === 'Todos' || safeArray(req.items).some(it => it && it.categoria === filtroCategoria);
+
+      const matchAnalista =
+        filtroAnalista === 'Todos' ||
+        (filtroAnalista === 'Sin Asignar' && !req.asignado_a) ||
+        req.asignado_a === filtroAnalista;
+
+      const matchMisAsignadas =
+        !verSoloMisAsignadas ||
+        esGerenteDeCompras ||
+        req.asignado_a === currentUser?.id;
+
+      const matchSemana = (() => {
+        if (filtroSemana === 'RangoFechas') {
+          const reqFecha = (req.fecha || (req.fecha_emision ? String(req.fecha_emision).split('T')[0] : '') || (req.created_at ? String(req.created_at).split('T')[0] : ''));
+          if (!reqFecha) return true;
+          if (fechaInicioHistorico && reqFecha < fechaInicioHistorico) return false;
+          if (fechaFinHistorico && reqFecha > fechaFinHistorico) return false;
+          return true;
+        }
+        if (filtroSemana === 'Todas') return true;
+        if (filtroSemana === 'Actual') {
+          if (!semanaActualObj) return false;
+          return (
+            (req.semanaInfo && req.semanaInfo.weekNum === semanaActualObj.weekNum && req.semanaInfo.year === semanaActualObj.year) ||
+            (req.semanaEmisionInfo && req.semanaEmisionInfo.weekNum === semanaActualObj.weekNum && req.semanaEmisionInfo.year === semanaActualObj.year) ||
+            (req.semanaAprobacionInfo && req.semanaAprobacionInfo.weekNum === semanaActualObj.weekNum && req.semanaAprobacionInfo.year === semanaActualObj.year)
+          );
+        }
+        return (
+          (req.semanaInfo && req.semanaInfo.key === filtroSemana) ||
+          (req.semanaEmisionInfo && req.semanaEmisionInfo.key === filtroSemana) ||
+          (req.semanaAprobacionInfo && req.semanaAprobacionInfo.key === filtroSemana)
+        );
+      })();
+
+      return matchTexto && matchGerencia && matchCC && matchCat && matchAnalista && matchMisAsignadas && matchSemana;
+    });
+  }, [historial, busqueda, filtroGerencia, filtroCentroCosto, filtroCategoria, filtroAnalista, filtroSemana, fechaInicioHistorico, fechaFinHistorico, semanaActualObj, verSoloMisAsignadas, esGerenteDeCompras, currentUser]);
+
   const abrirProcesamiento = async (req) => {
     setRequisicionActiva(req);
     setEditandoId(req.id);
@@ -4113,11 +4164,11 @@ const Compras = () => {
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '15px', marginBottom: '25px' }}>
         {[
-          { label: 'REQUISICIONES EN ESPERA', val: `${historial.filter(r => (r.status_compra || 'En espera') === 'En espera').length} No leídas`, col: '#030712', filter: 'En espera' },
-          { label: 'EN PROCESO', val: `${historial.filter(r => ['EN_PROCESO', 'En Proceso', 'EN PROCESO'].includes(r.status_compra)).length} En Proceso`, col: '#f59e0b', filter: 'EN_PROCESO' },
-          { label: 'COMPRAS PARCIALES', val: `${historial.filter(r => r.status_compra === 'Parcial').length} Parciales`, col: '#ea580c', filter: 'Parcial' },
-          { label: 'EN CURSO (HOY) 📌', val: `${historial.filter(r => r.en_gestion_hoy && r.asignado_a === currentUser?.id).length} Marcadas`, col: '#3b82f6', filter: 'EnCursoHoy' },
-          { label: 'COMPRAS FINALIZADAS', val: `${historial.filter(r => ['Completado', 'COMPLETADO', 'COMPLETADA'].includes(r.status_compra)).length} Completas`, col: '#10b981', filter: 'Completado' },
+          { label: 'REQUISICIONES EN ESPERA', val: `${historialBaseFiltros.filter(r => (r.status_compra || 'En espera') === 'En espera').length} No leídas`, col: '#030712', filter: 'En espera' },
+          { label: 'EN PROCESO', val: `${historialBaseFiltros.filter(r => ['EN_PROCESO', 'En Proceso', 'EN PROCESO'].includes(r.status_compra)).length} En Proceso`, col: '#f59e0b', filter: 'EN_PROCESO' },
+          { label: 'COMPRAS PARCIALES', val: `${historialBaseFiltros.filter(r => r.status_compra === 'Parcial').length} Parciales`, col: '#ea580c', filter: 'Parcial' },
+          { label: 'EN CURSO (HOY) 📌', val: `${historialBaseFiltros.filter(r => r.en_gestion_hoy && r.asignado_a === currentUser?.id).length} Marcadas`, col: '#3b82f6', filter: 'EnCursoHoy' },
+          { label: 'COMPRAS FINALIZADAS', val: `${historialBaseFiltros.filter(r => ['Completado', 'COMPLETADO', 'COMPLETADA'].includes(r.status_compra)).length} Completas`, col: '#10b981', filter: 'Completado' },
         ].map((x, i) => (
           <div
             key={i}
