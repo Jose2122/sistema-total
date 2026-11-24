@@ -499,7 +499,10 @@ const Compras = () => {
   const [filtroStatusCompra, setFiltroStatusCompra] = useState('Todos');
   const [filtroCategoria, setFiltroCategoria] = useState('Todos');
   const [filtroCentroCosto, setFiltroCentroCosto] = useState('Todos');
-  const [filtroSemana, setFiltroSemana] = useState('Actual'); // 'Actual' (Semana Actual por defecto), 'Todas', o key de semana
+  const [filtroSemana, setFiltroSemana] = useState('Actual'); // 'Actual' (Semana Actual por defecto), 'Todas', 'RangoFechas' o key de semana
+  const [fechaInicioHistorico, setFechaInicioHistorico] = useState('');
+  const [fechaFinHistorico, setFechaFinHistorico] = useState('');
+  const [cargandoHistoricoServidor, setCargandoHistoricoServidor] = useState(false);
   const [proveedores, setProveedores] = useState([]);
   const [filtroCatProvOdc, setFiltroCatProvOdc] = useState('TODAS');
 
@@ -1124,13 +1127,14 @@ const Compras = () => {
         }
       }
 
-      const { data, error } = await supabase
+      let query = supabase
         .from('requisiciones')
         .select('*')
         .neq('correlativo_req', 'SYS-PROVEEDORES-CENTRAL')
         .eq('estado_aprobacion', 'aprobado_final')
-        .order('fecha_emision', { ascending: false })
-        .limit(500);
+        .order('fecha_emision', { ascending: false });
+
+      const { data, error } = await query;
 
       if (error) throw error;
       setHistorial((data || []).map(db => {
@@ -1395,8 +1399,15 @@ const Compras = () => {
         esGerenteDeCompras || // El gerente ve todo
         req.asignado_a === currentUser?.id;
 
-      // Filtro por Semana Operativa
+      // Filtro por Semana Operativa / Rango Histórico
       const matchSemana = (() => {
+        if (filtroSemana === 'RangoFechas') {
+          const reqFecha = (req.fecha || (req.fecha_emision ? String(req.fecha_emision).split('T')[0] : '') || (req.created_at ? String(req.created_at).split('T')[0] : ''));
+          if (!reqFecha) return true;
+          if (fechaInicioHistorico && reqFecha < fechaInicioHistorico) return false;
+          if (fechaFinHistorico && reqFecha > fechaFinHistorico) return false;
+          return true;
+        }
         if (filtroSemana === 'Todas') return true;
         if (filtroSemana === 'Actual') {
           if (!semanaActualObj) return false;
@@ -1415,7 +1426,7 @@ const Compras = () => {
 
       return matchTexto && matchGerencia && matchStatus && matchCC && matchCat && matchAnalista && matchMisAsignadas && matchSemana;
     });
-  }, [historial, busqueda, filtroGerencia, filtroStatusCompra, filtroCentroCosto, filtroCategoria, filtroAnalista, filtroSemana, semanaActualObj, verSoloMisAsignadas, esGerenteDeCompras, currentUser]);
+  }, [historial, busqueda, filtroGerencia, filtroStatusCompra, filtroCentroCosto, filtroCategoria, filtroAnalista, filtroSemana, fechaInicioHistorico, fechaFinHistorico, semanaActualObj, verSoloMisAsignadas, esGerenteDeCompras, currentUser]);
 
   const abrirProcesamiento = async (req) => {
     setRequisicionActiva(req);
@@ -4157,15 +4168,15 @@ const Compras = () => {
             />
           </div>
 
-          {/* SELECTOR DE SEMANA OPERATIVA */}
+          {/* SELECTOR DE SEMANA OPERATIVA / RANGO HISTÓRICO */}
           <select
             className="input-tc"
             style={{
               width: '230px',
               margin: 0,
-              backgroundColor: filtroSemana === 'Actual' ? '#eff6ff' : 'white',
-              color: filtroSemana === 'Actual' ? '#1d4ed8' : '#1e293b',
-              borderColor: filtroSemana === 'Actual' ? '#93c5fd' : '#cbd5e1',
+              backgroundColor: filtroSemana === 'Actual' ? '#eff6ff' : (filtroSemana === 'RangoFechas' ? '#fef3c7' : 'white'),
+              color: filtroSemana === 'Actual' ? '#1d4ed8' : (filtroSemana === 'RangoFechas' ? '#92400e' : '#1e293b'),
+              borderColor: filtroSemana === 'Actual' ? '#93c5fd' : (filtroSemana === 'RangoFechas' ? '#fcd34d' : '#cbd5e1'),
               fontWeight: '800'
             }}
             value={filtroSemana}
@@ -4175,6 +4186,7 @@ const Compras = () => {
               📅 Semana Actual ({semanaActualObj?.label || 'Activa'})
             </option>
             <option value="Todas">🗓️ Todas las Semanas</option>
+            <option value="RangoFechas">📆 Rango Histórico Personalizado</option>
 
             {semanasDisponibles.length > 0 && (
               <optgroup label="Semanas Anteriores / Histórico">
@@ -4186,6 +4198,37 @@ const Compras = () => {
               </optgroup>
             )}
           </select>
+
+          {filtroSemana === 'RangoFechas' && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#fffbeb', border: '1px solid #fde68a', padding: '4px 10px', borderRadius: '8px' }}>
+              <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#b45309' }}>Desde:</span>
+              <input
+                type="date"
+                className="input-tc"
+                style={{ width: '135px', margin: 0, padding: '4px 8px', fontSize: '0.8rem', backgroundColor: 'white' }}
+                value={fechaInicioHistorico}
+                onChange={(e) => setFechaInicioHistorico(e.target.value)}
+              />
+              <span style={{ fontSize: '0.75rem', fontWeight: '800', color: '#b45309' }}>Hasta:</span>
+              <input
+                type="date"
+                className="input-tc"
+                style={{ width: '135px', margin: 0, padding: '4px 8px', fontSize: '0.8rem', backgroundColor: 'white' }}
+                value={fechaFinHistorico}
+                onChange={(e) => setFechaFinHistorico(e.target.value)}
+              />
+              {(fechaInicioHistorico || fechaFinHistorico) && (
+                <button
+                  type="button"
+                  onClick={() => { setFechaInicioHistorico(''); setFechaFinHistorico(''); }}
+                  style={{ background: 'none', border: 'none', color: '#dc2626', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}
+                  title="Limpiar fechas"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          )}
 
           <select
             className="input-tc"
