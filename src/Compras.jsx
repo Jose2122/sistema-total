@@ -1127,17 +1127,28 @@ const Compras = () => {
         }
       }
 
-      let query = supabase
-        .from('requisiciones')
-        .select('*')
-        .neq('correlativo_req', 'SYS-PROVEEDORES-CENTRAL')
-        .eq('estado_aprobacion', 'aprobado_final')
-        .order('fecha_emision', { ascending: false });
+      let allData = [];
+      let from = 0;
+      const batchSize = 1000;
 
-      const { data, error } = await query;
+      while (true) {
+        const to = from + batchSize - 1;
+        const { data: batch, error } = await supabase
+          .from('requisiciones')
+          .select('*')
+          .neq('correlativo_req', 'SYS-PROVEEDORES-CENTRAL')
+          .eq('estado_aprobacion', 'aprobado_final')
+          .order('fecha_emision', { ascending: false })
+          .range(from, to);
 
-      if (error) throw error;
-      setHistorial((data || []).map(db => {
+        if (error) throw error;
+        if (!batch || batch.length === 0) break;
+        allData.push(...batch);
+        if (batch.length < batchSize) break;
+        from += batchSize;
+      }
+
+      setHistorial((allData || []).map(db => {
         const itemsArr = safeArray(db.items);
         const facturasConsolidadas = consolidarSoportesRequisicion(db.facturas_url, itemsArr);
         const esCcTigre = (db.centro_costo || '').toLowerCase().includes('tigre');
