@@ -219,55 +219,36 @@ const Almacen = ({ currentUserProp = null }) => {
     }
   };
 
-  // Carga integral de Requisiciones y Órdenes de Compra
+  // Carga integral de Requisiciones y Órdenes de Compra (con paginación estricta)
   const cargarDatos = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      // 1. Cargar TODAS las Requisiciones Aprobadas con Ítems (Paginado)
-      let reqs = [];
-      let pageReq = 0;
-      let keepReq = true;
-      while (keepReq) {
-        const { data: chunk, error: errReq } = await supabase
-          .from('requisiciones')
-          .select('*')
-          .eq('estado_aprobacion', 'aprobado_final')
-          .order('fecha_emision', { ascending: false })
-          .range(pageReq * 1000, (pageReq + 1) * 1000 - 1);
+      // 1. Cargar Requisiciones Aprobadas con Ítems necesarios para Almacén (selección específica de columnas para evitar timeouts)
+      const { data: reqsData, error: errReq } = await supabase
+        .from('requisiciones')
+        .select('id, correlativo_req, items, fecha_emision, created_at, solicitante, gerencia, centro_costo')
+        .neq('correlativo_req', 'SYS-PROVEEDORES-CENTRAL')
+        .eq('estado_aprobacion', 'aprobado_final')
+        .order('fecha_emision', { ascending: false })
+        .limit(300);
 
-        if (errReq) throw errReq;
-        if (chunk && chunk.length > 0) {
-          reqs = reqs.concat(chunk);
-          if (chunk.length < 1000) keepReq = false;
-          else pageReq++;
-        } else {
-          keepReq = false;
-        }
-      }
+      if (errReq) throw errReq;
+      const reqs = reqsData || [];
 
-      // 2. Cargar Catálogo de Órdenes de Compra para Vinculación Directa (Paginado)
+      // 2. Cargar Catálogo de Órdenes de Compra para Vinculación Directa (columnas necesarias)
       let odcsData = [];
-      let pageOdc = 0;
-      let keepOdc = true;
-      while (keepOdc) {
-        try {
-          const { data: chunk, error: odcErr } = await supabase
-            .from('ordenes_compra')
-            .select('*')
-            .order('created_at', { ascending: false })
-            .range(pageOdc * 1000, (pageOdc + 1) * 1000 - 1);
-          
-          if (!odcErr && chunk && chunk.length > 0) {
-            odcsData = odcsData.concat(chunk);
-            if (chunk.length < 1000) keepOdc = false;
-            else pageOdc++;
-          } else {
-            keepOdc = false;
-          }
-        } catch (e) {
-          console.warn("Consulta a ordenes_compra:", e.message);
-          keepOdc = false;
+      try {
+        const { data: chunk, error: odcErr } = await supabase
+          .from('ordenes_compra')
+          .select('id, numero_orden, numero_odc, requisicion_id, requisicion_correlativo, correlativo_req, numero_req, pasa_por_almacen, destino_despacho, almacen_destino')
+          .order('created_at', { ascending: false })
+          .limit(300);
+        
+        if (!odcErr && chunk) {
+          odcsData = chunk;
         }
+      } catch (e) {
+        console.warn("Consulta a ordenes_compra:", e.message);
       }
       setOrdenesCompraList(odcsData);
 
@@ -531,26 +512,36 @@ const Almacen = ({ currentUserProp = null }) => {
   useEffect(() => {
     cargarDatos();
 
-    // SUSCRIPCIÓN REALTIME PARA ALMACÉN (Requisiciones y Órdenes de Compra)
+    let debounceTimer = null;
+    const cargarDebounced = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        cargarDatos(true);
+      }, 5000);
+    };
+
+    // SUSCRIPCIÓN REALTIME PARA ALMACÉN (Requisiciones y Órdenes de Compra con debounce)
     const channel = supabase
       .channel('almacen_realtime_stream')
       .on('postgres_changes', {
         event: '*',
         schema: 'public',
         table: 'requisiciones'
-      }, () => {
-        cargarDatos(true);
+      }, (payload) => {
+        if (payload?.new?.correlativo_req === 'SYS-PROVEEDORES-CENTRAL') return;
+        cargarDebounced();
       })
       .on('postgres_changes', {
         event: '*',
         schema: 'public',
         table: 'ordenes_compra'
       }, () => {
-        cargarDatos(true);
+        cargarDebounced();
       })
       .subscribe();
 
     return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
       supabase.removeChannel(channel);
     };
   }, [cargarDatos]);
