@@ -67,11 +67,13 @@ export default function MobileApp() {
     return `${n.charAt(0)}${a ? a.charAt(0) : ''}`.toUpperCase();
   };
 
+  const primerNombre = (currentUser?.nombre || '').split(' ')[0] || 'Usuario';
+
   if (loadingUser) {
     return (
       <div className="m-app-container" style={{ alignItems: 'center', justifyContent: 'center' }}>
-        <img src="/logo.png" alt="SITC" style={{ width: '64px', height: '64px', marginBottom: '16px' }} />
-        <p style={{ color: '#94a3b8', fontSize: '0.9rem' }}>Cargando SITC Móvil...</p>
+        <img src="/logo-tc-transparent.png" alt="Total Clean" style={{ width: '80px', height: '80px', marginBottom: '16px', objectFit: 'contain' }} />
+        <p style={{ color: '#94a3b8', fontSize: '0.9rem', fontWeight: 600 }}>Cargando SITC Móvil...</p>
       </div>
     );
   }
@@ -81,11 +83,16 @@ export default function MobileApp() {
       {/* TopBar */}
       <header className="m-topbar">
         <div className="m-brand">
-          <img src="/logo.png" alt="Logo" />
+          <img src="/logo-tc-transparent.png" alt="Total Clean" className="m-brand-logo" />
           <div className="m-brand-title">
-            <h1>
-              SITC <span className="m-brand-badge">Móvil</span>
-            </h1>
+            <div className="m-brand-header-row">
+              <h1>SITC</h1>
+              <span className="m-brand-badge">Móvil</span>
+            </div>
+            <div className="m-brand-greeting">
+              <span className="m-pulse-dot"></span>
+              <span>Hola, {primerNombre} 👋</span>
+            </div>
           </div>
         </div>
 
@@ -103,18 +110,19 @@ export default function MobileApp() {
           <div
             onClick={() => setActiveTab('perfil')}
             style={{
-              width: '36px',
-              height: '36px',
-              borderRadius: '12px',
+              width: '38px',
+              height: '38px',
+              borderRadius: '14px',
               backgroundColor: '#0284c7',
               color: 'white',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               fontWeight: 800,
-              fontSize: '0.8rem',
+              fontSize: '0.82rem',
               cursor: 'pointer',
-              border: activeTab === 'perfil' ? '2px solid #38bdf8' : '2px solid transparent'
+              border: activeTab === 'perfil' ? '2px solid #38bdf8' : '2px solid rgba(255,255,255,0.1)',
+              boxShadow: '0 4px 10px rgba(2, 132, 199, 0.3)'
             }}
           >
             {getInitials(currentUser?.nombre, currentUser?.apellido)}

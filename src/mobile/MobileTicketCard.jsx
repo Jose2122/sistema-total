@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ChevronDown, ChevronUp, FileText, CheckCircle2, XCircle, Clock, DollarSign } from 'lucide-react';
+import { ChevronDown, ChevronUp, FileText, CheckCircle2, XCircle, Clock, Calendar } from 'lucide-react';
 import MobileSoportesModal from './MobileSoportesModal';
 
 export default function MobileTicketCard({ ticket, currentUser, onAprobar, onRechazar, loadingAction }) {
@@ -90,123 +90,137 @@ export default function MobileTicketCard({ ticket, currentUser, onAprobar, onRec
   return (
     <>
       <div className="m-card">
-        {/* Encabezado */}
-        <div className="m-card-header">
-          <div>
-            <div className="m-card-id">{ticket.codigo_ticket || ticket.codigo_control || `TK-#${ticket.id}`}</div>
-            <div className="m-card-date">
-              {ticket.created_at || ticket.fecha ? new Date(ticket.created_at || ticket.fecha).toLocaleDateString('es-VE') : 'Sin fecha'}
-            </div>
-          </div>
-          <div>{getStatusBadge()}</div>
-        </div>
-
-        {/* Datos Principales */}
-        <div className="m-card-body">
-          <div className="m-info-group full">
-            <span className="m-info-label">Beneficiario / Proveedor</span>
-            <span className="m-info-value" style={{ color: '#38bdf8' }}>
-              {ticket.proveedor_nombre || ticket.beneficiario || 'No especificado'}
-            </span>
-          </div>
-
-          <div className="m-info-group">
-            <span className="m-info-label">Solicitante</span>
-            <span className="m-info-value">{ticket.solicitante || 'Usuario'}</span>
-          </div>
-
-          <div className="m-info-group">
-            <span className="m-info-label">C. Costo / Obra</span>
-            <span className="m-info-value">{ticket.centro_costo || ticket.departamento || 'No definido'}</span>
-          </div>
-
-          <div className="m-info-group full">
-            <span className="m-info-label">Monto a Pagar</span>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
-              <span className="m-info-amount">
-                ${montoTotalUSD.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </span>
-              {montoBS > 0 && (
-                <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>
-                  ({montoBS.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Bs)
-                </span>
-              )}
-            </div>
-          </div>
-
-          {ticket.justificacion && (
-            <div className="m-info-group full">
-              <span className="m-info-label">Concepto / Justificación</span>
-              <span className="m-info-value" style={{ fontWeight: 400, color: '#cbd5e1' }}>
-                {ticket.justificacion}
+        {/* Cabecera / Resumen Compacto Clickeable */}
+        <div className="m-card-compact-row" onClick={() => setExpandido(!expandido)}>
+          <div className="m-card-header">
+            <div className="m-card-id-row">
+              <span className="m-card-id">{ticket.codigo_ticket || ticket.codigo_control || `TK-#${ticket.id}`}</span>
+              <span className="m-card-date">
+                <Calendar size={12} color="#64748b" />
+                {ticket.created_at || ticket.fecha ? new Date(ticket.created_at || ticket.fecha).toLocaleDateString('es-VE') : 'Sin fecha'}
               </span>
             </div>
-          )}
+            <div>{getStatusBadge()}</div>
+          </div>
 
-          {ticket.motivo_rechazo && (
-            <div className="m-info-group full" style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)', padding: '8px', borderRadius: '8px', border: '1px solid rgba(239, 68, 68, 0.2)' }}>
-              <span className="m-info-label" style={{ color: '#f87171' }}>Motivo de Rechazo:</span>
-              <span className="m-info-value" style={{ color: '#fca5a5' }}>{ticket.motivo_rechazo}</span>
-            </div>
-          )}
-        </div>
-
-        {/* Desglose de Conceptos/Partidas si existen */}
-        {items.length > 0 && (
-          <div className="m-items-summary">
-            <div className="m-items-header" onClick={() => setExpandido(!expandido)}>
-              <span>Partidas / Conceptos ({items.length})</span>
-              {expandido ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-            </div>
-
-            {expandido && (
-              <div className="m-items-list">
-                {items.map((it, idx) => (
-                  <div key={idx} className="m-item-card">
-                    <div className="m-item-card-left">
-                      <span className="m-item-number">#{idx + 1}</span>
-                      <span className="m-item-desc">{it.descripcion || it.concepto || `Partida #${idx + 1}`}</span>
-                    </div>
-                    <div className="m-item-card-right">
-                      <span className="m-item-qty-badge" style={{ color: '#10b981', borderColor: 'rgba(16, 185, 129, 0.3)', background: 'rgba(16, 185, 129, 0.15)' }}>
-                        ${(parseFloat(it.monto || it.subtotal || 0)).toLocaleString('es-VE', { minimumFractionDigits: 2 })}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
+          <div className="m-compact-meta">
+            <span className="m-compact-user" style={{ color: '#38bdf8' }}>{ticket.proveedor_nombre || ticket.beneficiario || 'Beneficiario'}</span>
+            <span className="m-compact-dot">•</span>
+            <span className="m-compact-dept">{ticket.solicitante || 'Usuario'}</span>
+            {(ticket.centro_costo || ticket.departamento) && (
+              <>
+                <span className="m-compact-dot">•</span>
+                <span className="m-compact-cc">{ticket.centro_costo || ticket.departamento}</span>
+              </>
             )}
           </div>
-        )}
 
-        {/* Botón Soportes / Comprobantes */}
-        {soportes.length > 0 && (
-          <button className="m-btn-soportes" onClick={() => setModalSoportes(true)}>
-            <FileText size={15} />
-            <span>Ver Comprobantes y Facturas ({soportes.length})</span>
-          </button>
-        )}
+          <div className="m-compact-bottom">
+            <div className="m-compact-amount">
+              <span className="m-compact-amount-label">Monto a Pagar</span>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px' }}>
+                <span className="m-compact-amount-val">
+                  ${montoTotalUSD.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+                {montoBS > 0 && (
+                  <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>
+                    ({montoBS.toLocaleString('es-VE', { minimumFractionDigits: 2 })} Bs)
+                  </span>
+                )}
+              </div>
+            </div>
 
-        {/* Botones de Aprobación / Rechazo táctiles */}
-        {puedeAprobar && (
-          <div className="m-card-actions">
-            <button
-              className="m-btn m-btn-reject"
-              onClick={() => setModalRechazo(true)}
-              disabled={loadingAction}
-            >
-              <XCircle size={18} />
-              <span>Rechazar</span>
-            </button>
+            <div className="m-compact-toggle">
+              {items.length > 0 && (
+                <span className="m-compact-items-count">
+                  {items.length} {items.length === 1 ? 'partida' : 'partidas'}
+                </span>
+              )}
+              <div className="m-chevron-circle" title={expandido ? 'Colapsar' : 'Ver detalle y aprobar'}>
+                {expandido ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+              </div>
+            </div>
+          </div>
+        </div>
 
-            <button
-              className="m-btn m-btn-approve"
-              onClick={() => onAprobar(ticket)}
-              disabled={loadingAction}
-            >
-              <CheckCircle2 size={18} />
-              <span>Aprobar Ticket</span>
-            </button>
+        {/* Contenido Expandido */}
+        {expandido && (
+          <div className="m-card-expanded">
+            {/* Detalles / Justificación */}
+            <div className="m-card-body">
+              {ticket.justificacion && (
+                <div className="m-info-group full">
+                  <span className="m-info-label">Concepto / Justificación</span>
+                  <span className="m-info-value" style={{ fontWeight: 400, color: '#cbd5e1' }}>
+                    {ticket.justificacion}
+                  </span>
+                </div>
+              )}
+
+              {ticket.motivo_rechazo && (
+                <div className="m-info-group full" style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)', padding: '8px 10px', borderRadius: '8px', border: '1px solid rgba(239, 68, 68, 0.2)' }}>
+                  <span className="m-info-label" style={{ color: '#f87171' }}>Motivo de Rechazo:</span>
+                  <span className="m-info-value" style={{ color: '#fca5a5' }}>{ticket.motivo_rechazo}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Desglose de Conceptos/Partidas si existen */}
+            {items.length > 0 && (
+              <div className="m-items-summary">
+                <div className="m-items-header">
+                  <span>Partidas ({items.length})</span>
+                  <span style={{ fontSize: '0.72rem', color: '#64748b' }}>Desglose</span>
+                </div>
+
+                <div className="m-items-list">
+                  {items.map((it, idx) => (
+                    <div key={idx} className="m-item-card">
+                      <div className="m-item-card-left">
+                        <span className="m-item-number">#{idx + 1}</span>
+                        <span className="m-item-desc">{it.descripcion || it.concepto || `Partida #${idx + 1}`}</span>
+                      </div>
+                      <div className="m-item-card-right">
+                        <span className="m-item-qty-badge" style={{ color: '#10b981', borderColor: 'rgba(16, 185, 129, 0.3)', background: 'rgba(16, 185, 129, 0.15)' }}>
+                          ${(parseFloat(it.monto || it.subtotal || 0)).toLocaleString('es-VE', { minimumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Botón Soportes / Comprobantes */}
+            {soportes.length > 0 && (
+              <button className="m-btn-soportes" onClick={() => setModalSoportes(true)}>
+                <FileText size={15} />
+                <span>Ver Comprobantes y Facturas ({soportes.length})</span>
+              </button>
+            )}
+
+            {/* Botones de Aprobación / Rechazo táctiles */}
+            {puedeAprobar && (
+              <div className="m-card-actions">
+                <button
+                  className="m-btn m-btn-reject"
+                  onClick={() => setModalRechazo(true)}
+                  disabled={loadingAction}
+                >
+                  <XCircle size={18} />
+                  <span>Rechazar</span>
+                </button>
+
+                <button
+                  className="m-btn m-btn-approve"
+                  onClick={() => onAprobar(ticket)}
+                  disabled={loadingAction}
+                >
+                  <CheckCircle2 size={18} />
+                  <span>Aprobar Ticket</span>
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>
