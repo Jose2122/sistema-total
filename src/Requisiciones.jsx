@@ -56,14 +56,15 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
 
   const getRank = (rol) => {
     const emailLower = (currentUser?.correo || '').toLowerCase();
+    if (emailLower === 'jcontreras.totalclean@gmail.com' || currentUser?.esSuperAdmin || currentUser?.esAdminReal) return 4;
     if (emailLower === 'karincmm1@gmail.com') return 3;
     const r = (rol || '').toLowerCase();
-    if (r.includes('analista')) return 1;
-    if (r.includes('coordinador')) return 2;
-    if (r.includes('gerente de proyecto')) return 2.5;
+    if (r.includes('gerente general') || r.includes('admin') || r.includes('director')) return 4;
     if (r.includes('gerente de área') || r.includes('gerente area')) return 3;
-    if (r.includes('gerente general') || r.includes('admin')) return 4;
+    if (r.includes('gerente de proyecto')) return 2.5;
     if (r.includes('gerente')) return 3;
+    if (r.includes('coordinador')) return 2;
+    if (r.includes('analista')) return 1;
     return 0;
   };
 
@@ -3180,6 +3181,9 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
             {listaGerencias
               .filter(g => {
                 if (!currentUser) return true;
+                const emailLower = (currentUser.correo || '').toLowerCase();
+                const esSuperAdmin = emailLower === 'jcontreras.totalclean@gmail.com' || currentUser?.esSuperAdmin || currentUser?.esAdminReal;
+                if (esSuperAdmin) return true;
                 const rank = getRank(currentUser.rol);
                 if (rank <= 2) return g === currentUser.departamento;
                 return true;
