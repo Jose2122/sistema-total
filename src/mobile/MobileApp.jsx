@@ -72,8 +72,13 @@ export default function MobileApp() {
   if (loadingUser) {
     return (
       <div className="m-app-container" style={{ alignItems: 'center', justifyContent: 'center' }}>
-        <img src="/logo-tc-transparent.png" alt="Total Clean" style={{ width: '80px', height: '80px', marginBottom: '16px', objectFit: 'contain' }} />
-        <p style={{ color: '#94a3b8', fontSize: '0.9rem', fontWeight: 600 }}>Cargando SITC Móvil...</p>
+        <div className="m-brand-badge-icon" style={{ width: '64px', height: '64px', fontSize: '1.6rem', borderRadius: '20px', marginBottom: '16px' }}>
+          TC
+        </div>
+        <h2 style={{ fontSize: '1.25rem', fontWeight: 900, color: 'white', margin: '0 0 6px 0', letterSpacing: '-0.02em' }}>
+          SITC<span style={{ color: '#38bdf8' }}>.</span> Móvil
+        </h2>
+        <p style={{ color: '#94a3b8', fontSize: '0.85rem', fontWeight: 500, margin: 0 }}>Cargando sistema...</p>
       </div>
     );
   }
@@ -83,10 +88,10 @@ export default function MobileApp() {
       {/* TopBar */}
       <header className="m-topbar">
         <div className="m-brand">
-          <img src="/logo-tc-transparent.png" alt="Total Clean" className="m-brand-logo" />
+          <div className="m-brand-badge-icon">TC</div>
           <div className="m-brand-title">
             <div className="m-brand-header-row">
-              <h1>SITC</h1>
+              <h1>SITC<span style={{ color: '#38bdf8' }}>.</span></h1>
               <span className="m-brand-badge">Móvil</span>
             </div>
             <div className="m-brand-greeting">
