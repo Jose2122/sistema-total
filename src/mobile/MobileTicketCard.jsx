@@ -160,13 +160,18 @@ export default function MobileTicketCard({ ticket, currentUser, onAprobar, onRec
             </div>
 
             {expandido && (
-              <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <div className="m-items-list">
                 {items.map((it, idx) => (
-                  <div key={idx} className="m-item-row">
-                    <span className="m-item-name">{it.descripcion || it.concepto || `Partida #${idx + 1}`}</span>
-                    <span className="m-item-qty">
-                      ${(parseFloat(it.monto || it.subtotal || 0)).toLocaleString('es-VE', { minimumFractionDigits: 2 })}
-                    </span>
+                  <div key={idx} className="m-item-card">
+                    <div className="m-item-card-left">
+                      <span className="m-item-number">#{idx + 1}</span>
+                      <span className="m-item-desc">{it.descripcion || it.concepto || `Partida #${idx + 1}`}</span>
+                    </div>
+                    <div className="m-item-card-right">
+                      <span className="m-item-qty-badge" style={{ color: '#10b981', borderColor: 'rgba(16, 185, 129, 0.3)', background: 'rgba(16, 185, 129, 0.15)' }}>
+                        ${(parseFloat(it.monto || it.subtotal || 0)).toLocaleString('es-VE', { minimumFractionDigits: 2 })}
+                      </span>
+                    </div>
                   </div>
                 ))}
               </div>

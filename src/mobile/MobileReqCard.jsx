@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ChevronDown, ChevronUp, FileText, CheckCircle2, XCircle, AlertCircle, Clock, ShieldCheck, Zap } from 'lucide-react';
+import { ChevronDown, ChevronUp, FileText, CheckCircle2, XCircle, AlertCircle, Clock, ShieldCheck, Zap, Calendar } from 'lucide-react';
 import MobileSoportesModal from './MobileSoportesModal';
 
 export default function MobileReqCard({ req, currentUser, onAprobar, onRechazar, loadingAction }) {
@@ -13,8 +13,11 @@ export default function MobileReqCard({ req, currentUser, onAprobar, onRechazar,
 
   // Calcular total estimado
   const totalEstimado = items.reduce((acc, it) => {
+    if (it.total !== undefined && it.total !== null && !isNaN(parseFloat(it.total))) {
+      return acc + parseFloat(it.total);
+    }
     const qty = parseFloat(it.cantidad || it.cant || 1) || 1;
-    const precio = parseFloat(it.costo_unitario || it.precio_unitario || it.precio || 0) || 0;
+    const precio = parseFloat(it.pu || it.costo_unitario || it.precio_unitario || it.precio || 0) || 0;
     return acc + (qty * precio);
   }, 0);
 
@@ -85,9 +88,12 @@ export default function MobileReqCard({ req, currentUser, onAprobar, onRechazar,
       <div className="m-card">
         {/* Encabezado */}
         <div className="m-card-header">
-          <div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
             <div className="m-card-id">{req.correlativo || req.correlativo_req || 'REQ-S/N'}</div>
-            <div className="m-card-date">{req.fecha_emision ? new Date(req.fecha_emision).toLocaleDateString('es-VE') : 'Sin fecha'}</div>
+            <div className="m-card-date" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <Calendar size={13} color="#64748b" />
+              <span>{req.fecha_emision ? new Date(req.fecha_emision).toLocaleDateString('es-VE') : 'Sin fecha'}</span>
+            </div>
           </div>
           <div>{getStatusBadge()}</div>
         </div>
@@ -139,13 +145,26 @@ export default function MobileReqCard({ req, currentUser, onAprobar, onRechazar,
           </div>
 
           {expandido && (
-            <div style={{ marginTop: '8px', display: 'flex', flex_direction: 'column', gap: '6px' }}>
-              {items.map((it, idx) => (
-                <div key={idx} className="m-item-row">
-                  <span className="m-item-name">{it.descripcion || it.nombre || it.item || 'Ítem sin descripción'}</span>
-                  <span className="m-item-qty">{it.cantidad || it.cant || 1} {it.unidad || 'UND'}</span>
-                </div>
-              ))}
+            <div className="m-items-list">
+              {items.map((it, idx) => {
+                const subtotal = parseFloat(it.total || 0) || ((parseFloat(it.cantidad || it.cant || 1) || 1) * (parseFloat(it.pu || it.costo_unitario || 0) || 0));
+                return (
+                  <div key={idx} className="m-item-card">
+                    <div className="m-item-card-left">
+                      <span className="m-item-number">#{idx + 1}</span>
+                      <span className="m-item-desc">{it.descripcion || it.nombre || it.item || 'Ítem sin descripción'}</span>
+                    </div>
+                    <div className="m-item-card-right">
+                      <span className="m-item-qty-badge">{it.cantidad || it.cant || 1} {it.unidad || it.uni || 'UND'}</span>
+                      {subtotal > 0 && (
+                        <span className="m-item-subtotal">
+                          ${subtotal.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
