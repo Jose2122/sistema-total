@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Warehouse, LogIn, Eye, EyeOff, Lock, Mail } from 'lucide-react';
+import { Warehouse, LogIn, Eye, EyeOff, Lock, Mail, Smartphone } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import toast from 'react-hot-toast';
 import './Auth.css';
@@ -19,6 +19,14 @@ const Auth = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [mensajeIdx, setMensajeIdx] = useState(0);
+  const [modoMovil, setModoMovil] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('sitc_preferred_view');
+      if (saved) return saved === 'movil';
+      return window.innerWidth <= 768;
+    }
+    return false;
+  });
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -95,8 +103,13 @@ const Auth = () => {
 
     localStorage.setItem('user_totalclean_session', JSON.stringify(data.user));
     localStorage.setItem('user_profile', JSON.stringify(perfil));
+    localStorage.setItem('sitc_preferred_view', modoMovil ? 'movil' : 'desktop');
     
-    navigate('/dashboard');
+    if (modoMovil) {
+      navigate('/movil');
+    } else {
+      navigate('/dashboard');
+    }
     setLoading(false);
   };
 
@@ -104,6 +117,38 @@ const Auth = () => {
     <div className="auth-wrapper">
       <div className="auth-background-shape"></div>
       <div className="auth-card animate-fade-in" style={{ position: 'relative' }}>
+        {/* Acceso rápido / Botón Modo Móvil */}
+        <button
+          type="button"
+          onClick={() => {
+            const nuevo = !modoMovil;
+            setModoMovil(nuevo);
+            localStorage.setItem('sitc_preferred_view', nuevo ? 'movil' : 'desktop');
+          }}
+          style={{
+            position: 'absolute',
+            top: '16px',
+            right: '16px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            background: modoMovil ? 'rgba(2, 132, 199, 0.12)' : 'rgba(241, 245, 249, 0.8)',
+            border: modoMovil ? '1px solid #38bdf8' : '1px solid #e2e8f0',
+            color: modoMovil ? '#0284c7' : '#64748b',
+            borderRadius: '10px',
+            padding: '6px 10px',
+            fontSize: '0.72rem',
+            fontWeight: '700',
+            cursor: 'pointer',
+            transition: 'all 0.2s ease',
+            boxShadow: modoMovil ? '0 2px 8px rgba(2, 132, 199, 0.2)' : 'none'
+          }}
+          title="Alternar Modo Móvil"
+        >
+          <Smartphone size={14} color={modoMovil ? '#0284c7' : '#64748b'} />
+          <span>{modoMovil ? '📱 Móvil: Activo' : '📱 Modo Móvil'}</span>
+        </button>
+
         {loading && (
           <div className="auth-loading-overlay">
             <div className="auth-loading-content">
@@ -153,8 +198,36 @@ const Auth = () => {
             </div>
           </div>
 
-          <div className="form-options">
-           
+          <div className="form-options" style={{ margin: '8px 0 16px 0' }}>
+            <label
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                cursor: 'pointer',
+                fontSize: '0.8rem',
+                fontWeight: '600',
+                color: modoMovil ? '#0284c7' : '#64748b',
+                userSelect: 'none'
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={modoMovil}
+                onChange={(e) => {
+                  setModoMovil(e.target.checked);
+                  localStorage.setItem('sitc_preferred_view', e.target.checked ? 'movil' : 'desktop');
+                }}
+                style={{
+                  accentColor: '#0284c7',
+                  width: '16px',
+                  height: '16px',
+                  cursor: 'pointer'
+                }}
+              />
+              <Smartphone size={15} color={modoMovil ? '#0284c7' : '#64748b'} />
+              <span>Iniciar directamente en SITC Móvil</span>
+            </label>
           </div>
 
           <button type="submit" className="login-button" disabled={loading}>

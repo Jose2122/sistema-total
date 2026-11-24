@@ -94,8 +94,19 @@ function App() {
       />
 
       <Routes>
-        {/* Si hay sesión, al entrar a "/" te manda al Dashboard automáticamente */}
-        <Route path="/" element={!session ? <Auth /> : <Navigate to="/dashboard" />} />
+        {/* Si hay sesión, al entrar a "/" te manda a Móvil o Dashboard según preferencia o dispositivo */}
+        <Route 
+          path="/" 
+          element={
+            !session ? (
+              <Auth />
+            ) : (
+              (typeof window !== 'undefined' && (localStorage.getItem('sitc_preferred_view') === 'movil' || window.innerWidth <= 768))
+                ? <Navigate to="/movil" />
+                : <Navigate to="/dashboard" />
+            )
+          } 
+        />
 
         {/* Rutas protegidas */}
         <Route path="/dashboard" element={<ProtectedRoute session={session}><Dashboard /></ProtectedRoute>} />
