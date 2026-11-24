@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import MobileRequisiciones from './MobileRequisiciones';
 import MobileTickets from './MobileTickets';
-import { FileText, Ticket, User, Monitor, LogOut, CheckCircle2, Shield, Building2 } from 'lucide-react';
+import { FileText, Ticket, User, Monitor, LogOut, CheckCircle2, Shield, Building2, Smartphone, Download } from 'lucide-react';
+import toast from 'react-hot-toast';
 import './mobile.css';
 
 export default function MobileApp() {
@@ -13,6 +14,47 @@ export default function MobileApp() {
   const [activeTab, setActiveTab] = useState('requisiciones'); // 'requisiciones' | 'tickets' | 'perfil'
   const [pendingReqCount, setPendingReqCount] = useState(0);
   const [pendingTicketCount, setPendingTicketCount] = useState(0);
+  const [deferredPrompt, setDeferredPrompt] = useState(null);
+  const [isInstalled, setIsInstalled] = useState(false);
+  const [isIOS, setIsIOS] = useState(false);
+  const [showIOSInstructions, setShowIOSInstructions] = useState(false);
+
+  useEffect(() => {
+    // Detectar si ya está corriendo instalada (standalone)
+    const isStandalone = (typeof window !== 'undefined' && window.matchMedia('(display-mode: standalone)').matches) || 
+                         (typeof window !== 'undefined' && window.navigator.standalone === true);
+    setIsInstalled(isStandalone);
+
+    // Detectar iOS Safari
+    if (typeof window !== 'undefined') {
+      const ua = window.navigator.userAgent.toLowerCase();
+      setIsIOS(/iphone|ipad|ipod/.test(ua));
+    }
+
+    const handleBeforeInstallPrompt = (e) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    return () => window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+  }, []);
+
+  const handleInstalarApp = async () => {
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      if (outcome === 'accepted') {
+        setIsInstalled(true);
+        toast.success('¡SITC Móvil agregado con éxito!');
+      }
+      setDeferredPrompt(null);
+    } else if (isIOS) {
+      setShowIOSInstructions(true);
+    } else {
+      toast('Toca el menú de tu navegador ⋮ y pulsa "Instalar aplicación" o "Agregar a pantalla principal"', { icon: '📲', duration: 6000 });
+    }
+  };
 
   useEffect(() => {
     const cargarUsuario = async () => {
@@ -72,9 +114,11 @@ export default function MobileApp() {
   if (loadingUser) {
     return (
       <div className="m-app-container" style={{ alignItems: 'center', justifyContent: 'center' }}>
-        <div className="m-brand-badge-icon" style={{ width: '64px', height: '64px', fontSize: '1.6rem', borderRadius: '20px', marginBottom: '16px' }}>
-          TC
-        </div>
+        <img 
+          src="/logo-tc-white.png" 
+          alt="Total Clean" 
+          style={{ height: '48px', width: 'auto', objectFit: 'contain', marginBottom: '16px', filter: 'drop-shadow(0 4px 12px rgba(56, 189, 248, 0.3))' }} 
+        />
         <h2 style={{ fontSize: '1.25rem', fontWeight: 900, color: 'white', margin: '0 0 6px 0', letterSpacing: '-0.02em' }}>
           SITC<span style={{ color: '#38bdf8' }}>.</span> Móvil
         </h2>
@@ -88,7 +132,11 @@ export default function MobileApp() {
       {/* TopBar */}
       <header className="m-topbar">
         <div className="m-brand">
-          <div className="m-brand-badge-icon">TC</div>
+          <img 
+            src="/logo-tc-white.png" 
+            alt="Total Clean" 
+            className="m-brand-logo-img" 
+          />
           <div className="m-brand-title">
             <div className="m-brand-header-row">
               <h1>SITC<span style={{ color: '#38bdf8' }}>.</span></h1>
@@ -183,6 +231,49 @@ export default function MobileApp() {
                   <Building2 size={12} /> {currentUser?.departamento}
                 </span>
               </div>
+            </div>
+
+            {/* Tarjeta de Instalación PWA en Pantalla de Inicio */}
+            <div className="m-card" style={{ background: 'linear-gradient(135deg, rgba(2, 132, 199, 0.15) 0%, rgba(37, 99, 235, 0.1) 100%)', borderColor: 'rgba(56, 189, 248, 0.25)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
+                <div style={{ width: '40px', height: '40px', borderRadius: '12px', backgroundColor: 'rgba(56, 189, 248, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <Smartphone size={22} color="#38bdf8" />
+                </div>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '0.98rem', color: '#ffffff', fontWeight: 800 }}>
+                    {isInstalled ? 'SITC Instalado' : 'Instalar en este Teléfono'}
+                  </h3>
+                  <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>
+                    {isInstalled ? 'Estás disfrutando la versión de pantalla completa' : 'Acceso instantáneo con ícono directo en tu pantalla'}
+                  </span>
+                </div>
+              </div>
+
+              {!isInstalled ? (
+                <>
+                  <button
+                    className="m-btn m-btn-approve"
+                    style={{ minHeight: '44px', fontSize: '0.84rem' }}
+                    onClick={handleInstalarApp}
+                  >
+                    <Download size={16} />
+                    <span>Agregar a Pantalla de Inicio</span>
+                  </button>
+
+                  {showIOSInstructions && (
+                    <div style={{ backgroundColor: 'rgba(0, 0, 0, 0.35)', padding: '10px 12px', borderRadius: '12px', fontSize: '0.78rem', color: '#cbd5e1', lineHeight: '1.45', border: '1px solid rgba(255,255,255,0.08)' }}>
+                      📱 <strong>En iPhone / Safari:</strong><br />
+                      1. Toca el botón <strong>Compartir</strong> (ícono de cuadro con flecha hacia arriba).<br />
+                      2. Desliza hacia abajo y selecciona <strong>"Agregar a pantalla de inicio ＋"</strong>.
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: '#34d399', fontWeight: 700 }}>
+                  <CheckCircle2 size={16} />
+                  <span>Aplicación PWA agregada a tu pantalla de inicio</span>
+                </div>
+              )}
             </div>
 
             {/* Accesos rápidos */}

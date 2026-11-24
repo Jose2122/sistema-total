@@ -2,7 +2,9 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from '../supabaseClient';
 import { consolidarSoportesRequisicion } from '../services/requisicionesService';
 import MobileReqCard from './MobileReqCard';
-import { Search, Filter, Loader2, CheckCircle2, AlertCircle, RefreshCw } from 'lucide-react';
+import PullToRefresh from './PullToRefresh';
+import { vibrateHaptic } from './haptics';
+import { Search, Loader2, CheckCircle2, RefreshCw } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 export default function MobileRequisiciones({ currentUser, onPendingCountChange }) {
@@ -221,6 +223,7 @@ export default function MobileRequisiciones({ currentUser, onPendingCountChange 
         console.warn('Error al notificar:', eNotif);
       }
 
+      vibrateHaptic('success');
       toast.success(`Requisición ${req.correlativo} aprobada con éxito`, { id: toastId });
       await cargarRequisiciones();
     } catch (err) {
@@ -265,6 +268,7 @@ export default function MobileRequisiciones({ currentUser, onPendingCountChange 
         console.warn('Error al notificar:', eNotif);
       }
 
+      vibrateHaptic('reject');
       toast.success(`Requisición ${req.correlativo} rechazada`, { id: toastId });
       await cargarRequisiciones();
     } catch (err) {
@@ -276,8 +280,9 @@ export default function MobileRequisiciones({ currentUser, onPendingCountChange 
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-      {/* Sub-navegación por tabs */}
+    <PullToRefresh onRefresh={cargarRequisiciones}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        {/* Sub-navegación por tabs */}
       <div className="m-subnav">
         <button
           className={`m-pill-btn ${filtroTab === 'por_aprobar' ? 'active' : ''}`}
@@ -370,6 +375,7 @@ export default function MobileRequisiciones({ currentUser, onPendingCountChange 
         </div>
       )}
     </div>
+  </PullToRefresh>
   );
 }
 

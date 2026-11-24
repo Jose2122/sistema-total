@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from '../supabaseClient';
 import MobileTicketCard from './MobileTicketCard';
+import PullToRefresh from './PullToRefresh';
+import { vibrateHaptic } from './haptics';
 import { Search, Loader2, CheckCircle2, RefreshCw } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -168,6 +170,7 @@ export default function MobileTickets({ currentUser, onPendingCountChange }) {
         console.warn('Error al enviar notificaciones de ticket:', errNotif);
       }
 
+      vibrateHaptic('success');
       toast.success(`Ticket ${ticket.codigo_ticket || ticket.codigo_control || ''} aprobado exitosamente`, { id: toastId });
       await cargarTickets();
     } catch (err) {
@@ -215,6 +218,7 @@ export default function MobileTickets({ currentUser, onPendingCountChange }) {
         console.warn('Error al notificar rechazo de ticket:', errNotif);
       }
 
+      vibrateHaptic('reject');
       toast.success(`Ticket ${ticket.codigo_ticket || ticket.codigo_control || ''} rechazado`, { id: toastId });
       await cargarTickets();
     } catch (err) {
@@ -226,8 +230,9 @@ export default function MobileTickets({ currentUser, onPendingCountChange }) {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-      {/* Sub-navegación por tabs */}
+    <PullToRefresh onRefresh={cargarTickets}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        {/* Sub-navegación por tabs */}
       <div className="m-subnav">
         <button
           className={`m-pill-btn ${filtroTab === 'por_aprobar' ? 'active' : ''}`}
@@ -314,6 +319,7 @@ export default function MobileTickets({ currentUser, onPendingCountChange }) {
         </div>
       )}
     </div>
+  </PullToRefresh>
   );
 }
 

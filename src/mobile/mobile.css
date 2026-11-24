@@ -50,7 +50,21 @@
 .m-brand {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
+}
+
+.m-brand-logo-img {
+  height: 38px;
+  width: auto;
+  max-width: 95px;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.45));
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+}
+
+.m-brand-logo-img:active {
+  transform: scale(0.96);
 }
 
 .m-brand-badge-icon {
