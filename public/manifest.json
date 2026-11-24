@@ -1,0 +1,20 @@
+{
+  "name": "SITC Móvil - Total Clean",
+  "short_name": "SITC Móvil",
+  "description": "Gestión y aprobación de requisiciones y tickets de Total Clean",
+  "start_url": "/movil",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#090d16",
+  "theme_color": "#0284c7",
+  "icons": [
+    {
+      "src": "/logo.png",
+      "sizes": "192x192 512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
+

@@ -9,6 +9,7 @@ import Almacen from './Almacen';
 
 import AdminAnalytics from './AdminAnalytics';
 import ProtectedRoute from './ProtectedRoute';
+import MobileApp from './mobile/MobileApp';
 
 function App() {
   const [session, setSession] = useState(null);
@@ -98,6 +99,8 @@ function App() {
 
         {/* Rutas protegidas */}
         <Route path="/dashboard" element={<ProtectedRoute session={session}><Dashboard /></ProtectedRoute>} />
+        <Route path="/movil" element={<ProtectedRoute session={session}><MobileApp /></ProtectedRoute>} />
+        <Route path="/m" element={<Navigate to="/movil" replace />} />
         <Route path="/SolicitudFondos" element={<ProtectedRoute session={session}><SolicitudFondos session={session} /></ProtectedRoute>} />
         <Route path="/almacen" element={<ProtectedRoute session={session}><Almacen /></ProtectedRoute>} />
         <Route path="/admin/analytics" element={<ProtectedRoute session={session}><AdminAnalytics /></ProtectedRoute>} />

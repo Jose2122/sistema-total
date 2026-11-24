@@ -24,7 +24,7 @@ import ControlPrecios from './ControlPrecios';
 import LiquidacionFacturas from './LiquidacionFacturas';
 import AsistenteAyuda from './components/AsistenteAyuda';
 import ModalNovedades from './components/ModalNovedades';
-import { Menu, X as CloseIcon, Search, Cloud, Sun, ChevronDown, Power, LayoutDashboard, BarChartBig, Gauge } from 'lucide-react';
+import { Menu, X as CloseIcon, Search, Cloud, Sun, ChevronDown, Power, LayoutDashboard, BarChartBig, Gauge, Smartphone } from 'lucide-react';
 
 function Dashboard() {
   const navigate = useNavigate();
@@ -397,10 +397,10 @@ function Dashboard() {
         const dosDiasAtras = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
 
         try {
-          // 1. Errores de Sistema Recientes
+          // 1. Errores de Sistema Recientes (usar 'id' en vez de '*' para menor lectura)
           const { count: errCount } = await supabase
             .from('system_errors')
-            .select('*', { count: 'exact', head: true })
+            .select('id', { count: 'exact', head: true })
             .gt('created_at', unDiaAtras);
 
           if (errCount && errCount > 0) {
@@ -416,7 +416,8 @@ function Dashboard() {
           // 2. Incumplimiento de SLA (Requisición en Espera / Pendiente por más de 48h)
           const { count: slaCount } = await supabase
             .from('requisiciones')
-            .select('*', { count: 'exact', head: true })
+            .select('id', { count: 'exact', head: true })
+            .neq('correlativo_req', 'SYS-PROVEEDORES-CENTRAL')
             .or('estado_aprobacion.ilike.pendiente%,estado_aprobacion.eq.En Espera')
             .lt('created_at', dosDiasAtras);
 
@@ -433,7 +434,7 @@ function Dashboard() {
           // 3. Intentos de inicio fallidos (Seguridad)
           const { count: authFailCount } = await supabase
             .from('user_auth_logs')
-            .select('*', { count: 'exact', head: true })
+            .select('id', { count: 'exact', head: true })
             .eq('exitoso', false)
             .gt('created_at', unDiaAtras);
 
@@ -456,7 +457,7 @@ function Dashboard() {
       }
     };
     fetchNotificaciones();
-  }, [usuario?.id, usuario?.rol, usuario?.correo, usuario?.email]);
+  }, [usuario?.id]);
 
   // --- REALTIME NOTIFICATIONS ---
   useEffect(() => {
@@ -881,7 +882,30 @@ function Dashboard() {
         </div>
 
         {/* LADO DERECHO: Utilidades */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          {/* Botón directo a SITC Móvil */}
+          <button
+            onClick={() => navigate('/movil')}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              background: 'rgba(14, 165, 233, 0.15)',
+              color: '#38bdf8',
+              border: '1px solid rgba(14, 165, 233, 0.35)',
+              borderRadius: '10px',
+              padding: '5px 10px',
+              fontSize: '0.72rem',
+              fontWeight: '700',
+              cursor: 'pointer',
+              transition: 'all 0.2s ease'
+            }}
+            title="Abrir SITC Móvil para teléfonos"
+          >
+            <Smartphone size={14} />
+            <span>{isMobile ? 'Móvil' : 'SITC Móvil'}</span>
+          </button>
+
           {/* Indicador de Nube/Sincronización */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.65rem', fontWeight: '700', color: '#60a5fa', letterSpacing: '0.5px' }} title="Conectado a Supabase">
             <Cloud size={14} />
@@ -1043,6 +1067,15 @@ function Dashboard() {
                    </div>
  
                    <div 
+                    className="user-dropdown-item"
+                    onClick={() => navigate('/movil')}
+                    style={{ color: '#0284c7', cursor: 'pointer', padding: '8px', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.8rem', fontWeight: '600', borderBottom: '1px solid #f1f5f9' }}
+                  >
+                    <Smartphone size={16} />
+                    <span>Ir a SITC Móvil</span>
+                  </div>
+
+                  <div 
                      className="user-dropdown-item"
                      onClick={cerrarSesion}
                      style={{ color: '#ef4444', cursor: 'pointer', padding: '8px', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.8rem', fontWeight: '600' }}
