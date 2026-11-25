@@ -43,11 +43,16 @@ export default function MobileTickets({ currentUser, onPendingCountChange }) {
 
   // Verificar si un ticket requiere mi aprobación
   const requiereMiAprobacion = useCallback((ticket) => {
-    const statusLower = (ticket.status || '').toLowerCase();
-    const esPendiente = statusLower === 'pendiente aprobación' || statusLower === 'por aprobar';
+    const statusLower = (ticket.status || '').toLowerCase().trim();
+    const esPendiente = statusLower === 'pendiente aprobación' ||
+                        statusLower === 'pendiente aprobacion' ||
+                        statusLower === 'por aprobar' ||
+                        statusLower.includes('pendiente');
     if (!esPendiente) return false;
 
-    const esSolicitante = ticket.usuario_id === currentUser?.id || ticket.solicitante === `${currentUser?.nombre} ${currentUser?.apellido}`.trim();
+    const solNombre = (ticket.solicitante || ticket.gerente_nombre || '').toLowerCase();
+    const miNombre = `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim().toLowerCase();
+    const esSolicitante = ticket.usuario_id === currentUser?.id || (miNombre && solNombre.includes(miNombre));
     if (esSolicitante && !esAdmin) return false;
 
     if (esAdmin) return true;
@@ -81,7 +86,9 @@ export default function MobileTickets({ currentUser, onPendingCountChange }) {
       if (filtroTab === 'por_aprobar') {
         if (!requiereMiAprobacion(t)) return false;
       } else if (filtroTab === 'mis_tickets') {
-        const esMio = t.usuario_id === currentUser?.id || (t.solicitante || '').toLowerCase().includes((currentUser?.nombre || '').toLowerCase());
+        const sol = (t.solicitante || t.gerente_nombre || '').toLowerCase();
+        const miNombre = (currentUser?.nombre || '').toLowerCase();
+        const esMio = t.usuario_id === currentUser?.id || (miNombre && sol.includes(miNombre));
         if (!esMio) return false;
       } else if (filtroTab === 'emitidos') {
         const s = (t.status || '').toLowerCase();
@@ -93,11 +100,19 @@ export default function MobileTickets({ currentUser, onPendingCountChange }) {
         const query = busqueda.toLowerCase().trim();
         const cod = (t.codigo_ticket || t.codigo_control || '').toLowerCase();
         const prov = (t.proveedor_nombre || t.beneficiario || '').toLowerCase();
-        const sol = (t.solicitante || '').toLowerCase();
+        const sol = (t.solicitante || t.gerente_nombre || '').toLowerCase();
         const just = (t.justificacion || '').toLowerCase();
         const cc = (t.centro_costo || t.departamento || '').toLowerCase();
 
-        if (!cod.includes(query) && !prov.includes(query) && !sol.includes(query) && !just.includes(query) && !cc.includes(query)) {
+        let itemsArray = t.items || t.detalles || [];
+        if (typeof itemsArray === 'string') {
+          try { itemsArray = JSON.parse(itemsArray); } catch { itemsArray = []; }
+        }
+        const matchItems = Array.isArray(itemsArray) && itemsArray.some(it => 
+          (it.descripcion || it.concepto || it.desc || '').toLowerCase().includes(query)
+        );
+
+        if (!cod.includes(query) && !prov.includes(query) && !sol.includes(query) && !just.includes(query) && !cc.includes(query) && !matchItems) {
           return false;
         }
       }

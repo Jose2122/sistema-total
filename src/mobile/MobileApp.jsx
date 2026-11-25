@@ -115,7 +115,7 @@ export default function MobileApp() {
     return (
       <div className="m-app-container" style={{ alignItems: 'center', justifyContent: 'center' }}>
         <img 
-          src="/logo-tc-white.png" 
+          src="/logo-tc-white-v2.png" 
           alt="Total Clean" 
           style={{ height: '48px', width: 'auto', objectFit: 'contain', marginBottom: '16px', filter: 'drop-shadow(0 4px 12px rgba(56, 189, 248, 0.3))' }} 
         />
@@ -133,7 +133,7 @@ export default function MobileApp() {
       <header className="m-topbar">
         <div className="m-brand">
           <img 
-            src="/logo-tc-white.png" 
+            src="/logo-tc-white-v2.png" 
             alt="Total Clean" 
             className="m-brand-logo-img" 
           />

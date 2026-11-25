@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { ChevronDown, ChevronUp, FileText, CheckCircle2, XCircle, Clock, Calendar } from 'lucide-react';
 import MobileSoportesModal from './MobileSoportesModal';
 
@@ -8,37 +8,61 @@ export default function MobileTicketCard({ ticket, currentUser, onAprobar, onRec
   const [modalRechazo, setModalRechazo] = useState(false);
   const [motivoRechazo, setMotivoRechazo] = useState('');
 
-  // Desglose de partidas o conceptos
-  const items = Array.isArray(ticket.detalles)
-    ? ticket.detalles
-    : (Array.isArray(ticket.items) ? ticket.items : []);
+  // Desglose de partidas o conceptos (compatible con JSON string o Array)
+  const items = useMemo(() => {
+    let raw = ticket.items || ticket.detalles || [];
+    if (typeof raw === 'string') {
+      try {
+        raw = JSON.parse(raw);
+        if (typeof raw === 'string') raw = JSON.parse(raw);
+      } catch {
+        raw = [];
+      }
+    }
+    return Array.isArray(raw) ? raw : [];
+  }, [ticket.items, ticket.detalles]);
 
-  // Extraer soportes / comprobantes
-  const extraerSoportes = () => {
-    const raw = ticket.factura_url || ticket.comprobante_url || ticket.soporte_url || [];
-    const list = Array.isArray(raw) ? raw : [raw];
-    return list.map((item, idx) => {
-      if (!item) return null;
-      if (typeof item === 'string') {
-        const tr = item.trim();
-        if (tr.startsWith('{')) {
+  // Extraer soportes / comprobantes de manera exhaustiva y recursiva
+  const soportes = useMemo(() => {
+    const list = [];
+    const extract = (val, defaultName) => {
+      if (!val) return;
+      if (Array.isArray(val)) {
+        val.forEach((v, i) => extract(v, `${defaultName} #${i + 1}`));
+      } else if (typeof val === 'string') {
+        const tr = val.trim();
+        if (tr.startsWith('[') || tr.startsWith('{')) {
           try {
-            const parsed = JSON.parse(tr);
-            return { url: parsed.url, nombre: parsed.name || parsed.etiqueta || `Soporte #${idx + 1}` };
+            extract(JSON.parse(tr), defaultName);
           } catch {
-            return { url: tr, nombre: `Soporte #${idx + 1}` };
+            list.push({ url: tr, nombre: defaultName });
           }
+        } else if (tr.startsWith('http://') || tr.startsWith('https://')) {
+          list.push({ url: tr, nombre: defaultName });
         }
-        return { url: tr, nombre: `Soporte #${idx + 1}` };
+      } else if (typeof val === 'object' && val !== null) {
+        if (val.url) {
+          list.push({ url: val.url, nombre: val.name || val.etiqueta || defaultName });
+        }
       }
-      if (typeof item === 'object' && item.url) {
-        return { url: item.url, nombre: item.name || item.etiqueta || `Soporte #${idx + 1}` };
-      }
-      return null;
-    }).filter(Boolean);
-  };
+    };
 
-  const soportes = extraerSoportes();
+    extract(ticket.factura_url, 'Comprobante');
+    extract(ticket.comprobante_url, 'Comprobante');
+    extract(ticket.soporte_url, 'Soporte');
+
+    items.forEach((it, idx) => {
+      if (it.soporte_url) extract(it.soporte_url, `Partida #${idx + 1}`);
+      if (it.soportes) extract(it.soportes, `Partida #${idx + 1}`);
+    });
+
+    const seen = new Set();
+    return list.filter(s => {
+      if (!s.url || seen.has(s.url)) return false;
+      seen.add(s.url);
+      return true;
+    });
+  }, [ticket.factura_url, ticket.comprobante_url, ticket.soporte_url, items]);
 
   // Permisos de aprobación
   const rolUpper = (currentUser?.rol || '').toUpperCase();
@@ -51,10 +75,18 @@ export default function MobileTicketCard({ ticket, currentUser, onAprobar, onRec
   const coincideObra = ticket.centro_costo && obrasAsignadas.some(o => o.toLowerCase().trim() === (ticket.centro_costo || '').toLowerCase().trim());
   const sinAprobadorAsignado = !ticket.aprobador_id;
 
-  const esSolicitante = ticket.usuario_id === currentUser?.id || ticket.solicitante === `${currentUser?.nombre} ${currentUser?.apellido}`.trim();
+  const solNombre = (ticket.solicitante || ticket.gerente_nombre || '').toLowerCase();
+  const miNombre = `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim().toLowerCase();
+  const esSolicitante = ticket.usuario_id === currentUser?.id || (miNombre && solNombre.includes(miNombre));
 
-  const puedeAprobar = (ticket.status === 'Pendiente Aprobación' || ticket.status === 'Por Aprobar') &&
-    !esSolicitante &&
+  const statusNorm = (ticket.status || '').toLowerCase().trim();
+  const esPendiente = statusNorm === 'pendiente aprobación' ||
+                      statusNorm === 'pendiente aprobacion' ||
+                      statusNorm === 'por aprobar' ||
+                      statusNorm.includes('pendiente');
+
+  const puedeAprobar = esPendiente &&
+    (!esSolicitante || esAdmin) &&
     (esAdmin || (esGerente && (esAprobadorAsignado || coincideDepto || coincideObra || sinAprobadorAsignado)));
 
   const handleConfirmarRechazo = () => {
@@ -68,24 +100,33 @@ export default function MobileTicketCard({ ticket, currentUser, onAprobar, onRec
   };
 
   const getStatusBadge = () => {
-    const est = (ticket.status || '').toLowerCase();
+    const est = (ticket.status || '').toLowerCase().trim();
     if (est === 'emitido' || est === 'aprobado') {
       return <span className="m-status-pill m-status-info"><CheckCircle2 size={12} /> Emitido</span>;
     }
     if (est === 'pagado') {
       return <span className="m-status-pill m-status-success"><CheckCircle2 size={12} /> Pagado</span>;
     }
+    if (est === 'parcial') {
+      return <span className="m-status-pill m-status-info"><Clock size={12} /> Parcial</span>;
+    }
     if (est.includes('pendiente') || est.includes('aprobar')) {
       return <span className="m-status-pill m-status-warning"><Clock size={12} /> Por Aprobar</span>;
     }
-    if (est === 'rechazado' || est === 'anulado') {
+    if (est.includes('rechazado') || est.includes('anulado')) {
       return <span className="m-status-pill m-status-danger"><XCircle size={12} /> {ticket.status}</span>;
     }
-    return <span className="m-status-pill m-status-info">{ticket.status}</span>;
+    return <span className="m-status-pill m-status-info">{ticket.status || 'N/A'}</span>;
   };
 
-  const montoTotalUSD = parseFloat(ticket.monto_total || ticket.monto || 0);
+  // Monto compatible con total_usd, monto_total y monto
+  const montoTotalUSD = parseFloat(ticket.total_usd ?? ticket.monto_total ?? ticket.monto ?? 0);
   const montoBS = parseFloat(ticket.monto_bs || 0);
+
+  const codigoVisual = ticket.codigo_control || ticket.codigo_ticket || `TK-#${ticket.id}`;
+  const proveedorVisual = ticket.proveedor_nombre || ticket.beneficiario || 'Gasto / Solicitud Directa';
+  const solicitanteVisual = ticket.solicitante || ticket.gerente_nombre || 'Usuario';
+  const areaVisual = ticket.centro_costo || ticket.departamento || '';
 
   return (
     <>
@@ -94,23 +135,23 @@ export default function MobileTicketCard({ ticket, currentUser, onAprobar, onRec
         <div className="m-card-compact-row" onClick={() => setExpandido(!expandido)}>
           <div className="m-card-header">
             <div className="m-card-id-row">
-              <span className="m-card-id">{ticket.codigo_ticket || ticket.codigo_control || `TK-#${ticket.id}`}</span>
+              <span className="m-card-id">{codigoVisual}</span>
               <span className="m-card-date">
                 <Calendar size={12} color="#64748b" />
-                {ticket.created_at || ticket.fecha ? new Date(ticket.created_at || ticket.fecha).toLocaleDateString('es-VE') : 'Sin fecha'}
+                {ticket.created_at || ticket.fecha_emision || ticket.fecha ? new Date(ticket.created_at || ticket.fecha_emision || ticket.fecha).toLocaleDateString('es-VE') : 'Sin fecha'}
               </span>
             </div>
             <div>{getStatusBadge()}</div>
           </div>
 
           <div className="m-compact-meta">
-            <span className="m-compact-user" style={{ color: '#38bdf8' }}>{ticket.proveedor_nombre || ticket.beneficiario || 'Beneficiario'}</span>
+            <span className="m-compact-user" style={{ color: '#38bdf8' }}>{proveedorVisual}</span>
             <span className="m-compact-dot">•</span>
-            <span className="m-compact-dept">{ticket.solicitante || 'Usuario'}</span>
-            {(ticket.centro_costo || ticket.departamento) && (
+            <span className="m-compact-dept">{solicitanteVisual}</span>
+            {areaVisual && (
               <>
                 <span className="m-compact-dot">•</span>
-                <span className="m-compact-cc">{ticket.centro_costo || ticket.departamento}</span>
+                <span className="m-compact-cc">{areaVisual}</span>
               </>
             )}
           </div>
@@ -174,19 +215,23 @@ export default function MobileTicketCard({ ticket, currentUser, onAprobar, onRec
                 </div>
 
                 <div className="m-items-list">
-                  {items.map((it, idx) => (
-                    <div key={idx} className="m-item-card">
-                      <div className="m-item-card-left">
-                        <span className="m-item-number">#{idx + 1}</span>
-                        <span className="m-item-desc">{it.descripcion || it.concepto || `Partida #${idx + 1}`}</span>
+                  {items.map((it, idx) => {
+                    const desc = it.descripcion || it.concepto || it.desc || it.nombre || `Partida #${idx + 1}`;
+                    const montoPartida = parseFloat(it.monto || it.total || it.subtotal || ((it.cant && it.pu) ? (it.cant * it.pu) : 0));
+                    return (
+                      <div key={idx} className="m-item-card">
+                        <div className="m-item-card-left">
+                          <span className="m-item-number">#{idx + 1}</span>
+                          <span className="m-item-desc">{desc}</span>
+                        </div>
+                        <div className="m-item-card-right">
+                          <span className="m-item-qty-badge" style={{ color: '#10b981', borderColor: 'rgba(16, 185, 129, 0.3)', background: 'rgba(16, 185, 129, 0.15)' }}>
+                            ${montoPartida.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>
+                        </div>
                       </div>
-                      <div className="m-item-card-right">
-                        <span className="m-item-qty-badge" style={{ color: '#10b981', borderColor: 'rgba(16, 185, 129, 0.3)', background: 'rgba(16, 185, 129, 0.15)' }}>
-                          ${(parseFloat(it.monto || it.subtotal || 0)).toLocaleString('es-VE', { minimumFractionDigits: 2 })}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -230,7 +275,7 @@ export default function MobileTicketCard({ ticket, currentUser, onAprobar, onRec
         isOpen={modalSoportes}
         onClose={() => setModalSoportes(false)}
         soportes={soportes}
-        titulo={`Comprobantes: ${ticket.codigo_ticket || ticket.codigo_control || ''}`}
+        titulo={`Comprobantes: ${codigoVisual}`}
       />
 
       {/* Modal para ingresar motivo de rechazo */}
