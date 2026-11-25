@@ -2,7 +2,6 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from '../supabaseClient';
 import { consolidarSoportesRequisicion } from '../services/requisicionesService';
 import MobileReqCard from './MobileReqCard';
-import PullToRefresh from './PullToRefresh';
 import { vibrateHaptic } from './haptics';
 import { Search, Loader2, CheckCircle2, RefreshCw } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -280,9 +279,8 @@ export default function MobileRequisiciones({ currentUser, onPendingCountChange 
   };
 
   return (
-    <PullToRefresh onRefresh={cargarRequisiciones}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-        {/* Sub-navegación por tabs */}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+      {/* Sub-navegación por tabs */}
       <div className="m-subnav">
         <button
           className={`m-pill-btn ${filtroTab === 'por_aprobar' ? 'active' : ''}`}
@@ -375,7 +373,6 @@ export default function MobileRequisiciones({ currentUser, onPendingCountChange 
         </div>
       )}
     </div>
-  </PullToRefresh>
   );
 }
 
