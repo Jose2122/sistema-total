@@ -65,9 +65,9 @@ html, body {
 }
 
 .m-brand-logo-img {
-  height: 38px;
+  height: 42px;
   width: auto;
-  max-width: 95px;
+  max-width: 105px;
   object-fit: contain;
   filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.45));
   flex-shrink: 0;
