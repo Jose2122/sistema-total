@@ -817,6 +817,10 @@ const ModuloTicketsPago = () => {
     const pagados = list.filter(t => t.status === 'Pagado').length;
     const pendientes = list.filter(t => t.status !== 'Pagado' && t.status !== 'Rechazado' && t.status !== 'ANULADO' && t.status !== 'Pendiente Aprobación').length;
     const rolUpper = (currentUser?.rol || '').toUpperCase();
+    const deptoUpper = (currentUser?.departamento || '').toUpperCase();
+    const nombreLower = (currentUser?.nombre || '').toLowerCase();
+    const emailLower = (currentUser?.correo || currentUser?.email || '').toLowerCase();
+
     const esGerentePara = (
       rolUpper.includes('GERENTE') ||
       rolUpper.includes('COORDINADOR') ||
@@ -824,10 +828,19 @@ const ModuloTicketsPago = () => {
       rolUpper.includes('PROYECTO') ||
       rolUpper.includes('ÁREA') ||
       rolUpper.includes('AREA') ||
+      rolUpper.includes('JEFE') ||
+      rolUpper.includes('LIDER') ||
+      rolUpper.includes('LÍDER') ||
+      rolUpper.includes('CONTABIL') ||
+      deptoUpper.includes('CONTABIL') ||
+      deptoUpper.includes('ADMINISTRA') ||
+      nombreLower.includes('jorge') ||
       rolUpper.includes('ADMIN') ||
       currentUser?.esSuperAdmin ||
       currentUser?.esAdminReal ||
-      currentUser?.esAdminGlobal
+      currentUser?.esAdminGlobal ||
+      emailLower.includes('cvega') ||
+      emailLower.includes('jcontreras')
     );
     const obrasUsuario = [
       ...(currentUser?.obras_asignadas || []),
@@ -835,23 +848,38 @@ const ModuloTicketsPago = () => {
     ].map(o => String(o).toUpperCase().trim());
 
     const userDeptoNorm = (currentUser?.departamento || '').toLowerCase().trim();
+    const nombreMatchUser = (currentUser?.nombre || '').split(' ')[0].toLowerCase();
 
     const porAprobar = list.filter(t => {
-      if (t.status !== 'Pendiente Aprobación') return false;
-      if (currentUser?.esAdminReal || currentUser?.esSuperAdmin || currentUser?.esAdminGlobal) return true;
-      if (t.aprobador_id && t.aprobador_id === currentUser?.id) return true;
+      const statusLower = (t.status || '').toLowerCase().trim();
+      const esPendiente = statusLower.includes('pendiente') || statusLower.includes('por aprobar');
+      if (!esPendiente) return false;
+
+      const esAdmin = currentUser?.esAdminReal || currentUser?.esSuperAdmin || currentUser?.esAdminGlobal;
+      if (esAdmin) return true;
+
+      // Solicitante no puede auto-aprobarse salvo que sea Admin
+      const esSolicitante = t.usuario_id === currentUser?.id;
+      if (esSolicitante && !esAdmin) return false;
+
       if (!esGerentePara) return false;
 
-      // Si no tiene aprobador_id o está en su departamento/obra:
+      const esAprobadorAsignado = t.aprobador_id && t.aprobador_id === currentUser?.id;
+      const esSuGerenteAsignado = t.gerente_nombre && nombreMatchUser && t.gerente_nombre.toLowerCase().includes(nombreMatchUser);
+
       const ticketDeptoNorm = (t.departamento || '').toLowerCase().trim();
       const coincideDepto = userDeptoNorm && ticketDeptoNorm && (
-        userDeptoNorm.includes(ticketDeptoNorm) || ticketDeptoNorm.includes(userDeptoNorm)
+        userDeptoNorm.includes(ticketDeptoNorm) || 
+        ticketDeptoNorm.includes(userDeptoNorm) ||
+        (userDeptoNorm.includes('contabil') && ticketDeptoNorm.includes('contabil')) ||
+        (userDeptoNorm.includes('administra') && ticketDeptoNorm.includes('administra'))
       );
 
       const ticketCcNorm = String(t.centro_costo || '').toUpperCase().trim();
       const coincideObra = ticketCcNorm && obrasUsuario.includes(ticketCcNorm);
+      const sinAprobadorAsignado = !t.aprobador_id;
 
-      if (coincideDepto || coincideObra || !t.aprobador_id) return true;
+      if (esAprobadorAsignado || esSuGerenteAsignado || coincideDepto || coincideObra || sinAprobadorAsignado) return true;
       return false;
     }).length;
     const anuladosRechazados = list.filter(t => (t.status || '').toLowerCase() === 'anulado' || (t.status || '').toLowerCase() === 'rechazado').length;
@@ -863,6 +891,10 @@ const ModuloTicketsPago = () => {
   const esGerente = useMemo(() => {
     if (!currentUser) return false;
     const rolUpper = (currentUser.rol || '').toUpperCase();
+    const deptoUpper = (currentUser.departamento || '').toUpperCase();
+    const nombreLower = (currentUser.nombre || '').toLowerCase();
+    const emailLower = (currentUser.correo || currentUser.email || '').toLowerCase();
+
     return (
       rolUpper.includes('GERENTE') ||
       rolUpper.includes('COORDINADOR') ||
@@ -870,10 +902,19 @@ const ModuloTicketsPago = () => {
       rolUpper.includes('PROYECTO') ||
       rolUpper.includes('ÁREA') ||
       rolUpper.includes('AREA') ||
+      rolUpper.includes('JEFE') ||
+      rolUpper.includes('LIDER') ||
+      rolUpper.includes('LÍDER') ||
+      rolUpper.includes('CONTABIL') ||
+      deptoUpper.includes('CONTABIL') ||
+      deptoUpper.includes('ADMINISTRA') ||
+      nombreLower.includes('jorge') ||
       rolUpper.includes('ADMIN') ||
       currentUser?.esSuperAdmin ||
       currentUser?.esAdminReal ||
-      currentUser?.esAdminGlobal
+      currentUser?.esAdminGlobal ||
+      emailLower.includes('cvega') ||
+      emailLower.includes('jcontreras')
     );
   }, [currentUser]);
 
@@ -954,8 +995,21 @@ const ModuloTicketsPago = () => {
         if (esSuperAdminOGerenteGeneral) {
           // Super Admins y Gerente General ven todos los tickets sin restricción
         } else if (esAdminOrContabil) {
-          // Cajeros / Ejecutores de Pago: Ven aprobados/parciales/pagados + propios + por aprobar asignados
-          query = query.or(`status.in.("EMITIDO","Parcial","Pagado"),usuario_id.eq.${userIdMatch},gerente_nombre.ilike.%${nombreMatch}%`);
+          // Cajeros / Ejecutores de Pago / Contabilidad:
+          // Ven emitidos/parciales/pagados + tickets donde son solicitante o gerente o aprobador + tickets de su departamento + pendientes de aprobación
+          const deptoMatch = activeUser.departamento || '';
+          let orFiltrosContabil = [
+            'status.in.("EMITIDO","Parcial","Pagado")',
+            `usuario_id.eq.${userIdMatch}`,
+            `gerente_nombre.ilike.%${nombreMatch}%`,
+            `aprobador_id.eq.${userIdMatch}`,
+            'status.ilike.%pendiente%',
+            'status.ilike.%aproba%'
+          ];
+          if (deptoMatch) {
+            orFiltrosContabil.push(`departamento.ilike.%${deptoMatch}%`);
+          }
+          query = query.or(orFiltrosContabil.join(','));
         } else if (!tieneVisibilidadGlobal) {
           const deptoMatch = activeUser.departamento || '';
 
@@ -977,18 +1031,17 @@ const ModuloTicketsPago = () => {
             if (obrasFiltro) orQ += `,${obrasFiltro}`;
             query = query.or(orQ);
 
-          } else if (rolUserLower.includes('gerente') || rolUserLower.includes('coordinador')) {
-            // 2. GERENTES DE ÁREA/PROYECTO: Ven su DEPARTAMENTO + OBRAS ASIGNADAS
-            let orFiltros = [];
+          } else if (rolUserLower.includes('gerente') || rolUserLower.includes('coordinador') || rolUserLower.includes('jefe') || rolUserLower.includes('director') || rolUserLower.includes('lider') || rolUserLower.includes('líder') || (activeUser.nombre || '').toLowerCase().includes('jorge')) {
+            // 2. GERENTES DE ÁREA/PROYECTO: Ven su DEPARTAMENTO + OBRAS ASIGNADAS + ASIGNADOS
+            let orFiltros = [
+              `usuario_id.eq.${userIdMatch}`,
+              `gerente_nombre.ilike.%${nombreMatch}%`,
+              `aprobador_id.eq.${userIdMatch}`
+            ];
             if (deptoMatch) orFiltros.push(`departamento.ilike.%${deptoMatch}%`);
             if (obrasFiltro) orFiltros.push(obrasFiltro);
 
-            if (orFiltros.length > 0) {
-              query = query.or(orFiltros.join(','));
-            } else {
-              // Seguridad de respaldo
-              query = query.or(`usuario_id.eq.${userIdMatch},gerente_nombre.ilike.%${nombreMatch}%`);
-            }
+            query = query.or(orFiltros.join(','));
           } else {
             // Otros roles: Ven sus propios
             query = query.or(`usuario_id.eq.${userIdMatch},gerente_nombre.ilike.%${nombreMatch}%`);
@@ -2599,14 +2652,18 @@ const ModuloTicketsPago = () => {
       const bMatch = (t.codigo_control || '').toLowerCase().includes(qs) ||
         (t.gerente_nombre || '').toLowerCase().includes(qs) ||
         (t.departamento || '').toLowerCase().includes(qs);
+      const statusLower = (t.status || '').toLowerCase().trim();
+      const filtroLower = filtroStatus.toLowerCase().trim();
       const sMatch = filtroStatus !== 'Todos'
         ? (filtroStatus === 'anulados_rechazados'
-            ? ((t.status || '').toLowerCase() === 'anulado' || (t.status || '').toLowerCase() === 'rechazado')
-            : (filtroStatus.toLowerCase() === 'emitido' || filtroStatus.toLowerCase() === 'pendiente')
-                ? ((t.status || '').toLowerCase() === 'emitido' || (t.status || '').toLowerCase() === 'parcial')
-                : (filtroStatus.toLowerCase() === 'pagado' || filtroStatus.toLowerCase() === 'completado')
-                    ? ((t.status || '').toLowerCase() === 'pagado' || (t.status || '').toLowerCase() === 'completado' || (t.status || '').toLowerCase() === 'liquidado')
-                    : (t.status || 'Emitido').toLowerCase() === filtroStatus.toLowerCase()
+            ? (statusLower === 'anulado' || statusLower === 'rechazado')
+            : (filtroLower === 'emitido' || filtroLower === 'pendiente')
+                ? (statusLower === 'emitido' || statusLower === 'parcial')
+                : (filtroLower === 'pagado' || filtroLower === 'completado')
+                    ? (statusLower === 'pagado' || statusLower === 'completado' || statusLower === 'liquidado')
+                    : filtroLower.includes('aprob')
+                        ? (statusLower.includes('aprob') || statusLower.includes('por aprobar') || statusLower === 'pendiente')
+                        : statusLower === filtroLower
           )
         : true;
       const gMatch = filtroGerencia !== 'Todos' ? t.departamento === filtroGerencia : true;
@@ -5446,13 +5503,21 @@ const ModuloTicketsPago = () => {
             <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
               {/* Botones de Aprobación/Rechazo de Gerencia */}
               {(() => {
-                const statusOk = (ticketSeleccionado?.status || '').toLowerCase().includes('pendiente aprobaci');
+                const statusLower = (ticketSeleccionado?.status || '').toLowerCase().trim();
+                const statusOk = statusLower.includes('pendiente') || statusLower.includes('por aprobar');
                 if (!statusOk) return null;
+
+                const esAdmin = currentUser?.esAdminReal || currentUser?.esSuperAdmin || currentUser?.esAdminGlobal;
+                const esSolicitante = ticketSeleccionado?.usuario_id === currentUser?.id;
+                if (esSolicitante && !esAdmin) return null;
 
                 const userDeptoNorm = (currentUser?.departamento || '').toLowerCase().trim();
                 const ticketDeptoNorm = (ticketSeleccionado?.departamento || '').toLowerCase().trim();
                 const coincideDepto = userDeptoNorm && ticketDeptoNorm && (
-                  userDeptoNorm.includes(ticketDeptoNorm) || ticketDeptoNorm.includes(userDeptoNorm)
+                  userDeptoNorm.includes(ticketDeptoNorm) || 
+                  ticketDeptoNorm.includes(userDeptoNorm) ||
+                  (userDeptoNorm.includes('contabil') && ticketDeptoNorm.includes('contabil')) ||
+                  (userDeptoNorm.includes('administra') && ticketDeptoNorm.includes('administra'))
                 );
 
                 const obrasUsuario = [
@@ -5462,11 +5527,13 @@ const ModuloTicketsPago = () => {
                 const ticketCcNorm = String(ticketSeleccionado?.centro_costo || '').toUpperCase().trim();
                 const coincideObra = ticketCcNorm && obrasUsuario.includes(ticketCcNorm);
 
+                const nombreMatchUser = (currentUser?.nombre || '').split(' ')[0].toLowerCase();
+                const esSuGerenteAsignado = ticketSeleccionado?.gerente_nombre && nombreMatchUser && ticketSeleccionado.gerente_nombre.toLowerCase().includes(nombreMatchUser);
+
                 const esAprobadorAsignado = ticketSeleccionado?.aprobador_id === currentUser?.id;
                 const sinAprobadorAsignado = !ticketSeleccionado?.aprobador_id;
-                const esAdmin = currentUser?.esAdminReal || currentUser?.esSuperAdmin || currentUser?.esAdminGlobal;
 
-                const puedeAprobar = esAdmin || (esGerente && (esAprobadorAsignado || coincideDepto || coincideObra || sinAprobadorAsignado));
+                const puedeAprobar = esAdmin || (esGerente && (esAprobadorAsignado || esSuGerenteAsignado || coincideDepto || coincideObra || sinAprobadorAsignado));
 
                 if (!puedeAprobar) return null;
 

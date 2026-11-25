@@ -13,8 +13,29 @@ export default function MobileTickets({ currentUser, onPendingCountChange }) {
   const [busqueda, setBusqueda] = useState('');
 
   const rolUpper = (currentUser?.rol || '').toUpperCase();
-  const esAdmin = currentUser?.esAdminReal || currentUser?.esSuperAdmin || currentUser?.esAdminGlobal || rolUpper.includes('ADMIN') || rolUpper.includes('GERENTE GENERAL') || (currentUser?.correo || '').toLowerCase().includes('cvega');
-  const esGerente = esAdmin || rolUpper.includes('GERENTE') || rolUpper.includes('DIRECTOR') || rolUpper.includes('COORDINADOR');
+  const deptoUpper = (currentUser?.departamento || '').toUpperCase();
+  const emailLower = (currentUser?.correo || currentUser?.email || '').toLowerCase();
+  const nombreLower = (currentUser?.nombre || '').toLowerCase();
+
+  const esAdmin = currentUser?.esAdminReal || 
+                  currentUser?.esSuperAdmin || 
+                  currentUser?.esAdminGlobal || 
+                  rolUpper.includes('ADMIN') || 
+                  rolUpper.includes('GERENTE GENERAL') || 
+                  emailLower.includes('cvega') || 
+                  emailLower.includes('jcontreras');
+
+  const esGerente = esAdmin || 
+                    rolUpper.includes('GERENTE') || 
+                    rolUpper.includes('DIRECTOR') || 
+                    rolUpper.includes('COORDINADOR') || 
+                    rolUpper.includes('JEFE') || 
+                    rolUpper.includes('LIDER') || 
+                    rolUpper.includes('LÍDER') || 
+                    rolUpper.includes('CONTABIL') || 
+                    deptoUpper.includes('CONTABIL') || 
+                    deptoUpper.includes('ADMINISTRA') || 
+                    nombreLower.includes('jorge');
 
   const cargarTickets = useCallback(async () => {
     setLoading(true);
@@ -49,9 +70,8 @@ export default function MobileTickets({ currentUser, onPendingCountChange }) {
                         statusLower.includes('pendiente');
     if (!esPendiente) return false;
 
-    const solNombre = (ticket.solicitante || ticket.gerente_nombre || '').toLowerCase();
-    const miNombre = `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim().toLowerCase();
-    const esSolicitante = ticket.usuario_id === currentUser?.id || (miNombre && solNombre.includes(miNombre));
+    // Solo es solicitante si SU ID de usuario coincide con el creador del ticket
+    const esSolicitante = ticket.usuario_id === currentUser?.id;
     if (esSolicitante && !esAdmin) return false;
 
     if (esAdmin) return true;
@@ -59,12 +79,27 @@ export default function MobileTickets({ currentUser, onPendingCountChange }) {
     if (!esGerente) return false;
 
     const esAprobadorAsignado = ticket.aprobador_id && ticket.aprobador_id === currentUser?.id;
-    const coincideDepto = ticket.departamento && currentUser?.departamento && ticket.departamento.toLowerCase().trim() === currentUser?.departamento.toLowerCase().trim();
-    const obrasAsignadas = currentUser?.obras_asignadas || [];
-    const coincideObra = ticket.centro_costo && obrasAsignadas.some(o => o.toLowerCase().trim() === (ticket.centro_costo || '').toLowerCase().trim());
+
+    // Coincidencia de departamento flexible (ej: Contabilidad con Administración y Contabilidad)
+    const userDepto = (currentUser?.departamento || '').toLowerCase().trim();
+    const ticketDepto = (ticket.departamento || '').toLowerCase().trim();
+    const coincideDepto = userDepto && ticketDepto && (
+      userDepto.includes(ticketDepto) || 
+      ticketDepto.includes(userDepto) ||
+      (userDepto.includes('contabil') && ticketDepto.includes('contabil')) ||
+      (userDepto.includes('administra') && ticketDepto.includes('administra'))
+    );
+
+    const obrasAsignadas = (currentUser?.obras_asignadas || []).map(o => String(o).toLowerCase().trim());
+    const ticketCc = String(ticket.centro_costo || '').toLowerCase().trim();
+    const coincideObra = ticketCc && obrasAsignadas.includes(ticketCc);
+
+    const nombreMatch = (currentUser?.nombre || '').split(' ')[0].toLowerCase();
+    const esSuGerenteAsignado = ticket.gerente_nombre && nombreMatch && ticket.gerente_nombre.toLowerCase().includes(nombreMatch);
+
     const sinAprobadorAsignado = !ticket.aprobador_id;
 
-    return esAprobadorAsignado || coincideDepto || coincideObra || sinAprobadorAsignado;
+    return esAprobadorAsignado || esSuGerenteAsignado || coincideDepto || coincideObra || sinAprobadorAsignado;
   }, [currentUser, esAdmin, esGerente]);
 
   // Contador de pendientes

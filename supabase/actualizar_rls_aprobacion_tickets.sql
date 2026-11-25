@@ -39,7 +39,7 @@ USING (
     'larazuleika9@gmail.com'
   )
   
-  -- Cualquier usuario que tenga rol de Gerente, Coordinador, Director o Administrador en `perfiles`
+  -- Cualquier usuario que tenga rol de Gerente, Coordinador, Director, Jefe, Líder, Contabilidad o Administrador en `perfiles`
   OR EXISTS (
     SELECT 1 FROM perfiles p
     WHERE p.id = auth.uid()
@@ -48,8 +48,13 @@ USING (
         OR lower(coalesce(p.rol, '')) LIKE '%coordinador%'
         OR lower(coalesce(p.rol, '')) LIKE '%director%'
         OR lower(coalesce(p.rol, '')) LIKE '%admin%'
+        OR lower(coalesce(p.rol, '')) LIKE '%jefe%'
+        OR lower(coalesce(p.rol, '')) LIKE '%lider%'
+        OR lower(coalesce(p.rol, '')) LIKE '%líder%'
+        OR lower(coalesce(p.rol, '')) LIKE '%contabil%'
         OR lower(coalesce(p.departamento, '')) LIKE '%administra%'
         OR lower(coalesce(p.departamento, '')) LIKE '%contabil%'
+        OR lower(coalesce(p.nombre, '')) LIKE '%jorge%'
       )
   )
 )
@@ -59,3 +64,4 @@ WITH CHECK (
 
 -- Notificar éxito
 COMMENT ON TABLE tickets_directos IS 'Políticas RLS actualizadas para permitir aprobación de gerentes de área, proyecto y admins.';
+
