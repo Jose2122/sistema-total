@@ -16,10 +16,35 @@ export default function MobileRequisiciones({ currentUser, onPendingCountChange 
   const [gerenciasDisponibles, setGerenciasDisponibles] = useState([]);
 
   const rolUpper = (currentUser?.rol || '').toUpperCase();
+  const deptoUpper = (currentUser?.departamento || '').toUpperCase();
   const emailLower = (currentUser?.correo || currentUser?.email || '').toLowerCase();
+  const nombreLower = (currentUser?.nombre || '').toLowerCase();
   const esFavio = (currentUser?.nombre || '').toUpperCase().includes('FAVIO') && (currentUser?.apellido || '').toUpperCase().includes('BAVUSO');
-  const esGG = currentUser?.esAdminReal || currentUser?.esSuperAdmin || rolUpper.includes('GERENTE GENERAL') || rolUpper.includes('ADMIN') || emailLower.includes('cvega') || esFavio;
-  const esGerenteArea = (currentUser?.rol?.toLowerCase()?.includes('gerente') && !currentUser?.rol?.toLowerCase()?.includes('general')) || emailLower === 'karincmm1@gmail.com';
+
+  const esGG = currentUser?.esAdminReal || 
+               currentUser?.esSuperAdmin || 
+               currentUser?.esAdminGlobal || 
+               rolUpper.includes('GERENTE GENERAL') || 
+               rolUpper.includes('ADMIN') || 
+               emailLower.includes('cvega') || 
+               emailLower.includes('jcontreras') ||
+               esFavio;
+
+  const esGerenteArea = esGG || 
+                        rolUpper.includes('GERENTE') || 
+                        rolUpper.includes('DIRECTOR') || 
+                        rolUpper.includes('COORDINADOR') || 
+                        rolUpper.includes('PROYECTO') || 
+                        rolUpper.includes('ÁREA') || 
+                        rolUpper.includes('AREA') || 
+                        rolUpper.includes('JEFE') || 
+                        rolUpper.includes('LIDER') || 
+                        rolUpper.includes('LÍDER') || 
+                        rolUpper.includes('CONTABIL') || 
+                        deptoUpper.includes('CONTABIL') || 
+                        deptoUpper.includes('ADMINISTRA') || 
+                        nombreLower.includes('jorge') ||
+                        emailLower === 'karincmm1@gmail.com';
 
   const cargarRequisiciones = useCallback(async () => {
     setLoading(true);
@@ -74,26 +99,26 @@ export default function MobileRequisiciones({ currentUser, onPendingCountChange 
 
   // Verificar si una requisición requiere aprobación de este usuario
   const requiereMiAprobacion = useCallback((r) => {
-    const esSolicitante = r.solicitante === `${currentUser?.nombre} ${currentUser?.apellido}`.trim();
+    const estado = (r.estado_aprobacion || '').toLowerCase();
+    const esPendiente = estado.includes('pendiente') || estado.includes('enviada');
+    if (!esPendiente) return false;
+
+    const miNombreCompleto = `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim().toLowerCase();
+    const solNombre = (r.solicitante || '').toLowerCase();
+    const esSolicitante = (currentUser?.id && r.user_id === currentUser.id) || (miNombreCompleto && solNombre.includes(miNombreCompleto));
     if (esSolicitante && !esGG) return false;
 
-    if (r.estado_aprobacion === 'pendiente_proyecto') {
-      const obrasAsignadas = currentUser?.obras_asignadas || [];
-      const coincideObra = r.centro_costo && obrasAsignadas.some(o => o.toLowerCase().trim() === (r.centro_costo || '').toLowerCase().trim());
-      const esSuGerente = r.gerente_directo_id && currentUser?.id === r.gerente_directo_id;
-      return esGG || rolUpper.includes('PROYECTO') || coincideObra || esSuGerente;
+    if (estado === 'pendiente_proyecto') {
+      return esGG || rolUpper.includes('PROYECTO') || esGerenteArea;
     }
-    if (r.estado_aprobacion === 'pendiente_area') {
-      const coincideGerencia = currentUser?.departamento && r.gerencia &&
-        currentUser.departamento.toLowerCase().trim() === r.gerencia.toLowerCase().trim();
-      const esSuGerente = r.gerente_directo_id && currentUser?.id === r.gerente_directo_id;
-      return (esGerenteArea && (coincideGerencia || !r.gerencia)) || esSuGerente || esFavio || esGG;
+    if (estado === 'pendiente_area') {
+      return esGerenteArea;
     }
-    if (r.estado_aprobacion === 'enviada_general') {
+    if (estado === 'enviada_general') {
       return esGG;
     }
-    return false;
-  }, [currentUser, esGG, esGerenteArea, esFavio, rolUpper]);
+    return esGG || esGerenteArea;
+  }, [currentUser, esGG, esGerenteArea, rolUpper]);
 
   // Contador de pendientes para el badge
   const pendientesCount = useMemo(() => {

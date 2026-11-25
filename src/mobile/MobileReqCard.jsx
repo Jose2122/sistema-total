@@ -23,30 +23,58 @@ export default function MobileReqCard({ req, currentUser, onAprobar, onRechazar,
 
   // Permisos de aprobación
   const rolUpper = (currentUser?.rol || '').toUpperCase();
+  const deptoUpper = (currentUser?.departamento || '').toUpperCase();
   const emailLower = (currentUser?.correo || currentUser?.email || '').toLowerCase();
+  const nombreLower = (currentUser?.nombre || '').toLowerCase();
   const esFavio = (currentUser?.nombre || '').toUpperCase().includes('FAVIO') && (currentUser?.apellido || '').toUpperCase().includes('BAVUSO');
-  const esGG = currentUser?.esAdminReal || currentUser?.esSuperAdmin || rolUpper.includes('GERENTE GENERAL') || rolUpper.includes('ADMIN') || emailLower.includes('cvega') || esFavio;
-  const esGerenteArea = (currentUser?.rol?.toLowerCase()?.includes('gerente') && !currentUser?.rol?.toLowerCase()?.includes('general')) || emailLower === 'karincmm1@gmail.com';
+
+  const esGG = currentUser?.esAdminReal || 
+               currentUser?.esSuperAdmin || 
+               currentUser?.esAdminGlobal || 
+               rolUpper.includes('GERENTE GENERAL') || 
+               rolUpper.includes('ADMIN') || 
+               emailLower.includes('cvega') || 
+               emailLower.includes('jcontreras') ||
+               esFavio;
+
+  const esGerenteArea = esGG || 
+                        rolUpper.includes('GERENTE') || 
+                        rolUpper.includes('DIRECTOR') || 
+                        rolUpper.includes('COORDINADOR') || 
+                        rolUpper.includes('PROYECTO') || 
+                        rolUpper.includes('ÁREA') || 
+                        rolUpper.includes('AREA') || 
+                        rolUpper.includes('JEFE') || 
+                        rolUpper.includes('LIDER') || 
+                        rolUpper.includes('LÍDER') || 
+                        rolUpper.includes('CONTABIL') || 
+                        deptoUpper.includes('CONTABIL') || 
+                        deptoUpper.includes('ADMINISTRA') || 
+                        nombreLower.includes('jorge') ||
+                        emailLower === 'karincmm1@gmail.com';
+
   const esSuGerenteDirecto = req.gerente_directo_id && currentUser?.id === req.gerente_directo_id;
 
-  const esSolicitante = req.solicitante === `${currentUser?.nombre} ${currentUser?.apellido}`.trim();
+  const miNombreCompleto = `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim().toLowerCase();
+  const solNombre = (req.solicitante || '').toLowerCase();
+  const esSolicitante = (currentUser?.id && req.user_id === currentUser.id) || (miNombreCompleto && solNombre.includes(miNombreCompleto));
 
   let puedeAprobarProyecto = false;
   let puedeAprobarArea = false;
   let puedeAprobarGeneral = false;
 
+  const estado = (req.estado_aprobacion || '').toLowerCase();
+
   if (!esSolicitante || esGG) {
-    if (req.estado_aprobacion === 'pendiente_proyecto') {
-      const obrasAsignadas = currentUser?.obras_asignadas || [];
-      const coincideObra = req.centro_costo && obrasAsignadas.some(o => o.toLowerCase().trim() === (req.centro_costo || '').toLowerCase().trim());
-      puedeAprobarProyecto = esGG || rolUpper.includes('PROYECTO') || coincideObra || esSuGerenteDirecto;
+    if (estado === 'pendiente_proyecto') {
+      const obrasAsignadas = (currentUser?.obras_asignadas || []).map(o => String(o).toLowerCase().trim());
+      const coincideObra = req.centro_costo && obrasAsignadas.includes(String(req.centro_costo).toLowerCase().trim());
+      puedeAprobarProyecto = esGG || rolUpper.includes('PROYECTO') || coincideObra || esSuGerenteDirecto || esGerenteArea;
     }
-    if (req.estado_aprobacion === 'pendiente_area') {
-      const coincideGerencia = currentUser?.departamento && req.gerencia &&
-        currentUser.departamento.toLowerCase().trim() === req.gerencia.toLowerCase().trim();
-      puedeAprobarArea = (esGerenteArea && (coincideGerencia || !req.gerencia)) || esSuGerenteDirecto || esFavio || esGG;
+    if (estado === 'pendiente_area') {
+      puedeAprobarArea = esGerenteArea || esSuGerenteDirecto || esFavio || esGG;
     }
-    if (req.estado_aprobacion === 'enviada_general') {
+    if (estado === 'enviada_general') {
       puedeAprobarGeneral = esGG;
     }
   }
@@ -129,6 +157,66 @@ export default function MobileReqCard({ req, currentUser, onAprobar, onRechazar,
             </div>
           </div>
         </div>
+
+        {/* Acciones de Aprobación rápidas visibles sin necesidad de expandir */}
+        {tieneAccion && !expandido && (
+          <div className="m-card-quick-actions" onClick={(e) => e.stopPropagation()}>
+            <button
+              className="m-btn m-btn-reject"
+              onClick={() => setModalRechazo(true)}
+              disabled={loadingAction}
+            >
+              <XCircle size={17} />
+              <span>Rechazar</span>
+            </button>
+
+            {puedeAprobarProyecto && (
+              <button
+                className="m-btn m-btn-approve"
+                onClick={() => onAprobar(req, 'proyecto')}
+                disabled={loadingAction}
+              >
+                <CheckCircle2 size={17} />
+                <span>Aprobar Proyecto</span>
+              </button>
+            )}
+
+            {puedeAprobarArea && (
+              <button
+                className="m-btn m-btn-approve"
+                onClick={() => onAprobar(req, 'area')}
+                disabled={loadingAction}
+              >
+                <CheckCircle2 size={17} />
+                <span>{esGG ? 'Aprobar Área (GG)' : 'Aprobar Área'}</span>
+              </button>
+            )}
+
+            {puedeAprobarArea && esGG && (
+              <button
+                className="m-btn m-btn-approve"
+                style={{ background: 'linear-gradient(135deg, #8b5cf6, #6d28d9)' }}
+                onClick={() => onAprobar(req, 'general_directa')}
+                disabled={loadingAction}
+              >
+                <Zap size={17} />
+                <span>Aprobación Final</span>
+              </button>
+            )}
+
+            {puedeAprobarGeneral && (
+              <button
+                className="m-btn m-btn-approve"
+                style={{ background: 'linear-gradient(135deg, #0284c7, #2563eb)' }}
+                onClick={() => onAprobar(req, 'general')}
+                disabled={loadingAction}
+              >
+                <ShieldCheck size={17} />
+                <span>Aprobación Final</span>
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Contenido Expandido */}
         {expandido && (

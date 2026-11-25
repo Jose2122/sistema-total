@@ -76,12 +76,16 @@ export default function MobileTicketCard({ ticket, currentUser, onAprobar, onRec
                   rolUpper.includes('ADMIN') || 
                   rolUpper.includes('GERENTE GENERAL') || 
                   emailLower.includes('cvega') || 
-                  emailLower.includes('jcontreras');
+                  emailLower.includes('jcontreras') ||
+                  emailLower === 'karincmm1@gmail.com';
 
   const esGerente = esAdmin || 
                     rolUpper.includes('GERENTE') || 
                     rolUpper.includes('DIRECTOR') || 
                     rolUpper.includes('COORDINADOR') || 
+                    rolUpper.includes('PROYECTO') ||
+                    rolUpper.includes('ÁREA') ||
+                    rolUpper.includes('AREA') ||
                     rolUpper.includes('JEFE') || 
                     rolUpper.includes('LIDER') || 
                     rolUpper.includes('LÍDER') || 
@@ -109,17 +113,18 @@ export default function MobileTicketCard({ ticket, currentUser, onAprobar, onRec
   const esSuGerenteAsignado = ticket.gerente_nombre && nombreMatch && ticket.gerente_nombre.toLowerCase().includes(nombreMatch);
 
   const sinAprobadorAsignado = !ticket.aprobador_id;
-  const esSolicitante = ticket.usuario_id === currentUser?.id;
+  const esSolicitante = ticket.usuario_id && currentUser?.id && ticket.usuario_id === currentUser?.id;
 
   const statusNorm = (ticket.status || '').toLowerCase().trim();
   const esPendiente = statusNorm === 'pendiente aprobación' ||
                       statusNorm === 'pendiente aprobacion' ||
                       statusNorm === 'por aprobar' ||
-                      statusNorm.includes('pendiente');
+                      statusNorm.includes('pendiente') ||
+                      statusNorm.includes('aprob');
 
   const puedeAprobar = esPendiente &&
     (!esSolicitante || esAdmin) &&
-    (esAdmin || (esGerente && (esAprobadorAsignado || esSuGerenteAsignado || coincideDepto || coincideObra || sinAprobadorAsignado)));
+    (esAdmin || esGerente || esAprobadorAsignado || esSuGerenteAsignado || coincideDepto || coincideObra || sinAprobadorAsignado);
 
   const handleConfirmarRechazo = () => {
     if (!motivoRechazo.trim()) {
@@ -215,6 +220,29 @@ export default function MobileTicketCard({ ticket, currentUser, onAprobar, onRec
             </div>
           </div>
         </div>
+
+        {/* Botones de Aprobación rápidos visibles en la tarjeta compacta */}
+        {puedeAprobar && !expandido && (
+          <div className="m-card-quick-actions" onClick={(e) => e.stopPropagation()}>
+            <button
+              className="m-btn m-btn-reject"
+              onClick={() => setModalRechazo(true)}
+              disabled={loadingAction}
+            >
+              <XCircle size={17} />
+              <span>Rechazar</span>
+            </button>
+
+            <button
+              className="m-btn m-btn-approve"
+              onClick={() => onAprobar(ticket)}
+              disabled={loadingAction}
+            >
+              <CheckCircle2 size={17} />
+              <span>Aprobar Ticket</span>
+            </button>
+          </div>
+        )}
 
         {/* Contenido Expandido */}
         {expandido && (
