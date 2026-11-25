@@ -77,7 +77,9 @@ export default function MobileTicketCard({ ticket, currentUser, onAprobar, onRec
                   rolUpper.includes('GERENTE GENERAL') || 
                   emailLower.includes('cvega') || 
                   emailLower.includes('jcontreras') ||
-                  emailLower === 'karincmm1@gmail.com';
+                  emailLower === 'karincmm1@gmail.com' ||
+                  emailLower === 'larazuleika9@gmail.com' ||
+                  nombreLower.includes('perla');
 
   const esGerente = esAdmin || 
                     rolUpper.includes('GERENTE') || 
@@ -90,9 +92,15 @@ export default function MobileTicketCard({ ticket, currentUser, onAprobar, onRec
                     rolUpper.includes('LIDER') || 
                     rolUpper.includes('LÍDER') || 
                     rolUpper.includes('CONTABIL') || 
+                    rolUpper.includes('CAJER') ||
+                    rolUpper.includes('PAGADOR') ||
                     deptoUpper.includes('CONTABIL') || 
                     deptoUpper.includes('ADMINISTRA') || 
-                    nombreLower.includes('jorge');
+                    deptoUpper.includes('MARACAIBO') || 
+                    deptoUpper.includes('MCBO') || 
+                    deptoUpper.includes('ADM') ||
+                    nombreLower.includes('jorge') ||
+                    nombreLower.includes('perla');
 
   const esAprobadorAsignado = ticket.aprobador_id && ticket.aprobador_id === currentUser?.id;
 

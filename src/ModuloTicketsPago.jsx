@@ -832,15 +832,22 @@ const ModuloTicketsPago = () => {
       rolUpper.includes('LIDER') ||
       rolUpper.includes('LÍDER') ||
       rolUpper.includes('CONTABIL') ||
+      rolUpper.includes('CAJER') ||
+      rolUpper.includes('PAGADOR') ||
       deptoUpper.includes('CONTABIL') ||
       deptoUpper.includes('ADMINISTRA') ||
+      deptoUpper.includes('MARACAIBO') ||
+      deptoUpper.includes('MCBO') ||
+      deptoUpper.includes('ADM') ||
       nombreLower.includes('jorge') ||
+      nombreLower.includes('perla') ||
       rolUpper.includes('ADMIN') ||
       currentUser?.esSuperAdmin ||
       currentUser?.esAdminReal ||
       currentUser?.esAdminGlobal ||
       emailLower.includes('cvega') ||
-      emailLower.includes('jcontreras')
+      emailLower.includes('jcontreras') ||
+      emailLower === 'larazuleika9@gmail.com'
     );
     const obrasUsuario = [
       ...(currentUser?.obras_asignadas || []),
@@ -906,15 +913,22 @@ const ModuloTicketsPago = () => {
       rolUpper.includes('LIDER') ||
       rolUpper.includes('LÍDER') ||
       rolUpper.includes('CONTABIL') ||
+      rolUpper.includes('CAJER') ||
+      rolUpper.includes('PAGADOR') ||
       deptoUpper.includes('CONTABIL') ||
       deptoUpper.includes('ADMINISTRA') ||
+      deptoUpper.includes('MARACAIBO') ||
+      deptoUpper.includes('MCBO') ||
+      deptoUpper.includes('ADM') ||
       nombreLower.includes('jorge') ||
+      nombreLower.includes('perla') ||
       rolUpper.includes('ADMIN') ||
       currentUser?.esSuperAdmin ||
       currentUser?.esAdminReal ||
       currentUser?.esAdminGlobal ||
       emailLower.includes('cvega') ||
-      emailLower.includes('jcontreras')
+      emailLower.includes('jcontreras') ||
+      emailLower === 'larazuleika9@gmail.com'
     );
   }, [currentUser]);
 
@@ -925,14 +939,15 @@ const ModuloTicketsPago = () => {
     const email = (currentUser.correo || '').toLowerCase().trim();
     const nombre = (currentUser.nombre || '').toLowerCase().trim();
 
-    const matchRol = rol.includes('administra') || rol.includes('contabil');
-    const matchDepto = depto.includes('administra') || depto.includes('contabil');
+    const matchRol = rol.includes('administra') || rol.includes('contabil') || rol.includes('cajer') || rol.includes('pagador') || rol.includes('maracaibo') || rol.includes('mcbo') || rol.includes('adm');
+    const matchDepto = depto.includes('administra') || depto.includes('contabil') || depto.includes('maracaibo') || depto.includes('mcbo') || depto.includes('adm');
     const esZuleika = email === 'larazuleika9@gmail.com';
+    const esPerla = nombre.includes('perla');
     const esHilda = nombre.includes('hilda') || email.includes('hilda');
 
     if (esHilda) return false;
 
-    return matchRol || matchDepto || currentUser.esAdminReal === true || currentUser.esSuperAdmin === true || esZuleika;
+    return matchRol || matchDepto || currentUser.esAdminReal === true || currentUser.esSuperAdmin === true || esZuleika || esPerla;
   }, [currentUser]);
 
   const fetchHistorial = async (userParam = null) => {
@@ -946,15 +961,27 @@ const ModuloTicketsPago = () => {
         const rolUpper = (activeUser.rol || '').toUpperCase().trim();
         const deptoUpper = (activeUser.departamento || '').toUpperCase().trim();
         const emailLower = (activeUser.correo || '').toLowerCase().trim();
+        const nombreLower = (activeUser.nombre || '').toLowerCase().trim();
 
         const esAdminReal = emailLower === 'jcontreras.totalclean@gmail.com' ||
           emailLower === 'cvega@totalclean.com.ve' ||
           emailLower === 'karincmm1@gmail.com';
 
         const esZuleika = emailLower === 'larazuleika9@gmail.com';
+        const esPerla = nombreLower.includes('perla');
+        const esMaracaibo = deptoUpper.includes('MARACAIBO') || 
+                            deptoUpper.includes('MCBO') || 
+                            deptoUpper.includes('ADM') ||
+                            rolUpper.includes('MARACAIBO') ||
+                            rolUpper.includes('MCBO') ||
+                            rolUpper.includes('ADM') ||
+                            rolUpper.includes('CAJER') ||
+                            rolUpper.includes('PAGADOR');
 
         const tieneVisibilidadGlobal = esAdminReal ||
           esZuleika ||
+          esPerla ||
+          esMaracaibo ||
           emailLower === 'cvega@totalclean.com.ve' ||
           (activeUser.nombre || '').toLowerCase().includes('carlos') ||
           rolUpper.includes('ADMIN') ||
@@ -977,13 +1004,19 @@ const ModuloTicketsPago = () => {
         const esSuperAdminOGerenteGeneral = esAdminReal ||
           emailLower === 'cvega@totalclean.com.ve' ||
           rolUpper.includes('GERENTE GENERAL') ||
-          activeUser.esSuperAdmin === true;
+          activeUser.esSuperAdmin === true ||
+          esPerla ||
+          esZuleika ||
+          activeUser.capacidades?.ver_tickets_global === true ||
+          activeUser.capacidades?.ver_todos_tickets === true;
 
         const esAdminOrContabil = rolUpper.includes('ADMINISTRA') ||
           rolUpper.includes('CONTABIL') ||
           deptoUpper.includes('ADMINISTRA') ||
           deptoUpper.includes('CONTABIL') ||
           esZuleika ||
+          esPerla ||
+          esMaracaibo ||
           activeUser.capacidades?.ver_tickets_global === true ||
           activeUser.capacidades?.ver_todos_tickets === true;
 
@@ -993,10 +1026,10 @@ const ModuloTicketsPago = () => {
         const nombreMatch = (activeUser.nombre || '').split(' ')[0] || 'Unknown';
 
         if (esSuperAdminOGerenteGeneral) {
-          // Super Admins y Gerente General ven todos los tickets sin restricción
+          // Super Admins, Gerente General, Perla Delgado y Zuleika Lara ven todos los tickets sin restricción
         } else if (esAdminOrContabil) {
-          // Cajeros / Ejecutores de Pago / Contabilidad:
-          // Ven emitidos/parciales/pagados + tickets donde son solicitante o gerente o aprobador + tickets de su departamento + pendientes de aprobación
+          // Cajeros / Ejecutores de Pago / Contabilidad / Adm Maracaibo:
+          // Ven emitidos/parciales/pagados + tickets de Maracaibo/MCBO + donde son solicitante o gerente o aprobador + tickets de su departamento + pendientes de aprobación
           const deptoMatch = activeUser.departamento || '';
           let orFiltrosContabil = [
             'status.in.("EMITIDO","Parcial","Pagado")',
@@ -1004,7 +1037,13 @@ const ModuloTicketsPago = () => {
             `gerente_nombre.ilike.%${nombreMatch}%`,
             `aprobador_id.eq.${userIdMatch}`,
             'status.ilike.%pendiente%',
-            'status.ilike.%aproba%'
+            'status.ilike.%aproba%',
+            'departamento.ilike.%maracaibo%',
+            'departamento.ilike.%mcbo%',
+            'departamento.ilike.%adm%',
+            'centro_costo.ilike.%maracaibo%',
+            'centro_costo.ilike.%mcbo%',
+            'centro_costo.ilike.%adm%'
           ];
           if (deptoMatch) {
             orFiltrosContabil.push(`departamento.ilike.%${deptoMatch}%`);
@@ -2648,10 +2687,31 @@ const ModuloTicketsPago = () => {
   // ==========================================
   const filtradosTickets = useMemo(() => {
     return historialTickets.filter(t => {
-      const qs = busqueda.toLowerCase();
-      const bMatch = (t.codigo_control || '').toLowerCase().includes(qs) ||
+      const qs = busqueda.toLowerCase().trim();
+      const montoTotal = Number(t.total_usd ?? t.monto_total ?? t.monto ?? 0);
+      const montoBs = Number(t.monto_bs ?? 0);
+      const montoStr = String(t.total_usd ?? t.monto_total ?? t.monto ?? '');
+      const montoRound = String(Math.round(montoTotal));
+
+      const bMatch = !qs ||
+        String(t.id || '').includes(qs) ||
+        (t.codigo_control || '').toLowerCase().includes(qs) ||
+        (t.codigo_ticket || '').toLowerCase().includes(qs) ||
         (t.gerente_nombre || '').toLowerCase().includes(qs) ||
-        (t.departamento || '').toLowerCase().includes(qs);
+        (t.solicitante || '').toLowerCase().includes(qs) ||
+        (t.departamento || '').toLowerCase().includes(qs) ||
+        (t.centro_costo || '').toLowerCase().includes(qs) ||
+        (t.proveedor_nombre || '').toLowerCase().includes(qs) ||
+        (t.beneficiario || '').toLowerCase().includes(qs) ||
+        (t.justificacion || '').toLowerCase().includes(qs) ||
+        montoStr.includes(qs) ||
+        montoRound === qs ||
+        String(montoBs).includes(qs) ||
+        (t.items || []).some(it => 
+          (it.descripcion || it.concepto || it.desc || '').toLowerCase().includes(qs) ||
+          String(it.total || it.monto || '').includes(qs)
+        );
+
       const statusLower = (t.status || '').toLowerCase().trim();
       const filtroLower = filtroStatus.toLowerCase().trim();
       const sMatch = filtroStatus !== 'Todos'
@@ -2666,7 +2726,9 @@ const ModuloTicketsPago = () => {
                         : statusLower === filtroLower
           )
         : true;
-      const gMatch = filtroGerencia !== 'Todos' ? t.departamento === filtroGerencia : true;
+      const gMatch = filtroGerencia !== 'Todos'
+        ? (t.departamento === filtroGerencia || (t.departamento || '').toLowerCase().includes(filtroGerencia.toLowerCase()) || (t.centro_costo || '').toLowerCase().includes(filtroGerencia.toLowerCase()))
+        : true;
 
       // Filtro Categoria: busca en items[]
       const cMatch = filtroCategoria !== 'Todos'

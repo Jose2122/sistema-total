@@ -24,7 +24,9 @@ export default function MobileTickets({ currentUser, onPendingCountChange }) {
                   rolUpper.includes('GERENTE GENERAL') || 
                   emailLower.includes('cvega') || 
                   emailLower.includes('jcontreras') ||
-                  emailLower === 'karincmm1@gmail.com';
+                  emailLower === 'karincmm1@gmail.com' ||
+                  emailLower === 'larazuleika9@gmail.com' ||
+                  nombreLower.includes('perla');
 
   const esGerente = esAdmin || 
                     rolUpper.includes('GERENTE') || 
@@ -37,9 +39,15 @@ export default function MobileTickets({ currentUser, onPendingCountChange }) {
                     rolUpper.includes('LIDER') || 
                     rolUpper.includes('LÍDER') || 
                     rolUpper.includes('CONTABIL') || 
+                    rolUpper.includes('CAJER') ||
+                    rolUpper.includes('PAGADOR') ||
                     deptoUpper.includes('CONTABIL') || 
                     deptoUpper.includes('ADMINISTRA') || 
-                    nombreLower.includes('jorge');
+                    deptoUpper.includes('MARACAIBO') || 
+                    deptoUpper.includes('MCBO') || 
+                    deptoUpper.includes('ADM') || 
+                    nombreLower.includes('jorge') ||
+                    nombreLower.includes('perla');
 
   const cargarTickets = useCallback(async () => {
     setLoading(true);
@@ -124,16 +132,21 @@ export default function MobileTickets({ currentUser, onPendingCountChange }) {
         const sol = (t.solicitante || t.gerente_nombre || '').toLowerCase();
         const just = (t.justificacion || '').toLowerCase();
         const cc = (t.centro_costo || t.departamento || '').toLowerCase();
+        const montoUSD = String(t.total_usd ?? t.monto_total ?? t.monto ?? '');
+        const montoRound = String(Math.round(Number(montoUSD) || 0));
+        const montoBs = String(t.monto_bs ?? '');
+        const matchMonto = montoUSD.includes(query) || montoRound === query || montoBs.includes(query);
 
         let itemsArray = t.items || t.detalles || [];
         if (typeof itemsArray === 'string') {
           try { itemsArray = JSON.parse(itemsArray); } catch { itemsArray = []; }
         }
         const matchItems = Array.isArray(itemsArray) && itemsArray.some(it => 
-          (it.descripcion || it.concepto || it.desc || '').toLowerCase().includes(query)
+          (it.descripcion || it.concepto || it.desc || '').toLowerCase().includes(query) ||
+          String(it.total || it.monto || '').includes(query)
         );
 
-        if (!cod.includes(query) && !prov.includes(query) && !sol.includes(query) && !just.includes(query) && !cc.includes(query) && !matchItems) {
+        if (!cod.includes(query) && !prov.includes(query) && !sol.includes(query) && !just.includes(query) && !cc.includes(query) && !matchMonto && !matchItems) {
           return false;
         }
       }
