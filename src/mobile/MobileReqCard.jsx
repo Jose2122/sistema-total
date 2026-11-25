@@ -53,10 +53,11 @@ export default function MobileReqCard({ req, currentUser, onAprobar, onRechazar,
                         nombreLower.includes('jorge') ||
                         emailLower === 'karincmm1@gmail.com';
 
-  const esSuGerenteDirecto = req.gerente_directo_id && currentUser?.id === req.gerente_directo_id;
-
+  const esJorge = nombreLower.includes('jorge');
   const miNombreCompleto = `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim().toLowerCase();
   const solNombre = (req.solicitante || '').toLowerCase();
+  const esCarlosDelgado = solNombre.includes('carlos delgado');
+  const esSuGerenteDirecto = (req.gerente_directo_id && currentUser?.id === req.gerente_directo_id) || (esJorge && esCarlosDelgado);
   const esSolicitante = (currentUser?.id && req.user_id === currentUser.id) || (miNombreCompleto && solNombre.includes(miNombreCompleto));
 
   let puedeAprobarProyecto = false;

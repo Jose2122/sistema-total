@@ -9,13 +9,15 @@ export default function MobileTickets({ currentUser, onPendingCountChange }) {
   const [tickets, setTickets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadingAction, setLoadingAction] = useState(false);
-  const [filtroTab, setFiltroTab] = useState('por_aprobar'); // 'por_aprobar' | 'mis_tickets' | 'emitidos' | 'todos'
+  const [filtroTab, setFiltroTab] = useState('por_aprobar'); // 'por_aprobar' | 'mi_equipo' | 'mis_tickets' | 'emitidos' | 'todos'
   const [busqueda, setBusqueda] = useState('');
+  const [analistasIds, setAnalistasIds] = useState([]);
 
   const rolUpper = (currentUser?.rol || '').toUpperCase();
   const deptoUpper = (currentUser?.departamento || '').toUpperCase();
   const emailLower = (currentUser?.correo || currentUser?.email || '').toLowerCase();
   const nombreLower = (currentUser?.nombre || '').toLowerCase();
+  const esJorge = nombreLower.includes('jorge');
 
   const esAdmin = currentUser?.esAdminReal || 
                   currentUser?.esSuperAdmin || 
@@ -46,18 +48,48 @@ export default function MobileTickets({ currentUser, onPendingCountChange }) {
                     deptoUpper.includes('MARACAIBO') || 
                     deptoUpper.includes('MCBO') || 
                     deptoUpper.includes('ADM') || 
-                    nombreLower.includes('jorge') ||
+                    esJorge ||
                     nombreLower.includes('perla');
+
+  // Cargar analistas/subordinados de perfil
+  useEffect(() => {
+    const cargarAnalistas = async () => {
+      if (!currentUser?.id) return;
+      try {
+        const { data: directos } = await supabase
+          .from('perfiles')
+          .select('id, nombre, apellido')
+          .eq('gerente_directo_id', currentUser.id);
+
+        const ids = (directos || []).map(p => p.id);
+
+        if (esJorge) {
+          const { data: carlos } = await supabase
+            .from('perfiles')
+            .select('id')
+            .ilike('nombre', '%carlos%')
+            .ilike('apellido', '%delgado%');
+          if (carlos) {
+            carlos.forEach(c => { if (!ids.includes(c.id)) ids.push(c.id); });
+          }
+        }
+        setAnalistasIds(ids);
+      } catch (err) {
+        console.warn('Error al cargar analistas de tickets:', err);
+      }
+    };
+    cargarAnalistas();
+  }, [currentUser, esJorge]);
 
   const cargarTickets = useCallback(async () => {
     setLoading(true);
     try {
-      // Cargar los últimos 250 tickets
+      // Cargar los últimos 500 tickets
       const { data, error } = await supabase
         .from('tickets_directos')
         .select('*')
         .order('id', { ascending: false })
-        .limit(250);
+        .limit(500);
 
       if (error) throw error;
       setTickets(data || []);
@@ -73,6 +105,15 @@ export default function MobileTickets({ currentUser, onPendingCountChange }) {
     cargarTickets();
   }, [cargarTickets]);
 
+  // Verificar si un ticket es de un subordinado o analista de este usuario
+  const esDeMiEquipo = useCallback((ticket) => {
+    const sol = (ticket.solicitante || ticket.gerente_nombre || '').toLowerCase();
+    const esCarlosDeJorge = esJorge && sol.includes('carlos delgado');
+    const esSubordinado = (ticket.usuario_id && analistasIds.includes(ticket.usuario_id)) ||
+                          (ticket.aprobador_id && ticket.aprobador_id === currentUser?.id);
+    return Boolean(esCarlosDeJorge || esSubordinado);
+  }, [currentUser, esJorge, analistasIds]);
+
   // Verificar si un ticket requiere mi aprobación
   const requiereMiAprobacion = useCallback((ticket) => {
     const statusLower = (ticket.status || '').toLowerCase().trim();
@@ -87,6 +128,9 @@ export default function MobileTickets({ currentUser, onPendingCountChange }) {
     const esSolicitante = ticket.usuario_id && currentUser?.id && ticket.usuario_id === currentUser?.id;
     if (esSolicitante && !esAdmin) return false;
 
+    // Si es analista de su equipo (ej. Carlos Delgado para Jorge Urdaneta)
+    if (esDeMiEquipo(ticket)) return true;
+
     if (esAdmin) return true;
     if (esGerente) return true;
 
@@ -95,12 +139,17 @@ export default function MobileTickets({ currentUser, onPendingCountChange }) {
     const esSuGerenteAsignado = ticket.gerente_nombre && nombreMatch && ticket.gerente_nombre.toLowerCase().includes(nombreMatch);
 
     return esAprobadorAsignado || esSuGerenteAsignado;
-  }, [currentUser, esAdmin, esGerente]);
+  }, [currentUser, esAdmin, esGerente, esDeMiEquipo]);
 
   // Contador de pendientes
   const pendientesCount = useMemo(() => {
     return tickets.filter(requiereMiAprobacion).length;
   }, [tickets, requiereMiAprobacion]);
+
+  // Contador de mi equipo
+  const miEquipoCount = useMemo(() => {
+    return tickets.filter(esDeMiEquipo).length;
+  }, [tickets, esDeMiEquipo]);
 
   useEffect(() => {
     if (onPendingCountChange) {
@@ -114,6 +163,8 @@ export default function MobileTickets({ currentUser, onPendingCountChange }) {
       // Filtro de pestaña
       if (filtroTab === 'por_aprobar') {
         if (!requiereMiAprobacion(t)) return false;
+      } else if (filtroTab === 'mi_equipo') {
+        if (!esDeMiEquipo(t)) return false;
       } else if (filtroTab === 'mis_tickets') {
         const sol = (t.solicitante || t.gerente_nombre || '').toLowerCase();
         const miNombre = (currentUser?.nombre || '').toLowerCase();
@@ -153,7 +204,7 @@ export default function MobileTickets({ currentUser, onPendingCountChange }) {
 
       return true;
     });
-  }, [tickets, filtroTab, busqueda, requiereMiAprobacion, currentUser]);
+  }, [tickets, filtroTab, busqueda, requiereMiAprobacion, esDeMiEquipo, currentUser]);
 
   // Handler de Aprobación de Ticket
   const handleAprobarTicket = async (ticket) => {
@@ -288,6 +339,14 @@ export default function MobileTickets({ currentUser, onPendingCountChange }) {
         >
           <span>Por Aprobar</span>
           {pendientesCount > 0 && <span className="m-badge-count">{pendientesCount}</span>}
+        </button>
+
+        <button
+          className={`m-pill-btn ${filtroTab === 'mi_equipo' ? 'active' : ''}`}
+          onClick={() => setFiltroTab('mi_equipo')}
+        >
+          <span>Mi Equipo / Analistas</span>
+          {miEquipoCount > 0 && <span className="m-badge-count" style={{ background: '#3b82f6' }}>{miEquipoCount}</span>}
         </button>
 
         <button

@@ -10,16 +10,18 @@ export default function MobileRequisiciones({ currentUser, onPendingCountChange 
   const [requisiciones, setRequisiciones] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadingAction, setLoadingAction] = useState(false);
-  const [filtroTab, setFiltroTab] = useState('por_aprobar'); // 'por_aprobar' | 'mis_solicitudes' | 'todas'
+  const [filtroTab, setFiltroTab] = useState('por_aprobar'); // 'por_aprobar' | 'mi_equipo' | 'mis_solicitudes' | 'todas'
   const [busqueda, setBusqueda] = useState('');
   const [filtroGerencia, setFiltroGerencia] = useState('Todas');
   const [gerenciasDisponibles, setGerenciasDisponibles] = useState([]);
+  const [analistasIds, setAnalistasIds] = useState([]);
 
   const rolUpper = (currentUser?.rol || '').toUpperCase();
   const deptoUpper = (currentUser?.departamento || '').toUpperCase();
   const emailLower = (currentUser?.correo || currentUser?.email || '').toLowerCase();
   const nombreLower = (currentUser?.nombre || '').toLowerCase();
   const esFavio = (currentUser?.nombre || '').toUpperCase().includes('FAVIO') && (currentUser?.apellido || '').toUpperCase().includes('BAVUSO');
+  const esJorge = nombreLower.includes('jorge');
 
   const esGG = currentUser?.esAdminReal || 
                currentUser?.esSuperAdmin || 
@@ -43,18 +45,50 @@ export default function MobileRequisiciones({ currentUser, onPendingCountChange 
                         rolUpper.includes('CONTABIL') || 
                         deptoUpper.includes('CONTABIL') || 
                         deptoUpper.includes('ADMINISTRA') || 
-                        nombreLower.includes('jorge') ||
+                        esJorge ||
                         emailLower === 'karincmm1@gmail.com';
+
+  // Cargar IDs de analistas/subordinados directos
+  useEffect(() => {
+    const cargarAnalistas = async () => {
+      if (!currentUser?.id) return;
+      try {
+        const { data: directos } = await supabase
+          .from('perfiles')
+          .select('id, nombre, apellido')
+          .eq('gerente_directo_id', currentUser.id);
+
+        const ids = (directos || []).map(p => p.id);
+
+        // Si es Jorge Urdaneta, buscar también por nombre Carlos Delgado si no está ya vinculado por ID
+        if (esJorge) {
+          const { data: carlos } = await supabase
+            .from('perfiles')
+            .select('id')
+            .ilike('nombre', '%carlos%')
+            .ilike('apellido', '%delgado%');
+          if (carlos) {
+            carlos.forEach(c => { if (!ids.includes(c.id)) ids.push(c.id); });
+          }
+        }
+        setAnalistasIds(ids);
+      } catch (err) {
+        console.warn('Error al cargar analistas de perfil:', err);
+      }
+    };
+    cargarAnalistas();
+  }, [currentUser, esJorge]);
 
   const cargarRequisiciones = useCallback(async () => {
     setLoading(true);
     try {
-      // Cargamos las más recientes (últimas 300 requisiciones ordenadas por id desc)
+      // Cargamos las más recientes (últimas 500 requisiciones completas ordenadas por id desc)
       let query = supabase
         .from('requisiciones')
-        .select('id, correlativo_req, fecha_emision, created_at, solicitante, gerencia, centro_costo, prioridad, estado_aprobacion, motivo_rechazo, items, facturas_url, firma_gerente, firma_gerente_general, firma_gerente_proyecto, aprobado_gerente_area, aprobado_gerente_general, aprobado_gerente_proyecto, n_aprobacion_area, n_aprobacion_general, n_aprobacion_proyecto, f_aprobacion_area, f_aprobacion_general, f_aprobacion_proyecto, user_id')
+        .select('*')
+        .neq('correlativo_req', 'SYS-PROVEEDORES-CENTRAL')
         .order('id', { ascending: false })
-        .limit(300);
+        .limit(500);
 
       const { data, error } = await query;
       if (error) throw error;
@@ -97,6 +131,15 @@ export default function MobileRequisiciones({ currentUser, onPendingCountChange 
     cargarRequisiciones();
   }, [cargarRequisiciones]);
 
+  // Verificar si una requisición es de un analista o subordinado de este usuario
+  const esDeMiEquipo = useCallback((r) => {
+    const sol = (r.solicitante || '').toLowerCase();
+    const esCarlosDeJorge = esJorge && sol.includes('carlos delgado');
+    const esSubordinadoDirecto = (r.gerente_directo_id && r.gerente_directo_id === currentUser?.id) ||
+                                (r.user_id && analistasIds.includes(r.user_id));
+    return Boolean(esCarlosDeJorge || esSubordinadoDirecto);
+  }, [currentUser, esJorge, analistasIds]);
+
   // Verificar si una requisición requiere aprobación de este usuario
   const requiereMiAprobacion = useCallback((r) => {
     const estado = (r.estado_aprobacion || '').toLowerCase();
@@ -108,6 +151,11 @@ export default function MobileRequisiciones({ currentUser, onPendingCountChange 
     const esSolicitante = (currentUser?.id && r.user_id === currentUser.id) || (miNombreCompleto && solNombre.includes(miNombreCompleto));
     if (esSolicitante && !esGG) return false;
 
+    // Si es analista o subordinado directo (ej: Carlos Delgado para Jorge Urdaneta)
+    if (esDeMiEquipo(r)) {
+      return true;
+    }
+
     if (estado === 'pendiente_proyecto') {
       return esGG || rolUpper.includes('PROYECTO') || esGerenteArea;
     }
@@ -118,12 +166,17 @@ export default function MobileRequisiciones({ currentUser, onPendingCountChange 
       return esGG;
     }
     return esGG || esGerenteArea;
-  }, [currentUser, esGG, esGerenteArea, rolUpper]);
+  }, [currentUser, esGG, esGerenteArea, rolUpper, esDeMiEquipo]);
 
   // Contador de pendientes para el badge
   const pendientesCount = useMemo(() => {
     return requisiciones.filter(requiereMiAprobacion).length;
   }, [requisiciones, requiereMiAprobacion]);
+
+  // Contador de mi equipo
+  const miEquipoCount = useMemo(() => {
+    return requisiciones.filter(esDeMiEquipo).length;
+  }, [requisiciones, esDeMiEquipo]);
 
   useEffect(() => {
     if (onPendingCountChange) {
@@ -137,6 +190,8 @@ export default function MobileRequisiciones({ currentUser, onPendingCountChange 
       // Filtro de pestaña
       if (filtroTab === 'por_aprobar') {
         if (!requiereMiAprobacion(r)) return false;
+      } else if (filtroTab === 'mi_equipo') {
+        if (!esDeMiEquipo(r)) return false;
       } else if (filtroTab === 'mis_solicitudes') {
         const miNombre = `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim().toLowerCase();
         const sol = (r.solicitante || '').toLowerCase();
@@ -154,13 +209,14 @@ export default function MobileRequisiciones({ currentUser, onPendingCountChange 
         const matchCorr = (r.correlativo || '').toLowerCase().includes(query);
         const matchSol = (r.solicitante || '').toLowerCase().includes(query);
         const matchCC = (r.centro_costo || '').toLowerCase().includes(query);
+        const matchGer = (r.gerencia || '').toLowerCase().includes(query);
         const matchItems = (r.items || []).some(it => (it.descripcion || it.nombre || '').toLowerCase().includes(query));
-        if (!matchCorr && !matchSol && !matchCC && !matchItems) return false;
+        if (!matchCorr && !matchSol && !matchCC && !matchGer && !matchItems) return false;
       }
 
       return true;
     });
-  }, [requisiciones, filtroTab, filtroGerencia, busqueda, requiereMiAprobacion, currentUser]);
+  }, [requisiciones, filtroTab, filtroGerencia, busqueda, requiereMiAprobacion, esDeMiEquipo, currentUser]);
 
   // Handler de Aprobación
   const handleAprobar = async (req, tipoAprobacion) => {
@@ -313,6 +369,14 @@ export default function MobileRequisiciones({ currentUser, onPendingCountChange 
         >
           <span>Por Aprobar</span>
           {pendientesCount > 0 && <span className="m-badge-count">{pendientesCount}</span>}
+        </button>
+
+        <button
+          className={`m-pill-btn ${filtroTab === 'mi_equipo' ? 'active' : ''}`}
+          onClick={() => setFiltroTab('mi_equipo')}
+        >
+          <span>Mi Equipo / Analistas</span>
+          {miEquipoCount > 0 && <span className="m-badge-count" style={{ background: '#3b82f6' }}>{miEquipoCount}</span>}
         </button>
 
         <button

@@ -102,6 +102,11 @@ export default function MobileTicketCard({ ticket, currentUser, onAprobar, onRec
                     nombreLower.includes('jorge') ||
                     nombreLower.includes('perla');
 
+  const esJorge = nombreLower.includes('jorge');
+  const solTicket = (ticket.solicitante || ticket.gerente_nombre || '').toLowerCase();
+  const esCarlosDelgado = solTicket.includes('carlos delgado');
+  const esMiAnalistaTicket = esJorge && esCarlosDelgado;
+
   const esAprobadorAsignado = ticket.aprobador_id && ticket.aprobador_id === currentUser?.id;
 
   const userDepto = (currentUser?.departamento || '').toLowerCase().trim();
@@ -132,7 +137,7 @@ export default function MobileTicketCard({ ticket, currentUser, onAprobar, onRec
 
   const puedeAprobar = esPendiente &&
     (!esSolicitante || esAdmin) &&
-    (esAdmin || esGerente || esAprobadorAsignado || esSuGerenteAsignado || coincideDepto || coincideObra || sinAprobadorAsignado);
+    (esAdmin || esGerente || esMiAnalistaTicket || esAprobadorAsignado || esSuGerenteAsignado || coincideDepto || coincideObra || sinAprobadorAsignado);
 
   const handleConfirmarRechazo = () => {
     if (!motivoRechazo.trim()) {
