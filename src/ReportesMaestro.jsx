@@ -276,12 +276,12 @@ const ReportesMaestro = () => {
         setLoading(true);
         try {
             const [resReq, resTickets, resCC, resBancos, resSols, resParts, resGer] = await Promise.all([
-                supabase.from('requisiciones').select('*').order('fecha_emision', { ascending: false }),
-                supabase.from('tickets_directos').select('*').order('fecha_emision', { ascending: false }),
+                supabase.from('requisiciones').select('*').neq('correlativo_req', 'SYS-PROVEEDORES-CENTRAL').order('fecha_emision', { ascending: false }).limit(500),
+                supabase.from('tickets_directos').select('*').order('fecha_emision', { ascending: false }).limit(500),
                 supabase.from('maestros_centros_costo').select('id, nombre').eq('activo', true).order('nombre'),
                 supabase.from('bancos').select('*').eq('activo', true),
-                supabase.from('solicitudes_fondos').select('*').order('fecha_operativa', { ascending: false }),
-                supabase.from('partidas_fondos').select('*'),
+                supabase.from('solicitudes_fondos').select('*').order('fecha_operativa', { ascending: false }).limit(500),
+                supabase.from('partidas_fondos').select('*').limit(1500),
                 supabase.from('cat_gerencias').select('nombre').order('nombre')
             ]);
 

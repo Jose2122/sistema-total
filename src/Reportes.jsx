@@ -83,16 +83,14 @@ const Reportes = () => {
   const cargarDatos = useCallback(async () => {
     setLoading(true);
     try {
-      const [resReq, resTickets, resCC, resGer] = await Promise.all([
+      const [resReq, resCC, resGer] = await Promise.all([
         supabase
           .from('requisiciones')
           .select('*')
+          .neq('correlativo_req', 'SYS-PROVEEDORES-CENTRAL')
           .eq('estado_aprobacion', 'aprobado_final')
-          .order('fecha_emision', { ascending: false }),
-        supabase
-          .from('tickets_directos')
-          .select('*')
-          .order('fecha_emision', { ascending: false }),
+          .order('fecha_emision', { ascending: false })
+          .limit(500),
         supabase
           .from('maestros_centros_costo')
           .select('id, nombre')
@@ -105,7 +103,6 @@ const Reportes = () => {
       ]);
 
       if (resReq.error) throw resReq.error;
-      if (resTickets.error) throw resTickets.error;
       if (resCC.data) setListaCentrosCostos(resCC.data);
       if (resGer.data) setListaGerencias(resGer.data.map(g => g.nombre));
 

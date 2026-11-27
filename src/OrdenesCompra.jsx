@@ -239,79 +239,45 @@ const OrdenesCompra = ({ currentUser }) => {
     isCargandoOrdenesRef.current = true;
     setLoading(true);
     try {
-      // 1. Carga paralela de todas las fuentes de datos independientes
+      // 1. Carga paralela de todas las fuentes de datos independientes (con paginación estricta para proteger Disk IO)
       const [provsData, reqsData, itemsOdcData, odcData, destinosData] = await Promise.all([
         obtenerTodosProveedores(),
         // Catálogo de requisiciones de forma ultraliviana (sin el campo pesado 'items' JSON)
         (async () => {
-          let reqs = [];
-          let page = 0;
-          let keep = true;
-          while (keep) {
-            const { data: chunk, error: reqErr } = await supabase
-              .from('requisiciones')
-              .select('id, correlativo_req, solicitante, gerencia, centro_costo, prioridad')
-              .range(page * 1000, (page + 1) * 1000 - 1);
-            if (reqErr) {
-              console.warn("Aviso al cargar catálogo de requisiciones:", reqErr);
-              break;
-            }
-            if (chunk && chunk.length > 0) {
-              reqs = reqs.concat(chunk);
-              if (chunk.length < 1000) keep = false;
-              else page++;
-            } else {
-              keep = false;
-            }
+          const { data: chunk, error: reqErr } = await supabase
+            .from('requisiciones')
+            .select('id, correlativo_req, solicitante, gerencia, centro_costo, prioridad')
+            .neq('correlativo_req', 'SYS-PROVEEDORES-CENTRAL')
+            .order('id', { ascending: false })
+            .limit(500);
+          if (reqErr) {
+            console.warn("Aviso al cargar catálogo de requisiciones:", reqErr);
+            return [];
           }
-          return reqs;
+          return chunk || [];
         })(),
         // Renglones detallados de la tabla ordenes_compra_items
         (async () => {
-          let items = [];
-          let page = 0;
-          let keep = true;
-          while (keep) {
-            const { data: chunkItems, error: itemsErr } = await supabase
-              .from('ordenes_compra_items')
-              .select('id, orden_compra_id, item_numero, descripcion, cantidad, unidad, precio_unitario, subtotal, total_fila')
-              .order('item_numero', { ascending: true })
-              .range(page * 1000, (page + 1) * 1000 - 1);
-            if (itemsErr) {
-              console.warn("Aviso al cargar ítems globales de ODC:", itemsErr.message);
-              break;
-            }
-            if (chunkItems && chunkItems.length > 0) {
-              items = items.concat(chunkItems);
-              if (chunkItems.length < 1000) keep = false;
-              else page++;
-            } else {
-              keep = false;
-            }
+          const { data: chunkItems, error: itemsErr } = await supabase
+            .from('ordenes_compra_items')
+            .select('id, orden_compra_id, item_numero, descripcion, cantidad, unidad, precio_unitario, subtotal, total_fila')
+            .order('id', { ascending: false })
+            .limit(1000);
+          if (itemsErr) {
+            console.warn("Aviso al cargar ítems globales de ODC:", itemsErr.message);
+            return [];
           }
-          return items;
+          return chunkItems || [];
         })(),
         // Órdenes de compra principales
         (async () => {
-          let odcs = [];
-          let page = 0;
-          let keep = true;
-          while (keep) {
-            const { data: chunk, error } = await supabase
-              .from('ordenes_compra')
-              .select('*')
-              .order('created_at', { ascending: false })
-              .range(page * 1000, (page + 1) * 1000 - 1);
-            if (error) throw error;
-            if (chunk && chunk.length > 0) {
-              odcs = odcs.concat(chunk);
-              if (chunk.length < 1000) keep = false;
-              else page++;
-            } else {
-              keep = false;
-            }
-          }
-          return odcs;
+          const { data: chunk, error } = await supabase
+            .from('ordenes_compra')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .limit(500);
+          if (error) throw error;
+          return chunk || [];
         })(),
         // Destinos de despacho
         (async () => {

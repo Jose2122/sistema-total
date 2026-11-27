@@ -68,11 +68,14 @@ const AnalyticsCompras = ({ usuario }) => {
     const fetchData = useCallback(async () => {
         setLoading(true);
         try {
-            // Requisiciones
+            // Requisiciones (paginación estricta y exclusión de registro maestro de sistema)
             const { data: reqs, error: reqError } = await supabase
                 .from('requisiciones')
                 .select('*')
-                .not('estado_aprobacion', 'eq', 'ANULADA');
+                .neq('correlativo_req', 'SYS-PROVEEDORES-CENTRAL')
+                .not('estado_aprobacion', 'eq', 'ANULADA')
+                .order('fecha_emision', { ascending: false })
+                .limit(500);
             if (reqError) throw reqError;
             setData(reqs || []);
 
@@ -103,18 +106,28 @@ const AnalyticsCompras = ({ usuario }) => {
     useEffect(() => {
         fetchData();
 
-        // Suscribirse a cambios en tiempo real
+        let debounceTimer = null;
+        const fetchDebounced = () => {
+            if (debounceTimer) clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => {
+                fetchData();
+            }, 2000);
+        };
+
+        // Suscribirse a cambios en tiempo real con debounce
         const reqChannel = supabase
             .channel('compras_analytics_realtime')
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'requisiciones' }, () => {
-                fetchData();
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'requisiciones' }, (payload) => {
+                if (payload?.new?.correlativo_req === 'SYS-PROVEEDORES-CENTRAL') return;
+                fetchDebounced();
             })
             .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'requisicion_logs' }, () => {
-                fetchData();
+                fetchDebounced();
             })
             .subscribe();
 
         return () => {
+            if (debounceTimer) clearTimeout(debounceTimer);
             supabase.removeChannel(reqChannel);
         };
     }, [fetchData]);

@@ -751,13 +751,15 @@ const StockSmartTotalClean = ({ currentUserProp, session: sessionProp }) => {
       return;
     }
 
-    // Cargar lista de responsables (Gerentes, Coordinadores, Analistas)
-    const { data: dataGerentes } = await supabase
-      .from('perfiles')
-      .select('nombre, apellido, departamento')
-      .in('rol', ['Gerente', 'Coordinador', 'Analista'])
-      .order('nombre');
-    if (dataGerentes) setGerentesDisponibles(dataGerentes);
+    // Cargar lista de responsables (Gerentes, Coordinadores, Analistas) solo si aún no está cargada
+    if (gerentesDisponibles.length === 0) {
+      const { data: dataGerentes } = await supabase
+        .from('perfiles')
+        .select('nombre, apellido, departamento')
+        .in('rol', ['Gerente', 'Coordinador', 'Analista'])
+        .order('nombre');
+      if (dataGerentes) setGerentesDisponibles(dataGerentes);
+    }
 
     const fechaLimite = new Date();
     fechaLimite.setDate(fechaLimite.getDate() - 120);
@@ -814,7 +816,7 @@ const StockSmartTotalClean = ({ currentUserProp, session: sessionProp }) => {
       }
     }
 
-    const { data: dataHist, error: queryError } = await query.order('created_at', { ascending: false });
+    const { data: dataHist, error: queryError } = await query.order('created_at', { ascending: false }).limit(300);
 
     if (queryError) {
       console.error("[ERRORES FONDOS] Error cargando solicitudes_fondos:", queryError.message);
@@ -890,8 +892,10 @@ const StockSmartTotalClean = ({ currentUserProp, session: sessionProp }) => {
         const { data: reqsData } = await supabase
           .from('requisiciones')
           .select('id, correlativo_req, origen, estado_aprobacion, status_compra, total_bs, items')
+          .neq('correlativo_req', 'SYS-PROVEEDORES-CENTRAL')
+          .gte('created_at', fechaLimiteStr)
           .ilike('origen', 'REF:%')
-          .limit(5000);
+          .limit(500);
         if (reqsData) requisicionesPorOrigen = reqsData;
       } catch (e) {
         console.error("Error fetching requisiciones por origen:", e);
@@ -1163,44 +1167,46 @@ const StockSmartTotalClean = ({ currentUserProp, session: sessionProp }) => {
       setHistorial(historialMapeado);
     }
 
-    const { data: dataCC } = await supabase.from('maestros_centros_costo').select('id, nombre').eq('activo', true).order('nombre');
-    if (dataCC) setCentrosCosto(dataCC);
+    if (centrosCosto.length === 0) {
+      const [resCC, resClas, resSub, resGer] = await Promise.all([
+        supabase.from('maestros_centros_costo').select('id, nombre').eq('activo', true).order('nombre'),
+        supabase.from('maestros_clasificaciones').select('id, nombre, centro_costo_id').eq('activo', true),
+        supabase.from('maestros_sub_clasificaciones').select('id, nombre, clasificacion_id').eq('activo', true),
+        supabase.from('cat_gerencias').select('*').order('nombre')
+      ]);
 
-    const { data: dataClas } = await supabase
-      .from('maestros_clasificaciones')
-      .select('id, nombre, centro_costo_id')
-      .eq('activo', true);
-
-    if (dataClas) {
-      setTodasClasificaciones(dataClas.map(c => ({
-        id: c.id,
-        nombre: c.nombre,
-        padreId: c.centro_costo_id
-      })));
+      if (resCC.data) setCentrosCosto(resCC.data);
+      if (resClas.data) {
+        setTodasClasificaciones(resClas.data.map(c => ({
+          id: c.id,
+          nombre: c.nombre,
+          padreId: c.centro_costo_id
+        })));
+      }
+      if (resSub.data) {
+        setTodasCategorias(resSub.data.map(s => ({
+          id: s.id,
+          nombre: s.nombre,
+          padreId: s.clasificacion_id
+        })));
+      }
+      if (resGer.data) setGerenciasBaseDatos(resGer.data);
     }
-
-    const { data: dataSub } = await supabase
-      .from('maestros_sub_clasificaciones')
-      .select('id, nombre, clasificacion_id')
-      .eq('activo', true);
-
-    if (dataSub) {
-      setTodasCategorias(dataSub.map(s => ({
-        id: s.id,
-        nombre: s.nombre,
-        padreId: s.clasificacion_id
-      })));
-    }
-
-    const { data: dataGer } = await supabase.from('cat_gerencias').select('*').order('nombre');
-    if (dataGer) setGerenciasBaseDatos(dataGer);
 
     setLoading(false);
-  }, [currentUser]);
+  }, [currentUser, centrosCosto.length, gerentesDisponibles.length]);
 
-  // --- EFECTO DE CARGA INICIAL CON SUSCRIPCIÓN EN TIEMPO REAL ---
+  // --- EFECTO DE CARGA INICIAL CON SUSCRIPCIÓN EN TIEMPO REAL (CON DEBOUNCE Y CLEANUP) ---
   useEffect(() => {
     cargarTodo();
+
+    let debounceTimer = null;
+    const recargarDebounced = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        cargarTodo();
+      }, 1500);
+    };
 
     const channel = supabase
       .channel('fondos_realtime')
@@ -1211,7 +1217,7 @@ const StockSmartTotalClean = ({ currentUserProp, session: sessionProp }) => {
         table: 'solicitudes_fondos'
       }, (payload) => {
         console.log('[REALTIME FONDOS] Cambio detectado en solicitudes_fondos:', payload.eventType, payload.new);
-        cargarTodo();
+        recargarDebounced();
       })
       // 2. Escuchar cambios en partidas_fondos (pagos, duplicaciones, eliminaciones o vinculación a requisiciones)
       .on('postgres_changes', {
@@ -1220,7 +1226,7 @@ const StockSmartTotalClean = ({ currentUserProp, session: sessionProp }) => {
         table: 'partidas_fondos'
       }, (payload) => {
         console.log('[REALTIME FONDOS] Cambio detectado en partidas_fondos:', payload.eventType, payload.new);
-        cargarTodo();
+        recargarDebounced();
       })
       // 3. Escuchar creación de nuevas requisiciones (INSERT) para bloquear partidas de inmediato
       .on('postgres_changes', {
@@ -1228,9 +1234,10 @@ const StockSmartTotalClean = ({ currentUserProp, session: sessionProp }) => {
         schema: 'public',
         table: 'requisiciones'
       }, (payload) => {
+        if (payload?.new?.correlativo_req === 'SYS-PROVEEDORES-CENTRAL') return;
         console.log('[REALTIME FONDOS] Nueva Requisición creada:', payload.new);
         toast.success(`Nueva requisición ${payload.new.correlativo_req || ''} generada. Sincronizando partidas...`, { icon: '📝' });
-        cargarTodo();
+        recargarDebounced();
       })
       // 4. Escuchar actualizaciones de requisiciones (UPDATE) para sincronizar aprobaciones
       .on('postgres_changes', {
@@ -1238,14 +1245,19 @@ const StockSmartTotalClean = ({ currentUserProp, session: sessionProp }) => {
         schema: 'public',
         table: 'requisiciones'
       }, (payload) => {
+        if (payload?.new?.correlativo_req === 'SYS-PROVEEDORES-CENTRAL') return;
         console.log('[REALTIME FONDOS] Requisición actualizada:', payload.new);
         if (payload.new.estado_aprobacion === 'aprobado_final') {
           toast.success(`Requisición ${payload.new.correlativo_req || ''} APROBADA GLOBAL. Sincronizando montos...`, { icon: '✅' });
         }
-        cargarTodo();
+        recargarDebounced();
       })
       .subscribe();
 
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      supabase.removeChannel(channel);
+    };
   }, [cargarTodo]);
 
   // --- EFECTO DE PRESENCIA MULTIUSUARIO ---
@@ -5026,6 +5038,7 @@ const StockSmartTotalClean = ({ currentUserProp, session: sessionProp }) => {
                   isOpen={abrirTicketModal}
                   onClose={() => setAbrirTicketModal(false)}
                   datosPredefinidos={dataParaTicket}
+                  currentUser={currentUser}
                   onSuccess={handleTicketFinalizado}
                 />
               </div>

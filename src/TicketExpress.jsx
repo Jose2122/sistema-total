@@ -726,14 +726,42 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
 
     setLoading(true);
     try {
-      const rolCreatorUpper = (currentUser?.rol || '').toUpperCase();
-      const esGerenteAreaOProyecto = (
+      // Garantizar que contemos con el usuario autenticado activo (incluso si no llegó por props)
+      let activeUser = currentUser;
+      if (!activeUser || !activeUser.id) {
+        try {
+          const { data: { user } } = await supabase.auth.getUser();
+          if (user) {
+            const { data: perfil } = await supabase.from('perfiles').select('*').eq('id', user.id).maybeSingle();
+            activeUser = {
+              id: user.id,
+              nombre: perfil ? `${perfil.nombre || ''} ${perfil.apellido && String(perfil.apellido).toLowerCase() !== 'undefined' ? perfil.apellido : ''}`.trim() : (user.email || '').split('@')[0],
+              correo: user.email,
+              departamento: perfil?.departamento || form.departamento || 'General',
+              rol: perfil?.rol || 'Usuario',
+              esSuperAdmin: user.email === 'jcontreras.totalclean@gmail.com',
+              esAdminReal: user.email === 'jcontreras.totalclean@gmail.com' || user.email === 'cvega@totalclean.com.ve',
+              esAdminGlobal: user.email === 'jcontreras.totalclean@gmail.com' || user.email === 'cvega@totalclean.com.ve' || perfil?.rol === 'Gerente General'
+            };
+            setCurrentUser(activeUser);
+          }
+        } catch (eAuth) {
+          console.warn("[TicketExpress] Error recuperando sesión en emitirTicket:", eAuth);
+        }
+      }
+
+      const userId = activeUser?.id || null;
+      const userNombre = activeUser?.nombre || form.solicitante || 'Usuario';
+      const userDept = activeUser?.departamento || form.departamento || '';
+      const rolCreatorUpper = (activeUser?.rol || '').toUpperCase();
+
+      const esGerenteAreaOProyecto = Boolean(
         (rolCreatorUpper.includes('GERENTE') && !rolCreatorUpper.includes('GENERAL')) ||
         rolCreatorUpper.includes('PROYECTO') ||
         rolCreatorUpper.includes('ÁREA') ||
         rolCreatorUpper.includes('AREA') ||
-        currentUser?.esSuperAdmin === true ||
-        currentUser?.esAdminReal === true
+        activeUser?.esSuperAdmin === true ||
+        activeUser?.esAdminReal === true
       );
 
       // Buscar ID del Gerente General como último recurso si no hay gerente de área
@@ -766,7 +794,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
       // Si el creador no es Gerente de Área/Proyecto (Analistas y Coordinadores cuentan como analista),
       // se busca el gerente principal o de proyecto correspondiente a su disciplina:
       if (!esGerenteAreaOProyecto) {
-        const deptoNormalizado = (form.departamento || currentUser?.departamento || '').trim().toLowerCase();
+        const deptoNormalizado = (form.departamento || userDept).trim().toLowerCase();
 
         if (deptoNormalizado.includes('operac')) {
           // En Operaciones, buscar gerente de proyecto de la obra (CC)
@@ -777,7 +805,7 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
               .contains('obras_asignadas', [cc])
               .ilike('rol', '%proyecto%')
               .limit(1);
-            if (gerentesProyecto && gerentesProyecto.length > 0) {
+            if (gerentesProyecto && gerentesProyecto.length > 0 && gerentesProyecto[0]?.id) {
               targetAprobadorId = gerentesProyecto[0].id;
             }
           }
@@ -790,12 +818,12 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
               .ilike('rol', '%gerente%')
               .not('rol', 'ilike', '%general%')
               .limit(1);
-            if (gOperaciones && gOperaciones.length > 0) {
+            if (gOperaciones && gOperaciones.length > 0 && gOperaciones[0]?.id) {
               targetAprobadorId = gOperaciones[0].id;
             }
           }
           if (!targetAprobadorId) {
-            targetAprobadorId = currentUser?.gerente_directo_id || ggId;
+            targetAprobadorId = activeUser?.gerente_directo_id || ggId;
           }
         } else if (deptoNormalizado.includes('estimac')) {
           // En Estimaciones, el gerente directo para aprobaciones es Karin Machado (karincmm1@gmail.com)
@@ -805,18 +833,18 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
               .select('id')
               .eq('correo', 'karincmm1@gmail.com')
               .limit(1);
-            if (karinData && karinData.length > 0) {
+            if (karinData && karinData.length > 0 && karinData[0]?.id) {
               targetAprobadorId = karinData[0].id;
             }
           } catch (e) {
             console.error("Error al buscar a Karin Machado:", e);
           }
           if (!targetAprobadorId) {
-            targetAprobadorId = currentUser?.gerente_directo_id || ggId;
+            targetAprobadorId = activeUser?.gerente_directo_id || ggId;
           }
         } else {
           // Lógica para otros departamentos: buscar Gerente de Proyecto o Gerente de Área
-          targetAprobadorId = currentUser?.gerente_directo_id || null;
+          targetAprobadorId = activeUser?.gerente_directo_id || null;
 
           if (!targetAprobadorId && cc) {
             const { data: gerentesProyecto } = await supabase
@@ -825,20 +853,20 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
               .contains('obras_asignadas', [cc])
               .ilike('rol', '%proyecto%')
               .limit(1);
-            if (gerentesProyecto && gerentesProyecto.length > 0) {
+            if (gerentesProyecto && gerentesProyecto.length > 0 && gerentesProyecto[0]?.id) {
               targetAprobadorId = gerentesProyecto[0].id;
             }
           }
 
-          if (!targetAprobadorId && currentUser?.departamento) {
+          if (!targetAprobadorId && userDept) {
             const { data: gerentesDepto } = await supabase
               .from('perfiles')
               .select('id')
-              .eq('departamento', currentUser.departamento)
+              .eq('departamento', userDept)
               .ilike('rol', '%gerente%')
               .not('rol', 'ilike', '%general%')
               .limit(1);
-            if (gerentesDepto && gerentesDepto.length > 0) {
+            if (gerentesDepto && gerentesDepto.length > 0 && gerentesDepto[0]?.id) {
               targetAprobadorId = gerentesDepto[0].id;
             }
           }
@@ -878,19 +906,19 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
         initialStatus = 'EMITIDO';
         apArea = true;
         apGeneral = true;
-        nArea = currentUser.nombre;
+        nArea = userNombre;
         fArea = new Date().toISOString();
         nGeneral = 'Auto-Aprobado (Gerente)';
         fGeneral = new Date().toISOString();
         finalAprobadorId = null;
-        finalAprobadoPor = currentUser.id;
+        finalAprobadoPor = userId;
         finalFechaAprobacion = new Date().toISOString();
       }
 
       const payload = {
-        usuario_id: currentUser.id,
-        gerente_nombre: form.solicitante || currentUser.nombre,
-        departamento: form.departamento,
+        usuario_id: userId,
+        gerente_nombre: form.solicitante || userNombre,
+        departamento: form.departamento || userDept,
         fecha_emision: form.fecha,
         codigo_control: idControlAutomatico,
         total_usd: totalGeneral,
@@ -921,22 +949,25 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
 
       console.log("[TicketExpress] Payload de inserción:", payload);
 
-      const { data: newTicket, error } = await supabase.from('tickets_directos').insert([payload]).select().single();
+      const { data: newTicket, error } = await supabase.from('tickets_directos').insert([payload]).select().maybeSingle();
       if (error) throw error;
+
+      const ticketId = newTicket?.id || null;
+      const ticketCodigo = newTicket?.codigo_control || idControlAutomatico;
 
       // NOTIFICAR AL DESTINATARIO ADECUADO
       try {
-        if (initialStatus === 'Pendiente Aprobación' && targetAprobadorId) {
+        if (initialStatus === 'Pendiente Aprobación' && targetAprobadorId && ticketId) {
           // Notificar al Gerente de Área/Proyecto que tiene un ticket por aprobar
           await supabase.from('notificaciones').insert([{
             usuario_id: targetAprobadorId,
             titulo: 'Nuevo Ticket por Aprobar',
-            mensaje: `El Ticket ${newTicket.codigo_control} creado por ${newTicket.gerente_nombre || 'un usuario'} requiere tu aprobación.`,
+            mensaje: `El Ticket ${ticketCodigo} creado por ${payload.gerente_nombre || 'un usuario'} requiere tu aprobación.`,
             tipo: 'Aprobación Pendiente',
             leido: false,
-            ticket_id: newTicket.id
+            ticket_id: ticketId
           }]);
-        } else if (initialStatus === 'EMITIDO') {
+        } else if (initialStatus === 'EMITIDO' && ticketId) {
           // Si nació auto-aprobado por ser creado por Gerente, notificar a Administración
           const { data: perfiles } = await supabase
             .from('perfiles')
@@ -948,40 +979,40 @@ const TicketExpress = ({ isOpen = false, onClose = null, datosPredefinidos = nul
               return rol.includes('administra') || rol.includes('contabil') || depto.includes('administra') || depto.includes('contabil');
             });
             for (const admin of admins) {
-              if (admin.id !== currentUser?.id) {
+              if (admin?.id && admin.id !== userId) {
                 await supabase.from('notificaciones').insert([{
                   usuario_id: admin.id,
                   titulo: 'Nuevo Ticket para Pago',
-                  mensaje: `Nuevo Ticket de Pago ${newTicket.codigo_control} en cola creado por ${newTicket.gerente_nombre || 'un usuario'}.`,
+                  mensaje: `Nuevo Ticket de Pago ${ticketCodigo} en cola creado por ${payload.gerente_nombre || 'un usuario'}.`,
                   tipo: 'Ticket Nuevo',
                   leido: false,
-                  ticket_id: newTicket.id
+                  ticket_id: ticketId
                 }]);
               }
             }
           }
         }
-      } catch (err) {
-        console.error("Error al notificar:", err);
+      } catch (errNotif) {
+        console.error("Error al notificar:", errNotif);
       }
 
       // ACTUALIZAR PARTIDAS FONDOS SI EXISTEN
       const idsRelacionados = form.partidas.map(p => p.id).filter(id => typeof id === 'number' || (typeof id === 'string' && id.length > 10)); // Los IDs de Supabase son largos
-      if (idsRelacionados.length > 0) {
+      if (idsRelacionados.length > 0 && ticketId) {
         await supabase
           .from('partidas_fondos')
           .update({
-            ticket_id: newTicket.id,
+            ticket_id: ticketId,
             status: 'Bloqueado',
-            codigo_ticket: idControlAutomatico,
-            emisor_nombre: form.solicitante || `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.trim()
+            codigo_ticket: ticketCodigo,
+            emisor_nombre: form.solicitante || `${userNombre}`.trim()
           })
           .in('id', idsRelacionados);
       }
 
       toast.success("Ticket EMITIDO Y FINALIZADO con éxito.");
       setShowModal(false);
-      if (onSuccess) onSuccess(newTicket.id, idsRelacionados, idControlAutomatico);
+      if (onSuccess) onSuccess(ticketId, idsRelacionados, ticketCodigo);
       cargarHistorial();
       // Reset form
       setForm({

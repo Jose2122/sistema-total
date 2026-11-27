@@ -1151,70 +1151,8 @@ export const obtenerTodosProveedores = async (options = {}) => {
     // ignore
   }
 
-  // Si no hay proveedores históricos en caché y no tenemos proveedores primarios, escanear bajo demanda
-  if (historicosReqs.length === 0 && cloudProvs.length === 0 && supabaseProvs.length === 0 && localProvs.length === 0) {
-    try {
-      let reqsAll = [];
-      let pageReq = 0;
-      let keepReq = true;
-      while (keepReq) {
-        const { data: chunk, error: reqsError } = await supabase
-          .from('requisiciones')
-          .select('items, correlativo_req, fecha_emision')
-          .range(pageReq * 1000, (pageReq + 1) * 1000 - 1);
-        
-        if (reqsError) break;
-        if (chunk && chunk.length > 0) {
-          reqsAll = reqsAll.concat(chunk);
-          if (chunk.length < 1000) keepReq = false;
-          else pageReq++;
-        } else {
-          keepReq = false;
-        }
-      }
-
-      const mapaHist = new Map();
-      reqsAll.forEach(r => {
-        if (r.correlativo_req?.startsWith('SYS-')) return;
-        const items = Array.isArray(r.items) ? r.items : [];
-        items.forEach(it => {
-          const hist = Array.isArray(it.historial_compras) ? it.historial_compras : [];
-          hist.forEach(h => {
-            if (h.tipo === 'JUSTIFICACION' || h.tipo === 'ANULACION') return;
-            const nombreLimpio = (h.proveedor_nombre || '').trim();
-            if (nombreLimpio) {
-              const key = normalizarNombreEmpresa(nombreLimpio);
-              if (key && !mapaHist.has(key)) {
-                mapaHist.set(key, {
-                  id: h.proveedor_id || `HIST-${key.substring(0, 15)}`,
-                  razon_social: nombreLimpio,
-                  rif: h.proveedor_rif || '',
-                  persona_contacto: h.contacto || '',
-                  contacto_nombre: h.contacto || '',
-                  telefono: h.telefono || '',
-                  correo: h.correo || '',
-                  localizacion: h.ciudad || 'Maracaibo',
-                  ciudad: h.ciudad || 'Maracaibo',
-                  direccion: h.direccion || '',
-                  categoria: (h.categoria && h.categoria.toUpperCase() !== 'OTROS') ? h.categoria : '',
-                  status: true,
-                  es_historico: true
-                });
-              }
-            }
-          });
-        });
-      });
-      historicosReqs = deduplicarListaProveedores(Array.from(mapaHist.values()));
-      try {
-        localStorage.setItem('local_proveedores_historicos_extraidos', JSON.stringify(historicosReqs));
-      } catch {
-        // ignore
-      }
-    } catch (err) {
-      console.warn('Error en proceso de proveedores históricos:', err);
-    }
-  }
+  // Contingencia Disk IO: Desactivado el escaneo completo (while loop) sobre la tabla 'requisiciones'
+  // cuando las fuentes primarias están vacías o la BD experimenta lentitud, evitando lecturas TOAST masivas.
 
   // 3.5 Snapshots de proveedores desde el historial de modificaciones
   let historySnapshots = [];

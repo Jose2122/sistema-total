@@ -76,26 +76,28 @@ const ResumenSesion = ({ currentUser, setActiveSeccion }) => {
             if (!currentUser?.id) return;
             setLoading(true);
             try {
-                // 1. Requisiciones propias
+                // 1. Requisiciones propias (columnas necesarias y límite estricto)
                 const { data: myReqs } = await supabase
                     .from('requisiciones')
-                    .select('*')
+                    .select('id, correlativo_req, solicitante, estado_aprobacion, justificacion, gerencia, centro_costo, items, created_at, fecha_emision')
+                    .neq('correlativo_req', 'SYS-PROVEEDORES-CENTRAL')
                     .or(`solicitante.eq."${currentUser.nombre}",solicitante.eq."${currentUser.nombre} ${currentUser.apellido}"`)
-                    .order('created_at', { ascending: false });
+                    .order('created_at', { ascending: false })
+                    .limit(200);
 
                 // 2. Personal a cargo (Subordinados en la misma gerencia)
                 let subs = [];
                 if (currentUser.gerencia_id) {
                     const { data: subsData } = await supabase
                         .from('perfiles')
-                        .select('*')
+                        .select('id, nombre, apellido, rol, departamento, correo, gerencia_id')
                         .eq('gerencia_id', currentUser.gerencia_id)
                         .neq('id', currentUser.id);
                     subs = subsData || [];
                 }
 
                 // 3. Aprobaciones pendientes
-                let queryPending = supabase.from('requisiciones').select('id, correlativo_req, solicitante, estado_aprobacion, justificacion, gerencia, centro_costo');
+                let queryPending = supabase.from('requisiciones').select('id, correlativo_req, solicitante, estado_aprobacion, justificacion, gerencia, centro_costo').neq('correlativo_req', 'SYS-PROVEEDORES-CENTRAL');
                 
                 const rolUpper = (currentUser.rol || '').toUpperCase();
                 const deptoUpper = (currentUser.departamento || '').toUpperCase();
@@ -118,7 +120,7 @@ const ResumenSesion = ({ currentUser, setActiveSeccion }) => {
                 } else {
                     queryPending = queryPending.eq('id', '00000000-0000-0000-0000-000000000000');
                 }
-                const { data: pendingData } = await queryPending;
+                const { data: pendingData } = await queryPending.limit(200);
 
                 // Filtrar aprobaciones pendientes en frontend según el rol y departamento para evitar ver las de otros departamentos
                 let filteredPending = pendingData || [];
@@ -207,7 +209,7 @@ const ResumenSesion = ({ currentUser, setActiveSeccion }) => {
         };
 
         fetchDashboardData();
-    }, [currentUser]);
+    }, [currentUser?.id]);
 
     const myReqsBreakdown = useMemo(() => {
         const stats = {};

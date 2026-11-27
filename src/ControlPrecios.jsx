@@ -44,9 +44,11 @@ const ControlPrecios = ({ currentUser }) => {
       const { data, error } = await supabase
         .from('requisiciones')
         .select('*')
+        .neq('correlativo_req', 'SYS-PROVEEDORES-CENTRAL')
         .eq('estado_aprobacion', 'aprobado_final')
         .neq('status_compra', 'Completado')
-        .order('fecha_emision', { ascending: false });
+        .order('fecha_emision', { ascending: false })
+        .limit(300);
 
       if (error) throw error;
 
@@ -110,19 +112,29 @@ const ControlPrecios = ({ currentUser }) => {
     cargarCentrosCosto();
     cargarDatos();
 
-    // Suscripción Realtime para mantener consistencia
+    let debounceTimer = null;
+    const cargarDebounced = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        cargarDatos();
+      }, 2000);
+    };
+
+    // Suscripción Realtime para mantener consistencia (con debounce)
     const channel = supabase
       .channel('control_precios_realtime')
       .on('postgres_changes', {
         event: '*',
         schema: 'public',
         table: 'requisiciones'
-      }, () => {
-        cargarDatos();
+      }, (payload) => {
+        if (payload?.new?.correlativo_req === 'SYS-PROVEEDORES-CENTRAL') return;
+        cargarDebounced();
       })
       .subscribe();
 
     return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
       supabase.removeChannel(channel);
     };
   }, [cargarCentrosCosto, cargarDatos]);

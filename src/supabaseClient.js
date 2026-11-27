@@ -3,28 +3,51 @@ import { createClient } from '@supabase/supabase-js'
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 
-// Interceptor global para registrar automáticamente errores de API de Supabase
+// Circuit breaker para evitar tormentas de escritura en system_errors durante caídas de BD
+let lastErrorLogTime = 0;
+let circuitBreakerOpenUntil = 0;
+const ERROR_LOG_COOLDOWN_MS = 60000; // Máximo 1 log por minuto por cliente
+const CIRCUIT_BREAKER_PAUSE_MS = 300000; // 5 minutos de pausa si hay error 5xx / red / timeout
+
+// Interceptor global con protección contra cascada de fallos (Disk IO protection)
 const customFetch = async (url, options) => {
   try {
     const response = await fetch(url, options);
     
-    // Evitar bucle infinito y filtrar errores de API (4xx o 5xx)
     const urlString = typeof url === 'string' ? url : url?.url || '';
-    if (!urlString.includes('/system_errors') && !response.ok && response.status >= 400) {
+    // Si la BD o Gateway arroja 5xx o 429 (Too Many Requests), abrir el circuit breaker y NO escribir en BD
+    if (response.status >= 500 || response.status === 429) {
+      circuitBreakerOpenUntil = Date.now() + CIRCUIT_BREAKER_PAUSE_MS;
+      return response;
+    }
+
+    // Evitar bucle infinito: no loguear errores de system_errors, auth ni realtime
+    if (
+      !urlString.includes('/system_errors') &&
+      !urlString.includes('/auth/v1/') &&
+      !urlString.includes('/realtime/v1/') &&
+      !response.ok &&
+      response.status >= 400 &&
+      response.status < 500
+    ) {
       logSupabaseError(urlString, response.status, response.statusText || 'Error de API');
     }
     
     return response;
   } catch (err) {
-    const urlString = typeof url === 'string' ? url : url?.url || '';
-    if (!urlString.includes('/system_errors')) {
-      logSupabaseError(urlString, 0, err.message || 'Error de conexión / red');
-    }
+    // Error de red / timeout: abrir circuit breaker para NO disparar escrituras adicionales
+    circuitBreakerOpenUntil = Date.now() + CIRCUIT_BREAKER_PAUSE_MS;
     throw err;
   }
 };
 
 const logSupabaseError = async (url, status, statusText) => {
+  const now = Date.now();
+  if (now < circuitBreakerOpenUntil || (now - lastErrorLogTime) < ERROR_LOG_COOLDOWN_MS) {
+    return;
+  }
+  lastErrorLogTime = now;
+
   try {
     const endpoint = url.split('/rest/v1/')[1] || url;
     
@@ -41,7 +64,7 @@ const logSupabaseError = async (url, status, statusText) => {
     }
 
     // Inserción directa mediante fetch para no gatillar el interceptor de manera recursiva
-    await fetch(`${supabaseUrl}/rest/v1/system_errors`, {
+    const res = await fetch(`${supabaseUrl}/rest/v1/system_errors`, {
       method: 'POST',
       headers: {
         'apikey': supabaseAnonKey,
@@ -57,13 +80,21 @@ const logSupabaseError = async (url, status, statusText) => {
         usuario_rol: 'Anon'
       })
     });
-  } catch (err) {
-    console.error("Error al registrar logs en system_errors:", err);
+    if (!res.ok) {
+      circuitBreakerOpenUntil = Date.now() + CIRCUIT_BREAKER_PAUSE_MS;
+    }
+  } catch {
+    circuitBreakerOpenUntil = Date.now() + CIRCUIT_BREAKER_PAUSE_MS;
   }
 };
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   global: {
     fetch: customFetch
+  },
+  realtime: {
+    params: {
+      eventsPerSecond: 2
+    }
   }
 })
