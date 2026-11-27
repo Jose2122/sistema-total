@@ -1127,26 +1127,15 @@ const Compras = () => {
         }
       }
 
-      let allData = [];
-      let from = 0;
-      const batchSize = 1000;
+      const { data: allData, error } = await supabase
+        .from('requisiciones')
+        .select('*')
+        .neq('correlativo_req', 'SYS-PROVEEDORES-CENTRAL')
+        .eq('estado_aprobacion', 'aprobado_final')
+        .order('fecha_emision', { ascending: false })
+        .limit(500);
 
-      while (true) {
-        const to = from + batchSize - 1;
-        const { data: batch, error } = await supabase
-          .from('requisiciones')
-          .select('*')
-          .neq('correlativo_req', 'SYS-PROVEEDORES-CENTRAL')
-          .eq('estado_aprobacion', 'aprobado_final')
-          .order('fecha_emision', { ascending: false })
-          .range(from, to);
-
-        if (error) throw error;
-        if (!batch || batch.length === 0) break;
-        allData.push(...batch);
-        if (batch.length < batchSize) break;
-        from += batchSize;
-      }
+      if (error) throw error;
 
       setHistorial((allData || []).map(db => {
         const itemsArr = safeArray(db.items);

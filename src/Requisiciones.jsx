@@ -422,7 +422,7 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
         }
       }
 
-      const { data, error } = await query.order('fecha_emision', { ascending: false });
+      const { data, error } = await query.order('fecha_emision', { ascending: false }).limit(400);
 
       if (error) throw error;
       if (data) {
