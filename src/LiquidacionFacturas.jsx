@@ -669,10 +669,13 @@ const LiquidacionFacturas = ({ currentUser }) => {
         
         if (esAbono) {
           const idKey = doc.abono_id || `${doc.referencia || ''}_${doc.monto || ''}_${urlStr || Math.random()}`;
+          const facNumUpper = String(doc.factura_num || doc.doc_numero || '').trim().toUpperCase();
+          const esDeOdc = Boolean(doc.odc_id || doc.numero_odc || facNumUpper.startsWith('ODC-'));
           listMap.set(idKey, {
             ...doc,
             abono_id: doc.abono_id || idKey,
             tipo: 'abono',
+            es_de_odc: esDeOdc,
             req_id: req.id,
             req_correlativo: req.correlativo_req
           });
@@ -926,22 +929,41 @@ const LiquidacionFacturas = ({ currentUser }) => {
     return odcsContado.filter(o => o.saldo_pendiente > 0.01 && o.estatus_calculado !== 'PAGADO');
   }, [odcsContado]);
 
-  // Group purchased items by Invoice and Provider
+  // Group purchased items by Invoice and Provider (excluding ODCs which are managed in their own tabs)
   const facturasAgrupadas = useMemo(() => {
     const grupos = {};
+
+    const odcsActivas = ordenesCompra.filter(o => {
+      const st = (o.estatus_pago || o.status_pago || o.estatus_orden || '').toUpperCase();
+      return st !== 'ANULADA' && o.estado_aprobacion_precio !== 'anulada';
+    });
+    const numerosOdcSet = new Set(
+      odcsActivas.map(o => String(o.numero_odc || '').trim().toUpperCase()).filter(Boolean)
+    );
 
     requisiciones.forEach(req => {
       const items = parsearItems(req.items);
       
       items.forEach(item => {
-        // Un ítem está "comprado" si estado_item === 'comprado', 'pagado' o si tiene historial de compras válido
-        const comprasValidas = (item.historial_compras || []).filter(
-          h => h && h.tipo !== 'JUSTIFICACION' && h.tipo !== 'ANULACION' && h.tipo !== 'DIRECTRIZ'
+        if (item.anulado) return;
+
+        // Si el ítem ya está cubierto por una ODC activa, su pago se gestiona por ODC, no como Factura Procura
+        const histRaw = Array.isArray(item.historial_compras) ? item.historial_compras : [];
+        const tieneOdcActiva = histRaw.some(h => {
+          if (!h || (h.tipo !== 'ODC' && h.doc_tipo !== 'ODC')) return false;
+          const numOdc = String(h.doc_numero || h.odc_numero || '').trim().toUpperCase();
+          return !numOdc || numerosOdcSet.has(numOdc);
+        });
+        if (tieneOdcActiva) return;
+
+        // Un ítem está "comprado" si estado_item === 'comprado', 'pagado' o si tiene historial de compras válido (excluyendo ODC)
+        const comprasValidas = histRaw.filter(
+          h => h && h.tipo !== 'JUSTIFICACION' && h.tipo !== 'ANULACION' && h.tipo !== 'DIRECTRIZ' && h.tipo !== 'ODC' && h.doc_tipo !== 'ODC'
         );
         const tieneComprasHistorial = comprasValidas.length > 0;
         const esComprado = item.estado_item === 'comprado' || item.estado_item === 'pagado' || tieneComprasHistorial;
 
-        if (!esComprado || item.anulado) return;
+        if (!esComprado) return;
 
         // Intentar obtener datos de la raíz, o del historial si es histórico
         let docNum = (item.factura_num || '').trim();
@@ -963,6 +985,10 @@ const LiquidacionFacturas = ({ currentUser }) => {
         }
 
         if (!docNum) return; // Debe tener número de factura para ser agrupado
+
+        // Si el número de documento corresponde a una ODC, omitir de Facturas Procura para no duplicar
+        const docNumUpper = docNum.toUpperCase();
+        if (docNumUpper.startsWith('ODC-') || numerosOdcSet.has(docNumUpper)) return;
 
         const key = `${docNum.toUpperCase()}_${provNombre.toUpperCase()}`;
 
@@ -1012,8 +1038,12 @@ const LiquidacionFacturas = ({ currentUser }) => {
       const normalizarTexto = (str) => String(str || '').trim().toUpperCase().replace(/[.,/#!$%^&*;:{}=\-_`~()]/g, '').replace(/\s+/g, ' ');
       const normalizarDoc = (str) => String(str || '').trim().toUpperCase().replace(/^0+/, '').replace(/[^\w]/g, '');
 
-      // Filter abonos that match this invoice number and provider with resilient normalization
+      // Filter abonos that match this invoice number and provider with resilient normalization (excluding ODC abonos)
       const abonosFactura = abonosGlobales.filter(ab => {
+        if (ab.es_de_odc || ab.odc_id || ab.numero_odc) return false;
+        const abNumUpper = String(ab.factura_num || ab.doc_numero || '').trim().toUpperCase();
+        if (abNumUpper.startsWith('ODC-') || numerosOdcSet.has(abNumUpper)) return false;
+
         const abDoc = normalizarDoc(ab.factura_num || ab.doc_numero || '');
         const facDoc = normalizarDoc(factura.doc_numero || '');
         const docMatches = Boolean(abDoc && facDoc && (abDoc === facDoc || (ab.factura_num || '').trim().toUpperCase() === (factura.doc_numero || '').trim().toUpperCase()));
@@ -1082,7 +1112,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
       if (!aEsPagado && bEsPagado) return -1;
       return new Date(b.fecha_compra) - new Date(a.fecha_compra);
     });
-  }, [requisiciones, abonosGlobales, proveedores]);
+  }, [requisiciones, abonosGlobales, proveedores, ordenesCompra]);
 
   // Helper to obtain categories for a provider in a given grouped invoice
   const getProveedorCategorias = useCallback((fac) => {
@@ -1255,66 +1285,19 @@ const LiquidacionFacturas = ({ currentUser }) => {
   const historialPagosRealizados = useMemo(() => {
     const list = [];
     const seenKeys = new Set();
+    const seenAbonoIds = new Set();
+    const seenSignatures = new Set();
 
-    // 1. Pagos y Abonos de Facturas de Procura
-    facturasAgrupadas.forEach(fac => {
-      if (fac.abonos && fac.abonos.length > 0) {
-        fac.abonos.forEach(ab => {
-          const key = `ab_fac_${ab.abono_id || `${fac.doc_numero}_${ab.fecha}_${ab.monto}`}`;
-          if (!seenKeys.has(key)) {
-            seenKeys.add(key);
-            list.push({
-              id: key,
-              abono_id: ab.abono_id,
-              tipo_documento: 'FACTURA',
-              numero_documento: fac.doc_numero,
-              proveedor_nombre: fac.proveedor_nombre || ab.proveedor_nombre || 'Desconocido',
-              modalidad: fac.es_credito ? 'CREDITO' : 'CONTADO',
-              monto: Number(ab.monto) || 0,
-              banco_nombre: ab.banco_nombre || ab.banco || 'Banco Origen',
-              referencia: ab.referencia || 'N/A',
-              usuario_nombre: ab.usuario_nombre || fac.comprador || fac.usuario_compra || 'Compras / Finanzas',
-              fecha: ab.fecha || fac.fecha_compra || new Date().toISOString(),
-              timestamp: new Date(ab.fecha || fac.fecha_compra || 0).getTime(),
-              estatus_badge: fac.saldo_pendiente <= 0.01 ? 'LIQUIDADO' : 'ABONO',
-              url_soporte: ab.url || (ab.urls && ab.urls[0]?.url) || null,
-              urls_soporte: ab.urls || (ab.url ? [{ url: ab.url, name: ab.name || 'Soporte' }] : []),
-              documento_ref: fac,
-              es_odc: false
-            });
-          }
-        });
-      } else if (fac.estatus === 'PAGADO' || fac.saldo_pendiente <= 0.01) {
-        // Factura pagada directamente sin desglose de abonos previos
-        const key = `leg_fac_${fac.key}`;
-        if (!seenKeys.has(key)) {
-          seenKeys.add(key);
-          list.push({
-            id: key,
-            abono_id: null,
-            tipo_documento: 'FACTURA',
-            numero_documento: fac.doc_numero,
-            proveedor_nombre: fac.proveedor_nombre || 'Desconocido',
-            modalidad: fac.es_credito ? 'CREDITO' : 'CONTADO',
-            monto: Number(fac.total_factura) || 0,
-            banco_nombre: 'Banco Empresa',
-            referencia: fac.orden_pago_ref || 'PAGO DIRECTO',
-            usuario_nombre: fac.comprador || fac.usuario_compra || 'Compras / Finanzas',
-            fecha: fac.fecha_compra || new Date().toISOString(),
-            timestamp: new Date(fac.fecha_compra || 0).getTime(),
-            estatus_badge: 'LIQUIDADO',
-            url_soporte: null,
-            urls_soporte: [],
-            documento_ref: fac,
-            es_odc: false
-          });
-        }
-      }
-    });
+    const buildSignature = (ref, monto, fecha) => {
+      const r = String(ref || '').trim().toUpperCase();
+      const m = Number(monto || 0).toFixed(2);
+      const f = String(fecha || '').slice(0, 10);
+      return r && r !== 'N/A' && r !== 'PAGO DIRECTO' ? `${r}_${m}_${f}` : null;
+    };
 
-    // 2. Pagos y Abonos de Órdenes de Compra (ODC)
+    // 1. Pagos y Abonos de Órdenes de Compra (ODC) - Tienen prioridad sobre copias en requisiciones
     ordenesCompra.forEach(o => {
-      const abonos = obtenerAbonosOdc(o);
+      const abonos = obtenerAbonosOdc(o, requisiciones, abonosGlobales);
       const cleanReq = String(o.requisicion_id || o.numero_req || o.correlativo_req || o.requisicion_correlativo || '').replace(/^REQ-?/i, '').trim();
       const reqObj = reqMapById[cleanReq] || reqMapById[String(o.requisicion_id)] || (o.requisicion_id ? reqMapById[Number(o.requisicion_id)] : null);
       const solicitante = (reqObj?.solicitante && reqObj.solicitante !== 'Total Clean C.A.') ? reqObj.solicitante : (o.solicitante || o.solicitado_por || reqObj?.solicitante || 'Total Clean C.A.');
@@ -1330,9 +1313,13 @@ const LiquidacionFacturas = ({ currentUser }) => {
 
       if (abonos && abonos.length > 0) {
         abonos.forEach(ab => {
-          const key = `ab_odc_${ab.abono_id || `${o.id}_${ab.fecha}_${ab.monto}`}`;
-          if (!seenKeys.has(key)) {
+          const abId = ab.abono_id ? String(ab.abono_id) : null;
+          const key = `ab_odc_${abId || `${o.id}_${ab.fecha}_${ab.monto}`}`;
+          const sig = buildSignature(ab.referencia || o.orden_pago_ref, ab.monto, ab.fecha || o.updated_at || o.created_at);
+          if (!seenKeys.has(key) && (!abId || !seenAbonoIds.has(abId)) && (!sig || !seenSignatures.has(sig))) {
             seenKeys.add(key);
+            if (abId) seenAbonoIds.add(abId);
+            if (sig) seenSignatures.add(sig);
             const totalVal = Number(o.total_general ?? o.total ?? 0);
             const sumaAbonos = abonos.reduce((s, a) => s + (Number(a.monto) || 0), 0);
             const saldoOdc = Math.max(0, totalVal - sumaAbonos);
@@ -1385,8 +1372,69 @@ const LiquidacionFacturas = ({ currentUser }) => {
       }
     });
 
+    // 2. Pagos y Abonos de Facturas de Procura (solo compras directas sin ODC)
+    facturasAgrupadas.forEach(fac => {
+      if (fac.abonos && fac.abonos.length > 0) {
+        fac.abonos.forEach(ab => {
+          if (ab.es_de_odc || ab.odc_id || ab.numero_odc) return;
+          const abId = ab.abono_id ? String(ab.abono_id) : null;
+          const key = `ab_fac_${abId || `${fac.doc_numero}_${ab.fecha}_${ab.monto}`}`;
+          const sig = buildSignature(ab.referencia, ab.monto, ab.fecha || fac.fecha_compra);
+          if (!seenKeys.has(key) && (!abId || !seenAbonoIds.has(abId)) && (!sig || !seenSignatures.has(sig))) {
+            seenKeys.add(key);
+            if (abId) seenAbonoIds.add(abId);
+            if (sig) seenSignatures.add(sig);
+            list.push({
+              id: key,
+              abono_id: ab.abono_id,
+              tipo_documento: 'FACTURA',
+              numero_documento: fac.doc_numero,
+              proveedor_nombre: fac.proveedor_nombre || ab.proveedor_nombre || 'Desconocido',
+              modalidad: fac.es_credito ? 'CREDITO' : 'CONTADO',
+              monto: Number(ab.monto) || 0,
+              banco_nombre: ab.banco_nombre || ab.banco || 'Banco Origen',
+              referencia: ab.referencia || 'N/A',
+              usuario_nombre: ab.usuario_nombre || fac.comprador || fac.usuario_compra || 'Compras / Finanzas',
+              fecha: ab.fecha || fac.fecha_compra || new Date().toISOString(),
+              timestamp: new Date(ab.fecha || fac.fecha_compra || 0).getTime(),
+              estatus_badge: fac.saldo_pendiente <= 0.01 ? 'LIQUIDADO' : 'ABONO',
+              url_soporte: ab.url || (ab.urls && ab.urls[0]?.url) || null,
+              urls_soporte: ab.urls || (ab.url ? [{ url: ab.url, name: ab.name || 'Soporte' }] : []),
+              documento_ref: fac,
+              es_odc: false
+            });
+          }
+        });
+      } else if (fac.estatus === 'PAGADO' || fac.saldo_pendiente <= 0.01) {
+        // Factura pagada directamente sin desglose de abonos previos
+        const key = `leg_fac_${fac.key}`;
+        if (!seenKeys.has(key)) {
+          seenKeys.add(key);
+          list.push({
+            id: key,
+            abono_id: null,
+            tipo_documento: 'FACTURA',
+            numero_documento: fac.doc_numero,
+            proveedor_nombre: fac.proveedor_nombre || 'Desconocido',
+            modalidad: fac.es_credito ? 'CREDITO' : 'CONTADO',
+            monto: Number(fac.total_factura) || 0,
+            banco_nombre: 'Banco Empresa',
+            referencia: fac.orden_pago_ref || 'PAGO DIRECTO',
+            usuario_nombre: fac.comprador || fac.usuario_compra || 'Compras / Finanzas',
+            fecha: fac.fecha_compra || new Date().toISOString(),
+            timestamp: new Date(fac.fecha_compra || 0).getTime(),
+            estatus_badge: 'LIQUIDADO',
+            url_soporte: null,
+            urls_soporte: [],
+            documento_ref: fac,
+            es_odc: false
+          });
+        }
+      }
+    });
+
     return list;
-  }, [facturasAgrupadas, ordenesCompra, reqMapById]);
+  }, [facturasAgrupadas, ordenesCompra, reqMapById, requisiciones, abonosGlobales]);
 
   // Histórico Filtrado y Ordenado Estrictamente por Fecha y Hora de Registro Descendente (Más reciente primero)
   const historialPagosFiltrados = useMemo(() => {
@@ -1684,16 +1732,6 @@ const LiquidacionFacturas = ({ currentUser }) => {
           return o;
         }));
 
-        if (targetOdc.requisicion_id) {
-          setRequisiciones(prev => prev.map(r => {
-            if (String(r.id) === String(targetOdc.requisicion_id)) {
-              const currentUrls = parsearFacturaUrls(r.facturas_url || []);
-              return { ...r, facturas_url: [...currentUrls, nuevoAbono] };
-            }
-            return r;
-          }));
-        }
-
         if (showOdcPreviewModal && odcPreviewSeleccionada && String(odcPreviewSeleccionada.id) === String(targetOdc.id)) {
           setOdcPreviewSeleccionada(prev => ({
             ...prev,
@@ -1710,7 +1748,7 @@ const LiquidacionFacturas = ({ currentUser }) => {
         setSubiendoAbono(false);
         toast.success(`Pago de $ ${montoNum.toLocaleString('de-DE', { minimumFractionDigits: 2 })} registrado exitosamente para la ODC ${targetOdc.numero_odc}`);
 
-        // Sincronizar en segundo plano con Supabase
+        // Sincronizar en segundo plano con Supabase (únicamente en ordenes_compra para no duplicar en facturas de requisición)
         const payloadOdcUpdate = {
           estatus_pago: estatusFinal,
           status_pago: estatusFinal,
@@ -1722,29 +1760,6 @@ const LiquidacionFacturas = ({ currentUser }) => {
 
         safeSupabaseUpdate(supabase, 'ordenes_compra', payloadOdcUpdate, 'id', targetOdc.id)
           .catch(err => console.warn('safeSupabaseUpdate ODC background error:', err));
-
-        // Respaldo secundario en requisiciones si está enlazada
-        if (targetOdc.requisicion_id) {
-          (async () => {
-            try {
-              const { data: reqData } = await supabase
-                .from('requisiciones')
-                .select('facturas_url')
-                .eq('id', targetOdc.requisicion_id)
-                .single();
-              if (reqData) {
-                const currentUrls = parsearFacturaUrls(reqData.facturas_url || []);
-                const updatedUrls = [...currentUrls, nuevoAbono];
-                await supabase
-                  .from('requisiciones')
-                  .update({ facturas_url: updatedUrls })
-                  .eq('id', targetOdc.requisicion_id);
-              }
-            } catch (backupErr) {
-              console.warn('Backup abono en requisición omitido:', backupErr);
-            }
-          })();
-        }
 
         return;
       }

@@ -3854,10 +3854,10 @@ const Compras = () => {
   const { subTotalCalculado, totalCalculado, montoPagadoF, montoPendienteNE } = useMemo(() => {
     const totals = (renglones || []).reduce((acc, r) => {
       const yaComprado = (r.historial_compras || []).reduce((sum, t) => {
-        if (t.tipo === 'JUSTIFICACION') return sum;
+        if (!t || t.tipo === 'JUSTIFICACION' || t.tipo === 'ANULACION' || t.tipo === 'DIRECTRIZ') return sum;
         const val = (Number(t.cant) || 0) * (Number(t.pu) || 0);
         if (t.doc_tipo === 'NC') acc.totalNE += val;
-        else acc.totalF += val; // FAC o por defecto
+        else if (t.tipo !== 'ODC' && t.doc_tipo !== 'ODC') acc.totalF += val; // Solo FAC directas (ODC se gestiona en CxP)
         return sum + val;
       }, 0);
 
