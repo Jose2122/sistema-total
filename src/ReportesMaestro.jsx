@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from './supabaseClient';
+import toast from 'react-hot-toast';
 // eslint-disable-next-line no-unused-vars
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -1369,7 +1370,7 @@ const ReportesMaestro = () => {
 
         const rowsFiltradas = costosRows.filter(r => r.cc === filtroCC || r.cc?.includes(filtroCC));
         if (rowsFiltradas.length === 0) {
-            toast.info("No hay datos registrados para este Centro de Costo en el período seleccionado.");
+            toast("No hay datos registrados para este Centro de Costo en el período seleccionado.", { icon: 'ℹ️' });
             return;
         }
 
@@ -1732,7 +1733,7 @@ const ReportesMaestro = () => {
 
         const rowsGlobales = getGlobalCostosRows();
         if (rowsGlobales.length === 0) {
-            toast.info("No hay datos registrados para generar el resumen global.");
+            toast("No hay datos registrados para generar el resumen global.", { icon: 'ℹ️' });
             return;
         }
 
@@ -2828,7 +2829,7 @@ const ReportesMaestro = () => {
                                                             onClick={() => {
                                                                 if (row.tipo === 'Requisición') handleOpenRequisicion(row.ref, `REQ-${row.id}`);
                                                                 else if (row.tipo === 'Ticket Directo') handleOpenTicket(row.ref, `TK-${row.id}`);
-                                                                else toast.info(`Solicitud de Fondo: ${row.ref}`);
+                                                                else toast(`Solicitud de Fondo: ${row.ref}`, { icon: 'ℹ️' });
                                                             }}
                                                         >
                                                             {row.ref}
@@ -3481,7 +3482,7 @@ const ReportesMaestro = () => {
                                                             setBeneficiarioSeleccionado(null);
                                                             if (t.tipo === 'Requisición') handleOpenRequisicion(t.ref, `REQ-${t.id}`);
                                                             else if (t.tipo === 'Ticket Directo') handleOpenTicket(t.ref, `TK-${t.id}`);
-                                                            else toast.info(`Solicitud de Fondo: ${t.ref}`);
+                                                            else toast(`Solicitud de Fondo: ${t.ref}`, { icon: 'ℹ️' });
                                                         }}
                                                     >
                                                         {t.ref}

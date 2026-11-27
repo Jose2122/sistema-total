@@ -231,7 +231,7 @@ const FormularioAdjuntoToast = ({
     } else if (!cleanUrl.startsWith('data:')) {
       window.open(cleanUrl, '_blank', 'noopener,noreferrer');
     } else {
-      toast.info("Documento en base64 listo para vincular.");
+      toast("Documento en base64 listo para vincular.", { icon: 'ℹ️' });
     }
   };
 

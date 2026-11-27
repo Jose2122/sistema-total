@@ -2530,7 +2530,7 @@ const StockSmartTotalClean = ({ currentUserProp, session: sessionProp }) => {
 
       if (paginasAgregadas === 0) {
         printWindow.close();
-        toast.info("No hay saldos pendientes para los filtros actuales.");
+        toast("No hay saldos pendientes para los filtros actuales.", { icon: 'ℹ️' });
         return;
       }
 
