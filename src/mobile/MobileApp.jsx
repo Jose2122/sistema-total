@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import MobileRequisiciones from './MobileRequisiciones';
 import MobileTickets from './MobileTickets';
-import { FileText, Ticket, User, Monitor, LogOut, CheckCircle2, Shield, Building2, Smartphone, Download } from 'lucide-react';
+import MobileOrdenesCompra from './MobileOrdenesCompra';
+import { FileText, Ticket, ShoppingBag, User, Monitor, LogOut, CheckCircle2, Shield, Building2, Smartphone, Download } from 'lucide-react';
 import toast from 'react-hot-toast';
 import './mobile.css';
 
@@ -11,8 +12,9 @@ export default function MobileApp() {
   const navigate = useNavigate();
   const [currentUser, setCurrentUser] = useState(null);
   const [loadingUser, setLoadingUser] = useState(true);
-  const [activeTab, setActiveTab] = useState('requisiciones'); // 'requisiciones' | 'tickets' | 'perfil'
+  const [activeTab, setActiveTab] = useState('requisiciones'); // 'requisiciones' | 'ordenes' | 'tickets' | 'perfil'
   const [pendingReqCount, setPendingReqCount] = useState(0);
+  const [pendingOdcCount, setPendingOdcCount] = useState(0);
   const [pendingTicketCount, setPendingTicketCount] = useState(0);
   const [deferredPrompt, setDeferredPrompt] = useState(null);
   const [isInstalled, setIsInstalled] = useState(false);
@@ -78,6 +80,38 @@ export default function MobileApp() {
                             (perfil?.rol || '').toUpperCase().includes('ADMIN') ||
                             (perfil?.rol || '').toUpperCase().includes('SUPERADMIN');
 
+        const esPuedeOrdenes = Boolean(
+          esAdminReal ||
+          (perfil?.rol || '').toLowerCase().includes('admin') ||
+          (perfil?.rol || '').toLowerCase().includes('gerente general') ||
+          emailLower.includes('cvega') ||
+          emailLower.includes('rherrera') ||
+          `${perfil?.nombre || ''} ${perfil?.apellido || ''}`.toLowerCase().includes('carlos vega') ||
+          `${perfil?.nombre || ''} ${perfil?.apellido || ''}`.toLowerCase().includes('ricardo herrera') ||
+          (perfil?.departamento || '').toLowerCase().includes('compra') ||
+          (perfil?.rol || '').toLowerCase().includes('compra')
+        );
+        if (esPuedeOrdenes) {
+          supabase
+            .from('ordenes_compra')
+            .select('id, estado_aprobacion_precio, estatus_orden, estatus_pago, status_pago')
+            .order('id', { ascending: false })
+            .limit(200)
+            .then(({ data: odcs }) => {
+              if (!Array.isArray(odcs)) return;
+              const pend = odcs.filter(o => {
+                const eo = (o.estatus_orden || '').toUpperCase();
+                const ep = (o.estatus_pago || o.status_pago || '').toUpperCase();
+                const eap = (o.estado_aprobacion_precio || '').toLowerCase();
+                if (eo === 'ANULADA' || ep === 'ANULADA' || eap === 'anulada') return false;
+                if (eap === 'aprobado' || eo === 'APROBADA' || eap === 'rechazado' || eo === 'RECHAZADA') return false;
+                return true;
+              }).length;
+              setPendingOdcCount(pend);
+            })
+            .catch(() => {});
+        }
+
         setCurrentUser({
           ...(perfil || {}),
           id: user.id,
@@ -110,6 +144,22 @@ export default function MobileApp() {
   };
 
   const primerNombre = (currentUser?.nombre || '').split(' ')[0] || 'Usuario';
+
+  const rolLower = (currentUser?.rol || '').toLowerCase();
+  const deptoLower = (currentUser?.departamento || '').toLowerCase();
+  const emailLowerUser = (currentUser?.correo || currentUser?.email || '').toLowerCase();
+  const nombreFullLower = `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.toLowerCase();
+  const puedeVerOrdenes = Boolean(
+    currentUser?.esAdminReal ||
+    rolLower.includes('admin') ||
+    rolLower.includes('gerente general') ||
+    emailLowerUser.includes('cvega') ||
+    emailLowerUser.includes('rherrera') ||
+    nombreFullLower.includes('carlos vega') ||
+    nombreFullLower.includes('ricardo herrera') ||
+    deptoLower.includes('compra') ||
+    rolLower.includes('compra')
+  );
 
   if (loadingUser) {
     return (
@@ -179,6 +229,13 @@ export default function MobileApp() {
           <MobileRequisiciones
             currentUser={currentUser}
             onPendingCountChange={setPendingReqCount}
+          />
+        )}
+
+        {activeTab === 'ordenes' && puedeVerOrdenes && (
+          <MobileOrdenesCompra
+            currentUser={currentUser}
+            onPendingCountChange={setPendingOdcCount}
           />
         )}
 
@@ -308,6 +365,17 @@ export default function MobileApp() {
           <span>Requisiciones</span>
           {pendingReqCount > 0 && <span className="m-nav-badge">{pendingReqCount}</span>}
         </button>
+
+        {puedeVerOrdenes && (
+          <button
+            className={`m-nav-item ${activeTab === 'ordenes' ? 'active' : ''}`}
+            onClick={() => setActiveTab('ordenes')}
+          >
+            <ShoppingBag size={22} />
+            <span>Órdenes</span>
+            {pendingOdcCount > 0 && <span className="m-nav-badge">{pendingOdcCount}</span>}
+          </button>
+        )}
 
         <button
           className={`m-nav-item ${activeTab === 'tickets' ? 'active' : ''}`}
