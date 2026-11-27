@@ -10,7 +10,13 @@ export default function MobileOrdenesCompra({ currentUser, onPendingCountChange 
   const [ordenes, setOrdenes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadingAction, setLoadingAction] = useState(false);
-  const [filtroTab, setFiltroTab] = useState('por_aprobar'); // 'por_aprobar' | 'aprobadas' | 'sin_firma' | 'todas'
+  const [filtroTab, setFiltroTab] = useState(() => {
+    const emailInit = (currentUser?.correo || currentUser?.email || '').toLowerCase();
+    const rolInit = (currentUser?.rol || '').toLowerCase();
+    const nomInit = `${currentUser?.nombre || ''} ${currentUser?.apellido || ''}`.toLowerCase();
+    const esCarlosInit = emailInit.includes('cvega') || nomInit.includes('carlos vega') || rolInit.includes('gerente general');
+    return esCarlosInit ? 'sin_firma' : 'por_aprobar';
+  }); // 'por_aprobar' | 'aprobadas' | 'sin_firma' | 'todas'
   const [busqueda, setBusqueda] = useState('');
 
   const deptoUser = (currentUser?.departamento || '').toLowerCase().trim();
@@ -289,14 +295,6 @@ export default function MobileOrdenesCompra({ currentUser, onPendingCountChange 
 
       {/* Filtros en Pills */}
       <div className="m-filter-pills">
-        <button
-          className={`m-pill-btn ${filtroTab === 'por_aprobar' ? 'active' : ''}`}
-          onClick={() => setFiltroTab('por_aprobar')}
-        >
-          <span>Por Aprobar</span>
-          {pendientesCount > 0 && <span className="m-pill-count">{pendientesCount}</span>}
-        </button>
-
         {puedeFirmarCarlos && (
           <button
             className={`m-pill-btn ${filtroTab === 'sin_firma' ? 'active' : ''}`}
@@ -306,6 +304,14 @@ export default function MobileOrdenesCompra({ currentUser, onPendingCountChange 
             {sinFirmaCarlosCount > 0 && <span className="m-pill-count">{sinFirmaCarlosCount}</span>}
           </button>
         )}
+
+        <button
+          className={`m-pill-btn ${filtroTab === 'por_aprobar' ? 'active' : ''}`}
+          onClick={() => setFiltroTab('por_aprobar')}
+        >
+          <span>Por Aprobar</span>
+          {pendientesCount > 0 && <span className="m-pill-count">{pendientesCount}</span>}
+        </button>
 
         <button
           className={`m-pill-btn ${filtroTab === 'aprobadas' ? 'active' : ''}`}

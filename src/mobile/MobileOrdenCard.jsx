@@ -129,12 +129,12 @@ export default function MobileOrdenCard({
           </div>
         </div>
 
-        {/* Mini resumen de firmas */}
-        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '2px' }}>
+        {/* Mini resumen de firmas / Check rápido de firma para Carlos Vega */}
+        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center', marginTop: '2px' }}>
           <span style={{
             fontSize: '0.68rem',
             fontWeight: 700,
-            padding: '2px 8px',
+            padding: '3px 8px',
             borderRadius: '6px',
             backgroundColor: odc.ricardo_firma_digital_activa ? 'rgba(16, 185, 129, 0.14)' : 'rgba(148, 163, 184, 0.1)',
             color: odc.ricardo_firma_digital_activa ? '#34d399' : '#94a3b8',
@@ -142,17 +142,74 @@ export default function MobileOrdenCard({
           }}>
             {odc.ricardo_firma_digital_activa ? '✓ Aval Compras' : '○ Sin Aval Compras'}
           </span>
-          <span style={{
-            fontSize: '0.68rem',
-            fontWeight: 700,
-            padding: '2px 8px',
-            borderRadius: '6px',
-            backgroundColor: odc.carlos_firma_digital_activa ? 'rgba(56, 189, 248, 0.14)' : 'rgba(148, 163, 184, 0.1)',
-            color: odc.carlos_firma_digital_activa ? '#38bdf8' : '#94a3b8',
-            border: `1px solid ${odc.carlos_firma_digital_activa ? 'rgba(56, 189, 248, 0.3)' : 'rgba(148, 163, 184, 0.15)'}`
-          }}>
-            {odc.carlos_firma_digital_activa ? '✓ Firma Carlos Vega' : '○ Sin Firma G. General'}
-          </span>
+
+          {!esAnulada && puedeFirmarCarlos ? (
+            <button
+              type="button"
+              disabled={loadingAction}
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleFirma(odc, 'carlos', !odc.carlos_firma_digital_activa);
+              }}
+              style={{
+                flex: 1,
+                minWidth: '175px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px',
+                padding: '8px 12px',
+                borderRadius: '10px',
+                fontSize: '0.8rem',
+                fontWeight: 800,
+                cursor: loadingAction ? 'wait' : 'pointer',
+                border: odc.carlos_firma_digital_activa
+                  ? '1.5px solid #10b981'
+                  : '1.5px solid #38bdf8',
+                backgroundColor: odc.carlos_firma_digital_activa
+                  ? 'rgba(16, 185, 129, 0.2)'
+                  : 'rgba(2, 132, 199, 0.22)',
+                color: odc.carlos_firma_digital_activa ? '#6ee7b7' : '#e0f2fe',
+                boxShadow: odc.carlos_firma_digital_activa
+                  ? 'none'
+                  : '0 2px 8px rgba(56, 189, 248, 0.25)',
+                transition: 'all 0.15s ease'
+              }}
+              title="Toca para activar o retirar la firma digital de Carlos Vega"
+            >
+              <span style={{
+                width: '18px',
+                height: '18px',
+                borderRadius: '5px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: odc.carlos_firma_digital_activa ? '#10b981' : 'rgba(15, 23, 42, 0.6)',
+                border: odc.carlos_firma_digital_activa ? '1.5px solid #34d399' : '1.5px solid #38bdf8',
+                color: '#ffffff',
+                fontSize: '0.75rem',
+                fontWeight: 900,
+                flexShrink: 0
+              }}>
+                {odc.carlos_firma_digital_activa ? '✓' : ''}
+              </span>
+              <span>
+                {odc.carlos_firma_digital_activa ? 'Firmada por Carlos Vega' : 'Firmar ODC (Carlos Vega)'}
+              </span>
+            </button>
+          ) : (
+            <span style={{
+              fontSize: '0.68rem',
+              fontWeight: 700,
+              padding: '3px 8px',
+              borderRadius: '6px',
+              backgroundColor: odc.carlos_firma_digital_activa ? 'rgba(56, 189, 248, 0.14)' : 'rgba(148, 163, 184, 0.1)',
+              color: odc.carlos_firma_digital_activa ? '#38bdf8' : '#94a3b8',
+              border: `1px solid ${odc.carlos_firma_digital_activa ? 'rgba(56, 189, 248, 0.3)' : 'rgba(148, 163, 184, 0.15)'}`
+            }}>
+              {odc.carlos_firma_digital_activa ? '✓ Firma Carlos Vega' : '○ Sin Firma G. General'}
+            </span>
+          )}
         </div>
       </div>
 
@@ -405,3 +462,4 @@ export default function MobileOrdenCard({
     </div>
   );
 }
+
