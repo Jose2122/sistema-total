@@ -48,6 +48,8 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
   const [editandoId, setEditandoId] = useState(null);
   const [requisicionActiva, setRequisicionActiva] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [hayMasAntiguas, setHayMasAntiguas] = useState(false);
+  const [cargandoMas, setCargandoMas] = useState(false);
   const [currentUser, setCurrentUser] = useState(currentUserProp || null);
   const [modoEdicion, setModoEdicion] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
@@ -346,135 +348,130 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     }
   }, [currentUserProp, obtenerSesionUsuario]);
 
+  const construirQueryRequisiciones = useCallback(() => {
+    let query = supabase.from('requisiciones').select('*').neq('correlativo_req', 'SYS-PROVEEDORES-CENTRAL');
+
+    const emailLower = (currentUser?.correo || '').toLowerCase();
+    const esJose = emailLower === 'jcontreras.totalclean@gmail.com';
+    const esAdminReal = esJose ||
+      emailLower === 'cvega@totalclean.com.ve' ||
+      emailLower === 'karincmm1@gmail.com';
+
+    const rolUserLower = (currentUser.rol || '').toLowerCase();
+    const deptoUserLower = (currentUser.departamento || '').toLowerCase();
+    const esDirector = rolUserLower.includes('director') || deptoUserLower.includes('director');
+    const esTostitomas = (currentUser.correo || '').toLowerCase().includes('tostitomas') ||
+      (currentUser.nombre || '').toLowerCase().includes('tostitomas') ||
+      (currentUser.usuario || '').toLowerCase() === 'tostitomas';
+
+    const esAdminRealOCarlos = esAdminReal ||
+      (currentUser.correo || '').toLowerCase() === 'cvega@totalclean.com.ve' ||
+      (currentUser.nombre || '').toLowerCase().includes('carlos') ||
+      currentUser.capacidades?.ver_requisiciones_global === true ||
+      currentUser.capacidades?.ver_requisiciones_todos_deptos === true ||
+      esDirector ||
+      esTostitomas;
+
+    if (!esAdminRealOCarlos) {
+      const rawUserId = currentUser.id || '';
+      const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawUserId);
+      const userIdMatch = isUUID ? rawUserId : '00000000-0000-0000-0000-000000000000';
+
+      const deptoMatch = currentUser.departamento;
+      const nombreMatch = (currentUser.nombre || '').split(' ')[0] || 'Unknown';
+      const misObras = currentUser.obras_asignadas || [];
+
+      let orConditions = [
+        `user_id.eq.${userIdMatch}`,
+        `solicitante.ilike.%${nombreMatch}%`
+      ];
+
+      if (deptoMatch && deptoMatch.trim()) {
+        const normD = deptoMatch.trim().toLowerCase();
+        if (normD.includes('seguridad') || normD.includes('siaho') || normD.includes('sha')) {
+          orConditions.push(`gerencia.ilike.%Seguridad%`, `gerencia.ilike.%SIAHO%`, `gerencia.ilike.%SHA%`);
+        } else if (normD.includes('estimac') || normD.includes('eci')) {
+          orConditions.push(`gerencia.ilike.%Estimac%`, `gerencia.ilike.%ECI%`);
+        } else if (normD.includes('mantenimiento') || normD.includes('mtt')) {
+          orConditions.push(`gerencia.ilike.%Mantenimiento%`, `gerencia.ilike.%MTT%`);
+        } else {
+          orConditions.push(`gerencia.ilike.%${deptoMatch.trim()}%`);
+        }
+      }
+
+      if (misObras.length > 0) {
+        orConditions.push(`centro_costo.in.(${misObras.map(o => `"${o}"`).join(',')})`);
+      }
+
+      if (orConditions.length > 0) {
+        query = query.or(orConditions.join(','));
+      }
+    }
+
+    return query;
+  }, [currentUser]);
+
+  const mapearRequisicionBD = useCallback((db) => {
+    const itemsSeguros = parsearJsonSeguro(db.items);
+    const facturasSeguras = consolidarSoportesRequisicion(db.facturas_url, itemsSeguros);
+    return {
+      id: db.id,
+      correlativo: db.correlativo_req || `REQ-${String(db.id).padStart(3, '0')}`,
+      origen: db.origen || 'Manual',
+      solicitante: db.solicitante,
+      centroCosto: db.centro_costo,
+      aprobacion: db.aprobacion_nombre || (db.aprobacion ? 'Aprobado' : 'Pendiente'),
+      status: db.status_compra || 'Pendiente',
+      prioridad: db.prioridad || 'Normal',
+      total: Number(db.total_bs) || 0,
+      detalles: itemsSeguros,
+      items: itemsSeguros,
+      fecha: db.fecha_emision ? db.fecha_emision.split('T')[0] : '',
+      justificacion: db.justificacion,
+      fecha_requerida: db.fecha_requerida,
+      gerencia: db.gerencia,
+      aprobado_gerente_area: db.aprobado_gerente_area || false,
+      aprobado_gerente_general: db.aprobado_gerente_general || false,
+      aprobado_gerente_proyecto: db.aprobado_gerente_proyecto || false,
+      estado_aprobacion: db.estado_aprobacion || 'pendiente_area',
+      motivo_rechazo: db.motivo_rechazo || '',
+      firma_gerente_general: db.firma_gerente_general,
+      observaciones: db.observaciones || '',
+      observaciones_direccion: db.observaciones_direccion || '',
+      facturas_url: facturasSeguras,
+      id_referencia_proyecto: db.id_referencia_proyecto || '',
+      user_id: db.user_id,
+      fecha_emision: db.fecha_emision,
+      f_aprobacion_proyecto: db.f_aprobacion_proyecto,
+      n_aprobacion_proyecto: db.n_aprobacion_proyecto,
+      f_aprobacion_area: db.f_aprobacion_area,
+      n_aprobacion_area: db.n_aprobacion_area,
+      f_aprobacion_general: db.f_aprobacion_general,
+      n_aprobacion_general: db.n_aprobacion_general,
+      f_culminacion_compras: db.f_culminacion_compras,
+      f_inicio_compras: db.f_inicio_compras,
+      fecha_limite_compra: db.fecha_limite_compra,
+      is_pausada: db.is_pausada,
+      motivo_postergacion: db.motivo_postergacion,
+      con_iva: db.con_iva !== false,
+      asignado_nombre: db.asignado_nombre
+    };
+  }, []);
+
   // --- LÓGICA DE CARGA DESDE SUPABASE CON FILTROS JERÁRQUICOS POR FASE ---
   const cargarHistorialDesdeBD = useCallback(async () => {
     if (!currentUser) return;
     setLoading(true);
     try {
-      let query = supabase.from('requisiciones').select('*').neq('correlativo_req', 'SYS-PROVEEDORES-CENTRAL');
-
-      const rolUpper = (currentUser.rol || '').toUpperCase();
-      const deptoUpper = (currentUser.departamento || '').toUpperCase();
-      const tienePermisoDepto = currentUser.capacidades?.ver_departamento === true;
-
-      // José es el ÚNICO SuperAdmin (Borrar/Anular)
-      const emailLower = (currentUser?.correo || '').toLowerCase();
-      const esJose = emailLower === 'jcontreras.totalclean@gmail.com';
-      const esAdminReal = esJose ||
-        emailLower === 'cvega@totalclean.com.ve' ||
-        emailLower === 'karincmm1@gmail.com';
-
-      const emailActual = (currentUser?.correo || '').toLowerCase();
-      const esGG = rolUpper.includes('GERENTE') || rolUpper.includes('ADMIN') || emailActual === 'cvega@totalclean.com.ve';
-      // --- NUEVA LÓGICA DE SEGURIDAD JERÁRQUICA (SOLICITUD 24/04) ---
-      const rolUserLower = (currentUser.rol || '').toLowerCase();
-      const deptoUserLower = (currentUser.departamento || '').toLowerCase();
-      const esDirector = rolUserLower.includes('director') || deptoUserLower.includes('director');
-      const esTostitomas = (currentUser.correo || '').toLowerCase().includes('tostitomas') ||
-        (currentUser.nombre || '').toLowerCase().includes('tostitomas') ||
-        (currentUser.usuario || '').toLowerCase() === 'tostitomas';
-
-      const esAdminRealOCarlos = esAdminReal ||
-        (currentUser.correo || '').toLowerCase() === 'cvega@totalclean.com.ve' ||
-        (currentUser.nombre || '').toLowerCase().includes('carlos') ||
-        currentUser.capacidades?.ver_requisiciones_global === true ||
-        currentUser.capacidades?.ver_requisiciones_todos_deptos === true ||
-        esDirector ||
-        esTostitomas;
-
-      if (!esAdminRealOCarlos) {
-        const rawUserId = currentUser.id || '';
-        const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawUserId);
-        const userIdMatch = isUUID ? rawUserId : '00000000-0000-0000-0000-000000000000';
-
-        const deptoMatch = currentUser.departamento;
-        const nombreMatch = (currentUser.nombre || '').split(' ')[0] || 'Unknown';
-
-        // Soporte para Gerentes de Proyecto (Filtro por obras asignadas)
-        const misObras = currentUser.obras_asignadas || [];
-        const obrasFiltro = misObras.length > 0 ? `centro_costo.in.(${misObras.map(o => `"${o}"`).join(',')})` : '';
-
-        // Permite visibilidad completa del departamento + requisiciones propias + obras asignadas para cualquier usuario no admin
-        let orConditions = [
-          `user_id.eq.${userIdMatch}`,
-          `solicitante.ilike.%${nombreMatch}%`
-        ];
-
-        if (deptoMatch && deptoMatch.trim()) {
-          const normD = deptoMatch.trim().toLowerCase();
-          if (normD.includes('seguridad') || normD.includes('siaho') || normD.includes('sha')) {
-            orConditions.push(`gerencia.ilike.%Seguridad%`, `gerencia.ilike.%SIAHO%`, `gerencia.ilike.%SHA%`);
-          } else if (normD.includes('estimac') || normD.includes('eci')) {
-            orConditions.push(`gerencia.ilike.%Estimac%`, `gerencia.ilike.%ECI%`);
-          } else if (normD.includes('mantenimiento') || normD.includes('mtt')) {
-            orConditions.push(`gerencia.ilike.%Mantenimiento%`, `gerencia.ilike.%MTT%`);
-          } else {
-            orConditions.push(`gerencia.ilike.%${deptoMatch.trim()}%`);
-          }
-        }
-
-        if (misObras.length > 0) {
-          orConditions.push(`centro_costo.in.(${misObras.map(o => `"${o}"`).join(',')})`);
-        }
-
-        if (orConditions.length > 0) {
-          query = query.or(orConditions.join(','));
-        }
-      }
-
-      const { data, error } = await query.order('fecha_emision', { ascending: false }).limit(400);
+      const query = construirQueryRequisiciones();
+      const { data, error } = await query.order('fecha_emision', { ascending: false }).range(0, 399);
 
       if (error) throw error;
       if (data) {
-        let finalData = data.filter(r => !r.correlativo_req?.startsWith('SYS-'));
+        setHayMasAntiguas(data.length === 400);
+        const finalData = data.filter(r => !r.correlativo_req?.startsWith('SYS-'));
         const myRank = getRank(currentUser.rol);
-
-        const historialMapeado = finalData.map(db => {
-          const itemsSeguros = parsearJsonSeguro(db.items);
-          const facturasSeguras = consolidarSoportesRequisicion(db.facturas_url, itemsSeguros);
-          return {
-            id: db.id,
-            correlativo: db.correlativo_req || `REQ-${String(db.id).padStart(3, '0')}`,
-            origen: db.origen || 'Manual',
-            solicitante: db.solicitante,
-            centroCosto: db.centro_costo,
-            aprobacion: db.aprobacion_nombre || (db.aprobacion ? 'Aprobado' : 'Pendiente'),
-            status: db.status_compra || 'Pendiente',
-            prioridad: db.prioridad || 'Normal',
-            total: Number(db.total_bs) || 0,
-            detalles: itemsSeguros,
-            items: itemsSeguros,
-            fecha: db.fecha_emision ? db.fecha_emision.split('T')[0] : '',
-            justificacion: db.justificacion,
-            fecha_requerida: db.fecha_requerida,
-            gerencia: db.gerencia,
-            aprobado_gerente_area: db.aprobado_gerente_area || false,
-            aprobado_gerente_general: db.aprobado_gerente_general || false,
-            aprobado_gerente_proyecto: db.aprobado_gerente_proyecto || false,
-            estado_aprobacion: db.estado_aprobacion || 'pendiente_area',
-            motivo_rechazo: db.motivo_rechazo || '',
-            firma_gerente_general: db.firma_gerente_general,
-            observaciones: db.observaciones || '',
-            observaciones_direccion: db.observaciones_direccion || '',
-            facturas_url: facturasSeguras,
-            id_referencia_proyecto: db.id_referencia_proyecto || '',
-            user_id: db.user_id,
-            fecha_emision: db.fecha_emision,
-            f_aprobacion_proyecto: db.f_aprobacion_proyecto,
-            n_aprobacion_proyecto: db.n_aprobacion_proyecto,
-            f_aprobacion_area: db.f_aprobacion_area,
-            n_aprobacion_area: db.n_aprobacion_area,
-            f_aprobacion_general: db.f_aprobacion_general,
-            n_aprobacion_general: db.n_aprobacion_general,
-            f_culminacion_compras: db.f_culminacion_compras,
-            f_inicio_compras: db.f_inicio_compras,
-            fecha_limite_compra: db.fecha_limite_compra,
-            is_pausada: db.is_pausada,
-            motivo_postergacion: db.motivo_postergacion,
-            con_iva: db.con_iva !== false,
-            asignado_nombre: db.asignado_nombre
-          };
-        });
+        const historialMapeado = finalData.map(mapearRequisicionBD);
         setHistorial(historialMapeado);
 
         // Extraer subordinados y gerencias únicas
@@ -501,7 +498,32 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
     } finally {
       setLoading(false);
     }
-  }, [currentUser]);
+  }, [currentUser, construirQueryRequisiciones, mapearRequisicionBD]);
+
+  const cargarMasAntiguas = useCallback(async () => {
+    if (!currentUser || cargandoMas) return;
+    setCargandoMas(true);
+    try {
+      const from = historial.length;
+      const query = construirQueryRequisiciones();
+      const { data, error } = await query.order('fecha_emision', { ascending: false }).range(from, from + 399);
+      if (error) throw error;
+      if (data) {
+        setHayMasAntiguas(data.length === 400);
+        const nuevas = data
+          .filter(r => !r.correlativo_req?.startsWith('SYS-'))
+          .map(mapearRequisicionBD);
+        setHistorial(prev => {
+          const ids = new Set(prev.map(r => r.id));
+          return [...prev, ...nuevas.filter(n => !ids.has(n.id))];
+        });
+      }
+    } catch (err) {
+      toast.error("Error cargando requisiciones anteriores: " + err.message);
+    } finally {
+      setCargandoMas(false);
+    }
+  }, [currentUser, cargandoMas, historial.length, construirQueryRequisiciones, mapearRequisicionBD]);
 
   const cargarMasters = useCallback(async () => {
     const { data: dataCC } = await supabase.from('maestros_centros_costo').select('id, nombre').eq('activo', true).order('nombre');
@@ -3651,6 +3673,30 @@ const Requisiciones = ({ isOpen, onClose, datosPredefinidos, onSuccess, currentU
           </tbody>
         </table>
         {!loading && historialFiltrado.length === 0 && <div style={{ textAlign: 'center', padding: '40px', color: 'var(--slate-400)' }}>No se encontraron registros con esos filtros.</div>}
+        {hayMasAntiguas && (
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '12px', padding: '16px', borderTop: '1px solid #e2e8f0', backgroundColor: '#f8fafc' }}>
+            <span style={{ fontSize: '0.82rem', color: '#64748b', fontWeight: '600' }}>
+              Mostrando {historial.length} registros más recientes
+            </span>
+            <button
+              type="button"
+              onClick={cargarMasAntiguas}
+              disabled={cargandoMas}
+              style={{
+                padding: '8px 18px',
+                borderRadius: '8px',
+                border: '1px solid #0284c7',
+                backgroundColor: '#e0f2fe',
+                color: '#0369a1',
+                fontWeight: '700',
+                fontSize: '0.84rem',
+                cursor: cargandoMas ? 'wait' : 'pointer'
+              }}
+            >
+              {cargandoMas ? 'Cargando anteriores...' : '📂 Cargar 400 requisiciones más antiguas'}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* --- MODAL DE FORMULARIO (NUEVA / EDITAR) --- */}

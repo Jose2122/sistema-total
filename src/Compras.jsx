@@ -485,6 +485,8 @@ const Compras = () => {
   const [historial, setHistorial] = useState([]);
   const [editandoId, setEditandoId] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [hayMasAntiguas, setHayMasAntiguas] = useState(false);
+  const [cargandoMas, setCargandoMas] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -1111,6 +1113,33 @@ const Compras = () => {
     }
   }, []);
 
+  const mapearRequisicionCompras = useCallback((db, zProfile) => {
+    const itemsArr = safeArray(db.items);
+    const facturasConsolidadas = consolidarSoportesRequisicion(db.facturas_url, itemsArr);
+    const esCcTigre = (db.centro_costo || '').toLowerCase().includes('tigre');
+    const fechaEmisionRef = db.fecha_emision || db.created_at;
+    const fechaAprobRef = db.f_aprobacion_general || db.fecha_aprobacion_general || db.f_aprobacion_area;
+    const semanaEmisionInfo = fechaEmisionRef ? getSemanaInfo(fechaEmisionRef) : null;
+    const semanaAprobacionInfo = fechaAprobRef ? getSemanaInfo(fechaAprobRef) : null;
+    const semanaInfo = semanaEmisionInfo || semanaAprobacionInfo || getSemanaInfo(fechaAprobRef || fechaEmisionRef);
+    return {
+      ...db,
+      correlativo: db.correlativo_req || `REQ-${db.id}`,
+      total: db.total_bs || 0,
+      items: itemsArr,
+      detalles: itemsArr,
+      facturas_url: facturasConsolidadas,
+      fecha: db.fecha_emision ? String(db.fecha_emision).split('T')[0] : '',
+      semanaInfo,
+      semanaEmisionInfo,
+      semanaAprobacionInfo,
+      ...(esCcTigre && zProfile ? {
+        asignado_a: zProfile.id,
+        asignado_nombre: `${zProfile.nombre} ${zProfile.apellido}`
+      } : {})
+    };
+  }, []);
+
   const cargarRequisicionesAprobadas = useCallback(async () => {
     setLoading(true);
     try {
@@ -1133,42 +1162,44 @@ const Compras = () => {
         .neq('correlativo_req', 'SYS-PROVEEDORES-CENTRAL')
         .eq('estado_aprobacion', 'aprobado_final')
         .order('fecha_emision', { ascending: false })
-        .limit(500);
+        .range(0, 499);
 
       if (error) throw error;
-
-      setHistorial((allData || []).map(db => {
-        const itemsArr = safeArray(db.items);
-        const facturasConsolidadas = consolidarSoportesRequisicion(db.facturas_url, itemsArr);
-        const esCcTigre = (db.centro_costo || '').toLowerCase().includes('tigre');
-        const fechaEmisionRef = db.fecha_emision || db.created_at;
-        const fechaAprobRef = db.f_aprobacion_general || db.fecha_aprobacion_general || db.f_aprobacion_area;
-        const semanaEmisionInfo = fechaEmisionRef ? getSemanaInfo(fechaEmisionRef) : null;
-        const semanaAprobacionInfo = fechaAprobRef ? getSemanaInfo(fechaAprobRef) : null;
-        const semanaInfo = semanaEmisionInfo || semanaAprobacionInfo || getSemanaInfo(fechaAprobRef || fechaEmisionRef);
-        return {
-          ...db,
-          correlativo: db.correlativo_req || `REQ-${db.id}`,
-          total: db.total_bs || 0,
-          items: itemsArr,
-          detalles: itemsArr,
-          facturas_url: facturasConsolidadas,
-          fecha: db.fecha_emision ? String(db.fecha_emision).split('T')[0] : '',
-          semanaInfo,
-          semanaEmisionInfo,
-          semanaAprobacionInfo,
-          ...(esCcTigre && zProfile ? {
-            asignado_a: zProfile.id,
-            asignado_nombre: `${zProfile.nombre} ${zProfile.apellido}`
-          } : {})
-        };
-      }));
+      setHayMasAntiguas((allData || []).length === 500);
+      setHistorial((allData || []).map(db => mapearRequisicionCompras(db, zProfile)));
     } catch (err) {
       console.error("Error cargando compras:", err.message);
     } finally {
       setLoading(false);
     }
-  }, [zuleikaPerfil]);
+  }, [zuleikaPerfil, mapearRequisicionCompras]);
+
+  const cargarMasAntiguas = useCallback(async () => {
+    if (cargandoMas) return;
+    setCargandoMas(true);
+    try {
+      const from = historial.length;
+      const { data: batch, error } = await supabase
+        .from('requisiciones')
+        .select('*')
+        .neq('correlativo_req', 'SYS-PROVEEDORES-CENTRAL')
+        .eq('estado_aprobacion', 'aprobado_final')
+        .order('fecha_emision', { ascending: false })
+        .range(from, from + 499);
+
+      if (error) throw error;
+      const nuevas = (batch || []).map(db => mapearRequisicionCompras(db, zuleikaPerfil));
+      setHayMasAntiguas((batch || []).length === 500);
+      setHistorial(prev => {
+        const idsExistentes = new Set(prev.map(r => r.id));
+        return [...prev, ...nuevas.filter(n => !idsExistentes.has(n.id))];
+      });
+    } catch (err) {
+      toast.error("Error cargando historial anterior: " + err.message);
+    } finally {
+      setCargandoMas(false);
+    }
+  }, [cargandoMas, historial.length, zuleikaPerfil, mapearRequisicionCompras]);
 
   const cargarProveedores = useCallback(async (opts = {}) => {
     try {
@@ -4791,6 +4822,30 @@ const Compras = () => {
         </table>
         {historialFiltrado.length === 0 && !loading && (
           <div style={{ textAlign: 'center', padding: '40px', color: '#94a3b8' }}>No hay requisiciones pendientes por comprar.</div>
+        )}
+        {hayMasAntiguas && (
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '12px', padding: '16px', borderTop: '1px solid #e2e8f0', backgroundColor: '#f8fafc' }}>
+            <span style={{ fontSize: '0.82rem', color: '#64748b', fontWeight: '600' }}>
+              Mostrando {historial.length} requisiciones más recientes
+            </span>
+            <button
+              type="button"
+              onClick={cargarMasAntiguas}
+              disabled={cargandoMas}
+              style={{
+                padding: '8px 18px',
+                borderRadius: '8px',
+                border: '1px solid #0284c7',
+                backgroundColor: '#e0f2fe',
+                color: '#0369a1',
+                fontWeight: '700',
+                fontSize: '0.84rem',
+                cursor: cargandoMas ? 'wait' : 'pointer'
+              }}
+            >
+              {cargandoMas ? 'Cargando anteriores...' : '📂 Cargar 500 requisiciones más antiguas'}
+            </button>
+          </div>
         )}
       </div>
 
