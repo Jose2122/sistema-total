@@ -13,6 +13,7 @@ import {
   RefreshCw
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { sanitizarTicketsCorrecciones, persistirCorreccionesTickets } from './services/ticketsService';
 import './Administracion.css';
 
 // Inline Component for Stat Cards moved UP
@@ -86,22 +87,21 @@ const Administracion = () => {
   const cargarStats = async () => {
     setCargandoStats(true);
     try {
-      const now = new Date();
-      
       const { data, error } = await supabase
         .from('tickets_directos')
-        .select('total_usd, fecha_pago, categoria, clasificacion_admin')
+        .select('id, codigo_control, codigo_ticket, total_usd, fecha_pago, categoria, clasificacion_admin')
         .eq('estatus', 'Pagado');
 
       if (error) throw error;
 
       if (data && Array.isArray(data)) {
+        const saneados = sanitizarTicketsCorrecciones(data);
         const s = {
-          semanal: data.filter(t => t?.clasificacion_admin === 'Semanal').reduce((acc, t) => acc + (Number(t?.total_usd) || 0), 0),
-          mensual: data.filter(t => t?.clasificacion_admin === 'Mensual').reduce((acc, t) => acc + (Number(t?.total_usd) || 0), 0),
-          reembolsosPolizas: data.filter(t => t?.clasificacion_admin === 'Reembolsos Pólizas').reduce((acc, t) => acc + (Number(t?.total_usd) || 0), 0),
-          tea: data.filter(t => t?.clasificacion_admin === 'TEA').reduce((acc, t) => acc + (Number(t?.total_usd) || 0), 0),
-          totalGeneral: data.reduce((acc, t) => acc + (Number(t?.total_usd) || 0), 0)
+          semanal: saneados.filter(t => t?.clasificacion_admin === 'Semanal').reduce((acc, t) => acc + (Number(t?.total_usd) || 0), 0),
+          mensual: saneados.filter(t => t?.clasificacion_admin === 'Mensual').reduce((acc, t) => acc + (Number(t?.total_usd) || 0), 0),
+          reembolsosPolizas: saneados.filter(t => t?.clasificacion_admin === 'Reembolsos Pólizas').reduce((acc, t) => acc + (Number(t?.total_usd) || 0), 0),
+          tea: saneados.filter(t => t?.clasificacion_admin === 'TEA').reduce((acc, t) => acc + (Number(t?.total_usd) || 0), 0),
+          totalGeneral: saneados.reduce((acc, t) => acc + (Number(t?.total_usd) || 0), 0)
         };
         setStats(s);
       }
@@ -121,7 +121,9 @@ const Administracion = () => {
         .limit(10);
       
       if (error) throw error;
-      setRecientes(data || []);
+      const saneados = sanitizarTicketsCorrecciones(data || []);
+      setRecientes(saneados);
+      persistirCorreccionesTickets(supabase, saneados);
     } catch (err) {
       console.error('Error al cargar recientes:', err?.message);
     }

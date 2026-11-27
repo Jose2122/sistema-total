@@ -4,6 +4,7 @@ import MobileTicketCard from './MobileTicketCard';
 import { vibrateHaptic } from './haptics';
 import { Search, Loader2, CheckCircle2, RefreshCw } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { sanitizarTicketsCorrecciones, persistirCorreccionesTickets } from '../services/ticketsService';
 
 export default function MobileTickets({ currentUser, onPendingCountChange }) {
   const [tickets, setTickets] = useState([]);
@@ -92,7 +93,9 @@ export default function MobileTickets({ currentUser, onPendingCountChange }) {
         .limit(500);
 
       if (error) throw error;
-      setTickets(data || []);
+      const saneados = sanitizarTicketsCorrecciones(data || []);
+      setTickets(saneados);
+      persistirCorreccionesTickets(supabase, saneados);
     } catch (err) {
       console.error('Error al cargar tickets:', err);
       toast.error('No se pudieron cargar los tickets de pago');

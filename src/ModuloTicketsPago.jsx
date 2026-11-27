@@ -12,6 +12,7 @@ import { getSemanaInfo } from './utils/helpers';
 import { compressImage } from './utils/compressImage';
 import { subirArchivoAVps } from './services/uploadService';
 import { obtenerTodosProveedores } from './services/proveedoresService';
+import { sanitizarTicketsCorrecciones, persistirCorreccionesTickets } from './services/ticketsService';
 import {
   Plus,
   ChevronDown,
@@ -1090,7 +1091,9 @@ const ModuloTicketsPago = () => {
 
       const { data, error } = await query.order('fecha_emision', { ascending: false }).limit(500);
       if (error) throw error;
-      setHistorialTickets(data || []);
+      const saneados = sanitizarTicketsCorrecciones(data || []);
+      setHistorialTickets(saneados);
+      persistirCorreccionesTickets(supabase, saneados);
     } catch (err) {
       console.error('Error al cargar historial:', err.message);
     } finally {

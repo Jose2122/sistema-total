@@ -11,6 +11,7 @@ import {
     CheckCircle2, AlertCircle, ChevronDown, Briefcase, Users, FileText
 } from 'lucide-react';
 import { format, getWeek, parseISO as dateFnsParseISO } from 'date-fns';
+import { sanitizarTicketsCorrecciones, persistirCorreccionesTickets } from './services/ticketsService';
 
 const parseISO = (dateStr) => {
     if (!dateStr) return new Date();
@@ -176,7 +177,9 @@ const ResumenEjecutivo = ({ currentUser }) => {
             setRawReqs(resReq.data || []);
             setRawFunds(resFund.data || []);
             setRawPartidas(resPart.data || []);
-            setRawTickets(resTicket.data || []);
+            const saneados = sanitizarTicketsCorrecciones(resTicket.data || []);
+            setRawTickets(saneados);
+            persistirCorreccionesTickets(supabase, saneados);
         } catch (err) {
             console.error("Error cargando datos ejecutivos:", err);
         } finally {
